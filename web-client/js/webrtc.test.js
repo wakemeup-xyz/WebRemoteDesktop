@@ -114,7 +114,8 @@ function loadWebRTC(overrides = {}) {
   const context = {
     console,
     // Explicit offline configuration response; never use a real network fetch.
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    fetch: async (url) => ({ ok: true, status: 200, json: async () => url.endsWith('/api/auth/viewer-admission') ? { admission: { ticket: 'fixture-ticket' } } : {} }),
+    AbortController,
     setTimeout: trackTimeout,
     clearTimeout: clearTrackedTimeout,
     setInterval: trackInterval,
@@ -166,6 +167,7 @@ function loadWebRTC(overrides = {}) {
   }
   context.globalThis = context;
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'bounded-request.js'), 'utf8'), context);
   if (!overrides.createDesktopSessionState) {
     const stateSource = fs.readFileSync(path.join(__dirname, 'desktop-session-state.js'), 'utf8');
     vm.runInContext(stateSource, context);
@@ -5172,7 +5174,7 @@ test('viewer-superseded enters terminal state and blocks scheduleReconnect', () 
   assert.equal(WebRTC.reconnectTimer, null);
 });
 
-test('reclaimDesktopSession clears supersede flags', () => {
+test('reclaimDesktopSession clears supersede flags', async () => {
   const { WebRTC } = loadWebRTC();
   WebRTC.handleViewerSuperseded({ reason: 'single-desktop-viewer' });
   let started = 0;
@@ -5180,7 +5182,7 @@ test('reclaimDesktopSession clears supersede flags', () => {
   WebRTC.createPeerConnection = () => {};
   WebRTC.beginConnectionAttempt = () => {};
 
-  WebRTC.reclaimDesktopSession();
+  await WebRTC.reclaimDesktopSession();
 
   assert.equal(WebRTC._superseded, false);
   assert.equal(WebRTC.manualDisconnect, false);
@@ -6821,4 +6823,125 @@ test('real mobile and port-search writers converge with the chrome capability pr
   WebRTC.renderPortSearchStatus();
   assert.equal(port.disabled, true, 'tool retry cannot override the Terminal gate');
   assert.equal(port.getAttribute('aria-disabled'), 'true');
+});
+
+function admissionViewerFixture({ proof = null, fetchAdmission = null } = {}) {
+  const sockets = [], requests = [];
+  const storage = new Map(proof ? [['wrdProofAdmission', JSON.stringify(proof)]] : []);
+  const result = loadWebRTC({
+    sessionStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) },
+    fetch: async (url, init) => {
+      if (!url.endsWith('/api/auth/viewer-admission')) return { ok: true, status: 200, json: async () => ({ iceServers: [] }) };
+      requests.push({ url, init });
+      if (fetchAdmission) return fetchAdmission();
+      return { ok: true, status: 201, json: async () => ({ admission: { ticket: `fixture-ticket-${requests.length}` } }) };
+    },
+    io: (_url, options) => {
+      const handlers = new Map();
+      const socket = { auth: options.auth, connected: false, attempts: 0, reconnectEnabled: true,
+        on: (event, handler) => handlers.set(event, handler), emit() {},
+        disconnect() { this.connected = false; }, connect() { this.attempts++; },
+        trigger(event, data) { return handlers.get(event)?.(data); },
+        io: { reconnection(value) { socket.reconnectEnabled = value; } },
+      };
+      sockets.push(socket); return socket;
+    },
+  });
+  const { WebRTC } = result;
+  // Platform PC creation has no browser/RTC. Admission, Start, init, listeners,
+  // refresh, visibility recovery, and rejection cleanup are production methods.
+  WebRTC.createPeerConnection = () => {};
+  WebRTC.createOffer = () => {};
+  const controller = { load: async () => ({ schemaVersion: 1, host: { online: false }, webrtc: { iceServers: [] } }) };
+  return { ...result, sockets, requests, storage, controller };
+}
+
+test('real Start/reclaim issue once while Socket.IO resume, pageshow and PC refresh retain acknowledged generation', async () => {
+  const h = admissionViewerFixture();
+  const start = h.WebRTC.createStartHandler(h.controller);
+  await Promise.all([start(), start()]);
+  assert.equal(h.requests.length, 1);
+  const original = h.sockets[0];
+  assert.equal(original.auth.viewerAdmission.mode, 'explicit');
+  assert.equal(original.auth.viewerAdmission.ticket, 'fixture-ticket-1');
+  original.connected = true;
+  original.trigger('connected', { hostOnline: false, viewerAdmission: { mode: 'resume', generation: 'generation-1' } });
+  assert.equal(original.auth.viewerAdmission.generation, 'generation-1');
+  assert.equal(original.auth.viewerAdmission.ticket, undefined);
+  original.connected = false;
+  original.trigger('disconnect', 'transport close');
+  h.WebRTC.handlePageLifecycle('pageshow');
+  assert.equal(original.attempts, 1);
+  h.WebRTC.createSignalingSocket(true);
+  assert.equal(h.sockets[1].auth.viewerAdmission.generation, 'generation-1');
+  await h.WebRTC.refresh({ reason: 'fresh-frame-timeout' });
+  assert.equal(h.requests.length, 1, 'automatic recovery must not fetch a new ticket');
+  h.WebRTC.handleViewerSuperseded({ reason: 'single-desktop-viewer' });
+  await Promise.all([h.WebRTC.reclaimDesktopSession(), h.WebRTC.reclaimDesktopSession()]);
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.sockets.at(-1).auth.viewerAdmission.ticket, 'fixture-ticket-2');
+  assert.equal(h.WebRTC._superseded, false);
+});
+
+test('actual admission rejection stops reconnect chain and preserves input draft with manual reclaim available', async () => {
+  const h = admissionViewerFixture();
+  await h.WebRTC.startViewer(h.controller);
+  const socket = h.sockets[0]; socket.connected = true;
+  h.context.document.getElementById('mobileTextInput').value = 'unfinished draft';
+  h.storage.set('draft-canary', 'saved draft');
+  h.WebRTC.scheduleSignalingRecovery('network-online');
+  socket.trigger('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
+  assert.equal(socket.reconnectEnabled, false);
+  assert.equal(h.WebRTC.manualDisconnect, true);
+  assert.equal(h.WebRTC._signalRecoveryTimer, null);
+  assert.equal(h.WebRTC.createSignalingSocket(true), null);
+  assert.equal(h.WebRTC.handlePageLifecycle('pageshow'), false);
+  assert.equal(h.WebRTC.scheduleSignalingRecovery(), false);
+  await h.WebRTC.refresh({ reason: 'fresh-frame-timeout' });
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.context.document.getElementById('mobileTextInput').value, 'unfinished draft');
+  assert.equal(h.storage.get('draft-canary'), 'saved draft');
+  assert.equal(h.context.document.getElementById('viewerSupersededOverlay').hidden, false);
+  await h.WebRTC.reclaimDesktopSession();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.sockets.length, 2);
+});
+
+test('proof-bearing Start and manual reclaim never obtain an ordinary takeover ticket', async () => {
+  const proof = { token: 'fixture-proof', epoch: 1, realm: 'production' };
+  const h = admissionViewerFixture({ proof });
+  await h.WebRTC.startViewer(h.controller);
+  assert.equal(h.requests.length, 0);
+  assert.equal(JSON.stringify(h.sockets[0].auth.proofAdmission), JSON.stringify(proof));
+  assert.equal(h.sockets[0].auth.viewerAdmission, undefined);
+  h.WebRTC.handleViewerSuperseded();
+  await h.WebRTC.reclaimDesktopSession();
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.sockets.at(-1).auth.viewerAdmission, undefined);
+});
+
+test('admission API failure or stale auth response cannot open signaling or clear current credentials', async () => {
+  const failed = admissionViewerFixture({ fetchAdmission: async () => ({ ok: false, status: 429, json: async () => ({ error: 'admission-capacity' }) }) });
+  await failed.WebRTC.startViewer(failed.controller);
+  assert.equal(failed.sockets.length, 0);
+  let complete;
+  const h = admissionViewerFixture({ fetchAdmission: () => new Promise(resolve => { complete = resolve; }) });
+  const pending = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  h.context.Auth.getToken = () => 'new-auth-token';
+  complete({ ok: true, status: 201, json: async () => ({ admission: { ticket: 'old-response' } }) });
+  await pending;
+  assert.equal(h.sockets.length, 0);
+  assert.equal(h.WebRTC._viewerAdmission, null);
+  assert.equal(h.context.Auth.getToken(), 'new-auth-token');
+});
+
+test('malformed retained proof cannot turn an automated Start into ordinary admission', async () => {
+  const h = admissionViewerFixture();
+  h.storage.set('wrdProofAdmission', '{broken');
+  await h.WebRTC.startViewer(h.controller);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.sockets[0].auth.proofAdmission.invalid, true);
+  assert.equal(h.sockets[0].auth.viewerAdmission, undefined);
 });

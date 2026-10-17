@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
+const { createViewerAdmission } = require('../lib/viewer-admission');
 
 /**
  * Per-server signaling state.  Keeping this state in an explicit object makes
@@ -46,6 +47,7 @@ function createRuntimeContext(options = {}) {
 
   return {
     connections,
+    viewerAdmission: createViewerAdmission(options),
     requiresViewerProof() {
       return requireViewerProof;
     },
@@ -93,6 +95,7 @@ function createRuntimeContext(options = {}) {
       proofAdmissions.delete(token);
       if (epoch !== viewerEpoch || connections.viewers.size > 0) return false;
       viewerEpoch += 1;
+      this.viewerAdmission.noteProofAdmission();
       if (typeof socketId === 'string' && socketId) {
         consumedProofViewers.set(token, { epoch, realm, socketId, expiresAt: now() + proofAdmissionTtlMs });
       }

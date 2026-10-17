@@ -95,6 +95,19 @@ function createAuthRouter(options = {}) {
   router.post('/login', limiters.viewer, loginViewer);
   router.post('/login/viewer', limiters.viewer, loginViewer);
 
+  router.post('/viewer-admission', limiters.verify, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    let decoded;
+    try { decoded = verifyAccessToken(readBearerToken(req.headers.authorization), getConfig()); }
+    catch { return res.status(401).json({ error: 'Invalid token' }); }
+    if (decoded.role !== 'viewer') return res.status(403).json({ error: 'Viewer role required' });
+    const runtime = options.runtimeContext;
+    if (!runtime || runtime.requiresViewerProof()) return res.status(403).json({ error: 'Explicit admission unavailable' });
+    const admission = runtime.viewerAdmission.issue(decoded.sub, req.body?.viewerSessionId);
+    if (admission.error) return res.status(admission.error === 'admission-capacity' ? 429 : 400).json({ error: admission.error });
+    return res.status(201).json({ admission });
+  });
+
   router.post('/login/host', limiters.host, (req, res) => {
     const { hostSharedSecret } = getConfig();
     const secret = String(req.body?.secret || '');

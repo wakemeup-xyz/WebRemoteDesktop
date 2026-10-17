@@ -550,3 +550,10 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 - `hostAdapterAwaitMs` 只覆盖输入adapter入口至返回；`hostQueueMs` 只覆盖adapter内部等待至原生调用，`hostApplyMs` 覆盖原生调用区间。Host外层准入等待不在这三个阶段内，仍保留队列遥测；业务RTT减adapter总段后的剩余量不能称作网络耗时。
 - `freshFrameAgeMs` 只在M2验证同scope、video stream、新captureSeq与实际rVFC关联后可用，采用原始Viewer回调时间（100ms呈现、800ms关联时年龄为700ms）。旧/重复captureSeq不刷新；暂停和scope变化清空gauge，旧scope或暂停前/期间的迟到关联不能恢复它。普通paint、ACK、frame_timing、未知关联保持缺测，不改变控制授权。
 - 以上为源码与离线集成验证，实际部署、Viewer、公网、原生输入/抓屏、真实codec与长会话验收不由本次修复声明完成。证据见[最终集成修复报告](../superpowers/reports/2026-10-17-final-integration-fixes.md)。
+
+### C5 Viewer 准入与恢复补充（2026-10-17）
+
+- 只有用户 Start/“重新连接桌面”向认证 API 申请短期、绑定主体和 session 的显式 ticket，才能顶替其他 Viewer；自动 Socket.IO 重连、pageshow、PC refresh 只恢复服务端确认的当前 session/准入代次。
+- 服务端在 Viewer map、proof epoch 和租约副作用前判定；被更新 owner 取代的旧页面在 grace 内外均不能自动夺回。当前 owner 保留独立于 grace/ticket TTL；容量满有界拒绝，不淘汰有效 ticket 的去重证据。旧版未知握手仅在服务本轮生命周期首次 zero-Viewer 时兼容，冲突或未知恢复要求显式重连。
+- 当前 owner 在 grace 内仍须 Host applied ACK 完成 rebind；grace 外仍须原 reset/regrant。拒绝后停止自动抢占链并显示原手动重连入口，保留草稿；不自动切模式或修改媒体参数。
+- proof 仍严格单次、zero-Viewer；proof 页面不得请求普通显式 ticket，已接纳 proof 同样阻止旧普通页面自动恢复。源码/离线证据见 [C5 实施报告](../superpowers/reports/2026-10-17-task-C5-admission-recovery.md)，生产与可见效果验收另记。

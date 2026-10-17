@@ -501,6 +501,9 @@ const WebRTC = {
   _signalRecoveryStartedAt: 0,
   _signalRecoveryPending: false,
   _viewerSessionId: null,
+  _viewerAdmission: null,
+  _explicitAdmissionSequence: 0,
+  _reclaimPromise: null,
   SIGNAL_RECOVERY_RETRY_MS: 1500,
   SIGNAL_RECOVERY_MAX_WAIT_MS: 12000,
   _pageLifecycleRecoveryBound: false,
@@ -2340,6 +2343,7 @@ const WebRTC = {
     } else {
       await this.loadServerConfig();
     }
+    if (this._superseded) return false;
     this.clearFailureRecommendation();
     const modeState = this.enforceSupportedNetworkMode(this.networkMode);
     this.beginConnectionAttempt(trigger);
@@ -2461,6 +2465,9 @@ const WebRTC = {
       StartupTelemetry.mark('bootstrap-start');
     }
     try {
+      await this.requestExplicitViewerAdmission();
+      this._superseded = false;
+      this.hideSupersededUI();
       if (!controller) {
         await this.init({ trigger: 'start-button' });
         return;
@@ -2485,6 +2492,7 @@ const WebRTC = {
           StartupTelemetry.mark('bootstrap-ready');
         }
       }
+      if (this._superseded) return false;
       await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true });
     } catch (error) {
       this._deferPeerUntilConfig = false;
@@ -2493,7 +2501,7 @@ const WebRTC = {
           && controller?.getSnapshot?.().state === 'auth-required') {
         return Auth.logout();
       }
-      this.enterBootstrapFailure(error);
+      if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
     }
   },
 
@@ -2549,6 +2557,38 @@ const WebRTC = {
     return this.socket;
   },
 
+  readProofAdmission() {
+    try {
+      if (typeof sessionStorage === 'undefined') return null;
+      const raw = sessionStorage.getItem('wrdProofAdmission');
+      if (raw == null) return null;
+      try { return JSON.parse(raw) || { invalid: true }; }
+      catch (_error) { return { invalid: true }; }
+    } catch (_error) { return null; }
+  },
+
+  async requestExplicitViewerAdmission() {
+    // A proof-bearing page must never upgrade itself to ordinary human takeover.
+    if (this.readProofAdmission()) { this._viewerAdmission = null; return; }
+    const token = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
+    if (!token || Auth.isVerified?.() !== true) throw new Error('请重新验证登录');
+    const sequence = ++this._explicitAdmissionSequence;
+    const base = typeof RuntimeConfig !== 'undefined' ? RuntimeConfig.getApiBase() : window.location.origin;
+    const result = await fetchJsonWithin(`${base}/api/auth/viewer-admission`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ viewerSessionId: this.resolveViewerSessionId() }),
+    }, { timeoutMs: 5000 });
+    if (sequence !== this._explicitAdmissionSequence || Auth.getToken() !== token
+        || Auth.getGeneration?.() !== authGeneration || Auth.isVerified?.() !== true) {
+      throw Object.assign(new Error('superseded'), { code: 'superseded' });
+    }
+    if (!result.ok || typeof result.data?.admission?.ticket !== 'string') {
+      throw new Error('桌面连接授权暂不可用，请手动重试');
+    }
+    this._viewerAdmission = { mode: 'explicit', ticket: result.data.admission.ticket };
+  },
+
   signalingConnectBudgetMs: 5000,
 
   resolveViewerSessionId() {
@@ -2585,6 +2625,7 @@ const WebRTC = {
 
   buildSignalingSocketOptions({ token, reconnection = true, allowPolling = true } = {}) {
     const transports = this.resolveSignalingTransports({ allowPolling });
+    const proofAdmission = this.readProofAdmission();
     const timeout = Number(this.signalingConnectBudgetMs) > 0
       ? Number(this.signalingConnectBudgetMs)
       : 5000;
@@ -2594,12 +2635,10 @@ const WebRTC = {
         role: 'viewer',
         inputProtocolVersion: 2,
         viewerSessionId: this.resolveViewerSessionId(),
-        proofAdmission: (() => {
-          try {
-            if (typeof sessionStorage === 'undefined') return null;
-            return JSON.parse(sessionStorage.getItem('wrdProofAdmission') || 'null');
-          } catch (_err) { return null; }
-        })(),
+        proofAdmission,
+        ...(proofAdmission ? {} : {
+          viewerAdmission: this._viewerAdmission || { mode: 'resume', generation: null },
+        }),
       },
       reconnection: Boolean(reconnection),
       // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
@@ -3385,6 +3424,11 @@ const WebRTC = {
     });
 
     onCurrentSocket('connected', (data) => {
+      if (!this.readProofAdmission() && data.viewerAdmission?.mode === 'resume') {
+        this._viewerAdmission = { mode: 'resume', generation: data.viewerAdmission.generation };
+        // Socket.IO retries the same auth object; drop the consumed ticket now.
+        if (socket.auth) socket.auth.viewerAdmission = this._viewerAdmission;
+      }
       console.log('[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s',
         data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
@@ -3465,6 +3509,11 @@ const WebRTC = {
     });
 
     onCurrentSocket('input-ack', (data) => { this.acceptObservedInputAck(data, { transport: 'socket', socket }); });
+
+    onCurrentSocket('viewer-admission-rejected', (data) => {
+      this._viewerAdmission = null;
+      this.handleViewerSuperseded(data || {});
+    });
 
     onCurrentSocket('viewer-superseded', (data) => {
       this.handleViewerSuperseded(data || {});
@@ -6519,6 +6568,17 @@ if (this.tunnelLastObjectUrl) {
   },
 
   reclaimDesktopSession() {
+    if (this._reclaimPromise) return this._reclaimPromise;
+    this._reclaimPromise = this.reclaimDesktopSessionOnce().finally(() => { this._reclaimPromise = null; });
+    return this._reclaimPromise;
+  },
+
+  async reclaimDesktopSessionOnce() {
+    try { await this.requestExplicitViewerAdmission(); }
+    catch (error) {
+      if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
+      return false;
+    }
     this._controlUserReleased = false;
     this._cancelControlAcquireIntent();
     this.hideSupersededUI();

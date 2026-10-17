@@ -155,7 +155,7 @@ test('human viewer supersedes an admitted proof viewer under the existing user-p
   proof.handshake.auth.proofAdmission = issueProofAdmission();
   io.connect(proof);
   const human = new FakeSocket('human-viewer', 'viewer');
-  io.connect(human);
+  io.connectManual(human);
 
   assert.equal(proof.disconnected, true);
   assert.equal(connections.viewers.get('human-viewer'), human);
@@ -742,7 +742,7 @@ test('another viewer session cannot rebind the disconnected controller at Host',
   first.disconnect();
   const second = new FakeSocket('viewer-cross-b', 'viewer');
   second.handshake.auth.viewerSessionId = 'viewer-session-b';
-  io.connect(second);
+  io.connectManual(second);
   second.trigger('viewer-session-rebind', { previousViewerId: first.id, viewerId: second.id });
   assert.equal(host.sent.some((entry) => entry.event === 'viewer-session-rebind'), false);
   assert.equal(second.sent.some((entry) => entry.event === 'control-grant'), false);
@@ -810,7 +810,7 @@ for (const outcome of ['rejected', 'timeout', 'disconnected', 'superseded']) {
     if (outcome === 'superseded') {
       const other = new FakeSocket('viewer-rebind-unrelated', 'viewer');
       other.handshake.auth.viewerSessionId = 'session-unrelated';
-      io.connect(other);
+      io.connectManual(other);
     }
     const transitionsBeforeLateAck = host.sent.filter((entry) => entry.event === 'control-transition').length;
     rebind.ack(null, { status: 'applied' });
@@ -971,7 +971,7 @@ test('host input ack is routed only to its original viewer', () => {
   assert.equal(viewerA.sent.some((message) => message.event === 'input-ack' && message.data.inputIds[0] === 'input-1'), true);
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('viewer-b'), true);
 
@@ -1586,7 +1586,7 @@ test('legacy input lazily acquires control and stays blocked until host ack', ()
   assert.equal(host.sent.filter((entry) => entry.event === 'input').at(-1).data.viewerId, 'viewer-a');
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   assert.equal(connections.viewers.has('viewer-a'), false);
   viewerB.trigger('input', legacyInput);
   // Supersede removed the ACTIVE controller → REVOKING barrier; B cannot write yet.
@@ -1678,7 +1678,7 @@ test('legacy relay companion stops when a second desktop viewer supersedes the o
   assert.equal(host.sent.filter((entry) => entry.event === 'relay-stream-control').length, 1);
 
   const superseder = new FakeSocket('legacy-observer', 'viewer');
-  io.connect(superseder);
+  io.connectManual(superseder);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('legacy-observer'), true);
   assert.equal(mainViewer.disconnected, true);
@@ -1708,7 +1708,7 @@ test('legacy relay companion stops on second desktop viewer supersede and reject
   const relayedFramesBefore = relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
   const mainFramesBefore = mainViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
 
-  io.connect(new FakeSocket('legacy-observer', 'viewer'));
+  io.connectManual(new FakeSocket('legacy-observer', 'viewer'));
   assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
     enabled: false,
     viewerId: 'legacy-main',
@@ -1791,7 +1791,7 @@ test('legacy relay companion stops when a second desktop viewer supersedes durin
 
   const v2Viewer = new FakeSocket('viewer-v2', 'viewer');
   v2Viewer.handshake.auth.inputProtocolVersion = 2;
-  io.connect(v2Viewer);
+  io.connectManual(v2Viewer);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('viewer-v2'), true);
   assert.equal(mainViewer.disconnected, true);
@@ -1853,7 +1853,7 @@ test('ACTIVE controller disconnect stays REVOKING until matching applied ack', (
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   const stateAfterConnect = viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
   assert.equal(stateAfterConnect.state, 'REVOKING');
   assert.equal(stateAfterConnect.pendingViewerId, null);
@@ -1949,7 +1949,7 @@ test('ACTIVE controller disconnect rejected reset retries same epoch and stays b
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
 
   host.trigger('control-transition-ack', {
     leaseEpoch: epoch,
@@ -1993,6 +1993,7 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
     role: 'host', status: 'ok', inputProtocolVersion: 1,
   });
   assert.deepEqual(viewer.sent.find((entry) => entry.event === 'connected').data, {
+    viewerAdmission: viewer.sent.find(e => e.event === 'connected').data.viewerAdmission,
     role: 'viewer', status: 'ok', hostOnline: true,
     inputProtocolVersion: 2, hostInputProtocolVersion: 1,
     hostCapabilities: {
@@ -2136,7 +2137,7 @@ test('legacy controller is single-writer and a later v2 viewer acquires only aft
 
   const v2Viewer = new FakeSocket('v2-viewer', 'viewer');
   v2Viewer.handshake.auth.inputProtocolVersion = 2;
-  io.connect(v2Viewer);
+  io.connectManual(v2Viewer);
   assert.equal(connections.viewers.size, 1);
   assert.equal(legacyViewer.disconnected, true);
   transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
@@ -2213,7 +2214,7 @@ test('rejected transition stays fail-closed in REVOKING and cannot replay on lat
   // New sole viewer still blocked while the reset-only barrier is unresolved.
   viewer.disconnect();
   const viewerB = new FakeSocket('viewer-2', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'blocked-while-reset' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
@@ -2243,7 +2244,7 @@ test('controller disconnect freezes old lease until host ack then grants later s
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'b' });
   assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
@@ -2347,7 +2348,7 @@ test('heartbeat expiry is dispatched once before a later scheduler tick and keep
   viewerA.disconnect();
   const viewerB = new FakeSocket('viewer-expiry-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'b' });
   assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
 
@@ -2568,7 +2569,7 @@ test('blocked reset cannot grant a new controller and retries are same-epoch bou
 
   viewer.disconnect();
   const viewerB = new FakeSocket('viewer-2', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'should-block' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
@@ -3240,7 +3241,7 @@ test('second desktop viewer supersedes the first', () => {
   assert.equal(connections.viewers.has('viewer-a'), true);
   assert.equal(a.sent.some((entry) => entry.event === 'connected'), true);
 
-  io.connect(b);
+  io.connectManual(b);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('viewer-b'), true);
   assert.equal(connections.viewers.has('viewer-a'), false);
@@ -3271,7 +3272,7 @@ test('removeDesktopViewer is idempotent under disconnect after supersede', () =>
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
 
   const transitionsBefore = host.sent.filter((entry) => entry.event === 'control-transition').length;
-  io.connect(b);
+  io.connectManual(b);
   assert.equal(connections.viewers.size, 1);
   assert.equal(a.disconnected, true);
   const transitionsAfterSupersede = host.sent.filter((entry) => entry.event === 'control-transition').length;
@@ -3300,7 +3301,7 @@ test('host and relay-viewer survive desktop supersede', () => {
   io.connect(host);
   io.connect(relay);
   io.connect(viewerA);
-  io.connect(viewerB);
+  io.connectManual(viewerB);
 
   assert.equal(connections.host, host);
   assert.equal(connections.relayViewers.has('relay-1'), true);
@@ -3367,7 +3368,7 @@ for (const outcome of ['deadline', 'timeout', 'host-replaced', 'same-id-host-rep
     if (outcome === 'disconnected') h.b.disconnect();
     if (outcome === 'superseded') {
       const other = new FakeSocket('viewer-renew-unrelated', 'viewer');
-      other.handshake.auth.viewerSessionId = 'fixture-other-session'; h.io.connect(other);
+      other.handshake.auth.viewerSessionId = 'fixture-other-session'; h.io.connectManual(other);
     }
     const before = h.host.sent.filter(e => e.event === 'control-transition').length;
     h.rebind.ack(null, { status: 'applied' });
@@ -3532,7 +3533,7 @@ for (const outcome of ['applied', 'rejected', 'timeout', 'superseded', 'disconne
     assert.equal(host.sent.slice(hostBefore).filter(e => ['relay-stream-control', 'relay-frame-ack', 'input'].includes(e.event)).length, 0);
     assert.equal(companion.sent.slice(companionBefore).filter(e => e.event === 'relay-frame').length, 0);
     assert.equal(b.sent.slice(bBefore).filter(e => ['relay-frame', 'relay-stream-control-ack', 'media-activity-ack'].includes(e.event)).length, 0);
-    if (outcome === 'superseded') io.connect(new FakeSocket('legacy-superseder', 'viewer'));
+    if (outcome === 'superseded') io.connectManual(new FakeSocket('legacy-superseder', 'viewer'));
     if (outcome === 'disconnected') b.disconnect();
     if (outcome === 'companion-disconnected') companion.disconnect();
     rebind.ack(outcome === 'timeout' ? new Error('timeout') : null,

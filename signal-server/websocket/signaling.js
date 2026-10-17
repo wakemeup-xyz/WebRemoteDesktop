@@ -1048,7 +1048,25 @@ function setupSignaling(io, options = {}) {
         socket.disconnect(true);
         return;
       }
-      if (!isProofViewer) noteHumanViewerAdmission();
+      let humanAdmission = null;
+      if (!isProofViewer) {
+        const session = normalizeViewerSessionId(socket.handshake.auth?.viewerSessionId);
+        humanAdmission = instanceRuntime.viewerAdmission.admit({
+          subject: socket.user?.sub,
+          session,
+          admission: socket.handshake.auth?.viewerAdmission,
+          occupied: connections.viewers.size > 0,
+          sameSessionOccupancy: [...connections.viewers.values()].every(other =>
+            !other._wrdProofViewer && other._wrdViewerSessionId === session
+            && other.user?.sub === socket.user?.sub),
+        });
+        if (!humanAdmission.ok) {
+          socket.emit('viewer-admission-rejected', { reason: humanAdmission.reason });
+          socket.disconnect(true);
+          return;
+        }
+        noteHumanViewerAdmission();
+      }
       socket._wrdProofViewer = isProofViewer;
       socket._wrdDisconnected = false;
       socket._wrdViewerSessionId = normalizeViewerSessionId(socket.handshake?.auth?.viewerSessionId);
@@ -1063,6 +1081,7 @@ function setupSignaling(io, options = {}) {
       socket.emit('connected', {
         role: 'viewer',
         status: 'ok',
+        ...(humanAdmission ? { viewerAdmission: { mode: 'resume', generation: humanAdmission.generation } } : {}),
         hostOnline: connections.host !== null,
         inputProtocolVersion: socket.inputProtocolVersion,
         hostInputProtocolVersion: hostInputProtocolVersion(),

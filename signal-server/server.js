@@ -149,6 +149,7 @@ function createServerApp(options = {}) {
   app.use('/api/auth', createAuthRouter({
     config,
     configMode: 'exact',
+    runtimeContext: signalingRuntime,
     logger,
     terminalAudit,
     terminalMetrics,

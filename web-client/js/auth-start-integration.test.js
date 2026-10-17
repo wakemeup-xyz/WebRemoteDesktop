@@ -44,6 +44,7 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403() } = {
     sessionStorage: { getItem(key) { return tokens.get(key) || null; }, setItem(key, value) { tokens.set(key, value); }, removeItem(key) { tokens.delete(key); } },
     localStorage: { getItem() { return null; }, removeItem() {}, setItem() {} },
     fetch: async (url) => {
+      if (url.endsWith('/api/auth/viewer-admission')) return json(201, { admission: { ticket: 'fixture-ticket' } });
       requests.push(url.endsWith('/api/auth/verify') ? 'verify' : 'bootstrap');
       return url.endsWith('/api/auth/verify') ? verify() : bootstrap();
     },

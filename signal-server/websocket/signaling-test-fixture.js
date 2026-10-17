@@ -1,7 +1,7 @@
 // Offline test adapters only; this module registers no tests.
 const { EventEmitter } = require('node:events');
-const { signAccessToken } = require('../lib/auth');
-const { connections, clearHostCapabilities } = require('./signaling');
+const { signAccessToken, verifyAccessToken } = require('../lib/auth');
+const { connections, clearHostCapabilities, runtimeContext } = require('./signaling');
 
 class FakeSocket extends EventEmitter {
   constructor(id, role, tokenRole = role === 'relay-viewer' ? 'viewer' : role) {
@@ -9,7 +9,7 @@ class FakeSocket extends EventEmitter {
     this.id = id;
     this.disconnected = false;
     this.handshake = {
-      auth: { role, token: signAccessToken(tokenRole, `${id}-${tokenRole}`) },
+      auth: { role, token: signAccessToken(tokenRole, tokenRole === 'viewer' ? 'viewer-password-login' : `${id}-${tokenRole}`) },
       address: '127.0.0.1',
       headers: {},
     };
@@ -44,7 +44,7 @@ class FakeSocket extends EventEmitter {
   }
 }
 
-function makeIo() {
+function makeIo(context = runtimeContext) {
   return {
     connectionHandler: null,
     middleware: null,
@@ -74,6 +74,15 @@ function makeIo() {
       }
       return this.namespaces.get(name);
     },
+    // Tests must spell out a human click when replacing a different session.
+    connectManual(socket) {
+      const session = socket.handshake.auth.viewerSessionId || `fixture-session-${socket.id}`;
+      socket.handshake.auth.viewerSessionId = session;
+      const admission = context.viewerAdmission.issue(verifyAccessToken(socket.handshake.auth.token).sub, session);
+      if (!admission.ticket) throw new Error('fixture admission unavailable');
+      socket.handshake.auth.viewerAdmission = { mode: 'explicit', ticket: admission.ticket };
+      this.connect(socket);
+    },
     connect(socket) {
       if (this.middleware) {
         let middlewareError = null;
@@ -90,6 +99,7 @@ function makeIo() {
 }
 
 function resetConnections() {
+  runtimeContext.viewerAdmission = require('../lib/viewer-admission').createViewerAdmission();
   connections.host = null;
   connections.viewers.clear();
   connections.relayViewers.clear();
