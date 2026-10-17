@@ -1,0 +1,94 @@
+{
+  "origin": "https://link.stockhub.wiki",
+  "probe_limit": 4,
+  "probe_deadline_seconds": 8,
+  "probe_count": 4,
+  "env_presence": {
+    "HTTP_PROXY": true,
+    "HTTPS_PROXY": true,
+    "ALL_PROXY": true,
+    "NO_PROXY": true,
+    "http_proxy": true,
+    "https_proxy": true,
+    "all_proxy": true,
+    "no_proxy": true
+  },
+  "default_proxy_bypass_for_formal_host": false,
+  "probes": [
+    {
+      "utc_start": "2026-10-17T17:26:58.089+00:00",
+      "cst_start": "2026-10-18T01:26:58.089+08:00",
+      "path_class": "health",
+      "request_agent_class": "python-default-ua",
+      "route_class": "default-configured-proxy",
+      "method": "GET",
+      "http_status": 403,
+      "error_class": "http-non-success",
+      "server_class": "cloudflare",
+      "content_type_class": "application/json",
+      "json_status_ok": null,
+      "elapsed_ms": 3174.9,
+      "utc_end": "2026-10-17T17:27:01.264+00:00"
+    },
+    {
+      "utc_start": "2026-10-17T17:27:01.544+00:00",
+      "cst_start": "2026-10-18T01:27:01.544+08:00",
+      "path_class": "health",
+      "request_agent_class": "python-default-ua",
+      "route_class": "explicit-direct",
+      "method": "GET",
+      "http_status": 403,
+      "error_class": "http-non-success",
+      "server_class": "cloudflare",
+      "content_type_class": "application/json",
+      "json_status_ok": null,
+      "elapsed_ms": 1654.1,
+      "utc_end": "2026-10-17T17:27:03.198+00:00"
+    },
+    {
+      "utc_start": "2026-10-17T17:27:03.512+00:00",
+      "cst_start": "2026-10-18T01:27:03.512+08:00",
+      "path_class": "health",
+      "request_agent_class": "canonical-health-ua",
+      "route_class": "default-configured-proxy",
+      "method": "GET",
+      "http_status": 200,
+      "error_class": null,
+      "server_class": "cloudflare",
+      "content_type_class": "application/json",
+      "json_status_ok": true,
+      "elapsed_ms": 4422.3,
+      "utc_end": "2026-10-17T17:27:07.935+00:00"
+    },
+    {
+      "utc_start": "2026-10-17T17:27:07.965111+00:00",
+      "cst_start": "2026-10-18T01:27:07.965111+08:00",
+      "route_class": "explicit-direct",
+      "request_agent_class": "canonical-health-ua",
+      "path_class": "health",
+      "http_status": null,
+      "error_class": "process-deadline-8s",
+      "elapsed_ms": 8000,
+      "utc_deadline": "2026-10-17T17:27:15.965+00:00",
+      "method": "GET"
+    }
+  ],
+  "findings": [
+    "Canonical health user-agent succeeded over the default configured proxy route with HTTP 200 and JSON status=ok.",
+    "Python default user-agent received HTTP 403 on both default and explicit-direct routes.",
+    "Explicit-direct canonical-health user-agent did not yield a status within the hard eight-second process deadline.",
+    "These temporally adjacent probes support request-class sensitivity or intermittent edge behavior; they do not establish the exact cause or a browser, login, signaling, media, or input failure."
+  ],
+  "scope": {
+    "read_only": true,
+    "formal_health_gets": 4,
+    "other_http_gets": 0,
+    "services_mutated": false,
+    "tunnel_mutated": false,
+    "watcher_mutated": false,
+    "browser_login_viewer_proof_input_tests_builds": false,
+    "response_bodies_saved": false,
+    "credentials_saved": false
+  },
+  "watcher_source_context": "scripts/lib-fixed-domain.sh formal checker prefers scripts/wrd_entry_health.py when present; canonical UA probe matches that branch. Curl fallback was not invoked or probed."
+}
