@@ -72,3 +72,23 @@ TURN c 的恢复后 61 个 1Hz 快照覆盖约 60s，rVFC 增加 928（约 15.5 
 `c5-turn-soak-a` 的日志关联窗口为 09:21:40–09:23:30。Host 持续采样但 PC/ICE 为 none、relay 未运行、captureSeq=0，未见新 offer 或新媒体 producer；Signal 有 bootstrap 与 dc-stuck 诊断，但未留足本次浏览器准入、控制 grant/reset 和媒体状态。日志中的无时间戳 `Connection:viewer` 在准入检查之前输出，不能证明成功准入。未观察到普通 Viewer 顶替，也没有证据支持上一轮 JPEG generation 2 污染新 TURN generation 0；代码在新 attempt 上初始化 generation 0，且本窗尚未到 offer 阶段。
 
 因此原因保持未知，不能归因 TURN 网络或认定 proof 过期。现有工具在登录前领取默认 30s 一次性 proof，慢登录可能消耗有效期；整改将证明领取移至真实 UI/auth 就绪之后、Start 之前，并加入启动阶段白名单快照。仍需 fresh zero-Viewer、当前登录 token、一次领取一次使用；不能通过重领、清除 proof 或普通票据绕过准入。该调整是验收可靠性修复，不是前次故障因果结论。私有诊断：`/tmp/wrd-turn-soak-start-diagnosis.md`。
+
+
+## Proof 时序修订后的 TURN 复测
+
+`0a89ebe` 验收工具经独立 review 后部署，无服务重启。`proof-timing-turn-a` 请求 300 秒，真实登录/Start 和首帧均成功；实际采样 173.094 秒、174 行，未缺样/迟采，随后信令断开，结果 INCOMPLETE，不计五分钟或三小时通过。运行 build 仍为 `b73325b8166441a6`。这证明新工具能完成本轮启动，不证明前次失败必然由 proof 过期引起。
+
+末样本 Socket=false、PC=connected，H.264 双侧 relay/UDP，RTT 31ms；rVFC 从上一秒 1932 增至 1938，帧年龄 7.5ms，framesDropped=0。leaseEpoch 已从 15 清为 0、inputAllowed=false；即使 controlState 的旧展示仍是 ACTIVE，也不能称有效控制仍在。视频仍出帧而信令先断，符合应继续定位信令路径的证据。最大观察帧间隔约 1899.9ms，不能等同输入到画面。
+
+Signal 09:49:02.126 的断开 reason=transport close，09:49:10.132 grace 到期后清理，Host 09:49:10.137 才关 PC。末样本落盘 09:49:02.050 早于该日志；脚本在观察到断开并取 startupSummary 后关闭自有 browser，所以确有先观察到的客户端断线，但 server close 与清理同窗，仍无法确定最初主动关闭端或心跳超时原因。Host 同窗 loop rolling max 约 9.8–10.2ms，无 Host 断线；formal watcher 相邻探针正常不能排除短暂 WebSocket 故障。
+
+当前首次客户端关闭 reason、engine 心跳和清理前事件尚缺，首因 UNKNOWN。不自动重领 proof，也不把一次性测试会话的重连限制当成普通用户重连失败。下一步补充有界脱敏的现有 Socket/engine 事件观察后重测。私有证据：`/tmp/wrd-public-proof-timing-turn-20261017a` 和 `/tmp/wrd-turn-signal-drop-diagnosis.md`。
+
+
+## TURN 新鲜度、缓冲与显示频率
+
+`proof-timing-turn-a` 的 173 个断线前快照覆盖 172.0015s，rVFC 回调增加 1923（11.18 次/s），解码增加 3335（19.39 帧/s）；新采集 captureSeq 约 8.84 次/s。相邻约 1s 快照的回调增量为 2–20、中位数 12、无零增量。rVFC 观察器没有保留 metadata.presentedFrames，因此不能用这两个速率之差宣称视觉丢失 42%。36 个稳定捕获日志窗口共有 3482 输出、1908 缓存复用（54.80%）；新编码 PTS 不等于新内容。
+
+区间每 emitted 单位的缓冲均值最高 742ms；启动后约 157s 仍出现 725.1ms、同期 candidate RTT 31ms。10 个断线前快照的最近缓冲值至少 250ms，另有末个失败样本；不是完整事件分布。decode 最近值约 0.544–2.219ms、RTT 29–131ms。后段 loss/NACK、解码空窗和追帧表明不能全部归为启动暖机；具体哪一跳及调度因素未定位。Host VideoToolbox 5s 编码摘要平均大多约 4–5ms，稀疏最大约 100–166ms；不含 executor 等待和逐包发送等待，也不能直接与接收均值相加。
+
+另已确认 UI/上送将缺测缓冲/RTT 转成 0 的代码缺陷；本 artifact 的 LatencyMonitor 直接使用原始值，不能用此缺陷否认已有正值峰。原始 stats timestamp/inbound identity、presentedFrames 以及逐次截图耗时未导出，是下一步进一步归因的缺口。完整方法、源码与日志分母见[媒体性能诊断](2026-10-17-turn-media-performance-diagnosis.md)。

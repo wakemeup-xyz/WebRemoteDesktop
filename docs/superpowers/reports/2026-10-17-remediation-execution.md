@@ -56,11 +56,11 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
 | 本轮构建部署 | 已部署至 `8e375fa`；build `b73325b8166441a6`；W2 watcher 四文件未激活 |
-| 真实登录与媒体启动 | 公网 TURN 登录、当前帧进展和有效 input gate 短时 PASS；完整 baseline 被另一普通 Viewer 顶替，不能计连续性 PASS |
+| 真实登录与媒体启动 | C5 公网 TURN 暂停/恢复及随后 60s 同会话连续性 PASS（93.816s 总运行）；随后 300s 尝试在 173s 信令断开而视频仍出帧。JPEG 恢复后发生 >5s 无新图，M6 修复中 |
 | 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
 | 输入到真实可见效果 | NOT RUN；需要真实 producer 事件与解码 marker，ACK 或下一帧不能替代 |
-| 各路径连续三小时 | NOT RUN；新工具已实现连续采样和严格判定，实际运行未完成三小时 |
+| 各路径连续三小时 | NOT RUN；新工具已实现连续采样和严格判定；保留一次首次媒体未 ready 零样本及一次 173s 信令断开，未完成三小时 |
 | 正常资源与高压力分别验收 | NOT RUN |
 
 04:50 曾观察到在线 Viewer；05:41 后续快照 viewerCount=0。自动化接入前仍须重新检查并取得服务端一次性准入，不把旧快照当作持续空闲证明。
@@ -134,3 +134,15 @@ C5 `cd64e54` 增加显式 Start/reclaim 准入票据和独立于 socket/grace/TT
 本次公网媒体生命周期验收 `/tmp/wrd-public-c5-media-relay-20261017a`：登录页、fresh zero-Viewer proof、真实表单登录通过；69.11 秒后 readiness 超时，62 个样本均无 Socket/PC，画面和输入指标均缺测，浏览器已关闭。复核发现私有验收工具只在一次 `startBtn.is_visible()` 为 true 时点击，没有等待实际可用，也没有记录点击证明，因此该次 FAIL 不能作为 C5 服务回归证据，具体不可见原因也不能从现有样本确认。工具修订须等待 core/auth 与真实按钮可交互、验证 `start-click` 标记增加，才进入媒体验收；不绕过 UI 直接调用 Start。此失败记录保留，后续结果单列。
 
 最新公网各轮结果、实际传输分段与保留失败见[运行验收报告](2026-10-17-live-acceptance.md)。I2 Start 证明工具修订 `e2275a5` 已独立复审并同步，仅改验收脚本，无服务重启；[任务复审归档](2026-10-17-I2-start-proof-review.md)。JPEG 的运行复现与离线反例需完成 M6 后重验，不能因 TURN 短时 PASS 把整体验收关闭。
+
+
+## 8. 后续准入工具与新发现（09:49 之后更新）
+
+I2 `0a89ebe` 将一次性 proof 移到真实 UI/core/auth 就绪之后，删除额外 API 登录；25 项 Python + 10 项 Node 通过，独立复审 PASS。仅同步验收脚本，无服务重启。[独立审查](2026-10-17-I2-proof-timing-review.md)。首次长测原因仍未知，不能因工具改进断言其 proof 过期。
+
+新一轮 TURN 请求 300s，实际 173.094s/174 样本，信令先断而视频仍刷新；Host 无同期明显事件循环停顿。服务端 transport close 与测试清理同窗，缺少首次客户端 reason，不归因 TURN 丢包或普通用户重连。详细窗口、失败分母和传输阶段见[运行验收报告](2026-10-17-live-acceptance.md)及[信令断开诊断](2026-10-17-turn-signal-drop-diagnosis.md)。
+
+M6 [补充 spec](../specs/2026-10-17-jpeg-relay-recovery-addendum.md)和[执行 plan](../plans/2026-10-17-jpeg-relay-recovery-plan.md)已完成两项初稿问题修订，独立设计复审 R1 PASS：初始 generation 0 单独握手、完整来源 RTT sample key 均明确；源码已实现于 `5e6c26c`（106 Python、457 Node 最终通过），独立代码 review 进行中，尚未部署或验收。规格覆盖 ACK 槽 2000ms 单调过期、完整帧来源、5000ms 图像加载新鲜度门禁及安全 reset、经过 TTL 截断与合并采样说明的同钟 RTT。[设计 review](2026-10-17-M6-design-review.md)。
+
+
+媒体性能复查进一步区分了输出、新采集和浏览器回调：该 172s 健康窗口约 19.39 解码帧/s、8.84 新采集/s、11.18 rVFC 回调/s；后者未导出 presentedFrames，不能直接推导视觉丢帧比例。稳定捕获日志中 54.80% 输出为缓存复用；缓冲正值峰及后段 loss/NACK/解码空窗真实存在，具体传输/截图/调度瓶颈仍缺证据。另确认 `processStatsSnapshot` 的缺测 RTT/缓冲转 0 缺陷待修，不能将缺测当零延迟；本轮 artifact 原始 LatencyMonitor 值不受此转换影响。详见[媒体性能诊断](2026-10-17-turn-media-performance-diagnosis.md)。README 的旧 2 倍采集及 superfast 默认说明已按生产工厂/编码策略源码修正。
