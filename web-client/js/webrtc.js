@@ -2403,7 +2403,7 @@ const WebRTC = {
   ownsStartupOwner(owner) {
     // Reject stale owners before checking time: even rearming the current timer
     // is a mutation that an older producer must not perform.
-    return owner.peer === this.pc
+    return !owner.retired && owner.peer === this.pc
       && (!this.startupPending() || owner.socket === this.socket) && owner.attempt === this.currentConnectionAttemptId
       && owner.sequence === this.connectionAttemptSequence && this.startupAllowed(owner.episode);
   },
@@ -4591,7 +4591,6 @@ const WebRTC = {
     }
     this.clearMediaResumeProof();
     this.pc = new RTCPeerConnection(this.config);
-    const startupOwner = this.captureStartupOwner();
     this.pc._wrdConnectionAttemptId = this.currentConnectionAttemptId;
     // Bind before the asynchronous offer finishes: media replay can run first.
     this.bindCurrentConnectionAttempt();
@@ -4603,7 +4602,12 @@ const WebRTC = {
     console.log('Creating RTCPeerConnection with config:', this.config);
     this.updateNetworkUI('正在建立媒体链路...');
     this.createInputChannel();
+    this.bindPeerCallbacks();
+  },
 
+  bindPeerCallbacks() {
+    if (this._peerCallbackOwner) this._peerCallbackOwner.retired = true;
+    const startupOwner = this._peerCallbackOwner = this.captureStartupOwner();
     this.pc.onicecandidate = (event) => {
       if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer ICE candidate:', event.candidate);
@@ -4715,38 +4719,12 @@ const WebRTC = {
         console.error('Video play failed:', err);
       });
 
-      const tryPaintGate = () => {
-        if (!this.ownsStartupOwner(startupOwner)) return;
-        if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0 && videoElement.readyState >= 2) {
-          this.notePaintStats({
-            framesDecoded: this._lastInboundFramesDecoded || 0,
-            framesReceived: 0,
-            fps: 0,
-            videoWidth: videoElement.videoWidth,
-            videoHeight: videoElement.videoHeight,
-            source: 'video-element',
-          });
-        }
-      };
-
       this.markRemoteTrack({
         readyState: videoElement.readyState,
         paused: videoElement.paused,
       });
 
-      if (videoElement.readyState >= 1) {
-        tryPaintGate();
-      } else {
-        videoElement.onloadedmetadata = () => {
-          console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
-          tryPaintGate();
-        };
-      }
-
-      videoElement.onplaying = () => {
-        console.log('Video is now playing');
-        tryPaintGate();
-      };
+      this.bindRemoteVideoCallbacks(startupOwner);
 
       this.remoteStream.getTracks().forEach(track => {
         console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
@@ -4767,6 +4745,40 @@ const WebRTC = {
           this.hasPaintedFrame);
         this.applyPaintFallback();
       }, 8000);
+    };
+  },
+
+  bindRemoteVideoCallbacks(startupOwner, { observeCurrent = true } = {}) {
+    const videoElement = document.getElementById('remoteVideo');
+    if (!videoElement) return;
+    const tryPaintGate = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
+      if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0 && videoElement.readyState >= 2) {
+        this.notePaintStats({
+          framesDecoded: this._lastInboundFramesDecoded || 0,
+          framesReceived: 0,
+          fps: 0,
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight,
+          source: 'video-element',
+        });
+      }
+    };
+
+    if (observeCurrent && videoElement.readyState >= 1) {
+      tryPaintGate();
+    } else {
+      videoElement.onloadedmetadata = () => {
+        if (!this.ownsStartupOwner(startupOwner)) return;
+        console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+        tryPaintGate();
+      };
+    }
+
+    videoElement.onplaying = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
+      console.log('Video is now playing');
+      tryPaintGate();
     };
   },
 
@@ -4892,7 +4904,13 @@ const WebRTC = {
     this.inputMoveChannel.bufferedAmountLowThreshold = 4 * 1024;
 
     this.startDataChannelWatchdog(inputChannel);
+    this.bindInputChannelCallbacks();
+  },
 
+  bindInputChannelCallbacks() {
+    const inputChannel = this.inputChannel;
+    if (!inputChannel) return;
+    if (this._inputChannelOwner) this._inputChannelOwner.retired = true;
     const channelOwner = this._inputChannelOwner = { peer: this.pc, socket: this.socket, attempt: this.currentConnectionAttemptId, sequence: this.connectionAttemptSequence };
     inputChannel.onopen = () => {
       if (!this.ownsDataChannelOwner(channelOwner, inputChannel)) return;
@@ -4922,13 +4940,7 @@ const WebRTC = {
           this.pc.connectionState === 'connected') {
         if (this._dcReconnectTimer != null) return;
         console.warn('[INPUT-DC] Unexpected close while PC connected, will reconnect in 3s if not recovered');
-        const recoveryTimer = setTimeout(() => {
-          if (this._dcReconnectTimer !== recoveryTimer) return;
-          this._dcReconnectTimer = null;
-          if (!this.ownsDataChannelOwner(channelOwner, inputChannel) || this._refreshing || this.pc.connectionState !== 'connected') return;
-          this.noteDataChannelFault('dc-closed');
-        }, 3000);
-        this._dcReconnectTimer = recoveryTimer;
+        this.scheduleDataChannelRecovery(channelOwner, inputChannel, 'dc-closed');
       }
     };
     inputChannel.onerror = (event) => {
@@ -4939,16 +4951,12 @@ const WebRTC = {
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
         if (this._dcReconnectTimer != null) return;
-        const recoveryTimer = setTimeout(() => {
-          if (this._dcReconnectTimer !== recoveryTimer) return;
-          this._dcReconnectTimer = null;
-          if (!this.ownsDataChannelOwner(channelOwner, inputChannel) || this._refreshing || this.pc.connectionState !== 'connected') return;
-          this.noteDataChannelFault('dc-error');
-        }, 3000);
-        this._dcReconnectTimer = recoveryTimer;
+        this.scheduleDataChannelRecovery(channelOwner, inputChannel, 'dc-error');
       }
     };
     inputChannel.onmessage = (event) => {
+      if (channelOwner.retired || (this.startupPending()
+          && !this.ownsDataChannelOwner(channelOwner, inputChannel))) return;
       try {
         const data = JSON.parse(event.data);
 
@@ -5003,14 +5011,29 @@ const WebRTC = {
       }
     };
     this.inputMoveChannel.onopen = () => {
+      if (channelOwner.retired) return;
       console.log('[INPUT-DC] Move DataChannel open');
     };
     this.inputMoveChannel.onclose = () => {
+      if (channelOwner.retired) return;
       console.log('[INPUT-DC] Move DataChannel closed');
     };
     this.inputMoveChannel.onerror = (event) => {
+      if (channelOwner.retired) return;
       console.warn('[INPUT-DC] Move DataChannel error:', event);
     };
+  },
+
+  scheduleDataChannelRecovery(owner, channel, reason, deadline = performance.now() + 3000) {
+    this._dcReconnectDeadline = deadline;
+    this._dcReconnectReason = reason;
+    const recoveryTimer = setTimeout(() => {
+      if (this._dcReconnectTimer !== recoveryTimer) return;
+      this._dcReconnectTimer = null;
+      if (!this.ownsDataChannelOwner(owner, channel) || this._refreshing || this.pc.connectionState !== 'connected') return;
+      this.noteDataChannelFault(reason);
+    }, Math.max(0, deadline - performance.now()));
+    this._dcReconnectTimer = recoveryTimer;
   },
 
   sendInput(data) {
@@ -6079,30 +6102,34 @@ if (this.tunnelLastObjectUrl) {
     }
   },
   
-  startStats() {
+  startStats({ preserveConnection = false } = {}) {
     if (!this.pc || typeof WebRtcStats === 'undefined') return;
     if (this._statsSampler && this._statsPc !== this.pc) {
+      if (this._statsOwner) this._statsOwner.retired = true;
       this._statsSampler.stop();
       this._statsSampler = null;
       this._statsPc = null;
     }
     if (!this._statsSampler) {
       const pc = this.pc;
-      const owner = this.captureStartupOwner();
+      const owner = this._statsOwner = this.captureStartupOwner();
       this._statsPc = pc;
-      this.syncLinkQualityPath({ applyProfile: false, reason: 'stats-start' });
-      this.ensureLinkQualityController()?.beginConnection?.();
+      if (!preserveConnection) {
+        this.syncLinkQualityPath({ applyProfile: false, reason: 'stats-start' });
+        this.ensureLinkQualityController()?.beginConnection?.();
+      }
       this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
         getStats: () => pc.getStats(),
         intervalMs: 1000,
         onSample: (snapshot) => { if (this.ownsStartupOwner(owner)) this.processStatsSnapshot(snapshot); },
-        onError: (error) => console.warn('[STATS] getStats failed:', error?.message || error),
+        onError: (error) => { if (this.ownsStartupOwner(owner)) console.warn('[STATS] getStats failed:', error?.message || error); },
       });
     }
     this._statsSampler.start();
   },
 
   stopVideoFrameTracking() {
+    if (this._videoFrameOwner) this._videoFrameOwner.retired = true;
     const video = this._videoFrameElement;
     if (video && this._videoFrameCallbackId != null
         && typeof video.cancelVideoFrameCallback === 'function') {
@@ -6120,7 +6147,7 @@ if (this.tunnelLastObjectUrl) {
     if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
     const attemptId = this.currentConnectionAttemptId || null;
     const trackedPc = this.pc || null;
-    const startupOwner = this.captureStartupOwner();
+    const startupOwner = this._videoFrameOwner = this.captureStartupOwner();
     this._videoFrameElement = video;
     const onFrame = (now, metadata) => {
       if (!this.ownsStartupOwner(startupOwner) || this._videoFrameElement !== video
@@ -6430,6 +6457,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   stopMediaTelemetry() {
+    if (this._statsOwner) this._statsOwner.retired = true;
     if (this._statsSampler) this._statsSampler.stop();
     this._statsSampler = null;
     this._statsPc = null;
@@ -6761,6 +6789,41 @@ if (this.tunnelLastObjectUrl) {
     this._signalRecoveryPending = false;
   },
 
+  transferRetainedStartupPeer() {
+    // A surviving initial PC keeps its attempt and all elapsed budgets. Its
+    // producers still need fresh socket ownership; mutating old owner records
+    // would incorrectly authorize callbacks already queued before recovery.
+    if (!this.startupPending() || this._peerCallbackOwner?.socket === this.socket) return;
+    for (const owner of [this._peerCallbackOwner, this._statsOwner, this._videoFrameOwner]) {
+      if (owner) owner.retired = true;
+    }
+    for (const key of ['_iceDisconnectedTimer', '_disconnectedTimer']) {
+      if (this[key] != null) clearTimeout(this[key]);
+      this[key] = null;
+    }
+    this.bindPeerCallbacks();
+    if (this.remoteStream) this.bindRemoteVideoCallbacks(this._peerCallbackOwner, { observeCurrent: false });
+    this.bindInputChannelCallbacks();
+    const watchdog = this._dataChannelWatchdog;
+    if (watchdog) {
+      if (watchdog.timer != null) clearTimeout(watchdog.timer);
+      // Copy the deadline/phase/extensions, never restart a DC allowance.
+      const current = this._dataChannelWatchdog = { ...watchdog, socket: this.socket, timer: null };
+      this.checkDataChannelWatchdog(current);
+    }
+    if (this._dcReconnectTimer != null) {
+      clearTimeout(this._dcReconnectTimer);
+      this.scheduleDataChannelRecovery(this._inputChannelOwner, this.inputChannel,
+        this._dcReconnectReason, this._dcReconnectDeadline);
+    }
+    if (this._statsSampler) this._statsSampler.stop();
+    this._statsSampler = null;
+    this._statsPc = null;
+    this.startStats({ preserveConnection: true });
+    this.startVideoFrameTracking();
+    this.armStableRecoveryReset();
+  },
+
   handleSignalingRecoveryConnected() {
     if (!this.startupAllowed()) return false;
     if (!this._signalRecoveryPending || this.manualDisconnect || this._superseded) return false;
@@ -6776,6 +6839,8 @@ if (this.tunnelLastObjectUrl) {
       this.refresh({ reason: 'signal-reconnected' });
       return true;
     }
+
+    this.transferRetainedStartupPeer();
 
     // The disconnect handler moves the paint gate to `disconnected`, and the
     // socket connect handler moves it to `signaling`.  When the existing peer

@@ -1528,3 +1528,239 @@ for (const path of ['direct refresh', 'scheduled reconnect']) {
   assert.equal(episode.state, 'slow');
 });
 }
+
+async function retainedStartupPeerFixture({ suspended = false, channelState = 'open' } = {}) {
+  const h = startupFixture(), w = h.WebRTC;
+  const samples = [];
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'webrtc-stats.js'), 'utf8')
+    + '\nglobalThis.__Stats = WebRtcStats;', h.context);
+  const createSampler = h.context.__Stats.createWebRtcStatsSampler;
+  h.context.__Stats.createWebRtcStatsSampler = options => {
+    samples.push(options);
+    return createSampler(options);
+  };
+  let decoded = 0;
+  h.context.RTCPeerConnection = class {
+    constructor() { this.connectionState = 'new'; this.iceConnectionState = 'new'; }
+    createDataChannel() { return { readyState: channelState, send() {} }; }
+    getStats() { return Promise.resolve(new Map([['video', { type: 'inbound-rtp', kind: 'video',
+      framesDecoded: decoded, framesReceived: decoded, frameWidth: 1280, frameHeight: 720 }]])); }
+    getReceivers() { return []; }
+    close() { this.connectionState = 'closed'; }
+  };
+  w.createPeerConnection();
+  const peer = w.pc;
+  const video = h.context.document.getElementById('remoteVideo');
+  const frames = new Map();
+  let frameId = 0;
+  video.videoWidth = 1280; video.videoHeight = 720; video.readyState = 0;
+  video.play = () => Promise.resolve();
+  video.requestVideoFrameCallback = fn => { frames.set(++frameId, fn); return frameId; };
+  video.cancelVideoFrameCallback = id => frames.delete(id);
+  peer.ontrack({ track: { kind: 'video' }, streams: [{ getTracks: () => [] }] });
+  peer.connectionState = 'connected'; peer.iceConnectionState = 'connected';
+  peer.onconnectionstatechange();
+  await w._statsSampler.sampleNow();
+  h.advance(4000);
+  h.context.document.hidden = !suspended;
+  if (suspended) w._mediaIntent = { state: 'suspended' };
+  w.mediaActivityRuntime = { isHealthSuppressed: () => true, canEnableDesktopInput: () => false };
+  w.checkStartupEpisode();
+  h.advance(13000);
+  decoded++;
+  await w._statsSampler.sampleNow();
+  assert.equal(w._lastInboundFramesDecoded, 1);
+  assert.equal(w.hasPaintedFrame, false, 'suppressed decode is not paint');
+  const oldSocket = w.socket;
+  const oldListeners = {};
+  oldSocket.on = (event, fn) => { oldListeners[event] = fn; };
+  oldSocket.disconnect = () => { oldSocket.connected = false; };
+  w.setupSocketListeners();
+  h.context.Auth = { getToken: () => 'offline-token' };
+  const sockets = [];
+  h.context.io = () => {
+    const handlers = {};
+    const socket = { connected: true, emit() {}, on(event, fn) { handlers[event] = fn; },
+      disconnect() { this.connected = false; }, handlers };
+    sockets.push(socket);
+    return socket;
+  };
+  const old = { frame: frames.get(w._videoFrameCallbackId), sample: samples[0].onSample,
+    sampleError: samples[0].onError, peer: peer.onconnectionstatechange,
+    track: peer.ontrack, metadata: video.onloadedmetadata, playing: video.onplaying,
+    ice: peer.onicecandidate, dcOpen: w.inputChannel.onopen, dcClose: w.inputChannel.onclose,
+    dcMessage: w.inputChannel.onmessage, socket: oldListeners };
+  const recover = async () => {
+    w._signalRecoveryPending = true;
+    w.createSignalingSocket(true);
+    await w.socket.handlers.connect();
+  };
+  const resume = () => {
+    h.context.document.hidden = false;
+    w._mediaIntent = { state: 'active' };
+    w.mediaActivityRuntime = null;
+    w.checkStartupEpisode();
+  };
+  const paint = () => {
+    const id = w._videoFrameCallbackId, fn = frames.get(id);
+    frames.delete(id);
+    fn(h.context.performance.now(), {});
+  };
+  return { ...h, samples, peer, video, frames, old, oldSocket, recover, resume, paint };
+}
+
+for (const suspended of [false, true]) {
+  test(`integration I1: retained pending peer after ${suspended ? 'intentional pause' : 'hidden'} socket recovery accepts current frame only`, async () => {
+    const h = await retainedStartupPeerFixture({ suspended }), w = h.WebRTC;
+    const episode = w._startupEpisode, paint = episode.paint, attempt = w.currentConnectionAttemptId;
+    const channel = w.inputChannel, lease = w.controlState.lease;
+    await h.recover();
+    assert.equal(w.pc, h.peer);
+    assert.notEqual(w.socket, h.oldSocket);
+    assert.equal(w.currentConnectionAttemptId, attempt);
+    assert.equal(w.inputChannel, channel);
+    assert.equal(w.controlState.lease, lease);
+    assert.equal(w._startupEpisode, episode);
+    assert.equal(episode.paint, paint);
+    assert.equal(episode.remaining, 68000);
+    assert.equal(paint.remaining, 8000);
+    h.resume();
+    h.paint();
+    assert.equal(w._startupEpisode.state, 'complete');
+    assert.equal(w.isCurrentAttemptMediaReady(), true);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+    assert.equal(h.Input.isActive, true);
+    assert.equal(h.frames.size, 1);
+    assert.equal([...h.intervals.values()].filter(t => t.ms === 1000).length, 1);
+    const seq = w._videoFrameSeq, timer = episode.timer, stats = w._lastInboundFramesDecoded;
+    h.old.frame(0, {}); h.old.sample({ framesDecoded: 99 });
+    h.old.peer(); h.old.metadata(); h.old.playing(); h.old.dcOpen(); h.old.dcClose();
+    h.old.track({}); h.old.ice({ candidate: 'old' });
+    h.old.dcMessage({ data: JSON.stringify({ type: 'capture_stats', fps: 99 }) });
+    h.old.socket['host-status']({ online: false });
+    h.old.socket['control-grant']({ controller: true, leaseId: 'obsolete', leaseEpoch: 999 });
+    assert.equal(w._videoFrameSeq, seq, 'retired frame stays inert even after startup completes');
+    assert.equal(w._lastInboundFramesDecoded, stats);
+    assert.notEqual(w._hostCaptureFps, 99);
+    assert.equal(episode.timer, timer);
+    assert.equal(w.pc, h.peer);
+    assert.equal(w.controlState.lease, lease);
+    assert.equal(h.frames.size, 1);
+    assert.equal(h.Input.isActive, true);
+  });
+}
+
+test('integration I1: repeated retained-owner transfer preserves exact active budgets and rejects old queued work', async () => {
+  const h = await retainedStartupPeerFixture(), w = h.WebRTC;
+  const episode = w._startupEpisode, paint = episode.paint;
+  await h.recover();
+  await h.recover();
+  h.resume();
+  const timer = episode.timer;
+  h.old.frame(0, {}); h.old.sample({ framesDecoded: 99 }); h.old.peer();
+  assert.equal(episode.timer, timer);
+  assert.equal(episode.remaining, 68000);
+  assert.equal(paint.remaining, 8000);
+  h.advance(4000);
+  assert.equal(episode.state, 'slow');
+  assert.equal(episode.paint, paint);
+  assert.equal(paint.remaining, 4000);
+  h.advance(3999);
+  assert.notEqual(episode.state, 'failed');
+  h.advance(1);
+  assert.equal(episode.state, 'failed');
+  assert.equal(episode.reason, 'startup-paint-timeout');
+  assert.equal(h.Input.isActive, false);
+});
+
+test('integration I1: recovered current frame without a current control lease keeps actual Input closed', async () => {
+  const h = await retainedStartupPeerFixture(), w = h.WebRTC;
+  await h.recover();
+  w.freezeControl('control-readonly');
+  h.resume(); h.paint();
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(w.isCurrentAttemptMediaReady(), true);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  assert.equal(h.Input.isActive, false);
+});
+
+test('integration I1: transferred stats, metadata, track and channel producers remain current without duplicate samplers', async () => {
+  const h = await retainedStartupPeerFixture(), w = h.WebRTC;
+  let qualityResets = 0;
+  w.ensureLinkQualityController = () => ({ beginConnection() { qualityResets++; } });
+  await h.recover();
+  await w._statsSampler.sampleNow();
+  assert.equal(qualityResets, 0, 'retaining a PC must not reset link-quality adaptation');
+  assert.equal(h.samples.length, 2);
+  assert.equal(h.frames.size, 1);
+  assert.equal([...h.intervals.values()].filter(t => t.ms === 1000).length, 1);
+  h.samples[1].onSample({ framesDecoded: 2, framesReceived: 2, videoWidth: 1280, videoHeight: 720 });
+  assert.equal(w._lastInboundFramesDecoded, 2);
+  assert.equal(w.hasPaintedFrame, false);
+  assert.equal(h.Input.isActive, false);
+  const timer = w._startupEpisode.timer;
+  h.old.frame(0, {}); h.old.sample({ framesDecoded: 99 }); h.old.metadata(); h.old.playing();
+  const warnings = [];
+  h.context.console = { ...console, warn: (...args) => warnings.push(args) };
+  h.old.sampleError(new Error('retired sampler'));
+  assert.equal(warnings.length, 0);
+  assert.equal(w._startupEpisode.timer, timer);
+  w.inputChannel.onopen();
+  assert.equal([...h.intervals.values()].filter(t => t.ms === 15000).length, 1);
+  w.inputChannel.onopen();
+  assert.equal([...h.intervals.values()].filter(t => t.ms === 15000).length, 1);
+  w.inputChannel.onmessage({ data: JSON.stringify({ type: 'capture_stats', fps: 12 }) });
+  assert.equal(w._hostCaptureFps, 12);
+  // Current metadata/playing callbacks must also work after transfer. Only a
+  // post-resume event may use the existing decoded-frame readiness path.
+  h.resume(); h.video.readyState = 2;
+  h.video.onloadedmetadata(); h.video.onplaying();
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(h.Input.isActive, true);
+  const stream = { getTracks: () => [] };
+  h.peer.ontrack({ track: { kind: 'video' }, streams: [stream] });
+  assert.equal(w.remoteStream, stream);
+});
+
+test('integration I1: retained pending channel copies watchdog deadline and fences old watchdog/open callbacks', async () => {
+  const h = await retainedStartupPeerFixture({ channelState: 'connecting' }), w = h.WebRTC;
+  const previous = w._dataChannelWatchdog, oldWake = h.timers.get(previous.timer).fn;
+  const deadline = previous.deadline, phase = previous.phase, extensions = previous.extensions;
+  await h.recover();
+  const current = w._dataChannelWatchdog, timer = current.timer;
+  assert.notEqual(current, previous);
+  assert.equal(current.deadline, deadline);
+  assert.equal(current.phase, phase);
+  assert.equal(current.extensions, extensions);
+  oldWake(); h.old.dcOpen();
+  assert.equal(w._dataChannelWatchdog, current);
+  assert.equal(current.timer, timer);
+  w.inputChannel.readyState = 'open';
+  w.inputChannel.onopen();
+  assert.equal(w._dataChannelWatchdog, null);
+  assert.equal(w._startupEpisode.paint.remaining, 8000);
+  assert.equal(h.Input.isActive, false, 'current DC open cannot substitute for paint');
+  h.resume(); h.paint();
+  assert.equal(h.Input.isActive, true);
+});
+
+test('integration I1: retained channel error recovery keeps its existing deadline and ignores old timer', async () => {
+  const h = await retainedStartupPeerFixture(), w = h.WebRTC;
+  const faults = [];
+  w.noteDataChannelFault = reason => faults.push(reason);
+  w.inputChannel.onerror({ type: 'offline-error-fixture' });
+  const oldTimer = w._dcReconnectTimer, oldWake = h.timers.get(oldTimer).fn;
+  const deadline = h.timers.get(oldTimer).due;
+  h.advance(1000);
+  await h.recover();
+  const currentTimer = w._dcReconnectTimer;
+  assert.notEqual(currentTimer, oldTimer);
+  assert.equal(h.timers.get(currentTimer).due, deadline);
+  oldWake();
+  assert.equal(w._dcReconnectTimer, currentTimer);
+  assert.deepEqual(faults, []);
+  h.advance(1999);
+  assert.deepEqual(faults, []);
+  h.advance(1);
+  assert.deepEqual(faults, ['dc-error']);
+});
