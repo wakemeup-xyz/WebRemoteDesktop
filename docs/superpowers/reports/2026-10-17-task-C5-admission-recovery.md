@@ -62,3 +62,27 @@ node --test \
 未部署、未重启本地生产 Signal/Host、未改 tunnel/watcher，未打开生产 Viewer、未执行真实输入/抓屏/其他应用操作。VM/内存 handler/loopback 通过不等同于公网断网恢复、真实帧连续性、设备可见效果或长会话验收。生产日志已有 Viewer churn 的原因不能仅由本修复推断为旧页自动恢复。
 
 Signal 进程重启后 current owner/代次不保留，未知自动 resume 拒绝，用户需新 Start；这是显式保守兼容选择。ticket API 故障/超时不回落为无认证意图顶替；旧版客户端的冲突需要刷新后显式连接。短期 ticket 在丢失 welcome 时仅能在 TTL 内重试原代次，过期后需手动重连。准入成功本身不授权输入。
+
+## R1 独立审查修复：冷启动被替代后的 bootstrap/reclaim
+
+修复基线 `18b5c88`。独立审查指出：首次 Start 在 bootstrap 未完成时被 supersede/admission 拒绝，原早退会丢弃有效 TURN 配置并留下 `_deferPeerUntilConfig=true`；之后显式 reclaim 可以取得新准入并顶替其他页面，却无法创建 Relay PeerConnection。先前 C5 admission 测试把 `createPeerConnection` 替换为空函数，未覆盖该边界。
+
+新增实际 `startViewer`、socket listeners、reclaim、`applyBootstrapSnapshot`、`createPeerConnection`、`buildPeerConfig` 调用链测试，仅 fake 平台 RTCPeerConnection/DataChannel/IO/DOM。两种拒绝事件的原始 RED 命令：
+
+```sh
+node --test --test-name-pattern='late bootstrap after' web-client/js/webrtc.test.js
+```
+
+修复前两项均失败：bootstrap 返回后点击 reclaim 已创建第二个 socket，但 `pc` 仍为 `null`。原始复现日志 `/tmp/c5-r1-red.log` 只在本机保留，未提交。
+
+修复将待完成 bootstrap 表示为同一 Promise，在认证和当前配置请求身份校验之后保留被拒绝 Start 的配置。配置完成/失败只清理自己的等待标记。bootstrap 仍在进行时，显式 reclaim 先等有效配置，再申请新 ticket、创建 socket/peer；旧 Start 保持 superseded 并退出，不替新操作启动媒体。配置验证后的 Start continuation 再核对认证，避免 Promise 微任务间认证更换穿过旧门禁；该微任务边界也先取得独立 RED（peer 被创建），再修复。
+
+新增 6 项实际 PC 生命周期覆盖：superseded/admission-rejected 后 bootstrap 完成再 reclaim；bootstrap 完成前 reclaim 等待；等待中认证改变；旧认证 bootstrap 不填充配置；配置验证与 Start continuation 之间认证改变。有效 Relay 情况断言 PC 使用所给 TURN 及 `iceTransportPolicy=relay`，只有一次 reclaim 媒体 attempt，等待配置不提前发放新 ticket；旧认证情况保持无新 socket/peer/ticket。
+
+最终定向命令：
+
+```sh
+node --test web-client/js/webrtc.test.js web-client/js/auth-start-integration.test.js web-client/js/bootstrap-controller.test.js
+```
+
+实际结果：259 tests、259 pass、0 fail、0 skipped，约 15.5 秒；`git diff --check` 通过。没有重跑服务器大套件，没有构建/部署/生产服务或真实浏览器、媒体、输入操作。本次仅修改 `web-client/js/webrtc.js`、对应测试和本报告；等待独立审查复核，不能以此宣布生产验收完成。

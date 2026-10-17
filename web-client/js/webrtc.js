@@ -504,6 +504,7 @@ const WebRTC = {
   _viewerAdmission: null,
   _explicitAdmissionSequence: 0,
   _reclaimPromise: null,
+  _pendingBootstrapConfig: null,
   SIGNAL_RECOVERY_RETRY_MS: 1500,
   SIGNAL_RECOVERY_MAX_WAIT_MS: 12000,
   _pageLifecycleRecoveryBound: false,
@@ -2477,10 +2478,31 @@ const WebRTC = {
       this.manualDisconnect = false;
       this._deferPeerUntilConfig = true;
       this.createSignalingSocket(true);
-      const bootstrapSnapshot = await controller.load({
+      const pendingBootstrap = controller.load({
         mode: this.networkMode,
         turnServerId: this.selectedTurnServerId,
+      }).then((snapshot) => {
+        if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+            || Auth.getGeneration?.() !== authGeneration
+            || this._pendingBootstrapConfig !== pendingBootstrap) {
+          throw Object.assign(new Error('superseded'), { code: 'superseded' });
+        }
+        // Reclaim waits on validated configuration, never on a stale response.
+        // A rejected Start may retain config without reviving its old attempt.
+        if (this._superseded) this.applyBootstrapSnapshot(snapshot);
+        return snapshot;
       });
+      this._pendingBootstrapConfig = pendingBootstrap;
+      let bootstrapSnapshot;
+      try { bootstrapSnapshot = await pendingBootstrap; }
+      finally {
+        if (this._pendingBootstrapConfig === pendingBootstrap) {
+          this._pendingBootstrapConfig = null;
+          this._deferPeerUntilConfig = false;
+        }
+      }
+      // The promise settles before this continuation; authentication may have
+      // changed in another queued microtask after configuration validation.
       if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
           || Auth.getGeneration?.() !== authGeneration) {
         throw Object.assign(new Error('superseded'), { code: 'superseded' });
@@ -2495,7 +2517,7 @@ const WebRTC = {
       if (this._superseded) return false;
       await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true });
     } catch (error) {
-      this._deferPeerUntilConfig = false;
+      if (!this._pendingBootstrapConfig) this._deferPeerUntilConfig = false;
       if (error?.code === 'auth-invalid' && Auth.getToken() === authToken
           && Auth.getGeneration?.() === authGeneration
           && controller?.getSnapshot?.().state === 'auth-required') {
@@ -6574,7 +6596,12 @@ if (this.tunnelLastObjectUrl) {
   },
 
   async reclaimDesktopSessionOnce() {
-    try { await this.requestExplicitViewerAdmission(); }
+    try {
+      // Keep the old Start superseded until its configuration has settled. It
+      // cannot initialize media on behalf of this newer explicit operation.
+      if (this._pendingBootstrapConfig) await this._pendingBootstrapConfig;
+      await this.requestExplicitViewerAdmission();
+    }
     catch (error) {
       if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
       return false;

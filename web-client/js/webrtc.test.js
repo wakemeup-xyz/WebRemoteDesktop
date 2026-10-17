@@ -6825,10 +6825,15 @@ test('real mobile and port-search writers converge with the chrome capability pr
   assert.equal(port.getAttribute('aria-disabled'), 'true');
 });
 
-function admissionViewerFixture({ proof = null, fetchAdmission = null } = {}) {
+function admissionViewerFixture({ proof = null, fetchAdmission = null, realPeer = false } = {}) {
   const sockets = [], requests = [];
   const storage = new Map(proof ? [['wrdProofAdmission', JSON.stringify(proof)]] : []);
   const result = loadWebRTC({
+    RTCPeerConnection: class {
+      constructor(config) { this.config = config; this.connectionState = 'new'; this.iceConnectionState = 'new'; }
+      createDataChannel() { return { readyState: 'connecting', bufferedAmount: 0, send() {} }; }
+      close() { this.connectionState = 'closed'; }
+    },
     sessionStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) },
     fetch: async (url, init) => {
       if (!url.endsWith('/api/auth/viewer-admission')) return { ok: true, status: 200, json: async () => ({ iceServers: [] }) };
@@ -6848,10 +6853,12 @@ function admissionViewerFixture({ proof = null, fetchAdmission = null } = {}) {
     },
   });
   const { WebRTC } = result;
-  // Platform PC creation has no browser/RTC. Admission, Start, init, listeners,
-  // refresh, visibility recovery, and rejection cleanup are production methods.
-  WebRTC.createPeerConnection = () => {};
-  WebRTC.createOffer = () => {};
+  // Most admission tests isolate PC effects. Lifecycle tests opt into the real
+  // createPeerConnection/createOffer methods with only the platform RTC fake.
+  if (!realPeer) {
+    WebRTC.createPeerConnection = () => {};
+    WebRTC.createOffer = () => {};
+  }
   const controller = { load: async () => ({ schemaVersion: 1, host: { online: false }, webrtc: { iceServers: [] } }) };
   return { ...result, sockets, requests, storage, controller };
 }
@@ -6944,4 +6951,115 @@ test('malformed retained proof cannot turn an automated Start into ordinary admi
   assert.equal(h.requests.length, 0);
   assert.equal(h.sockets[0].auth.proofAdmission.invalid, true);
   assert.equal(h.sockets[0].auth.viewerAdmission, undefined);
+});
+
+for (const rejection of ['viewer-superseded', 'viewer-admission-rejected']) {
+  test(`late bootstrap after ${rejection} preserves TURN for explicit reclaim with real peer creation`, async () => {
+    const h = admissionViewerFixture({ realPeer: true });
+    h.WebRTC.networkMode = 'relay';
+    let finishBootstrap;
+    h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+    const start = h.WebRTC.startViewer(h.controller);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.WebRTC._deferPeerUntilConfig, true);
+    h.sockets[0].trigger(rejection, { reason: 'explicit-reconnect-required' });
+    finishBootstrap({ schemaVersion: 1, host: { online: true }, webrtc: {
+      iceServers: [{ urls: 'turn:fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+      turnConfigured: true,
+    } });
+    await start;
+    assert.equal(h.WebRTC.pc, null, 'bootstrap completion must not reconnect a rejected page');
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.requests.length, 1);
+    await h.WebRTC.reclaimDesktopSession();
+    assert.equal(h.sockets.length, 2);
+    assert.equal(h.requests.length, 2, 'only the explicit reclaim issues a second intent');
+    assert.equal(h.WebRTC._superseded, false);
+    assert.ok(h.WebRTC.pc, 'reclaim must construct the actual Relay peer from retained TURN config');
+    assert.equal(h.WebRTC.hasTurnConfigured(), true);
+    assert.equal(h.WebRTC._deferPeerUntilConfig, false);
+    assert.equal(h.WebRTC.pc.config.iceTransportPolicy, 'relay');
+    assert.ok(h.WebRTC.pc.config.iceServers.some(server => server.urls === 'turn:fixture.invalid:3478'));
+  });
+}
+
+test('superseded bootstrap from an older auth generation cannot populate reclaim TURN config', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  h.WebRTC.networkMode = 'relay';
+  let finishBootstrap;
+  h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+  const start = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  h.sockets[0].trigger('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
+  h.context.Auth.getToken = () => 'new-auth-token';
+  finishBootstrap({ schemaVersion: 1, webrtc: {
+    turnConfigured: true,
+    iceServers: [{ urls: 'turn:stale-fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+  } });
+  await start;
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
+  assert.equal(h.WebRTC.pc, null);
+  assert.equal(h.WebRTC._superseded, true);
+  assert.equal(h.WebRTC._deferPeerUntilConfig, false);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.requests.length, 1);
+});
+
+for (const staleAuth of [false, true]) {
+  test(`reclaim before bootstrap waits for validated config (${staleAuth ? 'stale auth' : 'current auth'})`, async () => {
+    const h = admissionViewerFixture({ realPeer: true });
+    h.WebRTC.networkMode = 'relay';
+    let finishBootstrap;
+    h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+    const start = h.WebRTC.startViewer(h.controller);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    h.sockets[0].trigger('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
+    const reclaim = h.WebRTC.reclaimDesktopSession();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    assert.equal(h.requests.length, 1, 'do not issue another takeover intent before config is usable');
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.WebRTC.pc, null);
+    if (staleAuth) h.context.Auth.getToken = () => 'new-auth-token';
+    finishBootstrap({ schemaVersion: 1, webrtc: {
+    turnConfigured: true,
+      iceServers: [{ urls: 'turn:fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+    } });
+    await Promise.all([start, reclaim]);
+    assert.equal(h.WebRTC._pendingBootstrapConfig, null);
+    assert.equal(h.WebRTC._deferPeerUntilConfig, false);
+    if (staleAuth) {
+      assert.equal(h.requests.length, 1);
+      assert.equal(h.sockets.length, 1);
+      assert.equal(h.WebRTC.pc, null);
+      assert.equal(h.WebRTC.hasTurnConfigured(), false);
+      assert.equal(h.WebRTC._superseded, true);
+    } else {
+      assert.equal(h.requests.length, 2);
+      assert.equal(h.sockets.length, 2);
+      assert.equal(h.WebRTC.connectionAttemptSequence, 1, 'only reclaim initializes a new media attempt');
+      assert.ok(h.WebRTC.pc);
+      assert.equal(h.WebRTC.pc.config.iceTransportPolicy, 'relay');
+      assert.equal(h.WebRTC.hasTurnConfigured(), true);
+      assert.equal(h.WebRTC._superseded, false);
+    }
+  });
+}
+
+test('auth change between bootstrap validation and Start continuation cannot create a peer', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  h.WebRTC.networkMode = 'relay';
+  let finishBootstrap;
+  h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+  const start = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  finishBootstrap({ schemaVersion: 1, webrtc: {
+    turnConfigured: true,
+    iceServers: [{ urls: 'turn:fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+  } });
+  await Promise.resolve();
+  h.context.Auth.getToken = () => 'new-auth-token';
+  await start;
+  assert.equal(h.WebRTC.pc, null);
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
 });
