@@ -431,8 +431,8 @@ async def test_suspension_drops_a_frame_that_finished_after_its_capture_generati
 async def test_profile_change_drops_a_worker_result_built_for_the_old_dimensions(monkeypatch):
     """Publishing the old-size result after a profile switch corrupts the next encoder frame."""
     pixels = np.array([[[1, 2, 3, 255]]], dtype=np.uint8)
-    track = bare_track(max_width=1, max_height=1)
-    track.monitor = {"width": 2, "height": 1}
+    track = bare_track(max_width=1280, max_height=720)
+    track.monitor = {"width": 1792, "height": 1120}
     track._last_img = pixels.copy()
     track._last_img_target_generation = 0
     track._capture_buffer = Screenshot(pixels)
@@ -450,13 +450,16 @@ async def test_profile_change_drops_a_worker_result_built_for_the_old_dimensions
     try:
         recv_task = asyncio.create_task(track.recv())
         await asyncio.to_thread(started.wait, 0.5)
-        track.apply_media_profile({"width": 2, "height": 1, "target_fps": 30})
+        result = track.apply_media_profile({"width": 640, "height": 360, "target_fps": 30})
+        assert result == {"sizeChanged": True, "width": 640, "height": 360}
+        assert track._target_generation == 1
         release.set()
         frame = await asyncio.wait_for(recv_task, timeout=1)
     finally:
         track._process_executor.shutdown(wait=True)
 
-    assert (frame.width, frame.height) == (320, 180)
+    assert (frame.width, frame.height) == (640, 360)
+    assert np.all(frame.to_ndarray(format="bgra") == 0)
 
 
 @pytest.mark.asyncio
@@ -503,3 +506,88 @@ async def test_shutdown_rejects_a_worker_result_that_was_already_in_flight(monke
 
     with pytest.raises(MediaStreamError):
         await recv_task
+
+
+def epoch_track():
+    track = bare_track(max_width=1280, max_height=720)
+    track.monitor = {"width": 1792, "height": 1120}
+    track._target_generation = 9
+    track._target_fps = 20
+    track._frame_interval = 1 / 20
+    track._last_img = np.full((720, 1152, 4), 7, dtype=np.uint8)
+    track._last_img_target_generation = 9
+    track._last_img_capture = (42, (100, 200))
+    releases = []
+    track._release_input_frame_reservations = lambda: releases.append(True)
+    return track, releases
+
+
+def test_image_epoch_changes_only_for_effective_dimensions():
+    track, releases = epoch_track()
+    try:
+        for fps in (15, 20, 20):
+            result = track.apply_media_profile({"width": 1280, "height": 720,
+                                                "target_fps": fps, "bitrate": 1800000})
+            assert result == {"sizeChanged": False, "width": 1280, "height": 720}
+            assert track._target_generation == 9
+            assert track._frame_interval == 1 / fps
+            assert releases == []
+        result = track.apply_media_profile({"width": 9999, "height": 9999, "target_fps": 15})
+        assert result == {"sizeChanged": True, "width": 1792, "height": 1080}
+        assert track._target_generation == 10
+        assert len(releases) == 1
+        assert track.apply_media_profile({"width": 2000, "height": 1200, "target_fps": 20}) == {
+            "sizeChanged": False, "width": 1792, "height": 1080}
+        assert track._target_generation == 10
+        assert len(releases) == 1
+    finally:
+        track._process_executor.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+async def test_fps_profile_preserves_cache_pixels_and_capture_identity():
+    track, releases = epoch_track()
+    outputs = []
+    track._frame_trace_context = SimpleNamespace(key=lambda seq, timestamp: (seq, timestamp))
+    track._record_output_trace = lambda context, key, pts, bounds, selected, timing, **flags: outputs.append(
+        (key[0], bounds, timing["source"], flags))
+    track._send_frame_trace_batch = lambda: None
+    try:
+        track.apply_media_profile({"width": 1280, "height": 720, "target_fps": 15})
+        frame = await track.recv()
+        assert (frame.width, frame.height) == (1152, 720)
+        assert np.all(frame.to_ndarray(format="bgra") == 7)
+        assert outputs == [(42, (100, 200), "cache", {"fresh": False, "reused": True})]
+        assert track._last_img_capture == (42, (100, 200))
+        assert releases == []
+    finally:
+        await track.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_fps_change_preserves_inflight_image_and_reservations(monkeypatch):
+    track, releases = epoch_track()
+    track._capture_buffer = Screenshot(np.full((720, 1152, 4), 8, dtype=np.uint8))
+    track._capture_seq = 43
+    started, release = threading.Event(), threading.Event()
+    original = track._process_screenshot
+
+    def blocked(screenshot, *args):
+        started.set()
+        assert release.wait(timeout=2)
+        return original(screenshot, *args)
+
+    monkeypatch.setattr(track, "_process_screenshot", blocked)
+    try:
+        task = asyncio.create_task(track.recv())
+        assert await asyncio.to_thread(started.wait, 1)
+        track.apply_media_profile({"width": 1280, "height": 720, "target_fps": 15})
+        release.set()
+        frame = await asyncio.wait_for(task, 2)
+        assert np.all(frame.to_ndarray(format="bgra") == 8)
+        assert track._last_img_capture == (43, None)
+        assert track._target_generation == 9
+        assert releases == []
+    finally:
+        release.set()
+        await track.shutdown()

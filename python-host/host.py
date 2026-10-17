@@ -1988,22 +1988,27 @@ class ScreenCaptureTrack(VideoStreamTrack):
         ABSOLUTE_MAX_HEIGHT = 1080
         width = max(320, min(int(width), self.monitor["width"], ABSOLUTE_MAX_WIDTH))
         height = max(180, min(int(height), self.monitor["height"], ABSOLUTE_MAX_HEIGHT))
+        # This epoch fences image dimensions, not pacing or bitrate updates.
         with self._target_lock:
-            self._max_width = width
-            self._max_height = height
-            self._target_generation += 1
-        self._release_input_frame_reservations()
+            changed = (width, height) != (self._max_width, self._max_height)
+            if changed:
+                self._max_width = width
+                self._max_height = height
+                self._target_generation += 1
+        if changed:
+            self._release_input_frame_reservations()
         logger.info("Screen stream max resolution set to %sx%s (requested capped at %sx%s, monitor=%sx%s)",
                     width, height, ABSOLUTE_MAX_WIDTH, ABSOLUTE_MAX_HEIGHT,
                     self.monitor["width"], self.monitor["height"])
+        return {"sizeChanged": changed, "width": width, "height": height}
 
     def set_target_fps(self, target_fps):
         target_fps = max(5, min(int(target_fps), 30))
         with self._target_lock:
+            if target_fps == self._target_fps:
+                return
             self._target_fps = target_fps
             self._frame_interval = 1.0 / target_fps
-            self._target_generation += 1
-        self._release_input_frame_reservations()
         logger.info("Screen stream target FPS set to %s", target_fps)
 
     @staticmethod
@@ -2021,10 +2026,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
         prev_h = getattr(self, "_max_height", None)
         next_w = int(profile.get("width") or prev_w or 1280)
         next_h = int(profile.get("height") or prev_h or 720)
-        size_changed = prev_w != next_w or prev_h != next_h
-        self.set_max_resolution(next_w, next_h)
+        result = self.set_max_resolution(next_w, next_h)
         self.set_target_fps(profile["target_fps"])
-        return {"sizeChanged": size_changed, "width": next_w, "height": next_h}
+        return result
 
     def _scale_image_array(self, img, max_width=None, max_height=None):
         if max_width is None or max_height is None:
