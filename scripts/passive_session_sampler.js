@@ -18,6 +18,156 @@
   let identity = 0, video = null, callback = null, stopped = false;
   let callbacks = 0, lastFrameAt = null, maxFrameGapMs = 0, statsPending = null;
   let relayImage = null, relayLoadCallbacks = 0, lastRelayLoadAt = null, maxRelayLoadGapMs = 0;
+  // Fixed, run-local diagnostics. No socket IDs, packet data or error messages.
+  const LIMIT = 999999999, TIME_LIMIT = 43320000;
+  const began = performance.now();
+  const integer = (value, max = LIMIT) => Number.isFinite(value) && value >= 0 ? Math.min(max, Math.round(value)) : null;
+  const anchor = value => Number.isFinite(value) && value >= 0 && value <= 9999999999999 ? Math.round(value) : null;
+  const anchors = { browserWallEpochMs: anchor(Date.now()),
+    browserTimeOriginEpochMs: anchor(performance.timeOrigin), browserAnchorNowMs: anchor(began) };
+  const kinds = ['sd','mc','ec','se','re','rx','tx','sc','mo','ra','rr','rf','ep','eo','ef','eu','bind',
+    'vis','net','focus','hide','show','freeze','resume','preclose','cap'];
+  const counters = Object.fromEntries(kinds.map(k => [k, 0]));
+  const events = [], labels = new WeakMap(), bindings = {s:null,m:null,e:null};
+  const bindingCounts = {s:0,m:0,e:0}, boundAtMs = {s:null,m:null,e:null};
+  let sequence = 0, droppedEvents = 0, cursor = 0, bindingChanges = 0;
+  let firstDisconnectEvent = null, coverageStatus = 'partial', coverageFailure = 'none';
+  let missingReferences = 0, observerTimer = null, observedTransport = 'unknown';
+  const lag = {lastMs:null,maxMs:0,count:0,missedIntervals:0,buckets:[0,0,0,0]};
+  const state = {visibility:'unknown',online:null,focus:null,socketState:'unavailable',
+    pingReceivedAtMs:null,pongCreatedAtMs:null,flushAtMs:null,lag};
+  const elapsed = () => { const value = Math.max(0, performance.now()-began);
+    return value <= TIME_LIMIT ? integer(value,TIME_LIMIT) : null; };
+  const current = prefix => {
+    const socket = typeof WebRTC === 'undefined' ? null : WebRTC?.socket;
+    return prefix === 's' ? socket : prefix === 'm' ? socket?.io : socket?.io?.engine;
+  };
+  const capacity = () => {
+    coverageStatus = 'capacity'; coverageFailure = 'schema-capacity';
+    if (!counters.cap && sequence < LIMIT) {
+      const event = {t:elapsed(),n:++sequence,k:'cap'};
+      if (event.t !== null) { if (events.length === 128) { events.shift(); droppedEvents = Math.min(LIMIT, droppedEvents+1); }
+        events.push(event); counters.cap = 1; }
+    }
+  };
+  const record = (k, fields = {}) => {
+    if (stopped) return;
+    const t = elapsed();
+    if (t === null || performance.now() - began > TIME_LIMIT || sequence >= LIMIT-1 || counters[k] >= LIMIT) {
+      capacity(); return;
+    }
+    const event = {t,n:++sequence,k,...fields};
+    if (JSON.stringify(event).length > 192) { capacity(); return; }
+    counters[k]++;
+    if (['sd','mc','ec','se','re'].includes(k) && firstDisconnectEvent === null) firstDisconnectEvent = {...event};
+    if (events.length === 128) { events.shift(); droppedEvents = Math.min(LIMIT, droppedEvents+1); }
+    events.push(event);
+    if (k === 'rx' && fields.p === 'ping') state.pingReceivedAtMs = t;
+    if (k === 'tx' && fields.p === 'pong') state.pongCreatedAtMs = t;
+    if (k === 'ef') state.flushAtMs = t;
+  };
+  const reasons = {'io server disconnect':'server','io client disconnect':'client','ping timeout':'ping',
+    'transport close':'transport-close','transport error':'transport-error','parse error':'parse','forced close':'forced'};
+  const reason = (value, prefix) => typeof value === 'string'
+    && (prefix === 's' || !['io server disconnect','io client disconnect'].includes(value))
+    && Object.prototype.hasOwnProperty.call(reasons,value) ? reasons[value] : 'unknown';
+  const detach = binding => {
+    if (binding) for (const [name, fn] of binding.listeners) binding.object.off?.(name, fn);
+  };
+  const bind = (prefix, object) => {
+    if (bindings[prefix]?.object === object) return;
+    detach(bindings[prefix]); bindings[prefix] = null;
+    if (!object || typeof object.on !== 'function' || typeof object.off !== 'function') return;
+    if (bindingChanges >= 64 || elapsed() === null) { capacity(); return; }
+    bindingChanges++;
+    if (!labels.has(object)) labels.set(object, prefix + (++bindingCounts[prefix]));
+    const label = labels.get(object), listeners = [];
+    bindings[prefix] = {object,listeners}; boundAtMs[prefix] = elapsed();
+    const observe = (name, k, project, rebind = false) => {
+      const fn = (...args) => {
+        if (stopped) return;
+        // An emitter may have copied this callback before our exact off(). Keep
+        // terminal evidence from the enrolled object, even after product mutation.
+        record(k,{o:label,c:current(prefix) === object,...(project ? project(...args) : {})});
+        if (rebind) scan();
+      };
+      object.on(name,fn); listeners.push([name,fn]);
+    };
+    record('bind',{o:label,c:current(prefix) === object});
+    if (prefix === 's') {
+      observe('disconnect','sd',value => ({r:reason(value,prefix)}));
+      observe('connect_error','se',error => ({r:error?.type === 'TransportError' ? 'transport-error':'unknown'}));
+      observe('connect','sc',null,true);
+    } else if (prefix === 'm') {
+      observe('open','mo',null,true);
+      observe('close','mc',value => ({r:reason(value,prefix)}));
+      observe('reconnect_attempt','ra');
+      // One microtask reads existing references after the Manager assigns engine.
+      const retry = () => { if (!stopped && current('m') === object) Promise.resolve().then(() => { if (!stopped) scan(); }); };
+      object.on('reconnect_attempt',retry); listeners.push(['reconnect_attempt',retry]);
+      observe('reconnect','rr',null,true);
+      observe('reconnect_error','re',error => ({r:error?.type === 'TransportError' ? 'transport-error':'unknown'}));
+      observe('reconnect_failed','rf');
+    } else {
+      observe('close','ec',value => ({r:reason(value,prefix)}));
+      observe('packet','rx',packet => ({p:oneOf(packet?.type,['ping','pong'])}));
+      observe('packetCreate','tx',packet => ({p:oneOf(packet?.type,['ping','pong'])}));
+      for (const [name,k] of [['ping','ep'],['pong','eo'],['flush','ef'],['upgrade','eu']]) observe(name,k);
+    }
+  };
+  const scan = () => {
+    if (stopped) return;
+    for (const prefix of ['s','m','e']) bind(prefix,current(prefix));
+    observedTransport = oneOf(current('e')?.transport?.name,['websocket','polling']);
+    state.socketState = !current('s') ? 'unavailable' : current('s').connected === true ? 'connected':'state-observed-disconnected';
+    if (Object.values(bindings).some(value => !value)) missingReferences = Math.min(LIMIT, missingReferences+1);
+  };
+  const domListeners = [];
+  const dom = (target,name,fn) => { if (target?.addEventListener && target?.removeEventListener) {
+    target.addEventListener(name,fn); domListeners.push([target,name,fn]); } };
+  const visibility = () => { state.visibility = oneOf(document.visibilityState,['visible','hidden','prerender']); record('vis',{v:state.visibility}); };
+  const online = () => { state.online = typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean' ? navigator.onLine:null; record('net',{v:state.online}); };
+  const focus = value => { state.focus = value; record('focus',{v:value}); };
+  visibility(); online();
+  try { const value = typeof document.hasFocus === 'function' ? document.hasFocus():null;
+    focus(typeof value === 'boolean' ? value:null); } catch (_) { focus(null); }
+  dom(document,'visibilitychange',visibility);
+  dom(window,'online',online); dom(window,'offline',online);
+  dom(window,'focus',() => focus(true)); dom(window,'blur',() => focus(false));
+  for (const [name,k,target] of [['pagehide','hide',window],['pageshow','show',window],
+    ['freeze','freeze',document],['resume','resume',document]]) dom(target,name,() => record(k));
+  let expected = performance.now()+1000;
+  const schedule = () => {
+    observerTimer = setTimeout(() => {
+      if (stopped) return;
+      const now = performance.now(); if (elapsed() === null) capacity();
+      const delay = Math.max(0,now-expected), missed = Math.floor(delay/1000);
+      lag.lastMs = integer(delay); lag.maxMs = Math.max(lag.maxMs,lag.lastMs);
+      lag.count = Math.min(LIMIT,lag.count+1); lag.missedIntervals = Math.min(LIMIT,lag.missedIntervals+missed);
+      const bucket = delay < 100 ? 0 : delay < 500 ? 1 : delay < 1000 ? 2 : 3;
+      lag.buckets[bucket] = Math.min(LIMIT,lag.buckets[bucket]+1);
+      expected += (missed+1)*1000;
+      scan(); schedule();
+    },Math.max(0,expected-performance.now()));
+  };
+  const snapshot = () => {
+    if (!stopped) scan();
+    return JSON.parse(JSON.stringify({schemaVersion:1,anchors,
+      attribution:{firstDisconnectEvent,cause:'unknown'},counters,state,
+      coverage:{status:coverageStatus,failure:coverageFailure,observedFromMs:0,boundAtMs,
+        bindingChanges:Math.min(LIMIT,bindingChanges),missingReferences,
+        transport:observedTransport},
+      droppedEvents,events}));
+  };
+  const drain = () => {
+    const available = events.filter(event => event.n > cursor), tail = available.slice(0,16);
+    const gap = available.length && available[0].n > cursor+1 ? available[0].n-cursor-1 : 0;
+    if (tail.length) cursor = tail[tail.length-1].n;
+    return JSON.parse(JSON.stringify({schemaVersion:1,events:tail,cursor,gap,
+      truncated:available.length > tail.length,droppedEvents,coverageStatus,
+      firstDisconnectEvent,cause:'unknown'}));
+  };
+  scan(); schedule();
   const relayLoaded = () => {
     if (stopped) return;
     const now = performance.now();
@@ -83,7 +233,7 @@
   };
   window.__wrdPassiveSampler = {
     async sample() {
-      attach();
+      if (!stopped) { attach(); scan(); }
       const client = typeof WebRTC === 'undefined' ? null : WebRTC;
       const pc = client?.pc;
       if (pc && !identities.has(pc)) identities.set(pc, ++identity);
@@ -122,11 +272,21 @@
         relayLoadAgeMs: lastRelayLoadAt === null ? null : Math.max(0, now - lastRelayLoadAt),
         maxRelayLoadGapMs, relayEvidenceKind: 'image-load-event-not-optical-presentation',
         buildId: typeof buildId === 'string' ? buildId : null,
-        metrics };
+        metrics, diagnostics:drain() };
+    },
+    diagnosticSnapshot: snapshot,
+    finalize() {
+      if (!stopped) { scan(); record('preclose'); }
+      const final = snapshot(); this.stop(); return final;
     },
     stop() {
-      stopped = true; if (callback !== null) video?.cancelVideoFrameCallback?.(callback);
+      if (stopped) return snapshot();
+      stopped = true; clearTimeout(observerTimer);
+      for (const binding of Object.values(bindings)) detach(binding);
+      for (const [target,name,fn] of domListeners) target.removeEventListener(name,fn);
+      if (callback !== null) video?.cancelVideoFrameCallback?.(callback);
       relayImage?.removeEventListener?.('load', relayLoaded);
+      return snapshot();
     },
   };
 })();

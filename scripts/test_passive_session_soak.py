@@ -482,4 +482,363 @@ class StartupRunTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((page.proofs, page.clicks), (1, 0 if guard_failure else 1))
 
 
+
+class LifecycleSchemaTest(unittest.TestCase):
+    def test_safe_initial_observer_and_reject_unknown_keys(self):
+        diagnostic = soak.empty_diagnostic()
+        self.assertEqual(soak.validate_diagnostic(diagnostic), diagnostic)
+        with self.assertRaises(ValueError):
+            soak.validate_diagnostic({**diagnostic, 'private-canary': 'secret'})
+
+class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
+    class Rig:
+        def __init__(self, output, *, fail_at=None, timeout_at=None, pause_at=None,
+                     malformed_export=False, malformed_delta=False, disconnected=True):
+            self.output = output
+            self.fail_at, self.timeout_at, self.pause_at = fail_at, timeout_at, pause_at
+            self.malformed_export, self.malformed_delta = malformed_export, malformed_delta
+            self.disconnected = disconnected
+            self.events = []
+            self.entered = asyncio.Event()
+            self.proofs = self.clicks = self.sample_count = 0
+            self.closed = False
+            self.chromium = self
+            self.diagnostic = soak.empty_diagnostic()
+            self.diagnostic['coverage']['status'] = 'partial'
+            self.diagnostic['state']['socketState'] = 'state-observed-disconnected'
+            self.diagnostic['attribution']['firstDisconnectEvent'] = {
+                't':20,'n':1,'k':'sd','o':'s1','c':True,'r':'transport-close'}
+            self.diagnostic['events'] = [self.diagnostic['attribution']['firstDisconnectEvent']]
+
+        async def operation(self,name):
+            self.events.append(name)
+            if self.pause_at == name:
+                self.entered.set()
+                try: await asyncio.Event().wait()
+                finally: self.events.append(name+'-settled')
+            if self.timeout_at == name:
+                try: await asyncio.Event().wait()
+                finally: self.events.append(name+'-settled')
+            if self.fail_at == name: raise RuntimeError('private-error-canary https://private.invalid')
+
+        async def start(self):
+            # Initial committed files must predate manager entry.
+            assert (self.output/'summary.json').exists()
+            assert (self.output/'lifecycle.json').exists()
+            assert json.loads((self.output/'summary.json').read_text())['status'] == 'INCOMPLETE'
+            await self.operation('manager-start')
+            return self
+
+        async def launch(self,**kwargs):
+            await self.operation('launch'); return self
+        async def new_context(self): return self
+        async def new_page(self): return self
+        async def stop(self): await self.operation('manager-stop')
+        def set_default_timeout(self,value): pass
+        async def add_init_script(self,script): pass
+        async def goto(self,*args,**kwargs):
+            await self.operation('entry'); return SimpleNamespace(status=200)
+        async def wait_for_url(self,*args,**kwargs): pass
+        async def wait_for(self,**kwargs): pass
+        def locator(self,selector):
+            if selector == '#startBtn': return self
+            owner = self
+            class Login:
+                async def fill(self,value): owner.events.append('login-fill')
+                async def click(self): owner.events.append('login-click')
+                async def wait_for(self,**kwargs): pass
+            return Login()
+        async def is_visible(self): return True
+        async def is_enabled(self): return True
+        async def click(self,**kwargs): self.clicks += 1; self.events.append('start-click')
+        async def evaluate(self,expression,arg=None):
+            assert not self.closed, 'evaluate after close'
+            if expression == soak.STARTUP_SUMMARY:
+                await self.operation('startup-summary')
+                return {'observerAvailable':True,'failureCause':'unknown','uiPhase':'connected'}
+            if expression == soak.PROOF_ADMISSION:
+                self.proofs += 1; self.events.append('proof'); return 'ready'
+            if expression == soak.START_UI_SNAPSHOT:
+                return {'shellAvailable':True,'clientAvailable':True,'marksAvailable':True,
+                    'coreInstalled':True,'authVerified':True,'queuedStart':False,
+                    'socketPresent':False,'pcPresent':False,'attemptPresent':False,
+                    'admissionCurrent':self.proofs == 1,'htmlShellMarks':1,
+                    'coreInteractiveMarks':1,'startClickMarks':self.clicks}
+            if expression.startswith('/* Acceptance observer'):
+                await self.operation('observer-install'); return None
+            if expression == soak.FINAL_EXPORT:
+                await self.operation('export')
+                if self.malformed_export: return {'private-canary':'secret'}
+                value = json.loads(json.dumps(self.diagnostic))
+                value['events'].append({'t':21,'n':2,'k':'preclose'})
+                self.events.append('preclose')
+                return value
+            if expression == '() => window.__wrdPassiveSampler.sample()':
+                await self.operation('sample')
+                self.sample_count += 1
+                sample = row(self.sample_count)['sample']
+                sample['attempt'] = 'private-attempt-canary'
+                sample['socketConnected'] = self.sample_count == 1 or not self.disconnected
+                sample['callbacks'] = 2+self.sample_count
+                if self.sample_count > 1:
+                    sample['diagnostics'] = {'schemaVersion':1,'events':self.diagnostic['events'],
+                        'cursor':1,'gap':0,'truncated':False,'droppedEvents':0,
+                        'coverageStatus':'partial','firstDisconnectEvent':self.diagnostic['events'][0],
+                        'cause':'unknown'}
+                    if self.malformed_delta: sample['diagnostics']['secret'] = 'private-canary'
+                return sample
+            raise AssertionError('unexpected evaluate')
+        async def close(self):
+            # Both preliminary artifacts, original strict failure and exported
+            # preclose event are committed before the first browser close call.
+            self.events.append('preliminary-check')
+            lifecycle = json.loads((self.output/'lifecycle.json').read_text())
+            summary = json.loads((self.output/'summary.json').read_text())
+            assert lifecycle['python']['browserClose']['status'] == 'not-created'
+            assert summary['status'] == 'INCOMPLETE'
+            if lifecycle['captureStatus'] == 'ok':
+                assert lifecycle['diagnostics']['events'][-1]['k'] == 'preclose'
+            await self.operation('close')
+            self.closed = True
+
+    async def execute(self, rig, **kwargs):
+        modules = {'dotenv':SimpleNamespace(dotenv_values=lambda _: {})}
+        with patch.dict('sys.modules',modules), \
+             patch.dict(os.environ,{'VIEWER_ACCESS_PASSWORD':'private-password-canary'}), \
+             patch('builtins.print'):
+            return await soak.run(SimpleNamespace(origin='https://fixture.invalid',output_dir=rig.output,
+                duration_seconds=1,mode='relay',runtime_config=None),manager_factory=lambda:rig,
+                limits={key:.08 for key in ('managerStart','managerLaunch','export','browserClose','managerStop')},
+                **kwargs)
+
+    def artifacts(self, rig):
+        lifecycle = json.loads((rig.output/'lifecycle.json').read_text())
+        summary = json.loads((rig.output/'summary.json').read_text())
+        for name in ('lifecycle.json','summary.json','samples.jsonl'):
+            self.assertEqual((rig.output/name).stat().st_mode & 0o777,0o600)
+        self.assertEqual(rig.output.stat().st_mode & 0o777,0o700)
+        self.assertLessEqual((rig.output/'lifecycle.json').stat().st_size,32768)
+        self.assertNotIn('private-',json.dumps((lifecycle,summary)))
+        self.assertEqual(lifecycle['ownedProcessExitEvidence'],'not-observed')
+        self.assertEqual(summary['status'],'INCOMPLETE')
+        return lifecycle,summary
+
+    async def test_strict_disconnect_commits_preclose_before_close_and_preserves_first_terminal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rig = self.Rig(Path(directory)/'evidence')
+            self.assertEqual(await self.execute(rig),1)
+            lifecycle,summary = self.artifacts(rig)
+            self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+            self.assertEqual(lifecycle['diagnostics']['attribution']['firstDisconnectEvent']['r'],'transport-close')
+            self.assertEqual(lifecycle['python']['browserClose']['status'],'closed')
+            self.assertEqual(lifecycle['python']['managerStop']['status'],'ok')
+            self.assertLess(rig.events.index('preclose'),rig.events.index('close'))
+            self.assertLess(rig.events.index('close'),rig.events.index('manager-stop'))
+            self.assertEqual((rig.proofs,rig.clicks),(1,1))
+            self.assertLess(rig.events.index('observer-install'),rig.events.index('proof'))
+            self.assertLessEqual(lifecycle['python']['failureDetectedMs'],lifecycle['python']['browserClose']['startedMs'])
+
+    async def test_outer_start_launch_entry_export_close_and_stop_errors_keep_evidence(self):
+        for stage in ('manager-start','launch','entry','observer-install','startup-summary','export','close','manager-stop'):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                rig = self.Rig(Path(directory)/'evidence',fail_at=stage)
+                self.assertEqual(await self.execute(rig),1)
+                lifecycle,summary = self.artifacts(rig)
+                if stage in ('export','close','manager-stop'):
+                    self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+                self.assertIn('manager-stop',rig.events)
+                if stage in ('manager-start','launch'): self.assertNotIn('close',rig.events)
+                self.assertNotEqual(summary['status'],'PASS')
+
+    async def test_cooperative_deadlines_settle_all_fake_stage_tasks(self):
+        for stage in ('manager-start','launch','export','close','manager-stop'):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                baseline = set(asyncio.all_tasks())
+                rig = self.Rig(Path(directory)/'evidence',timeout_at=stage)
+                self.assertEqual(await self.execute(rig),1)
+                lifecycle,summary = self.artifacts(rig)
+                self.assertIn(stage+'-settled',rig.events)
+                self.assertEqual(set(asyncio.all_tasks())-baseline,set())
+                key = {'manager-start':'managerStart','launch':'managerLaunch','close':'browserClose','manager-stop':'managerStop'}.get(stage)
+                self.assertEqual(lifecycle['python'][key]['status'] if key else lifecycle['captureStatus'],'timeout')
+                if stage not in ('manager-start','launch'):
+                    self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+
+    async def test_external_and_repeated_cancellation_during_entry_launch_export_close_stop(self):
+        for stage in ('manager-start','launch','export','close','manager-stop'):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
+                baseline = set(asyncio.all_tasks())
+                rig = self.Rig(Path(directory)/'evidence',pause_at=stage)
+                task = asyncio.create_task(self.execute(rig))
+                await asyncio.wait_for(rig.entered.wait(),1)
+                task.cancel('first-private-cancel')
+                await asyncio.sleep(0)
+                task.cancel('second-private-cancel')
+                with self.assertRaises(asyncio.CancelledError): await task
+                lifecycle,summary = self.artifacts(rig)
+                self.assertEqual(set(asyncio.all_tasks())-baseline,set())
+                if stage in ('manager-start','launch'):
+                    self.assertEqual(summary['failure']['reason'],'cancelled')
+                else: self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+                self.assertIn('manager-stop',rig.events)
+
+    async def test_bad_final_snapshot_falls_back_to_validated_last_delta(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rig = self.Rig(Path(directory)/'evidence',malformed_export=True)
+            await self.execute(rig)
+            lifecycle,summary = self.artifacts(rig)
+            self.assertEqual(lifecycle['captureStatus'],'schema-rejected')
+            self.assertEqual(lifecycle['diagnostics']['attribution']['firstDisconnectEvent']['r'],'transport-close')
+            self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+
+    async def test_bad_delta_cannot_reach_sample_or_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rig = self.Rig(Path(directory)/'evidence',malformed_delta=True)
+            await self.execute(rig)
+            _,summary = self.artifacts(rig)
+            self.assertEqual(summary['failure']['reason'],'sample-continuity-lost')
+            self.assertNotIn('private-',(rig.output/'samples.jsonl').read_text())
+
+    async def test_noncooperative_api_is_explicit_gate_failure_never_success(self):
+        # Such an API cannot be forcibly settled in-process. Own and release the
+        # adversarial fake in the test so the runner itself retains no live task.
+        release = asyncio.Event()
+        started = asyncio.Event()
+        async def resistant():
+            started.set()
+            try: await release.wait()
+            except asyncio.CancelledError: await release.wait()
+        child = asyncio.create_task(resistant())
+        await started.wait()
+        try:
+            with self.assertRaises(soak.CancellationCooperationError):
+                await soak.lifecycle_stage(child,.04,settlement=.01)
+        finally:
+            release.set()
+            await child
+        self.assertTrue(child.done())
+
+    async def test_successful_sampling_still_waits_for_cleanup_before_final_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rig = self.Rig(Path(directory)/'evidence',disconnected=False)
+            self.assertEqual(await self.execute(rig),0)
+            summary = json.loads((rig.output/'summary.json').read_text())
+            self.assertEqual(summary['status'],'PASS')
+            self.assertEqual(summary['activeControl'],'NOT_RUN')
+            self.assertEqual(summary['visibleEffect'],'NOT_RUN')
+            self.assertEqual(summary['lifecycle']['ownedProcessExitEvidence'],'not-observed')
+            self.assertEqual((rig.proofs,rig.clicks),(1,1))
+
+    async def test_missing_observer_and_sample_exception_are_explicit_incomplete(self):
+        for fail_sample in (False,True):
+            with self.subTest(fail_sample=fail_sample),tempfile.TemporaryDirectory() as directory:
+                class Rig(self.Rig):
+                    async def evaluate(self,expression,arg=None):
+                        if expression == soak.FINAL_EXPORT:
+                            self.events.append('export-unavailable'); return None
+                        return await super().evaluate(expression,arg)
+                rig = Rig(Path(directory)/'evidence',fail_at='sample' if fail_sample else None)
+                self.assertEqual(await self.execute(rig),1)
+                lifecycle,summary = self.artifacts(rig)
+                self.assertEqual(lifecycle['captureStatus'],'unavailable')
+                if fail_sample:
+                    self.assertEqual(summary['failure']['stage'],'media-start')
+                    self.assertIsNone(lifecycle['diagnostics']['attribution']['firstDisconnectEvent'])
+                else:
+                    self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+                    self.assertIsNotNone(lifecycle['diagnostics']['attribution']['firstDisconnectEvent'])
+
+    async def test_final_write_failure_keeps_committed_preclose_failure_artifacts(self):
+        original = soak.atomic_evidence
+        with tempfile.TemporaryDirectory() as directory:
+            rig = self.Rig(Path(directory)/'evidence')
+            def write(path,value,**kwargs):
+                if rig.closed: raise OSError('private-filesystem-canary')
+                return original(path,value,**kwargs)
+            with patch.object(soak,'atomic_evidence',write):
+                self.assertEqual(await self.execute(rig),1)
+            lifecycle,summary = self.artifacts(rig)
+            self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+            self.assertEqual(lifecycle['diagnostics']['events'][-1]['k'],'preclose')
+            self.assertEqual(lifecycle['python']['browserClose']['status'],'not-created')
+            self.assertFalse(list(rig.output.glob('.*.tmp')))
+
+
+class LifecycleBoundaryTest(unittest.TestCase):
+    def test_each_allowlist_and_numeric_boundary_rejects_malformed_or_canary(self):
+        import copy
+        good = soak.empty_diagnostic()
+        mutations = [
+            lambda d:d.update(private='private-canary'),
+            lambda d:d.update(schemaVersion=True),
+            lambda d:d['anchors'].update(browserWallEpochMs=float('nan')),
+            lambda d:d['anchors'].update(browserTimeOriginEpochMs=float('inf')),
+            lambda d:d['anchors'].update(browserAnchorNowMs=10000000000000),
+            lambda d:d['counters'].update(sd=-1),
+            lambda d:d['counters'].update(sd=True),
+            lambda d:d['counters'].update(sd=1000000000),
+            lambda d:d['coverage'].update(transport='https://private.invalid'),
+            lambda d:d['coverage'].update(boundAtMs={'s':0,'m':0,'e':'private-id'}),
+            lambda d:d['state'].update(visibility='private-canary'),
+            lambda d:d['state'].update(focus='private-target'),
+            lambda d:d['state']['lag'].update(buckets=[0]*5),
+            lambda d:d.update(events=[{'t':0,'n':1,'k':'sd','o':'private-socket-id','c':True,'r':'unknown'}]),
+            lambda d:d.update(events=[{'t':0,'n':1,'k':'ec','o':'e1','c':True,'r':'client'}]),
+            lambda d:d.update(events=[{'t':0,'n':1,'k':'se','o':'s1','c':True,'r':'private-error'}]),
+            lambda d:d.update(events=[{'t':0,'n':1,'k':'sd','o':'s1','c':True,'r':'unknown','payload':'private-input'}]),
+            lambda d:d.update(events=[{'t':0,'n':1,'k':'rx','o':'e1','c':True,'p':'private-packet'}]),
+            lambda d:d.update(events=[{'t':43320001,'n':1,'k':'preclose'}]),
+            lambda d:d.update(events=[{'t':0.1,'n':1,'k':'preclose'}]),
+            lambda d:d.update(events=[{'t':0,'n':0,'k':'preclose'}]),
+            lambda d:d.update(events=[{'t':0,'n':1,'k':'preclose'}]*129),
+        ]
+        for mutation in mutations:
+            candidate = copy.deepcopy(good); mutation(candidate)
+            with self.subTest(candidate=candidate),self.assertRaises(ValueError):
+                soak.validate_diagnostic(candidate)
+        delta = {'schemaVersion':1,'events':[],'cursor':0,'gap':0,'truncated':False,
+            'droppedEvents':0,'coverageStatus':'unavailable','firstDisconnectEvent':None,'cause':'unknown'}
+        self.assertEqual(soak.validate_delta(delta),delta)
+        for patch in ({'cursor':float('inf')},{'gap':-1},{'truncated':1}, {'cause':'private-canary'},
+                      {'events':[{'t':0,'n':1,'k':'preclose'}]*17},{'private':'canary'}):
+            with self.subTest(patch=patch),self.assertRaises(ValueError):
+                soak.validate_delta({**delta,**patch})
+
+    def test_two_final_files_reserved_and_atomic_replacement_modes_and_caps(self):
+        writer = EvidenceWriter(io.StringIO())
+        self.assertEqual(writer.max_bytes,67108864-2*32768)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)/'lifecycle.json'
+            soak.atomic_evidence(target,{'status':'initial'},initial=True)
+            with self.assertRaises(ValueError): soak.atomic_evidence(target,{'x':'x'*32768})
+            self.assertEqual(json.loads(target.read_text()),{'status':'initial'})
+            soak.atomic_evidence(target,{'status':'final'})
+            self.assertEqual(json.loads(target.read_text()),{'status':'final'})
+            self.assertEqual(target.stat().st_mode & 0o777,0o600)
+            self.assertEqual(list(Path(directory).iterdir()),[target])
+
+    def test_production_js_snapshot_and_delta_pass_actual_python_validator(self):
+        import subprocess
+        script = r'''
+const vm=require('node:vm'),fs=require('node:fs'),{EventEmitter}=require('node:events');
+let timer=0;
+const engine=Object.assign(new EventEmitter(),{transport:{name:'websocket'}});
+const manager=Object.assign(new EventEmitter(),{engine});
+const socket=Object.assign(new EventEmitter(),{io:manager,connected:false});
+const context={window:{},document:{getElementById:()=>null},WebRTC:{socket},
+performance:{now:()=>500,timeOrigin:1800000000000},setTimeout:()=>++timer,clearTimeout:()=>{}};
+vm.runInNewContext(fs.readFileSync('scripts/passive_session_sampler.js','utf8'),context);
+socket.emit('disconnect','transport close');
+(async()=>{const sampler=context.window.__wrdPassiveSampler;
+const sample=await sampler.sample();const snapshot=sampler.finalize();
+process.stdout.write(JSON.stringify({snapshot,delta:sample.diagnostics}));})();'''
+        child = subprocess.run(['node','-e',script],cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,text=True,check=True,timeout=2)
+        value = json.loads(child.stdout)
+        soak.validate_diagnostic(value['snapshot'])
+        soak.validate_delta(value['delta'])
+        self.assertEqual(value['snapshot']['state']['socketState'],'state-observed-disconnected')
+        self.assertLessEqual(len(soak.compact(value['snapshot'])),32768)
+
+
 if __name__ == '__main__': unittest.main()

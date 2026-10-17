@@ -124,7 +124,21 @@ async def issue_start_proof(page, timeout_s):
 
 async def startup_summary(page):
     try:
-        return await asyncio.wait_for(page.evaluate(STARTUP_SUMMARY), timeout=2)
+        value = await asyncio.wait_for(page.evaluate(STARTUP_SUMMARY), timeout=2)
+        allowed = {'observerAvailable':bool,'socketPresent':bool,'socketConnected':bool,'hostOnline':bool,
+            'superseded':bool,'pcState':('new','connecting','connected','disconnected','failed','closed','unknown'),
+            'uiPhase':('idle','signaling','media-pending','connected','media-stalled','disconnected','unknown'),
+            'controlState':('FREE','GRANTING','ACTIVE','REVOKING','unknown'),
+            'desiredMediaState':('active','suspended','unknown'),'authState':('verified','unavailable','unauthorized','unknown'),
+            'failureCause':('unknown',),'desiredGeneration':None}
+        if not isinstance(value,dict) or set(value)-set(allowed): raise ValueError('startup-schema')
+        for key,field in value.items():
+            rule = allowed[key]
+            if rule is bool and type(field) is not bool: raise ValueError('startup-schema')
+            if isinstance(rule,tuple) and field not in rule: raise ValueError('startup-schema')
+            if key == 'desiredGeneration' and field is not None: bounded_int(field)
+        byte_cap(value,1024)
+        return value
     except Exception:
         return {'observerAvailable': False, 'failureCause': 'unknown'}
 
@@ -297,7 +311,7 @@ class ContinuitySummary:
 
 
 class EvidenceWriter:
-    def __init__(self, stream, *, max_bytes=MAX_RUN_BYTES - MAX_ROW_BYTES, max_row_bytes=MAX_ROW_BYTES):
+    def __init__(self, stream, *, max_bytes=MAX_RUN_BYTES - 2 * MAX_ROW_BYTES, max_row_bytes=MAX_ROW_BYTES):
         self.stream, self.max_bytes, self.max_row_bytes = stream, max_bytes, max_row_bytes
         self.total_bytes = 0
 
@@ -336,8 +350,10 @@ async def collect_samples(sample_once, writer, summary, salt, *, start, duration
         row = {'schemaVersion': 1, 'tick': tick, 'elapsedSeconds': began-start,
             'lateByMs': max(0, (began-start-tick)*1000), 'status': 'missing'}
         try:
-            sample = await asyncio.wait_for(sample_once(), timeout=2)
+            sample = await lifecycle_stage(sample_once(),2)
             row.update(status='observed', sample=private_row(sample, salt))
+        except CancellationCooperationError:
+            raise
         except Exception:
             row['reason'] = 'browser-sample-unavailable'
         writer.write(row)
@@ -355,22 +371,259 @@ def private_row(sample, salt):
     sample = dict(sample)
     attempt = sample.pop('attempt', None)
     sample['attemptHash'] = hashlib.sha256(salt + attempt.encode()).hexdigest()[:16] if isinstance(attempt, str) else None
+    if 'diagnostics' in sample: validate_delta(sample['diagnostics'])
     build = sample.get('buildId')
     if not isinstance(build, str) or len(build) > 128 or not all(c.isalnum() or c in '-_.' for c in build):
         sample['buildId'] = None
     return sample
 
 
-async def run(args):
+# Browser diagnostics are a separate, strictly validated schema. Never retain an
+# unchecked browser dictionary, exception message, URL or real transport ID.
+EVENT_KINDS = ('sd','mc','ec','se','re','rx','tx','sc','mo','ra','rr','rf','ep','eo',
+    'ef','eu','bind','vis','net','focus','hide','show','freeze','resume','preclose','cap')
+TERMINAL_KINDS = frozenset(('sd','mc','ec','se','re'))
+CLOSE_REASONS = frozenset(('server','client','ping','transport-close','transport-error','parse','forced','unknown'))
+COUNTER_MAX = 999999999
+EVENT_TIME_MAX = 43320000
+FINAL_EXPORT = '() => window.__wrdPassiveSampler?.finalize?.() ?? null'
+
+
+def compact(value):
+    return json.dumps(value, separators=(',', ':'), ensure_ascii=True, allow_nan=False).encode('ascii')
+
+
+def exact_keys(value, keys):
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise ValueError('diagnostic-schema')
+
+
+def bounded_int(value, maximum=COUNTER_MAX, nullable=False):
+    if nullable and value is None:
+        return
+    if type(value) is not int or not 0 <= value <= maximum:
+        raise ValueError('diagnostic-schema')
+
+
+def enum(value, allowed):
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError('diagnostic-schema')
+
+
+def byte_cap(value, maximum):
+    if len(compact(value)) > maximum:
+        raise ValueError('diagnostic-capacity')
+
+
+def validate_event(event):
+    if not isinstance(event, dict): raise ValueError('diagnostic-schema')
+    kind = event.get('k')
+    enum(kind, EVENT_KINDS)
+    keys = {'t','n','k'}
+    if kind in TERMINAL_KINDS: keys |= {'o','c','r'}
+    elif kind in ('rx','tx'): keys |= {'o','c','p'}
+    elif kind in ('sc','mo','ra','rr','rf','ep','eo','ef','eu','bind'): keys |= {'o','c'}
+    elif kind in ('vis','net','focus'): keys |= {'v'}
+    exact_keys(event, keys)
+    bounded_int(event['t'], EVENT_TIME_MAX)
+    bounded_int(event['n'])
+    if event['n'] < 1: raise ValueError('diagnostic-schema')
+    if 'o' in keys:
+        label = event['o']
+        if not isinstance(label, str) or len(label) not in (2,3) or label[0] not in 'sme' \
+            or not label[1:].isascii() or not label[1:].isdigit() or not 1 <= int(label[1:]) <= 64 \
+            or str(int(label[1:])) != label[1:] or type(event['c']) is not bool:
+            raise ValueError('diagnostic-schema')
+        prefix = 's' if kind in ('sd','se','sc') else 'm' if kind in ('mc','mo','ra','rr','re','rf') else 'e'
+        if kind != 'bind' and label[0] != prefix: raise ValueError('diagnostic-schema')
+    if 'r' in keys:
+        reasons = ('transport-error','unknown') if kind in ('se','re') else CLOSE_REASONS
+        if kind in ('mc','ec'): reasons = CLOSE_REASONS - {'server','client'}
+        enum(event['r'], reasons)
+    if 'p' in keys: enum(event['p'], ('ping','pong','unknown'))
+    if kind == 'vis': enum(event['v'], ('visible','hidden','prerender','unknown'))
+    if kind in ('net','focus') and event['v'] is not None and type(event['v']) is not bool:
+        raise ValueError('diagnostic-schema')
+    byte_cap(event, 192)
+    return event
+
+
+def validate_events(events, count):
+    if not isinstance(events, list) or len(events) > count: raise ValueError('diagnostic-capacity')
+    previous_n, previous_t = 0, 0
+    for event in events:
+        validate_event(event)
+        if event['n'] <= previous_n or event['t'] < previous_t: raise ValueError('diagnostic-order')
+        previous_n, previous_t = event['n'], event['t']
+    byte_cap(events, count*192+count+1)
+
+
+def validate_attribution(value):
+    exact_keys(value, ('firstDisconnectEvent','cause'))
+    enum(value['cause'], ('unknown',))
+    if value['firstDisconnectEvent'] is not None:
+        validate_event(value['firstDisconnectEvent'])
+        if value['firstDisconnectEvent']['k'] not in TERMINAL_KINDS: raise ValueError('diagnostic-schema')
+    byte_cap(value, 384)
+
+
+def validate_delta(value):
+    exact_keys(value, ('schemaVersion','events','cursor','gap','truncated','droppedEvents',
+        'coverageStatus','firstDisconnectEvent','cause'))
+    if type(value['schemaVersion']) is not int or value['schemaVersion'] != 1: raise ValueError('diagnostic-schema')
+    validate_events(value['events'], 16)
+    for key in ('cursor','gap','droppedEvents'): bounded_int(value[key])
+    if type(value['truncated']) is not bool: raise ValueError('diagnostic-schema')
+    enum(value['coverageStatus'], ('partial','capacity','unavailable'))
+    validate_attribution({key:value[key] for key in ('firstDisconnectEvent','cause')})
+    if value['events']:
+        if value['cursor'] != value['events'][-1]['n'] or value['gap'] > value['events'][0]['n']-1:
+            raise ValueError('diagnostic-order')
+    elif value['gap'] or value['truncated']:
+        raise ValueError('diagnostic-order')
+    if value['truncated'] and len(value['events']) != 16: raise ValueError('diagnostic-order')
+    if value['gap'] > value['droppedEvents']: raise ValueError('diagnostic-order')
+    if len(compact(value))-len(compact(value['events'])) > 1007: raise ValueError('diagnostic-capacity')
+    byte_cap(value,4096)
+    return value
+
+
+def empty_diagnostic():
+    return {'schemaVersion':1,
+        'anchors':dict.fromkeys(('browserWallEpochMs','browserTimeOriginEpochMs','browserAnchorNowMs')),
+        'attribution':{'firstDisconnectEvent':None,'cause':'unknown'},
+        'counters':dict.fromkeys(EVENT_KINDS,0),
+        'state':{'visibility':'unknown','online':None,'focus':None,'socketState':'unavailable','pingReceivedAtMs':None,
+            'pongCreatedAtMs':None,'flushAtMs':None,
+            'lag':{'lastMs':None,'maxMs':0,'count':0,'missedIntervals':0,'buckets':[0,0,0,0]}},
+        'coverage':{'status':'unavailable','failure':'none','observedFromMs':0,
+            'boundAtMs':dict.fromkeys(('s','m','e')), 'bindingChanges':0,
+            'missingReferences':0,'transport':'unknown'},
+        'droppedEvents':0,'events':[]}
+
+
+def validate_diagnostic(value):
+    exact_keys(value, ('schemaVersion','anchors','attribution','counters','state','coverage','droppedEvents','events'))
+    if type(value['schemaVersion']) is not int or value['schemaVersion'] != 1: raise ValueError('diagnostic-schema')
+    exact_keys(value['anchors'], ('browserWallEpochMs','browserTimeOriginEpochMs','browserAnchorNowMs'))
+    for field in value['anchors'].values(): bounded_int(field,9999999999999,True)
+    byte_cap(value['anchors'],512)
+    validate_attribution(value['attribution'])
+    exact_keys(value['counters'], EVENT_KINDS)
+    for field in value['counters'].values(): bounded_int(field)
+    byte_cap(value['counters'],1024)
+    state = value['state']
+    exact_keys(state, ('visibility','online','focus','socketState','pingReceivedAtMs','pongCreatedAtMs','flushAtMs','lag'))
+    enum(state['visibility'], ('visible','hidden','prerender','unknown'))
+    enum(state['socketState'], ('unavailable','connected','state-observed-disconnected'))
+    for key in ('online','focus'):
+        if state[key] is not None and type(state[key]) is not bool: raise ValueError('diagnostic-schema')
+    for key in ('pingReceivedAtMs','pongCreatedAtMs','flushAtMs'): bounded_int(state[key],EVENT_TIME_MAX,True)
+    exact_keys(state['lag'], ('lastMs','maxMs','count','missedIntervals','buckets'))
+    for key in ('lastMs','maxMs','count','missedIntervals'): bounded_int(state['lag'][key],nullable=key == 'lastMs')
+    if not isinstance(state['lag']['buckets'],list) or len(state['lag']['buckets']) != 4: raise ValueError('diagnostic-schema')
+    for field in state['lag']['buckets']: bounded_int(field)
+    byte_cap(state,1024)
+    coverage = value['coverage']
+    exact_keys(coverage, ('status','failure','observedFromMs','boundAtMs','bindingChanges','missingReferences','transport'))
+    enum(coverage['status'], ('partial','capacity','unavailable'))
+    enum(coverage['failure'], ('none','schema-capacity'))
+    bounded_int(coverage['observedFromMs'],EVENT_TIME_MAX)
+    exact_keys(coverage['boundAtMs'], ('s','m','e'))
+    for field in coverage['boundAtMs'].values(): bounded_int(field,EVENT_TIME_MAX,True)
+    for key in ('bindingChanges','missingReferences'): bounded_int(coverage[key])
+    enum(coverage['transport'], ('websocket','polling','unknown'))
+    byte_cap(coverage,1024)
+    bounded_int(value['droppedEvents'])
+    validate_events(value['events'],128)
+    if len(compact(value))-len(compact(value['events'])) > 8063: raise ValueError('diagnostic-capacity')
+    return value
+
+
+def diagnostic_from_delta(previous, delta):
+    validate_delta(delta)
+    # This is explicitly partial last-known evidence, never a fabricated history.
+    value = json.loads(compact(previous))
+    value['events'] = delta['events']
+    value['droppedEvents'] = delta['droppedEvents']
+    value['attribution'] = {key:delta[key] for key in ('firstDisconnectEvent','cause')}
+    value['coverage']['status'] = delta['coverageStatus']
+    return validate_diagnostic(value)
+
+
+def atomic_evidence(path, value, *, initial=False):
+    encoded = compact(value)
+    if len(encoded) > MAX_ROW_BYTES: raise ValueError('evidence-budget-exceeded')
+    if initial:
+        fd = os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+        with os.fdopen(fd,'wb') as stream: stream.write(encoded)
+        return
+    # One same-directory temporary file, at most MAX_ROW_BYTES extra disk bytes.
+    temporary = path.with_name('.'+path.name+'.tmp')
+    fd = os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    try:
+        with os.fdopen(fd,'wb') as stream: stream.write(encoded)
+        os.replace(temporary,path)
+    finally:
+        try: temporary.unlink()
+        except FileNotFoundError: pass
+
+
+class CancellationCooperationError(RuntimeError):
+    """The backend did not settle within its cancellation allowance."""
+
+
+async def lifecycle_stage(operation, timeout, *, settlement=0.25):
+    """Own the task and include cancellation settlement in the stage deadline.
+
+    API teardown bounds require cancellation cooperation; an uncooperative API is
+    an implementation gate failure, never evidence of process exit or success.
+    """
+    task = asyncio.ensure_future(operation)
+    started = time.monotonic()
+    try:
+        done,_ = await asyncio.wait({task},timeout=max(0,timeout-settlement))
+        if done: return task.result()
+        raise TimeoutError()
+    except BaseException:
+        task.cancel()
+        settle_deadline = time.monotonic()+min(settlement,max(0,timeout-(time.monotonic()-started)))
+        done = {task} if task.done() else set()
+        while not done and time.monotonic() < settle_deadline:
+            try:
+                done,_ = await asyncio.wait({task},timeout=max(0,settle_deadline-time.monotonic()))
+            except asyncio.CancelledError:
+                # Preserve the first failure/cancellation while still owning the
+                # one child task and its original cancellation-settlement budget.
+                continue
+        if not done:
+            # Caller must treat this as a hard implementation gate failure. No
+            # in-process asyncio primitive can force an arbitrary API to settle.
+            raise CancellationCooperationError('cancellation-noncooperative') from None
+        try: task.result()
+        except BaseException: pass
+        raise
+
+
+async def run(args, *, manager_factory=None, limits=None):
     from dotenv import dotenv_values
-    from playwright.async_api import async_playwright
+    if manager_factory is None:
+        from playwright.async_api import async_playwright
+        manager_factory = async_playwright
+    caps = {'managerStart':10,'managerLaunch':15,'export':1,'browserClose':3,'managerStop':3,'cleanup':8}
+    if limits:
+        for key,value in limits.items():
+            if key not in caps or not nonnegative(value) or value > caps[key]: raise ValueError('lifecycle-limit')
+            caps[key] = value
+    enum(args.mode, ('stun','relay','tunnel'))
+    if type(args.duration_seconds) is not int or not 1 <= args.duration_seconds <= 43200:
+        raise ValueError('duration must be 1..43200 seconds')
     origin = args.origin.rstrip('/')
     parsed = urlsplit(origin)
     if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path:
         raise ValueError('origin must contain only scheme and host')
     password = os.environ.get('VIEWER_ACCESS_PASSWORD') or dotenv_values(args.runtime_config).get('VIEWER_ACCESS_PASSWORD')
-    if not password:
-        raise ValueError('runtime password unavailable')
+    if not password: raise ValueError('runtime password unavailable')
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     fd = os.open(output/'samples.jsonl', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -378,70 +631,257 @@ async def run(args):
     salt = secrets.token_bytes(16)
     start = None
     interrupted = True
-    stage = 'browser-start'
+    stage = 'not-started'
     failure = None
-    start_proof = {'status': 'NOT_VERIFIED'}
+    cancellation = None
+    cooperation_failure = None
+    manager = playwright = browser = page = None
+    start_proof = {'status':'NOT_VERIFIED'}
     startup = None
-    page = None
-    with os.fdopen(fd, 'w') as stream:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+    diagnostic = empty_diagnostic()
+    python_state = {'failureDetectedMs':None,'failureWallEpochMs':None,
+        'managerStart':{'startedMs':None,'finishedMs':None,'status':'not-started'},
+        'managerLaunch':{'startedMs':None,'finishedMs':None,'status':'not-started'},
+        'managerStop':{'startedMs':None,'finishedMs':None,'status':'not-started'},
+        'browserClose':{'startedMs':None,'finishedMs':None,'status':'not-created'},
+        'cleanupStatus':'not-started'}
+    capture_status = 'not-started'
+    write_status = 'ok'
+    cleanup_failed = False
+    stages = frozenset(('not-started','manager-start','browser-start','browser-context','entry',
+        'ui-login','observer-install','start-ui','media-start','sampling','cancelled','cleanup'))
+    reasons = ADMISSION_FAILURES | {'entry-unavailable','media-start-deadline',
+        'sample-continuity-lost','session-changed-or-disconnected','evidence-budget-exceeded',
+        'sampling-deadline-overrun','start-ui-unavailable','start-ui-deadline','start-ui-not-fresh',
+        'start-ui-click-unproven','start-ui-state-changed','timeout','cancelled','unknown',
+        'cancellation-noncooperative','cleanup-failed','evidence-write-failed'}
+
+    def now(): return min(9999999999999,round(time.monotonic()*1000))
+
+    def fail(exc, *, at=None):
+        nonlocal failure, interrupted
+        interrupted = True
+        if failure is not None: return
+        at = at or stage
+        if at not in stages: at = 'cleanup'
+        reason = 'cancelled' if isinstance(exc,asyncio.CancelledError) else 'timeout' if isinstance(exc,TimeoutError) else str(exc)
+        failure = {'stage':at,'category':'startup-guard' if at == 'start-ui' else 'media-wait' if at == 'media-start' else 'runtime',
+            'reason':reason if reason in reasons else 'unknown'}
+        python_state['failureDetectedMs'] = now()
+        python_state['failureWallEpochMs'] = min(9999999999999,max(0,round(time.time()*1000)))
+
+    def result():
+        elapsed = time.monotonic()-start if start is not None else 0
+        value = summary.result(elapsed_s=elapsed,interrupted=interrupted or cleanup_failed or write_status != 'ok' or python_state['cleanupStatus'] != 'api-finished-exit-unknown')
+        value.update(mode=args.mode,failure=failure,startProof=start_proof,startupSummary=startup,
+            originClass='loopback' if parsed.hostname in ('localhost','127.0.0.1','::1') else 'formal',
+            lifecycle={'file':'lifecycle.json','captureStatus':capture_status,
+                'cleanupStatus':python_state['cleanupStatus'],'writeStatus':write_status,
+                'ownedProcessExitEvidence':'not-observed'})
+        return value
+
+    def lifecycle():
+        validate_diagnostic(diagnostic)
+        # All Python values are locally generated, but validate the entire schema
+        # before every persistence attempt, including fallback/preliminary files.
+        exact_keys(python_state, ('failureDetectedMs','failureWallEpochMs','managerStart',
+            'managerLaunch','managerStop','browserClose','cleanupStatus'))
+        for key in ('failureDetectedMs','failureWallEpochMs'): bounded_int(python_state[key],9999999999999,True)
+        for key in ('managerStart','managerLaunch','managerStop','browserClose'):
+            record = python_state[key]
+            exact_keys(record, ('startedMs','finishedMs','status'))
+            for clock_key in ('startedMs','finishedMs'): bounded_int(record[clock_key],9999999999999,True)
+            enum(record['status'], ('ok','timeout','error','cancelled','not-started','not-created','closed','noncooperative'))
+        enum(python_state['cleanupStatus'], ('not-started','running','api-finished-exit-unknown','incomplete'))
+        enum(capture_status, ('not-started','ok','unavailable','timeout','error','cancelled','schema-rejected','noncooperative'))
+        enum(write_status, ('ok','error'))
+        byte_cap(python_state,2048)
+        value = {'schemaVersion':1,'diagnostics':diagnostic,'python':python_state,
+            'captureStatus':capture_status,'writeStatus':write_status,'ownedProcessExitEvidence':'not-observed'}
+        byte_cap({k:v for k,v in value.items() if k not in ('diagnostics','python')},512)
+        if len(compact(value))-len(compact(diagnostic['events'])) > 8063: raise ValueError('diagnostic-capacity')
+        byte_cap(value,MAX_ROW_BYTES)
+        return value
+
+    def persist(*, initial=False):
+        nonlocal write_status, diagnostic
+        try:
+            value = lifecycle()
+        except ValueError:
+            # Preserve only previously validated anchors/first terminal, fixed
+            # statuses and cleanup; never truncate bytes or arbitrary fields.
+            fallback = empty_diagnostic()
+            fallback['anchors'] = diagnostic['anchors']
+            fallback['attribution'] = diagnostic['attribution']
+            fallback['coverage'].update(status='capacity',failure='schema-capacity')
+            diagnostic = validate_diagnostic(fallback)
+            value = lifecycle()
+        for name in ('lifecycle.json','summary.json'):
+            payload = value if name == 'lifecycle.json' else result()
+            try: atomic_evidence(output/name,payload,initial=initial)
+            except (OSError,ValueError):
+                write_status = 'error'
+                fail(RuntimeError('evidence-write-failed'))
+
+    async def tracked(key, operation, cap):
+        record = python_state[key]
+        record.update(startedMs=now(),status='not-started')
+        try:
+            value = await lifecycle_stage(operation,cap,settlement=min(.25,cap/4))
+            record['status'] = 'closed' if key == 'browserClose' else 'ok'
+            return value
+        except asyncio.CancelledError:
+            record['status'] = 'cancelled'; raise
+        except TimeoutError:
+            record['status'] = 'timeout'; raise
+        except CancellationCooperationError:
+            record['status'] = 'noncooperative'; raise
+        except Exception:
+            record['status'] = 'error'; raise
+        finally: record['finishedMs'] = now()
+
+    async def sample_once():
+        nonlocal diagnostic
+        value = await page.evaluate('() => window.__wrdPassiveSampler.sample()')
+        if isinstance(value,dict) and 'diagnostics' in value:
+            diagnostic = diagnostic_from_delta(diagnostic,value['diagnostics'])
+        return value
+
+    async def cleanup():
+        nonlocal diagnostic, capture_status, cleanup_failed, startup, cooperation_failure
+        deadline = time.monotonic()+caps['cleanup']
+        python_state['cleanupStatus'] = 'running'
+        def remaining(key): return max(0,min(caps[key],deadline-time.monotonic()))
+        if failure is not None and page is not None and remaining('export') > 0:
             try:
-                context = await browser.new_context()
-                page = await context.new_page()
-                page.set_default_timeout(8000)
-                await page.add_init_script("localStorage.setItem('wrdNetworkMode', " + json.dumps(args.mode) + ");")
-                stage = 'entry'
-                response = await page.goto(origin, wait_until='domcontentloaded', timeout=30000)
-                if not response or response.status != 200:
-                    raise RuntimeError('entry-unavailable')
-                await page.locator('#password').wait_for(state='visible')
-                stage = 'ui-login'
-                await login_via_ui(page, password)
-                stage = 'start-ui'
-                start_proof = await start_via_ui(page)
-                await page.evaluate(Path(__file__).with_name('passive_session_sampler.js').read_text())
-                stage = 'media-start'
-                for _ in range(45):
-                    sample = await asyncio.wait_for(page.evaluate('() => window.__wrdPassiveSampler.sample()'), timeout=2)
-                    ready = (sample['socketConnected'] and (sample['relayFrameSeq'] is not None and sample['tunnelRelayActive'] and sample['relayLoadCallbacks'] > 1
-                        if args.mode == 'tunnel' else sample['pcState'] == 'connected' and sample['callbacks'] > 1))
-                    if ready: break
-                    await asyncio.sleep(1)
-                else: raise RuntimeError('media-start-deadline')
-                startup = await startup_summary(page)
-                stage = 'sampling'
-                start = time.monotonic()
-                await collect_samples(
-                    lambda: page.evaluate('() => window.__wrdPassiveSampler.sample()'),
-                    EvidenceWriter(stream), summary, salt, start=start, duration_s=args.duration_seconds,
-                    progress=lambda elapsed: print(json.dumps({'stage': stage, 'elapsedSeconds': round(elapsed),
-                        'samples': summary.samples, 'missing': summary.missing}), flush=True))
-                interrupted = False
-            except Exception as exc:
-                failure = {'stage':stage, 'category': ('startup-guard' if stage == 'start-ui'
-                    else 'media-wait' if stage == 'media-start' else 'runtime')}
-                if page is not None: startup = await startup_summary(page)
-                # Only our own fixed reason vocabulary may reach evidence.
-                if str(exc) in ADMISSION_FAILURES | {'entry-unavailable','viewer-present-or-unknown','authentication-unavailable',
-                    'admission-refused','media-start-deadline','sample-continuity-lost',
-                    'session-changed-or-disconnected','evidence-budget-exceeded','sampling-deadline-overrun',
-                    'start-ui-unavailable','start-ui-deadline','start-ui-not-fresh','start-ui-click-unproven',
-                    'start-ui-state-changed'}:
-                    failure['reason'] = str(exc)
+                startup = await lifecycle_stage(startup_summary(page),remaining('export'),
+                    settlement=min(.25,remaining('export')/4))
+            except CancellationCooperationError as exc:
+                cooperation_failure = exc; cleanup_failed = True
+            except BaseException: pass
+        if page is not None and remaining('export') > 0:
+            try:
+                value = await lifecycle_stage(page.evaluate(FINAL_EXPORT),remaining('export'),
+                    settlement=min(.25,remaining('export')/4))
+                if value is None: capture_status = 'unavailable'; cleanup_failed = True
+                else:
+                    candidate = validate_diagnostic(value)
+                    prior = diagnostic['attribution']['firstDisconnectEvent']
+                    found = candidate['attribution']['firstDisconnectEvent']
+                    if prior is not None and (found is None or found['n'] > prior['n']):
+                        candidate['attribution']['firstDisconnectEvent'] = prior
+                    diagnostic = validate_diagnostic(candidate)
+                    capture_status = 'ok'
+            except asyncio.CancelledError: capture_status = 'cancelled'; cleanup_failed = True
+            except TimeoutError: capture_status = 'timeout'; cleanup_failed = True
+            except ValueError: capture_status = 'schema-rejected'; cleanup_failed = True
+            except CancellationCooperationError as exc:
+                cooperation_failure = exc; capture_status = 'noncooperative'; cleanup_failed = True
+            except Exception: capture_status = 'error'; cleanup_failed = True
+        else: capture_status = 'unavailable'
+        # Ordered pre-close evidence survives browser.close and manager.stop.
+        persist()
+        if browser is not None:
+            if remaining('browserClose') > 0:
+                try: await tracked('browserClose',browser.close(),remaining('browserClose'))
+                except CancellationCooperationError as exc:
+                    cooperation_failure = exc; cleanup_failed = True
+                except BaseException: cleanup_failed = True
+            else:
+                python_state['browserClose'].update(status='timeout',startedMs=now(),finishedMs=now())
+                cleanup_failed = True
+        # A manager may exist after an unsuccessful start or launch. Teardown is
+        # attempted independently of browser close, inside this one total budget.
+        if manager is not None:
+            if remaining('managerStop') > 0:
+                try:
+                    operation = playwright.stop() if playwright is not None and hasattr(playwright,'stop') else manager.stop() if hasattr(manager,'stop') else manager.__aexit__(None,None,None)
+                    await tracked('managerStop',operation,remaining('managerStop'))
+                except CancellationCooperationError as exc:
+                    cooperation_failure = exc; cleanup_failed = True
+                except BaseException: cleanup_failed = True
+            else:
+                python_state['managerStop'].update(status='timeout',startedMs=now(),finishedMs=now())
+                cleanup_failed = True
+        if python_state['managerStart']['status'] != 'ok' or python_state['managerLaunch']['status'] != 'ok':
+            cleanup_failed = True
+        if cleanup_failed:
+            fail(RuntimeError('cleanup-failed'),at='cleanup')
+        python_state['cleanupStatus'] = 'incomplete' if cleanup_failed else 'api-finished-exit-unknown'
+
+    # Evidence ownership starts before manager construction/entry and ends after
+    # teardown. Even launch failure and repeated cancellation reach final writes.
+    with os.fdopen(fd,'w') as stream:
+        try:
+            persist(initial=True)
+            stage = 'manager-start'
+            manager = manager_factory()
+            operation = manager.start() if hasattr(manager,'start') else manager.__aenter__()
+            playwright = await tracked('managerStart',operation,caps['managerStart'])
+            stage = 'browser-start'
+            browser = await tracked('managerLaunch',playwright.chromium.launch(headless=True),caps['managerLaunch'])
+            stage = 'browser-context'
+            context = await lifecycle_stage(browser.new_context(),8)
+            page = await lifecycle_stage(context.new_page(),8)
+            page.set_default_timeout(8000)
+            await lifecycle_stage(page.add_init_script("localStorage.setItem('wrdNetworkMode', " + json.dumps(args.mode) + ");"),8)
+            stage = 'entry'
+            response = await lifecycle_stage(page.goto(origin,wait_until='domcontentloaded',timeout=30000),31)
+            if not response or response.status != 200: raise RuntimeError('entry-unavailable')
+            await lifecycle_stage(page.locator('#password').wait_for(state='visible'),9)
+            stage = 'ui-login'
+            await lifecycle_stage(login_via_ui(page,password),39)
+            stage = 'observer-install'
+            await lifecycle_stage(page.evaluate(Path(__file__).with_name('passive_session_sampler.js').read_text()),8)
+            stage = 'start-ui'
+            start_proof = await start_via_ui(page)
+            stage = 'media-start'
+            for _ in range(45):
+                sample = await lifecycle_stage(sample_once(),2)
+                ready = (sample['socketConnected'] and (sample['relayFrameSeq'] is not None and sample['tunnelRelayActive'] and sample['relayLoadCallbacks'] > 1
+                    if args.mode == 'tunnel' else sample['pcState'] == 'connected' and sample['callbacks'] > 1))
+                if ready: break
+                await asyncio.sleep(1)
+            else: raise RuntimeError('media-start-deadline')
+            startup = await startup_summary(page)
+            stage = 'sampling'
+            start = time.monotonic()
+            await collect_samples(sample_once,EvidenceWriter(stream),summary,salt,
+                start=start,duration_s=args.duration_seconds,
+                progress=lambda elapsed: print(json.dumps({'stage':stage,'elapsedSeconds':round(elapsed),
+                    'samples':summary.samples,'missing':summary.missing}),flush=True))
+            interrupted = False
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+            fail(exc)
+        except CancellationCooperationError as exc:
+            cooperation_failure = exc
+            fail(exc)
+        except Exception as exc:
+            fail(exc)
+        finally:
+            # A shield owns the single coordinator. Repeated external cancellation
+            # never restarts its deadline or skips synchronous final persistence.
+            coordinator = asyncio.create_task(cleanup())
+            try:
+                while not coordinator.done():
+                    try: await asyncio.shield(coordinator)
+                    except asyncio.CancelledError as exc:
+                        if cancellation is None: cancellation = exc; fail(exc)
+                    except BaseException:
+                        break
+                try: coordinator.result()
+                except BaseException:
+                    cleanup_failed = True
+                    python_state['cleanupStatus'] = 'incomplete'
+                    fail(RuntimeError('cleanup-failed'),at='cleanup')
             finally:
-                await browser.close()
-    elapsed = time.monotonic()-start if start is not None else 0
-    result = summary.result(elapsed_s=elapsed, interrupted=interrupted)
-    result.update(mode=args.mode, failure=failure, startProof=start_proof, startupSummary=startup,
-        originClass='loopback' if parsed.hostname in ('localhost','127.0.0.1','::1') else 'formal')
-    report_fd = os.open(output/'summary.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(report_fd, 'w') as report:
-        encoded = json.dumps(result, indent=2, allow_nan=False)
-        if len(encoded.encode('utf-8')) > MAX_ROW_BYTES: raise RuntimeError('evidence-budget-exceeded')
-        report.write(encoded)
-    print(json.dumps(result), flush=True)
-    return 0 if result['status'] == 'PASS' else 1
+                persist()
+    final = result()
+    print(json.dumps(final),flush=True)
+    if cancellation is not None: raise cancellation
+    if cooperation_failure is not None: raise cooperation_failure
+    return 0 if final['status'] == 'PASS' else 1
 
 
 if __name__ == '__main__':
