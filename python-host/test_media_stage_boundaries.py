@@ -25,8 +25,9 @@ async def test_media_clock_capture_stats_and_trace_follow_five_second_windows(mo
     track._frame_trace_context = SenderFrameTraceContext(
         registry, StageMetrics(registry=registry), "clock-test", 1)
     sent, log = [], Mock()
-    track._host_ref = SimpleNamespace(get_input_datachannel=lambda: SimpleNamespace(
-        send=lambda value: sent.append(json.loads(value))))
+    dc = SimpleNamespace(readyState="open", bufferedAmount=0,
+                         send=lambda value: sent.append(json.loads(value)))
+    track._host_ref = SimpleNamespace(get_input_datachannel=lambda: dc)
     monkeypatch.setattr("host.logger.info", log)
     try:
         for now, expected_reports in [(104.999, 0), (105.0, 1), (110.0, 2)]:
@@ -160,8 +161,9 @@ class TestCaptureBoundaries(unittest.IsolatedAsyncioTestCase):
         now = [0.0]
         sent = []
         self.track.last_time = 0.0
-        self.track._host_ref = SimpleNamespace(
-            get_input_datachannel=lambda: SimpleNamespace(send=lambda value: sent.append(json.loads(value))))
+        dc = SimpleNamespace(readyState="open", bufferedAmount=0,
+                             send=lambda value: sent.append(json.loads(value)))
+        self.track._host_ref = SimpleNamespace(get_input_datachannel=lambda: dc)
         self.publish(1, (0, 1))
         with patch("host.time.monotonic", lambda: now[0]), patch("host.logger.info") as log:
             await self.track.recv()

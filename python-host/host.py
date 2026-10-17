@@ -52,6 +52,7 @@ from h264_encoder_policy import (
     select_measured_media_policy,
 )
 from media_apply_coordinator import MediaApplyCoordinator, MediaApplyIdentity
+from dc_diagnostic_admission import DiagnosticAdmission
 from media_timing import RtpFrameClock
 from media_stage_metrics import FrameKey, FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
 from rtp_frame_observer import RtpFrameObserver, install_aiortc_observer
@@ -1745,21 +1746,15 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self.last_time = current_time
             self._total_reuse = 0
             # Send capture stats to viewer via DataChannel for FPS/latency display
-            host = getattr(self, '_host_ref', None)
-            if host is not None:
-                dc = host.get_input_datachannel()
-                if dc is not None and hasattr(dc, 'send'):
-                    try:
-                        dc.send(json.dumps({
-                            "type": "capture_stats",
-                            "fps": round(fps, 1),
-                            "width": frame.width,
-                            "height": frame.height,
-                            "reuse": interval_reuse,
-                            "frames": interval_frames,
-                        }))
-                    except Exception:
-                        pass
+            self._send_disposable_diagnostic({
+                "type": "capture_stats",
+                "fps": round(fps, 1),
+                "width": frame.width,
+                "height": frame.height,
+                "reuse": interval_reuse,
+                "frames": interval_frames,
+            })
+            logger.info("DC_DIAGNOSTIC_ADMISSION %s", self._diagnostic_admission.snapshot())
 
         self._send_frame_timing(
             capture_prepare_ms=worker_timing["prepare"] * 1000,
@@ -1770,14 +1765,18 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
         return frame
 
-    def _send_frame_timing(self, *, capture_prepare_ms, frame_convert_ms, imgproc_queue_ms=None, imgproc_build_ms=None):
-        host = getattr(self, '_host_ref', None)
-        if host is None:
-            return
-        dc = host.get_input_datachannel()
-        if dc is None or not hasattr(dc, 'send'):
-            return
+    def _send_disposable_diagnostic(self, payload):
+        # One event-loop turn: no await, retries, retained payloads or fallback.
+        if not hasattr(self, "_diagnostic_admission"):
+            self._diagnostic_admission = DiagnosticAdmission()
+        host = getattr(self, "_host_ref", None)
+        try:
+            dc = host.get_input_datachannel() if host is not None else None
+        except Exception:
+            dc = None
+        return self._diagnostic_admission.send(host, dc, payload)
 
+    def _send_frame_timing(self, *, capture_prepare_ms, frame_convert_ms, imgproc_queue_ms=None, imgproc_build_ms=None):
         with self._pending_input_lock:
             input_ids = list(self._pending_input_ids)
             self._pending_input_ids.clear()
@@ -1804,10 +1803,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
             timing["inputs"] = input_data_list
 
         self._timing_seq += 1
-        try:
-            dc.send(json.dumps(timing))
-        except Exception as e:
-            logger.debug("Frame timing send failed: %s", e)
+        if not self._send_disposable_diagnostic(timing):
+            self._diagnostic_admission.note_legacy_drop(len(input_ids), len(input_data_list))
 
     def _send_frame_trace_batch(self):
         """Best-effort diagnostics every 100ms; media never waits for this channel."""
@@ -1820,23 +1817,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._last_trace_send_ns = now_ns
         batch = context.registry.take_frame_trace_batch(limit=64)
         loss_batch = context.registry.take_loss_lab_trace_batch(limit=64)
-        if not batch["traces"] and not loss_batch["events"]:
-            return
         batch["droppedTraceCount"] = context.registry.snapshot()["droppedTraceCount"]
-        host = getattr(self, "_host_ref", None)
-        dc = host.get_input_datachannel() if host is not None else None
-        if dc is None or not hasattr(dc, "send"):
+        if batch["traces"] and not self._send_disposable_diagnostic(batch):
             context.registry.note_dropped_trace(len(batch["traces"]))
-            context.registry.note_dropped_loss_lab_events(len(loss_batch["events"]))
-            return
-        try:
-            if batch["traces"]:
-                dc.send(json.dumps(batch))
-            if loss_batch["events"]:
-                dc.send(json.dumps(loss_batch))
-        except Exception:
-            context.registry.note_dropped_trace(len(batch["traces"]))
-            context.registry.note_dropped_loss_lab_events(len(loss_batch["events"]))
+        if loss_batch["events"] or loss_batch["droppedEventCount"]:
+            if not self._send_disposable_diagnostic(loss_batch):
+                # take_loss_lab_trace_batch drains its count; return it exactly once.
+                context.registry.note_dropped_loss_lab_events(
+                    len(loss_batch["events"]) + loss_batch["droppedEventCount"])
 
     def _frame_trace_summary(self, context):
         """Return one bounded five-second evidence window without cross-clock math."""

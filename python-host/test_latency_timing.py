@@ -55,7 +55,8 @@ class TestFrameTiming(unittest.TestCase):
     def test_frame_timing_v2_only_names_measured_boundaries(self):
         sent = []
         track = object.__new__(ScreenCaptureTrack)
-        track._host_ref = type("Host", (), {"get_input_datachannel": lambda self: type("DC", (), {"send": lambda self, value: sent.append(value)})()})()
+        dc = SimpleNamespace(readyState="open", bufferedAmount=0, send=sent.append)
+        track._host_ref = SimpleNamespace(get_input_datachannel=lambda: dc)
         track._pending_input_lock = __import__("threading").Lock()
         track._pending_input_ids = set()
         track._pending_input_data = []
@@ -192,9 +193,8 @@ class TestFrameTiming(unittest.TestCase):
         async def produce_host_messages():
             track = bare_track(max_width=16, max_height=16)
             sent = []
-            track._host_ref = type("Host", (), {
-                "get_input_datachannel": lambda _self: type("DC", (), {"send": lambda _dc, value: sent.append(value)})(),
-            })()
+            dc = SimpleNamespace(readyState="open", bufferedAmount=0, send=sent.append)
+            track._host_ref = SimpleNamespace(get_input_datachannel=lambda: dc)
             track._frame_trace_context = context
             track._capture_buffer = Screenshot(np.zeros((16, 16, 4), dtype=np.uint8))
             track._capture_seq = 1
