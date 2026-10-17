@@ -49,3 +49,8 @@ Beacon resource total duration was 3490.2 ms, start 4099.0 / end 7589.2. Its DNS
 4. Avoid a speculative local index/login fix to remove or race an edge-injected module. The beacon is absent from repository login HTML/build output; current deferred login mount already runs before beacon finishes. Any retained analytics approach should be verified at the served page boundary.
 
 Operational decision: preserve services and all tunnels. No runtime restart or tunnel operation is needed to validate this finding. Authentication and actual user-visible readiness remain untested; the evidence establishes handler initialization before the late analytics/DCL/load boundary.
+
+
+## Follow-up proxy-route boundary
+
+Read-only system settings show HTTP/HTTPS/SOCKS enabled on loopback port 7897, with proxy environment variables also present. A fresh default-browser root navigation returned HTTP 200 with Playwright server address classified loopback (DCL 6.639s, TLS 2.104s, TTFB 1.012s). A separate disposable browser launched with --no-proxy-server also reported loopback (HTTP 200, DCL 8.051s, TLS 3.773s, TTFB 1.090s). Thus the latter did NOT establish an independent direct connection and cannot be used as a proxy-versus-direct result or a reason to change routing. Only the disposable test browser flags differed; no system/application/tunnel configuration changed, no login or Viewer was created. Evidence is private browser-route-ab-20261017a.json and readonly-proxy-route-20261017a.json under the rollout directory.
