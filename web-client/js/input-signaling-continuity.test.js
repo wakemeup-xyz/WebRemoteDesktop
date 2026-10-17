@@ -1488,3 +1488,43 @@ test('startup supervision: legacy config await cannot initialize after auth gene
   assert.equal(w._startupEpisode.reason, 'auth-changed');
   assert.equal(w.uiPhase, 'disconnected');
 });
+
+for (const path of ['direct refresh', 'scheduled reconnect']) {
+  test(`review I2: actual ${path} preserves nonblocking slow-start presentation and remaining allowance`, async () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const loading = h.context.document.getElementById('loading');
+  const classes = new Set(['is-connecting']);
+  loading.classList = {
+    add: (...names) => names.forEach(name => classes.add(name)),
+    remove: (...names) => names.forEach(name => classes.delete(name)),
+    contains: name => classes.has(name),
+  };
+  h.context.RTCPeerConnection = class {
+    constructor() { this.connectionState = 'new'; this.iceConnectionState = 'new'; }
+    createDataChannel() { return { readyState: 'connecting' }; }
+    close() { this.connectionState = 'closed'; }
+  };
+  h.advance(8000);
+  const episode = w._startupEpisode;
+  assert.equal(episode.state, 'slow');
+  assert.equal(classes.has('is-connecting'), false);
+  assert.equal(h.context.document.getElementById('startupWaitControls').hidden, false);
+  if (path === 'scheduled reconnect') {
+    w.scheduleReconnect('negotiation-timeout');
+    assert.equal(classes.has('is-connecting'), false);
+    assert.match(h.context.document.getElementById('loadingText').textContent, /连接较慢/);
+    h.advance(1500);
+  } else {
+    await w.refresh({ reason: 'reconnect:negotiation-timeout' });
+  }
+  assert.equal(w._startupEpisode, episode);
+  assert.equal(episode.remaining, path === 'scheduled reconnect' ? 62500 : 64000);
+  assert.equal(classes.has('is-connecting'), false);
+  assert.match(h.context.document.getElementById('loadingText').textContent, /连接较慢/);
+  assert.equal(h.context.document.getElementById('startupWaitControls').hidden, false);
+  assert.equal(h.Input.isActive, false);
+  w.checkStartupEpisode();
+  assert.equal(classes.has('is-connecting'), false);
+  assert.equal(episode.state, 'slow');
+});
+}

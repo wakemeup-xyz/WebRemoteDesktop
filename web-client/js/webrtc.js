@@ -2443,9 +2443,7 @@ const WebRTC = {
     if (paused) return;
     if (e.feedbackRemaining <= 0 && e.state === 'pending') {
       e.state = 'slow';
-      document.getElementById('loading')?.classList.remove('is-connecting');
-      updateLoadingText('连接较慢，仍在等待画面；可以重试或取消');
-      this.renderStartupControls(true);
+      this.showSlowStartup();
     }
     const delay = Math.min(e.remaining, e.paint?.remaining ?? Infinity,
       e.state === 'pending' ? e.feedbackRemaining : Infinity);
@@ -2535,6 +2533,12 @@ const WebRTC = {
         ? '媒体链路已连接，但等待画面超时，请重试' : '等待媒体连接超时，请重试');
       this.renderStartupControls(true, false);
     }
+  },
+
+  showSlowStartup() {
+    document.getElementById('loading')?.classList.remove('is-connecting');
+    updateLoadingText('连接较慢，仍在等待画面；可以重试或取消');
+    this.renderStartupControls(true);
   },
 
   renderStartupControls(show, cancel = true) {
@@ -6906,8 +6910,12 @@ if (this.tunnelLastObjectUrl) {
       videoElement?.classList.remove('connected');
       document.body.classList.remove('stream-connected');
       document.getElementById('loading')?.classList.remove('hidden');
-      document.getElementById('loading')?.classList.add('is-connecting');
-      updateLoadingText('正在重新连接...');
+      if (this._startupEpisode?.state === 'slow') {
+        this.showSlowStartup();
+      } else {
+        document.getElementById('loading')?.classList.add('is-connecting');
+        updateLoadingText('正在重新连接...');
+      }
     }
     this.stopTunnelRelay();
 
@@ -7140,6 +7148,7 @@ if (this.tunnelLastObjectUrl) {
       return;
     }
 
+    if (this._startupEpisode?.state === 'slow') this.showSlowStartup();
     const attempt = Number(this._reconnectAttempt) || 0;
     const delay = Math.min(1500 * (2 ** attempt), 15000);
     this._reconnectAttempt = attempt + 1;
@@ -7357,6 +7366,11 @@ if (this.tunnelLastObjectUrl) {
       if (retained) this.applyBootstrapSnapshot(retained.snapshot);
     }
     catch (error) {
+      // Rejection bypasses admission's post-await guard. Before enrollment the
+      // pending bootstrap belongs to previousEpisode; afterward it belongs to
+      // episode. Neither failure may clean up a newer explicit Start.
+      if ((episode || previousEpisode) !== this._startupEpisode
+          || (episode && !this.startupAllowed(episode))) return false;
       if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
       return false;
     }

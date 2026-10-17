@@ -7951,3 +7951,47 @@ test('startup ownership: detached old PC and metadata callbacks cannot act on re
   assert.equal(h.WebRTC.uiPhase, 'signaling');
   assert.equal(h.WebRTC.hasPaintedFrame, false);
 });
+
+for (const boundary of ['admission', 'pre-enrollment bootstrap']) {
+  test(`review I1: obsolete reclaim ${boundary} rejection cannot terminate a newer explicit Start`, async () => {
+    let rejectOld, admissionCalls = 0;
+    const h = admissionViewerFixture({ realPeer: true, fetchAdmission: () => {
+      admissionCalls++;
+      if (boundary === 'admission' && admissionCalls === 2) {
+        return new Promise((_resolve, reject) => { rejectOld = reject; });
+      }
+      return { ok: true, status: 201, json: async () => ({ admission: { ticket: `ticket-${admissionCalls}` } }) };
+    } });
+    let oldStart;
+    if (boundary === 'pre-enrollment bootstrap') {
+      oldStart = h.WebRTC.startViewer({ load: () => new Promise((_resolve, reject) => { rejectOld = reject; }) });
+      for (let i = 0; i < 30; i++) await Promise.resolve();
+      h.sockets[0].trigger('viewer-superseded', {});
+    } else {
+      await h.WebRTC.startViewer(h.controller);
+    }
+    const reclaim = h.WebRTC.reclaimDesktopSession();
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    await h.WebRTC.startViewer(h.controller);
+    const w = h.WebRTC, episode = w._startupEpisode, pc = w.pc, socket = w.socket;
+    const timer = episode.timer, phase = w.uiPhase;
+    rejectOld(new Error('obsolete-request-failed'));
+    assert.equal(await reclaim, false);
+    if (oldStart) await oldStart;
+    assert.equal(w._startupEpisode, episode);
+    assert.equal(episode.state, 'pending');
+    assert.equal(episode.timer, timer);
+    assert.equal(w.pc, pc);
+    assert.equal(w.socket, socket);
+    assert.equal(w.uiPhase, phase);
+    assert.equal(admissionCalls, boundary === 'admission' ? 3 : 2);
+  });
+}
+
+test('review I1: current reclaim admission rejection retains terminal failure authority', async () => {
+  const h = admissionViewerFixture({ fetchAdmission: () => Promise.reject(new Error('current-request-failed')) });
+  assert.equal(await h.WebRTC.reclaimDesktopSession(), false);
+  assert.equal(h.WebRTC._startupEpisode.state, 'retired');
+  assert.equal(h.WebRTC._startupEpisode.reason, 'bootstrap-failure');
+  assert.equal(h.WebRTC.uiPhase, 'disconnected');
+});
