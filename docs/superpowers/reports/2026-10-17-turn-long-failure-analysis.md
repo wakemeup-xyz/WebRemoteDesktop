@@ -72,7 +72,7 @@ startupSummary里hostOnline=false/ui disconnected/FREE不能覆盖之后256份�
 
 浏览器Socket到失败仍connected，1秒lag探针max16ms、267次、missed0，visible/online/focus true。Viewer信令心跳10 ping创建/flush/pong匹配，关闭时Signal Node窗口last6/max262/P95 127ms、missed0、age2.36s；仅代表最后窗口。254条Host VIEWER_STATS所报loss全0、正向NACK总1；无完整网路逐包证据。RTT先241、首停顿恢复时4368/3158/2087ms，既可能含接收/网络扰动，也可能被Host不能及时处理RTCP放大，不能当单向网络耗时。纯外网慢无法独立解释本地capture与loop一起停顿。
 
-48份`DC_DIAGNOSTIC_ADMISSION`为累计计数：最后frame_timing sent2432/dropped1、capture_stats sent48/dropped0、detail trace0；原因仅初期unavailable1，congested/invalid_buffer/send_error均0。不能把48条累计值相加；没有证据表明本次触达新32KiB准入门槛或诊断积压触发停顿，也不能由congested0断言底层永不排队。首停顿期间sent几乎不增长，与生产进展停顿相容。所有主动输入/ACK/输入到可见效果指标保持缺测null/NOT RUN。
+48份`DC_DIAGNOSTIC_ADMISSION`为累计计数：最后frame_timing sent2432/dropped1、capture_stats sent48/dropped0、detail trace0；原因仅初期unavailable1，congested/invalid_buffer/send_error均0。不能把48条累计值相加；没有证据表明本次触达新4096B准入门槛或诊断积压触发停顿，也不能由congested0断言底层永不排队。首停顿期间sent几乎不增长，与生产进展停顿相容。所有主动输入/ACK/输入到可见效果指标保持缺测null/NOT RUN。
 
 ## 4. Profile/codec往返：既有自动链与Quality Lock真实边界
 
@@ -110,3 +110,5 @@ helper browser.close/manager.stop成功，原ownedProcessExitEvidence仍not-obse
 5. **把资源可用性列为验收前置证据。** 同机负载52→182、大量换页与资源采集超时在失效窗确实存在；优先由用户释放已知重负载或在有依据的独立资源窗口完成后续验收。不得杀未授权应用，亦不能声称代码修复能保证在这种整机压力下稳定。确认新代码针对已复现机制、观测可工作、资源窗口有记录后再进行下一次长会话。
 
 本轮不是通过的长测，短测通过不能抵销本轮失败；当前已确立“本机进展停顿→媒体间歇冻结，后Host心跳失败→控制lease清零”的时间顺序。尚未取得足够native/调度证据宣布最初系统根因唯一确定，真实输入到可见效果仍NOT RUN。
+
+Root复核更正：生产DC预算为4096B，原审计提及32KiB是笔误；已按实际已部署常量更正。采样下一步先执行[采样观测方案](../specs/2026-10-17-sample-observation-design.md)规定的自建无业务子进程能力检查，不直接重复生产Host采样。
