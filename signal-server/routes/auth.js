@@ -1,5 +1,4 @@
 const express = require('express');
-const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { loadConfig } = require('../lib/config');
@@ -54,11 +53,6 @@ function createAuthLimiters(options = {}) {
   };
 }
 
-async function verifyPassword(input, expected) {
-  const hash = bcrypt.hashSync(expected, 10);
-  return bcrypt.compare(String(input || ''), hash);
-}
-
 function createAuthRouter(options = {}) {
   const router = express.Router();
   const terminalAudit = options.terminalAudit || createTerminalAudit(options.logger || console);
@@ -80,7 +74,9 @@ function createAuthRouter(options = {}) {
       return res.status(400).json({ error: 'Password required' });
     }
 
-    const valid = await verifyPassword(password, viewerAccessPassword);
+    const valid = typeof viewerAccessPassword === 'string'
+      && viewerAccessPassword.length > 0
+      && constantTimeSecretEqual(password, viewerAccessPassword);
     if (!valid) {
       return res.status(401).json({ error: 'Invalid password' });
     }
