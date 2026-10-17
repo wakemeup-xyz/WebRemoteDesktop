@@ -20,6 +20,10 @@ Owned: python-host/runtime_observability.py, python-host/test_runtime_observabil
 
 Read-only capture-path review evaluates minimal phase observation without media behavior changes. Decide separately after Task1; do not silently expand its owner scope. Prospective browser-close allocation may use at most5s while reserving3s manager stop inside unchanged8s shared deadline; old timeout cannot become PASS. No sampling-backend replacement without a documented/validated bounded private design. Any implemented follow-on requires exact scope and pure regressions before promotion.
 
+### Task 2A selected: Capture wall/CPU companions
+
+Binding spec: ../specs/2026-10-18-capture-cpu-observation-design.md. After Task1 review/fixes release source ownership, a fresh implementer owns only python-host/runtime_observability.py capture section, host.py capture-loop timing/read helper import, and test_capture_observation.py. Do not change ResourceSampler/owner, imgproc/media stages or unrelated tests. Implement actual AST-loop behavioral RED for known wall/CPU pair plus pure max-companion regression, four fixed fields and safe current-thread clock reads; retain all old capture lifecycle behavior. Run meaningful pure capture/AST tests plus the53-test affected integration set once after changes. Independent task spec+quality review, original-worker fixes/scoped rereview, then combined most-capable review. Root remains docs/index owner until explicit handoff. Full watchdog/MSS/backend instrumentation deferred.
+
 ## Task 3: Promote and qualify
 
 Root final most-capable review of exact increment, guarded exact-byte sync preserving primary state and tunnel, safe local Host reload, health/Host/build/password report. Fresh passive short run only when user Viewer absent, one normal UI Start/proof, no heavy work while active. Preserve failures, trace missing evidence and user-session priority. Then pursue long-session and actual-user input acceptance; never call passive gates actual input/visible-effect latency.
