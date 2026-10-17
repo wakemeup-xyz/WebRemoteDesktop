@@ -204,3 +204,7 @@ Host时钟修复后新TURN300s PASS：301样本0missing/late/failed/identitychan
 随后JPEG媒体生命周期测试实际69.744991s/69样本FAIL：初始/暂停/恢复全部通过，但恢复后qualified load age到5200ms，输入门禁按新鲜度保护关闭；socket仍connected。失败原因是post-recovery-not-healthy，完整现场在本机`/tmp/wrd-public-media-clock-jpeg-20261017a`，继续分层诊断，不能用前一TURN通过覆盖此失败。
 
 Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项失败独立确认为缺M6认证scope的旧fixture，正在单独修复测试，生产校验不放宽。[实现](2026-10-17-viewer-clock-implementation.md)、[review](2026-10-17-viewer-clock-task-review.md)。临时候选buildb6d77cd86c6f9d02保留c305/f5，尚未上线。
+
+## 可丢诊断通道准入增量（尚未部署）
+
+`e279060`仅对frame_timing、capture_stats和两类detail批次增加4096B同步字节准入，拥塞时丢弃并按固定字段统计；可靠input_ack、M2binding、时钟及labflush路径不变，不重试/补发旧诊断。65项Python及45项Node回归通过，独立task review通过；一个已有trace fixture失败经独立归类，在`616a79d`补当前receiver/SSRC及detail启用条件，保留全部原断言，6项安全Python/21项Node检查及独立复核通过。测试范围有重叠，不相加为唯一用例数。详见[实现](2026-10-17-dc-diagnostic-admission-implementation.md)、[准入复核](2026-10-17-dc-diagnostic-admission-review.md)、[fixture复核](2026-10-17-trace-integration-fixture-review.md)。跨层最终复核进行中；当前运行Host仍是先前版本，不能提前宣布已加载。4KiB不是完整SCTP/ACK内存界，也不是13.8s停帧根因修复的证明。
