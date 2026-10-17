@@ -1,6 +1,6 @@
 # 晚间反复连接失败与控制中断：继续诊断
 
-更新：2026-10-17 22:27，Asia/Shanghai。状态：继续排查，尚未稳定验收；本地服务保持运行。用户维护授权延续；本轮没有重启或修改tunnel。
+更新：2026-10-17 23:13，Asia/Shanghai。状态：继续排查，尚未稳定验收；本地服务保持运行。用户维护授权延续；本轮没有重启或修改tunnel。
 
 ## 为什么先前修复后仍有问题
 
@@ -76,8 +76,16 @@ maxLagMs是滚动60秒最大值，不是该条日志瞬间或上次发日志以�
 
 每窗指标：candidate RTT last34–5827ms；decode last0.844–12.9518ms；buffer0–674.5ms。这些是应用窗口快照，部分可陈旧约5秒，不是本轮独立整体P95，也不是单向传输时间。真实输入ACK/应用阶段/输入后新帧/可见效果全未测。新增sink没有每帧写盘，但Socket键盘/按钮/命令会沿既有结构化日志逐条同步写盘，move/wheel每100条聚合；轮转只界定容量，不界定延迟/事件率。该开销未实测且不能解释启用前的空闲停顿，后续输入性能验收需单列。
 
-**本轮确定的新代码缺陷：启动DataChannel看门狗过早。** 诊断capturedAt22:09:25.165，不能用uploadedAt22:09:27.826替代；首Host answer在22:09:25.547才发送。当前10秒DC计时从peer/channel创建开始，消耗了控制/信令及relay最多8秒ICE gathering；new状态不延期，尚未完成answer便判dc-stuck并触发第二offer、拆掉旧Host peer。第二次连接才在22:09:33.635达到采样基线。并非证实有reset/activeACK等待竞态，首轮如果继续是否最终成功也未测。初次core资源14.267s、先core-failed后core-interactive是另一个慢启动现象，当前没有独立代码归因。
+**本轮确定的新代码缺陷：启动DataChannel看门狗过早。** 诊断captured.wallTime22:09:25.165，server receivedAt为22:09:27.004；报告未提供明确uploadedAt字段，不能用后续接收/记录时间替代故障捕获时间；首Host answer在22:09:25.547才发送。当时旧版10秒DC计时从peer/channel创建开始，消耗了控制/信令及relay最多8秒ICE gathering；new状态不延期，尚未完成answer便判dc-stuck并触发第二offer、拆掉旧Host peer。第二次连接才在22:09:33.635达到采样基线。并非证实有reset/activeACK等待竞态，首轮如果继续是否最终成功也未测。初次core资源14.267s、先core-failed后core-interactive是另一个慢启动现象，当前没有独立代码归因。
 
-新[启动看门狗设计](../specs/2026-10-17-startup-datachannel-watchdog-design.md)和[执行计划](../plans/2026-10-17-startup-datachannel-watchdog-plan.md)已写入，独立preflight后实施：分离有界negotiation与answer成功后的DC等待，保留已有恢复/权限/画质策略，并让固定阶段状态通过schema3白名单持久化。此修复尚未加载，不宣称已解决。
+新[启动看门狗设计](../specs/2026-10-17-startup-datachannel-watchdog-design.md)和[执行计划](../plans/2026-10-17-startup-datachannel-watchdog-plan.md)已写入，独立preflight后实施：分离有界negotiation与answer成功后的DC等待，保留已有恢复/权限/画质策略，并让固定阶段状态通过schema3白名单持久化。修复后来于22:58加载，详见下方最新结果；该时刻的根因证据和失败记录保留。
 
 22:17本地health/Host在线、Viewer/relay0；22:20左右正式根HTTP200，TTFB1.747765s、总1.748159s，属于只读HTTP探测不是连续性通过。独立进程RSS快照较大项多为Codex Renderer（单进程约0.6–1.84GiB），另有后台Python/数据库；共享页不能相加当可回收内存，没有据此关闭其他工作或认定唯一资源来源。
+
+## 23:13 最新部署与复测
+
+启动看门狗修复已完成任务和最终独立review，期间修正阶段年龄重置与旧失败快照残留两项P2；当前源码3cafc64、build22d13d54ac6b458a。22:58:48仅重启Signal（PID15383），3.371秒恢复；Host89291和tunnel/watch保持。23:00:19–23:05:19的正式入口被动测试PASS：300.081秒/301样本，maxgap916.7ms，无采样期身份变化或失败观测；结束后Host在线、Viewer/relay0。
+
+启动仍记录一次connect_error与自动恢复，原因unknown，之后Host只收到一次offer、约3.061秒连接。PC2/gen2的具体刷新原因因事件环丢772条不能直接证明；源码恢复路径是有依据推断。当前不支持继续延长watchdog，转而核查信令预算/回退和错误分类留存。最新传输快照RTT30–510ms、解码0.465–1.608ms；Host滚动60秒窗口P95为2.149–6.844ms，抓屏最近完成21.544–53.110ms。快照不是全程分位数；输入ACK/应用后帧/真实可见效果及三小时未验收。早前长停顿不会被此短测抵消。
+
+[完整review、部署、延迟与启动时序](2026-10-17-startup-watchdog-review-and-rollout.md)及[脱敏结果](evidence/2026-10-17-startup-watchdog/summary.json)。

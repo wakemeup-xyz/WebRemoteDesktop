@@ -1,5 +1,7 @@
 # 稳定性与延迟整改实施记录
 
+> **23:13 最新更新：** 启动DC阶段修复3cafc64/build22d13d54ac6b458a已加载，仅Signal重启3.371秒，Host/tunnel/watch保持。正式300秒被动测试PASS（301样本/maxgap916.7ms），启动仍有一次unknown信令错误后恢复；继续核查，真实输入和三小时未验收。[本轮review与部署](2026-10-17-startup-watchdog-review-and-rollout.md)。
+
 > **22:08 晚间续查更新：** 已部署诊断保存回执、固定入口摘要及独立抓屏状态观测，冻结候选db5d2b1/build067dfc41e8374b4e。Signal89188/Host89291在线；本地重启25.829s，tunnel/watcher与主HEAD/index保留。实际HTTP首次/重复提交均确认、pending0，入口完整JSONL与Host空闲capture已核对。旧版本正式短测maxgap10.566s；空闲窗口也有15.647s迟到及高换页，新版本短测继续复现，整体稳定性仍未通过。[晚间诊断](2026-10-17-evening-connectivity-followup.md)、[增量review](2026-10-17-evening-evidence-review.md)。下文按时间保留历史版本和失败证据。
 
 > **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新TURN窗口turn-long-20261017b最终131.953秒/132样本INCOMPLETE：客户端transport-close时PC与画面仍推进，maxgap783.3ms；5次Signal ping均有pong，本次没有长停帧或ping-timeout签名。七个已登记测试身份自然退出；三小时及真实input→visible仍未通过。

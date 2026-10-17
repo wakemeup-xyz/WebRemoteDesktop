@@ -1,0 +1,55 @@
+{
+  "sourceCommit": "3cafc64a303c10d69cd890248e70a4bf69a7d8e0",
+  "buildId": "22d13d54ac6b458a",
+  "sampling": {
+    "status": "PASS",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 300.08107791794464,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "maxObservedNoProgressMs": 916.6999999999825,
+    "progressAfterBaseline": true,
+    "frameStallThresholdMs": 5000,
+    "frameEvidence": "requestVideoFrameCallback",
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "mode": "relay",
+    "originClass": "formal"
+  },
+  "supervisor": {
+    "workerExitCode": 0,
+    "deadline": false,
+    "failureType": null,
+    "intervention": false,
+    "elapsedSeconds": 345.7230342698749,
+    "completeProcessTreeExitEstablished": false
+  },
+  "ownedProcesses": {
+    "registered": 7,
+    "allRegisteredExited": true,
+    "signalsSent": 0
+  },
+  "sampleTriggered": false,
+  "inputMetrics": "NOT_RUN",
+  "nativeInput": "NOT_RUN",
+  "currentServiceAfterProbe": {
+    "health": true,
+    "hostOnline": true,
+    "viewerCount": 0,
+    "relayViewerCount": 0
+  },
+  "startupIdentityCause": "Startup connect_error and retry directly observed; exact peer-refresh call inferred because early ring events dropped.",
+  "scopeNote": "Passive continuity only; not true input, ordinary reconnect, optical effect or three-hour qualification.",
+  "startupSignalingError": {
+    "count": 1,
+    "classification": "unknown",
+    "timeLocal": "2026-10-17T23:00:05.774+08:00",
+    "capturedSocketDisconnectBeforeSample": 0
+  }
+}

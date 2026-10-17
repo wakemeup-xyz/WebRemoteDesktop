@@ -22,3 +22,7 @@ Files: web-client/js/webrtc.js, runtime-diagnostic.js, diagnostic-core.js; diagn
 2. IsolatedViewerbuild + frozenapply baseactualprimarydb5d2b1 (plusdocs-only sync ifperformed). PreserveHEAD/index/unrelatedfiles/WATCH4; privatebackup. FreshHostonline/Viewer0/relay0; restartSignalonly viahelper; Hostautoreconnect verify, noHost/tunnelbounce.
 3. Verify source/build/manifest/retaindassets/health/Host/credentials, actualboundeddiagnostics schema ifsafelypossible. One guardedsession cancheckstartup andcapturelogs; noforcedordinaryadmission/nativeinput. No tests/build/reloads duringprobe. Preserveanyfailure andcurrentserviceavailability.
 4. Updatediagnosticreports with fixedprematuretimeout vsremaininghost/systemstall separately; neverclaim3h/nativeinput/overallstable withoutactualevidence.
+
+## Execution status
+
+Task1 implementation and task/final independent reviews complete:3cafc64;426baseline,22phase-age fix,61retirement fix focused tests pass (overlapping, not summed). Task2 frozen build/apply and Signal-only reload complete;300.081s passive formal window PASS301/maxgap916.7ms. Actualprimarybasef0571d6 afterdocs-onlysync;Host/tunnel unchanged. Startupconnect_error remainsunknown and is a separate follow-up investigation; ordinary user/nativeinput/3h qualification remain open. See [review and rollout](../reports/2026-10-17-startup-watchdog-review-and-rollout.md).

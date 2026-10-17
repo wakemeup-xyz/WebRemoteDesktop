@@ -1,6 +1,6 @@
 # 启动期DataChannel看门狗阶段修正
 
-2026-10-17。继续按brainstorming + writing-plans执行；维护、开发、本地加载已授权。当前生产db5d2b1/build067dfc41e8374b4e，原工作区HEAD/index/其他修改和tunnel/watch必须保留。
+2026-10-17。继续按brainstorming + writing-plans执行；维护、开发、本地加载已授权。设计时生产db5d2b1/build067dfc41e8374b4e，原工作区HEAD/index/其他修改和tunnel/watch必须保留。
 
 ## 已复现的缺陷与范围
 
@@ -36,3 +36,5 @@
 纯VM/fakeclock/fakeRTCPeerConnection，不接真实生产或原生输入。必须先写旧实现会失败的延迟answer案例：peer new超过10秒仍在30秒协商预算内不报dc-stuck，成功answer后新的10秒期限才开始。另测never-answer30秒正确分类、pending setRemoteDescription跨截止、ICE checking延期有界、已connected重建、open-before-answer、重复answer不延期、意外close于new/checking仍有界、connected-close旧3秒回调隔离、控制租约退休、替换/refresh/disconnect/tunnel/旧callback/staleawait隔离、最终只一次恢复。用实际核心+延迟panel builder、localStorage投影和服务端persist/receipt覆盖固定字段保留及隐私/上限；未知字段和secret-shaped hostile值必须丢弃。
 
 逐项review及最终增量review后隔离build，按实际主工作区基线db5d2b1冻结apply；仅重启Signal加载新Viewer与诊断redactor，Host无需重启。再次核对fresh Hostonline、Viewer/relay0、资产与tunnel/watch身份。受控正常登录/Start复测分开记录startup dc-stuck、frame stall、cleanup，不将无dc-stuck等同整体稳定。保持服务在线。
+
+实施完成于22:58，实际apply基线为docs-only同步后的f0571d6，产品行为基线仍db5d2b1；源3cafc64。独立review与300秒被动验收结果见[实施报告](../reports/2026-10-17-startup-watchdog-review-and-rollout.md)，不代表整体稳定性或真实输入验收完成。
