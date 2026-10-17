@@ -1,0 +1,263 @@
+{
+  "scope": "read-only bounded short-run resource and CPU audit",
+  "windowUtc": [
+    "2026-10-17T19:30:25.380289+00:00",
+    "2026-10-17T19:36:09.225518+00:00"
+  ],
+  "windowSeconds": 343.845,
+  "runtime": {
+    "candidate": "c583250",
+    "hostPid": 94398,
+    "hostBirthLocal": "2026-10-18 03:29:32",
+    "signalPid": 51710,
+    "signalBuildId": "ed92d1313adb54f6",
+    "samePidsAndBuildAtEnd": true,
+    "healthAndHostOnlineAtBothBounds": true,
+    "viewerEpochAtBounds": [
+      1,
+      2
+    ]
+  },
+  "sources": {
+    "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log": {
+      "start": 3602738,
+      "end": 3910067,
+      "bytes": 307329,
+      "device": 16777220,
+      "inode": 43654875,
+      "sha256": "c9da77244f872649cac4d7d91316e96dcb051c5604bc7daa3dc6eeda27cab277",
+      "lineCount": 986,
+      "startBoundary": "unknown (preceding byte outside authorized window)",
+      "endBoundary": "line"
+    },
+    "/tmp/signal-server.log": {
+      "start": 2237861,
+      "end": 2247424,
+      "bytes": 9563,
+      "device": 16777220,
+      "inode": 31830923,
+      "sha256": "a5e88350665e25ac5237514620f32a5dac34390ca125a8c56369adb78b63e4b1",
+      "lineCount": 322,
+      "startBoundary": "unknown (preceding byte outside authorized window)",
+      "endBoundary": "line"
+    },
+    "/tmp/wrd-structured/signal-server.jsonl": {
+      "start": 963064,
+      "end": 980066,
+      "bytes": 17002,
+      "device": 16777220,
+      "inode": 43620520,
+      "sha256": "7a79dd564e02cf324773307bb1848531edbdc402ddfeb7c486fad4fda0add6dc",
+      "lineCount": 13,
+      "startBoundary": "unknown (preceding byte outside authorized window)",
+      "endBoundary": "line"
+    }
+  },
+  "hostJsonl": "absent-at-both-bounds",
+  "counts": {
+    "hostLagEvents": 62,
+    "encoderSamples": 61,
+    "captureStats": 61,
+    "viewerStats": 302,
+    "viewerSummaries": 302,
+    "structuredSignalEvents": 13,
+    "events": {
+      "host_event_loop_lag": 62,
+      "host_session_presentation": 1,
+      "viewer_bootstrap_served": 2,
+      "connection_attempt_bound": 1,
+      "entry_window": 5,
+      "signal_socket_disconnected": 1,
+      "viewer_disconnect_grace_started": 1,
+      "control_transition_failed_closed": 1,
+      "control_reset_retry": 1,
+      "control_reset_completed": 1
+    }
+  },
+  "resource": {
+    "status": {
+      "ok": 62
+    },
+    "available": {
+      "true": 62
+    },
+    "memoryPressure": {
+      "unknown": 62
+    },
+    "collectorState": {
+      "idle": 50,
+      "busy": 12
+    },
+    "collectorBusy": {
+      "False": 50,
+      "True": 12
+    },
+    "collectorCleanupPending": {
+      "False": 62
+    },
+    "collectorOwnerAlive": {
+      "True": 62
+    },
+    "ageMsRange": [
+      740.723581,
+      5117.050839
+    ],
+    "freshnessLimitMs": 10000,
+    "rssMiBRange": [
+      145.203125,
+      466.72265625
+    ],
+    "systemLoad1Range": [
+      16.526,
+      52.464
+    ],
+    "swapOutBytesPerSecMaxSystemWide": 91829035.60184915,
+    "connectedProcessCpuSeconds": [
+      11.14,
+      192.872
+    ],
+    "connectedCpuSampleTimesLocal": [
+      "2026-10-18 03:30:55,041",
+      "2026-10-18 03:35:56,042"
+    ]
+  },
+  "capture": {
+    "scope": "track-lifetime",
+    "state": {
+      "unavailable": 6,
+      "grabbing": 56
+    },
+    "clipped": {
+      "False": 62
+    },
+    "pairedLongestGrabMs": {
+      "maxDurationMs": 742.585,
+      "maxDurationThreadCpuMs": 26.236,
+      "maxDurationNonCpuMs": 716.35
+    },
+    "lastObservedCompletedGrabMs": {
+      "lastDurationMs": 203.746,
+      "lastThreadCpuMs": 16.75,
+      "lastNonCpuMs": 186.996
+    },
+    "attemptedCompletedFailedAtLastActiveSample": {
+      "attempted": 2241,
+      "completed": 2240,
+      "failed": 0
+    },
+    "snapshotFieldsNonNull": {
+      "lastDurationMs": 56,
+      "maxDurationMs": 56,
+      "lastThreadCpuMs": 56,
+      "lastNonCpuMs": 56,
+      "maxDurationThreadCpuMs": 56,
+      "maxDurationNonCpuMs": 56
+    },
+    "firstSnapshotWithCompletions": {
+      "timeLocal": "2026-10-18 03:30:50,035",
+      "completed": 19
+    }
+  },
+  "loop": {
+    "sampledEventCount": 62,
+    "lastLagMsMax": 319.995,
+    "lastLagMsMaxAtLocal": "2026-10-18 03:34:41,362",
+    "rolling60sMaxMsObserved": 319.995,
+    "lagEventSeverity": {
+      "critical": 49,
+      "normal": 4,
+      "warning": 9
+    },
+    "missedSampleCountMax": 0,
+    "semantics": "1 s samples, 60 s rolling window, emitted about every 5 s; maxLagMs is rolling-window max and not a whole-run exact max"
+  },
+  "encode": {
+    "samples": 61,
+    "encodedCountSum": 4710,
+    "codec": {
+      "h264_videotoolbox": 61
+    },
+    "size": [
+      [
+        1152,
+        720
+      ]
+    ],
+    "targetFps": {
+      "20": 61
+    },
+    "fiveSecondWindowAvgMsRange": [
+      10.012,
+      41.995
+    ],
+    "fiveSecondWindowP95MsMax": 160.348,
+    "fiveSecondWindowMaxMsMax": 802.138,
+    "fiveSecondWindowMaxAtLocal": "2026-10-18 03:30:56,516"
+  },
+  "startup": {
+    "browserMarksMs": {
+      "start-click": 5509.3,
+      "bootstrap-start": 5510.5,
+      "bootstrap-ready": 7188.6,
+      "signal-connected": 9661,
+      "first-frame": 14666.1,
+      "active": 14666.2
+    },
+    "browserClickToSignalMs": 4151.7,
+    "browserClickToFirstFrameMs": 9156.8,
+    "hostWallClockPhasesLocal": {
+      "offerReceived": "2026-10-18 03:30:47,969",
+      "captureTrackInitialized": "2026-10-18 03:30:48,170",
+      "videoTrackAdded": "2026-10-18 03:30:48,176",
+      "remoteDescriptionSet": "2026-10-18 03:30:48,194",
+      "iceGatheringStarted": "2026-10-18 03:30:48,224",
+      "iceGatheringCompleted": "2026-10-18 03:30:48,443",
+      "localDescriptionSet": "2026-10-18 03:30:48,466",
+      "answerSent": "2026-10-18 03:30:48,532",
+      "iceCompleted": "2026-10-18 03:30:50,265",
+      "webrtcConnected": "2026-10-18 03:30:50,540",
+      "encoderOpening": "2026-10-18 03:30:50,622",
+      "firstCaptureStats": "2026-10-18 03:30:53,180",
+      "firstEncoderSample": "2026-10-18 03:30:56,516",
+      "peerClosing": "2026-10-18 03:36:00,257",
+      "turnAllocationDeleted": "2026-10-18 03:36:00,346"
+    },
+    "signalStructuredBootstrapServedUtc": [
+      "2026-10-17T19:30:40.143Z",
+      "2026-10-17T19:30:43.340Z"
+    ],
+    "crossClockLimit": "Browser marks use performance.now; Host/Signal timestamps use wall clocks. Do not subtract across clocks as exact stage latency. First capture and first encoded frame have no exact timestamp in this slice; diagnostics are later aggregated samples."
+  },
+  "teardown": {
+    "signalEvents": {
+      "signal_socket_disconnected": 1,
+      "viewer_disconnect_grace_started": 1,
+      "control_transition_failed_closed": 1,
+      "control_reset_retry": 1,
+      "control_reset_completed": 1
+    },
+    "hostPeerClosingLocal": "2026-10-18 03:36:00,257",
+    "hostTurnAllocationDeletedLocal": "2026-10-18 03:36:00,346",
+    "endHostOnline": true,
+    "endViewerCount": 0,
+    "controlResetState": "FREE/applied in structured signal event"
+  },
+  "browserRun": {
+    "status": "PASS",
+    "samples": 301,
+    "elapsedSeconds": 300.3940033700783,
+    "maxObservedNoProgressMs": 616.7000000000116,
+    "activeControl": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "workerExitCode": 0,
+    "workerProcessTreeExitEstablished": false,
+    "lifecycleCoverage": "partial"
+  },
+  "limits": [
+    "Read-only bounded log audit; no active input or physical visible-effect check.",
+    "Five-second Host diagnostics and capture snapshots are sparse; capture maxima are track-lifetime, loop maxima rolling 60 s.",
+    "System load and vm_stat swap rates are machine-wide, not Host-attributable. Process CPU is cumulative, not per-capture CPU.",
+    "No historical baseline or unique root-cause claim; shared machine load and diagnostics perturbation remain.",
+    "Host JSONL absent; Host events parsed from bounded stdout."
+  ]
+}

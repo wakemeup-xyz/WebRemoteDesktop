@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "candidate": "c5832501c8b7d1d5c19089b5b19a97db4cc20375",
+  "viewerBuildId": "ed92d1313adb54f6",
+  "runKind": "passive-session-continuity-only",
+  "helperStatus": "PASS",
+  "requestedSeconds": 300,
+  "actualFirstToLastSampleSeconds": 300.0000913857948,
+  "helperElapsedIncludingCleanupSeconds": 300.3940033700783,
+  "supervisorElapsedSeconds": 333.52370260911994,
+  "samples": 301,
+  "missingSamples": 0,
+  "lateSamples": 0,
+  "failedObservations": 0,
+  "identityChangeObservations": 0,
+  "samplingFirstApproxEpochMs": 1792265451743.9,
+  "samplingLastApproxEpochMs": 1792265751744.3,
+  "sampleSha256": "e00457bc9640658c6031cb4af7358d3cb55c382bcbf3c8a71043aad68a054a6b",
+  "gateTrueCounts": {
+    "inputActive": 301,
+    "hasInputLease": 301,
+    "viewportSupported": 301,
+    "hasPaintedFrame": 301,
+    "currentAttemptReady": 301,
+    "hasActiveControl": 301,
+    "socketConnected": 301
+  },
+  "inputAllowedTrueCount": 301,
+  "maxCompletedFrameGapMs": 616.7000000000116,
+  "frameAgeMs": {
+    "count": 301,
+    "snapshotP50": 35,
+    "snapshotP95": 152.2999999046442,
+    "max": 428.7999999523163
+  },
+  "metricLastSnapshotStats": {
+    "inputAckRttMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    },
+    "inputToPostApplyFrameMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    },
+    "inputToVisibleEffectMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    },
+    "hostQueueMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    },
+    "hostApplyMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    },
+    "hostAdapterAwaitMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    },
+    "candidateRttMs": {
+      "count": 301,
+      "snapshotP50": 91,
+      "snapshotP95": 244,
+      "max": 502
+    },
+    "jitterBufferMs": {
+      "count": 299,
+      "snapshotP50": 83.7,
+      "snapshotP95": 158.8,
+      "max": 189.2
+    },
+    "decodeMs": {
+      "count": 299,
+      "snapshotP50": 1.5222666666666977,
+      "snapshotP95": 1.8734999999999724,
+      "max": 4.3451666666666595
+    },
+    "encoderMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    },
+    "relayFrameAckRttMs": {
+      "count": 0,
+      "snapshotP50": null,
+      "snapshotP95": null,
+      "max": null
+    }
+  },
+  "metricInterpretation": "Nearest-rank statistics over sparse one-second last-value snapshots, not per-frame/per-input distributions; no percentile sums or one-way inference.",
+  "singlePageStartupMs": {
+    "clickToSignal": 4151.7,
+    "clickToFirstFrame": 9156.8,
+    "bootstrap": 1678.1000000000004
+  },
+  "startupInterpretation": "One normal UI Start/proof; single-page values, not cold-start P95.",
+  "browserLoopLag": {
+    "lastMs": 0,
+    "maxMs": 12,
+    "count": 311,
+    "missedIntervals": 0,
+    "buckets": [
+      311,
+      0,
+      0,
+      0
+    ]
+  },
+  "browserLifecycleCoverage": {
+    "status": "partial",
+    "droppedEvents": 767
+  },
+  "cleanup": {
+    "browserCloseStatus": "closed",
+    "browserCloseMs": 251,
+    "managerStopStatus": "ok",
+    "managerStopMs": 30,
+    "registeredIdentities": 7,
+    "allRecordedIdentitiesExited": true,
+    "signals": 0,
+    "completeProcessTreeExitEstablished": false
+  },
+  "sampleTriggered": false,
+  "threeHourContinuity": "NOT_RUN",
+  "activeControl": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physicalDisplay": "NOT_RUN",
+  "limitations": [
+    "Shared machine workload uncontrolled; no causal before-after claim.",
+    "Input gate readiness is not actual input execution.",
+    "Historical incomplete runs unchanged."
+  ]
+}
