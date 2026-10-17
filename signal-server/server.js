@@ -44,6 +44,7 @@ const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-
 const { createRotatingFileSink, createStructuredLogger } = require('./lib/observability/logger');
 const { createRecentEventStore } = require('./lib/observability/store');
 const { createRuntimeObserver, bindRuntimeObserver } = require('./lib/observability/runtime');
+const { createEntryObserver, bindEntryObserver } = require('./lib/observability/entry');
 const { createViewerHeartbeatRegistry } = require('./lib/observability/viewer-heartbeat');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
@@ -134,7 +135,13 @@ function createServerApp(options = {}) {
   server.on('error', () => viewerHeartbeat.stop());
   bindRuntimeObserver(server, runtimeObserver);
 
+  const entryObserver = options.entryObserver || createEntryObserver({ structuredLogger, recentEventStore });
+
   app.set('trust proxy', trustLoopbackProxy);
+  app.use((req, res, next) => {
+    try { entryObserver.observeHttp(req, res); } catch { /* Best-effort entry evidence. */ }
+    return next();
+  });
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(compression({
     // Compress HTML/JS/CSS; skip already-tiny or precompressed payloads.
@@ -208,7 +215,8 @@ function createServerApp(options = {}) {
     httpCompression: false,
   });
 
-  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, observeViewerHeartbeat: viewerHeartbeat.attach, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
+  bindEntryObserver(server, io.engine, entryObserver);
+  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, observeNamespaceOutcome: outcome => entryObserver.observeNamespaceOutcome(outcome), observeViewerHeartbeat: viewerHeartbeat.attach, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
   const terminal = setupTerminal(io, {
     config,
     logger,
@@ -497,9 +505,11 @@ function createServerApp(options = {}) {
     structuredLogger,
     runtimeObserver,
     signalingRuntime,
+    entryObserver,
     async close(reason = 'system:shutdown') {
       viewerHeartbeat.stop();
       runtimeObserver.stop();
+      try { entryObserver.stop(); } catch { /* Best-effort entry evidence. */ }
       if (typeof terminal?.close === 'function') {
         return terminal.close(reason);
       }

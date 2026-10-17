@@ -993,15 +993,21 @@ function setupSignaling(io, options = {}) {
     connections.host.emit('offer', forwarded);
     return true;
   }
+  function observeNamespaceOutcome(outcome) {
+    try { options.observeNamespaceOutcome?.(outcome); } catch { /* Observation must not affect authentication. */ }
+  }
+
   // Use default namespace for all connections
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) {
+      observeNamespaceOutcome('missing_auth');
       return next(new Error('Authentication required'));
     }
     let decoded = null;
     try { decoded = verifyRuntimeToken(token); } catch (_error) { decoded = null; }
     if (!decoded) {
+      observeNamespaceOutcome('invalid_auth');
       return next(new Error('Invalid token'));
     }
     socket.user = decoded;
@@ -1010,6 +1016,7 @@ function setupSignaling(io, options = {}) {
     socket.userRole = decoded.role === 'viewer' && claimedRole === 'relay-viewer'
       ? 'relay-viewer'
       : decoded.role;
+    observeNamespaceOutcome('accepted');
     next();
   });
 
