@@ -1,0 +1,23 @@
+{
+  "taskRange": "a23b8ad3f408f12efdbe5793b14cead8c41f761f..8675e85e3b66453fc17ddb778fd3a253f4c0d600",
+  "finalRange": "418601c20f024a2f52d1593f3835d28dec4f7128..8675e85e3b66453fc17ddb778fd3a253f4c0d600",
+  "canonicalSha256": "ad77fc3cb1c25658093b005623f5f345163e590e4f7eccab62661b7688717f79",
+  "reviews": {
+    "task-1-review.md": {
+      "sha256": "2cf1e8b60031656e149e3f9bae00177907c166eb1f8da6e629dd10aa6de226cd",
+      "verdict": "Approved",
+      "findings": 0
+    },
+    "final-integration-review.md": {
+      "sha256": "0a5f95768bc937794cdfd9d05800b8dc2c9fa624450d5f397d426af240424d80",
+      "verdict": "Approved",
+      "findings": 0
+    }
+  },
+  "workerFinalTests": {
+    "tests": 30,
+    "pass": 30,
+    "fail": 0
+  },
+  "scope": "Source review only; runtime acceptance separate"
+}
