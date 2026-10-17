@@ -6617,7 +6617,7 @@ if (this.tunnelLastObjectUrl) {
       this.useRelayFallback = false;
       this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
       this.updateNetworkUI('Strict STUN 直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
-      updateLoadingText('直连失败，诊断日志已发送。');
+      updateLoadingText('直连失败，已尝试提交诊断日志。');
       document.getElementById('loading').classList.remove('hidden');
       document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
@@ -6629,7 +6629,7 @@ if (this.tunnelLastObjectUrl) {
       console.warn('[RECOVERY] Strict STUN mode exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
       this.updateNetworkUI('外网直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
-      updateLoadingText('直连失败，诊断日志已发送。');
+      updateLoadingText('直连失败，已尝试提交诊断日志。');
       document.getElementById('loading').classList.remove('hidden');
       document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');

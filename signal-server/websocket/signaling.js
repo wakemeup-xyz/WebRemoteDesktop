@@ -1481,14 +1481,18 @@ function setupSignaling(io, options = {}) {
 
     // Diagnostic logs relay (viewer -> host) + persist to disk
     socket.on('diagnostic', (data, acknowledge) => {
+      const rejectDiagnostic = () => {
+        if (typeof acknowledge === 'function') acknowledge({ accepted: false, diagnosticId: null, eventIdHashes: [] });
+      };
       if (role !== 'viewer') {
         console.warn(`Diagnostic rejected: role=${role} from ${socket.id}`);
-        return;
+        rejectDiagnostic(); return;
       }
       if (!isActiveViewerSocket(socket)) {
         console.warn(`Diagnostic rejected: disconnected viewer ${socket.id}`);
-        return;
+        rejectDiagnostic(); return;
       }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) { rejectDiagnostic(); return; }
       const logCount = data.logs?.length || 0;
       logger.log?.(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
       const result = ingestDiagnosticPayload({
@@ -1505,7 +1509,7 @@ function setupSignaling(io, options = {}) {
         structuredLogger?.info(result.summaryEvent);
       }
 
-      if (typeof acknowledge === 'function') acknowledge(result.receipt || { accepted: false, eventIdHashes: [] });
+      if (typeof acknowledge === 'function') acknowledge(result.receipt || { accepted: false, diagnosticId: null, eventIdHashes: [] });
 
       // Also relay to host for real-time analysis
       if (result.accepted && !result.duplicate && connections.host) {

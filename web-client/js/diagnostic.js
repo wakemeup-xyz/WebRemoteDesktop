@@ -295,10 +295,10 @@
     const sent = await this.sendConnectionDiagnostic(payload);
     if (sent) {
       console.log('[Diagnostic] Logs sent');
-      alert('日志已发送到服务端，请等待分析');
+      alert('服务端已确认保存诊断（按保留策略清理）');
     } else {
       console.error('[Diagnostic] Failed to send logs; queued for retry');
-      alert('发送失败，日志已保存待重试');
+      alert('未获服务端保存确认，请稍后重试');
     }
     return sent;
   },

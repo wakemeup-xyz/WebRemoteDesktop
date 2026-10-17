@@ -938,8 +938,22 @@ test('diagnostic socket confirms only persisted IDs and preserves viewer authori
     handler(payload, receipt => receipts.push(receipt)); handler(payload, receipt => receipts.push(receipt));
     assert.equal(receipts.length, 2); assert.deepEqual(receipts[0], receipts[1]); assert.equal(receipts[0].accepted, true);
     assert.equal(receipts[0].diagnosticId, payload.diagnosticId); assert.equal(receipts[0].eventIdHashes.length, 1);
+    // HTTP ingress uses this same persistence API with an HTTP-prefixed viewer ID.
+    const fallback = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'http-w3a-active', data: payload,
+      config: { enableDiagPersist: true }, logger: {} });
+    assert.equal(fallback.duplicate, true); assert.deepEqual(fallback.receipt, receipts[0]);
+    assert.equal(fallback.summaryEvent, null);
+    assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 1);
     assert.equal(viewer.sent.some(message => message.event === 'control-grant'), false); // Diagnostic ACK never grants control.
-    viewer.disconnect(); handler(payload, receipt => receipts.push(receipt)); assert.equal(receipts.length, 2);
+    for (const malformed of [null, undefined, 'invalid', []]) {
+      handler(malformed, receipt => assert.deepEqual(receipt, { accepted: false, diagnosticId: null, eventIdHashes: [] }));
+    }
+    const host = new FakeSocket('w3a-host', 'host'); io.connect(host);
+    host.listeners('diagnostic')[0](payload, receipt => assert.deepEqual(receipt,
+      { accepted: false, diagnosticId: null, eventIdHashes: [] }));
+    host.disconnect();
+    viewer.disconnect(); handler(payload, receipt => receipts.push(receipt)); assert.equal(receipts.length, 3);
+    assert.deepEqual(receipts[2], { accepted: false, diagnosticId: null, eventIdHashes: [] });
     const context2 = createRuntimeContext(); const io2 = makeIo();
     setupSignaling(io2, { runtimeContext: context2, config: { ...loadConfig(), enableDiagPersist: false }, logger: {} });
     const noPersist = new FakeSocket('w3a-no-persist', 'viewer'); io2.connect(noPersist);
