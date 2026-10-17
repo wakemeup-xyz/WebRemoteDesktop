@@ -51,11 +51,16 @@ test('late timer cannot let answer install buy a new budget; pending install cro
 });
 test('checking channel extensions are bounded at two and duplicate answers do not reset deadline', async () => {
   const f = fixture(); f.now(100); await f.answer({ answer: {} });
+  assert.equal(f.rtc.getDataChannelWatchdogSnapshot().elapsedMs, 0);
   f.rtc.pc.connectionState = 'connecting'; f.rtc.pc.iceConnectionState = 'checking';
   f.now(500); await f.answer({ answer: {} });
   f.tick(10100); assert.equal(f.rtc._dataChannelWatchdog.extensions, 1);
+  assert.equal(f.rtc.getDataChannelWatchdogSnapshot().elapsedMs, 10000);
   f.tick(20100); assert.equal(f.rtc._dataChannelWatchdog.extensions, 2);
   f.tick(30100); assert.deepEqual(f.faults, ['dc-stuck']);
+  const snapshot = f.rtc.getDataChannelWatchdogSnapshot();
+  assert.equal(snapshot.phase, 'channel-open'); assert.equal(snapshot.elapsedMs, 30000);
+  assert.equal(snapshot.remainingMs, 0); assert.equal(snapshot.extensions, 2);
 });
 test('connected or negotiated peer rebuild starts channel deadline immediately', () => {
   for (const mode of ['connected', 'remoteDescription']) {

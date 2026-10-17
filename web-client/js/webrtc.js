@@ -4484,7 +4484,7 @@ const WebRTC = {
     }
     if (record.phase === 'channel-open' && now !== null && record.extensions < 2
         && (record.peer.connectionState === 'connecting' || record.peer.iceConnectionState === 'checking')) {
-      record.extensions++; record.startedAt = now; record.deadline = now + 10000;
+      record.extensions++; record.deadline = now + 10000;
       if (record.timer != null) clearTimeout(record.timer);
       this.armDataChannelWatchdog(record, 10000); return;
     }
