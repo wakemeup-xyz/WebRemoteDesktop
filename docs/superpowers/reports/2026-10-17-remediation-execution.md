@@ -1,12 +1,14 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `836dccd`（Host 时钟修复 `f492357`；Signal 心跳观测 `d1166ab`），build `c30530f331a4def5`；源码/整轮增量与新增心跳观测 review 通过。M6 版本 JPEG 和 TURN 暂停恢复短测均通过；后续 93s 首断证实客户端心跳超时、同窗 connector edge loss，精确服务端心跳边界继续排查。三小时、普通用户重连、业务输入与可见效果未完成，不能宣布全部验收通过。
+执行开始：2026-10-17。当前线上：Host时钟修复 `f492357`、Signal心跳观测 `d1166ab`，同步基线 `836dccd`、网页 build `c30530f331a4def5`。本地服务在线；最新真实 TURN 300s PASS，但随后 JPEG 69.744991s 在成功恢复后停帧5.2s而FAIL。原32分钟长测5.15s停帧及93s信令超时均保留，三小时、普通用户重连、业务输入与真实可见效果未完成。
+
+最新确定缺陷：JPEG stale/start 的键盘 reset reason 被严格协议拒绝，已于 `d057853` 修复并通过529项回归和独立复审，尚未加载；Viewer本页 duration clock `3ca62fe` 同样已复审待加载。相邻控制释放 reset reason 已于 `c3abb21` 修复并通过534项回归和独立复审，两项等待统一加载，见[设计与计划](../specs/2026-10-17-relay-reset-reason-design.md)。JPEG首个停帧边界仍需区分 worker处理、结果回送与发送；不能用 reset 修复解释先前停帧。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
 ## 1. 基线与执行边界
 
-隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录部署至 `58ad766`（生产增量 `d1166ab`），W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
+隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录同步至 `836dccd`（Host `f492357`、Signal `d1166ab`），W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
 
 离线阶段使用定向测试和临时目录构建，未调用 npm pretest。经独立复审后按用户授权构建并重启本地服务；真实 Viewer 测试均使用 fresh zero-Viewer 与一次性 proof，未执行业务原生输入。未修改、停止或重启 tunnel。
 
