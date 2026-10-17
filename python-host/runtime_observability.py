@@ -309,12 +309,162 @@ async def collect_resources(pid, *, registered_pids, command=run_command,
             'peakRssMiB': read_peak_rss_mib() if pid == os.getpid() else None, **counters}
 
 
+_RESOURCE_FIELDS = ('sampledNs', 'currentRssMiB', 'peakRssMiB', 'pageSize', 'swapIns', 'swapOuts')
+
+
+class _ResourceCompletion(NamedTuple):
+    job_id: int
+    outcome: str
+    values: tuple | None
+
+
+class _ResourceCollectorOwner:
+    """One daemon/private loop, one job, one immutable cleanup acknowledgement.
+
+    Only the worker publishes completion after the entire collector has returned,
+    including run_command's shielded reap. Caller cancellation is merely a latch.
+    No default executor, cross-loop Future or per-poll callback is involved.
+    """
+    def __init__(self, collect):
+        self._collect = collect
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._thread = None
+        self._started = False
+        self._stopping = False
+        self._failed = False
+        self._job = None
+        self._cancelled = False
+        self._completion = None
+        self._loop = None
+        self._active_task = None
+
+    def submit(self, job_id, pid):
+        with self._lock:
+            if self._stopping or self._failed or self._job is not None:
+                return False
+            self._job = (job_id, pid)
+            self._cancelled = False
+            self._completion = None
+            start = not self._started
+            self._started = True
+        if start:
+            # One explicit, lazy control-plane cost; thread.start has no hard deadline.
+            self._thread = threading.Thread(target=self._run, name='resource-collector', daemon=True)
+            try:
+                self._thread.start()
+            except Exception:
+                with self._lock:
+                    self._failed = True
+                    self._job = None  # no collector/child was started
+                return False
+        self._wake.set()
+        return True
+
+    def cancel(self, job_id):
+        with self._lock:
+            if self._job is None or self._job[0] != job_id or self._cancelled:
+                return
+            self._cancelled = True
+            loop, task = self._loop, self._active_task
+        if loop is not None and task is not None:
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                pass  # a stopped/failed owner is reported separately; never an ACK
+
+    def stop(self):
+        with self._lock:
+            self._stopping = True
+            job = self._job
+        if job is not None:
+            self.cancel(job[0])
+        self._wake.set()
+
+    def read(self):
+        with self._lock:
+            return self._completion
+
+    def snapshot(self):
+        with self._lock:
+            busy = self._job is not None
+            failed, stopping = self._failed, self._stopping
+            pending = busy and (self._cancelled or stopping or failed)
+        alive = self._thread is not None and self._thread.is_alive()
+        state = ('unavailable' if failed else 'stopping' if stopping and alive else
+                 'closed' if stopping else 'busy' if busy else 'idle' if alive else 'not-started')
+        return {'state': state, 'busy': busy, 'cleanupPending': pending, 'ownerAlive': alive}
+
+    async def _execute(self, pid):
+        current = await self._collect(pid)
+        # Publish only immutable numeric scalars; no raw output or exception retention.
+        values = tuple(value if type(value) in (int, float) and finite_number(value) and value >= 0
+                       else None for value in (current.get(key) for key in _RESOURCE_FIELDS))
+        if values[0] is None:
+            raise ValueError('missing resource timestamp')
+        return values
+
+    def _run(self):
+        loop = None
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            with self._lock:
+                self._loop = loop
+            while True:
+                self._wake.wait()
+                with self._lock:
+                    self._wake.clear()
+                    job = self._job
+                    if job is None and self._stopping:
+                        break
+                    if job is None:
+                        continue
+                    task = loop.create_task(self._execute(job[1]))
+                    self._active_task = task
+                    if self._cancelled:
+                        task.cancel()
+                values, outcome = None, 'unavailable'
+                try:
+                    values = loop.run_until_complete(task)
+                    outcome = 'ok'
+                except asyncio.CancelledError:
+                    outcome = 'cancelled'
+                except Exception:
+                    pass
+                if not task.done():
+                    raise RuntimeError('resource owner loop stopped before cleanup')
+                task = None  # do not retain an exception/traceback while the worker is idle
+                # run_until_complete has finished collector finally/reap, independently
+                # of the caller's lifetime. This is the sole normal slot release.
+                with self._lock:
+                    self._completion = _ResourceCompletion(job[0], outcome, values)
+                    self._active_task = None
+                    self._job = None
+                    if self._stopping:
+                        break
+        except BaseException:
+            with self._lock:
+                self._failed = True  # uncertain outstanding ownership stays reserved
+        finally:
+            with self._lock:
+                self._loop = None
+            if loop is not None:
+                loop.close()
+
+
 class ResourceSampler:
-    """One owned asynchronous worker, one total budget, cached-only reads."""
+    """Cached-only reads; production work belongs to a private-loop daemon.
+
+    Explicit collect= injections retain caller-loop execution and cleanup waiting
+    (including tests replacing _collect). Only the production backend has bounded
+    caller/close observation; late cleanup continues while this process is alive.
+    """
     def __init__(self, pid, *, registered_pids, collect=None, now_ns=time.monotonic_ns,
                  interval_seconds=5, budget_seconds=1, stale_seconds=10):
+        registered_pids = frozenset(registered_pids)
         self.pid = validate_pid(pid, registered_pids)
-        self._collect = collect or (lambda selected_pid: collect_resources(
+        self._collect = collect if collect is not None else (lambda selected_pid: collect_resources(
             selected_pid, registered_pids=registered_pids, now_ns=now_ns))
         self._now_ns = now_ns
         self.interval_seconds = max(5, interval_seconds)
@@ -326,16 +476,61 @@ class ResourceSampler:
         self._cached = None
         self._status = 'unavailable'
         self._closed = False
+        self._owner = _ResourceCollectorOwner(self._collect) if collect is None else None
+        self._job_id = 0
+        self._close_deadline = None
+
+    def _accept(self, current):
+        self._cached = {**resource_delta(self._previous, current), 'sampledNs': current['sampledNs']}
+        self._previous = current
+        self._status = 'ok' if self._cached['currentRssMiB'] is not None else 'unavailable'
+
+    async def _sample_isolated(self):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.budget_seconds
+        self._job_id += 1
+        job_id = self._job_id
+        if not self._owner.submit(job_id, self.pid):
+            if self._owner.snapshot()['state'] == 'unavailable':
+                self._status = 'unavailable'
+            return
+        try:
+            while not self._closed:
+                # Receipt at/after deadline is rejected even if completion predates it.
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    self._status = 'timeout'
+                    self._owner.cancel(job_id)
+                    return
+                completion = self._owner.read()
+                if completion is not None and completion.job_id == job_id:
+                    if completion.outcome == 'ok':
+                        self._accept(dict(zip(_RESOURCE_FIELDS, completion.values)))
+                    else:
+                        self._status = 'unavailable'
+                    return
+                if self._owner.snapshot()['state'] == 'unavailable':
+                    self._status = 'unavailable'
+                    return
+                await asyncio.sleep(min(.005, remaining))
+        finally:
+            # Idempotent cancellation; completion is never inferred from this caller.
+            self._owner.cancel(job_id)
 
     async def sample_once(self):
         if self._closed or self._sample_task is not None:
             return
+        if self._owner is not None:
+            self._sample_task = asyncio.current_task()
+            try:
+                await self._sample_isolated()
+            finally:
+                self._sample_task = None
+            return
         self._sample_task = asyncio.create_task(self._collect(self.pid))
         try:
             current = await asyncio.wait_for(self._sample_task, self.budget_seconds)
-            self._cached = {**resource_delta(self._previous, current), 'sampledNs': current['sampledNs']}
-            self._previous = current
-            self._status = 'ok' if self._cached['currentRssMiB'] is not None else 'unavailable'
+            self._accept(current)
         except asyncio.TimeoutError:
             self._status = 'timeout'
         except asyncio.CancelledError:
@@ -368,9 +563,28 @@ class ResourceSampler:
         result = {key: cached.get(key) if fresh else None for key in (
             'elapsedMs', 'swapInBytesPerSec', 'swapOutBytesPerSec', 'currentRssMiB', 'peakRssMiB')}
         return {**result, 'memoryPressure': 'unknown', 'ageMs': age_ns / 1_000_000 if age_ns is not None else None,
-                'available': fresh and cached.get('currentRssMiB') is not None, 'status': self._status}
+                'available': fresh and cached.get('currentRssMiB') is not None, 'status': self._status,
+                'collector': self._owner.snapshot() if self._owner is not None else {
+                    'state': 'inline', 'busy': self._sample_task is not None,
+                    'cleanupPending': self._closed and self._sample_task is not None,
+                    'ownerAlive': False}}
 
     async def close(self):
+        if self._owner is not None:
+            loop = asyncio.get_running_loop()
+            if self._close_deadline is None:
+                self._close_deadline = loop.time() + self.budget_seconds
+                self._closed = True
+                self._owner.stop()
+                for task in {self._sample_task, self._task} - {None, asyncio.current_task()}:
+                    task.cancel()
+            while loop.time() < self._close_deadline:
+                tasks = (self._task, self._sample_task)
+                if (not self._owner.snapshot()['ownerAlive'] and
+                        all(task is None or task.done() for task in tasks)):
+                    break
+                await asyncio.sleep(min(.005, max(0, self._close_deadline - loop.time())))
+            return
         self._closed = True
         tasks = [task for task in (self._task, self._sample_task) if task is not None]
         # The loop owns the sample task. Cancel its owner once; a second cancel
