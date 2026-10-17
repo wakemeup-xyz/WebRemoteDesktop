@@ -1,6 +1,6 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `966890b`（包含 C5 与 M6/R1）；build `f5c2a9203e47f9e5`。独立源码复审通过，公网 M6 生命周期验收待运行；信令首断观测工具已实现待 review，缺测转 0 修复待实施，尚未最终验收。
+执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `9e57bf4`，build `c30530f331a4def5`；源码/整轮增量 review 通过。M6 版本 JPEG 和 TURN 暂停恢复短测均通过；后续 93s 首断证实客户端心跳超时、同窗 connector edge loss，精确服务端心跳边界继续排查。三小时、普通用户重连、业务输入与可见效果未完成，不能宣布全部验收通过。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
@@ -155,3 +155,13 @@ M6 [补充 spec](../specs/2026-10-17-jpeg-relay-recovery-addendum.md)和[执行 
 约 10:39 北京时间，经过 fresh zero-Viewer 检查、逐文件基线验证和备份，将 `86c2e34..966890b` 18 条路径同步到原 checkout，保留原 HEAD/index 与既有脏文档。仅重启本地 Signal/Host，耗时 18.620 秒；Signal PID 85909，Host PID 85937。实际部署源码三文件精确匹配候选；schema 2/build `f5c2a9203e47f9e5`，保留 `b73325b8166441a6` / `7cdeb3e918582f7c`。health/status 正常、Host 在线、Viewer 0。cloudflared 84671 与 watcher 897 启动身份不变，quick URL 仍不存在；W2 四文件仍未激活。私有回滚快照 `/tmp/wrd-c5-rollout-private-ilovzfv1/apply-966890b8-8qje3zln`。这证明加载与本地存活，不代表公网 M6 验收通过。
 
 I2 信令首断 observer `10d4146` / 报告 `1e34602` 已实现：20 JS / 39 Python 通过，独立 review 进行中，尚未同步生产验收脚本。保留单次 proof 与首断严格失败；无法证明真实进程退出时保持 not-observed。媒体缺测两字段修复的[最小 plan](../plans/2026-10-17-media-null-observation-plan.md)沿 M1 契约，不扩展测量或修改网络阈值。
+
+M6 公网 JPEG 短测 PASS：85.034s/84 样本，暂停恢复 4.009s，随后 60.0025s 当前来源连续出图、RTT 反馈与门禁通过；两次槽过期回收后仍有进展。详见[真实验收](2026-10-17-live-acceptance.md)。不扩展为三小时或业务输入已验收。
+I2 首断工具独立 review 初轮发现两项证据失真风险，`0f0e902` 修复 startup-summary 失败误 PASS 与初始证据写失败仍连接；实际健康 fake 反例及 5 个针对性测试通过，独立 R1 APPROVED。[I2 审查记录](2026-10-17-I2-signal-observer-review.md)。
+
+
+## 10. Nullable 部署与整轮增量复审
+
+`9e57bf4` 修复 RTT/缓冲 unknown→0，从真实 Viewer/UI/控制器到 Signal/Host 日志保持 number|null；真实0和已有 stall/loss恢复保留。[实现](2026-10-17-media-null-implementation.md)、[独立 review](2026-10-17-media-null-review.md)。已同步原 checkout 15 条路径（12 源码/测试及3份保持原内容的文档），私有备份 `/tmp/wrd-c5-rollout-private-ilovzfv1/apply-9e57bf47-t4k_adk1`。本地重启22.553s后 Signal3905/Host4164、build c30530f331a4def5，health/Host通过；tunnel/watch及原Git身份保持。
+
+`8e375fa..9e57bf4` 37路径整轮增量 review PASS，无新源码 P0–P3 项；[报告](2026-10-17-runtime-followups-final-review.md)。最新 JPEG/TURN短测、93s失败与入口复查见[运行验收](2026-10-17-live-acceptance.md)。下一步仅设计有界服务端心跳事件/flush观测，不因相关性盲改超时、网络模式或tunnel，也不为让验收成功而绕过单次proof。

@@ -92,3 +92,27 @@ Signal 09:49:02.126 的断开 reason=transport close，09:49:10.132 grace 到期
 区间每 emitted 单位的缓冲均值最高 742ms；启动后约 157s 仍出现 725.1ms、同期 candidate RTT 31ms。10 个断线前快照的最近缓冲值至少 250ms，另有末个失败样本；不是完整事件分布。decode 最近值约 0.544–2.219ms、RTT 29–131ms。后段 loss/NACK、解码空窗和追帧表明不能全部归为启动暖机；具体哪一跳及调度因素未定位。Host VideoToolbox 5s 编码摘要平均大多约 4–5ms，稀疏最大约 100–166ms；不含 executor 等待和逐包发送等待，也不能直接与接收均值相加。
 
 另已确认 UI/上送将缺测缓冲/RTT 转成 0 的代码缺陷；本 artifact 的 LatencyMonitor 直接使用原始值，不能用此缺陷否认已有正值峰。原始 stats timestamp/inbound identity、presentedFrames 以及逐次截图耗时未导出，是下一步进一步归因的缺口。完整方法、源码与日志分母见[媒体性能诊断](2026-10-17-turn-media-performance-diagnosis.md)。
+
+
+## M6 新版 JPEG 公网生命周期短测（2026-10-17 约 10:50）
+
+运行代码 `966890b`、build `f5c2a9203e47f9e5`。`/tmp/wrd-public-m6-media-tunnel-20261017a` 为 PASS：85.034304s、84 样本、0 缺失，owned browser 已关闭；随后本地 Host 在线、Viewer 0。真实 UI 登录及 Start、fresh zero-Viewer 单次 proof、三个连续健康样本、5 秒基线、真实 UI 暂停/恢复均通过。恢复到三个连续健康样本用时 4.009457s；新媒体 generation、完整 producer 来源、应用 ACK、合格新图和有效输入门禁均匹配。
+
+恢复后 61 个快照覆盖 60.0025s，load 增量 228（约 3.8 次/s），合格 load 年龄采样最大 500.3ms；同一来源未变，当前来源 RTT 有效样本在该窗口内到达。RTT 快照值范围 405.50–633.88ms；这是 Host 同钟 JPEG 反馈往返，经过 2000ms TTL 右截断与每间隔最新样本合并，不是总体 P95、单向传输或输入可见耗时。末次反馈 expired=2、unmatched=0、timeout=0、coalesced=181、pending=1；真实过期槽被回收后出图继续。
+
+1Hz 检查证明采样时的新鲜度及滚动窗口进展，不能排除采样间的短暂状态变化；累计最大 load gap 4200.3ms 含计划内暂停，不当作稳态故障。原 `8e375fa` JPEG FAIL 保留。该次短测不关闭三小时、普通用户自动重连、业务输入、原生可见效果或光学验收。TURN 新版本回归另测。
+
+
+## M6 TURN 回归与带首断观测的后续运行
+
+`/tmp/wrd-public-m6-media-relay-20261017a`，代码 `966890b`/build `f5c2a9203e47f9e5`：PASS，86.272106s/85 样本，恢复 4.007493s，随后 61 快照/60.0024s；rVFC 回调增量 1149（约 19.15/s），末次实际双端 relay/UDP、H.264、RTT 40ms、framesDropped 0。owned browser 已关闭；不把回调频率当作独立新截图频率或原生输入效果。
+
+I2 observer `10d4146`+`0f0e902` 已独立复审后只同步验收脚本，无服务重启。`/tmp/wrd-public-i2-observed-turn-20261017a` 请求 300s，实际 93.094368s/94 样本、0 missing/late，INCOMPLETE。首次当前 Engine close reason=ping，在最后 incoming ping 后 45003ms；Socket/Manager 随后关闭，preclose 晚 967ms，故不是工具先清理造成首断。浏览器 103 次调度采样最大 lag 9ms，持续 visible/online/focus；最后视频仍推进，RTT 33ms、frame age 29.9ms、PC connected，但租约已清且输入门禁关闭。
+
+同窗 formal connector 两个连接索引发生 edge loss，8s/34s 后各自重新注册；Signal/Host 上行 stats 仍每秒到达直到关闭前。证据支持公网下行/connector 路径异常假设，不足以确定丢失的下一次 ping 在生成、排队、交付的哪一步停止；不能把不同钟墙钟相差约 588ms 当作精确先后。详见[首断诊断](2026-10-17-observed-ping-timeout-diagnosis.md)。一次性 proof 工具首断即结束，不能认证普通当前 owner 自动恢复；不会清 proof、重签或自动接管。
+
+## Nullable 修复部署与当前入口
+
+`9e57bf4` 缺测修复通过 task review 及整轮增量复审；359 Viewer / 109 Signal / 25 诊断 / 51 Python 定向检查通过（7 个监听 HTTP 用例按离线边界未运行）。仅本地重启耗时 22.553s，Signal 3905/Host 4164；实际 schema 2/build `c30530f331a4def5`，保留 f5c2/b733。cloudflared 84671/watch897 身份不变，quick URL 文件仍不存在，原 HEAD/index 保留。当前版本的业务输入/三小时验收仍未完成。
+
+11:08 的只读 TCP7844 单次比较：四个最近注册 IPv6 目标和四个仓库已有 IPv4 探测目标均连接成功（约 209–215ms / 175–177ms）。目标不同、只是瞬时建连，不证明长连接质量、HTTP2 成功或 IPv6 因果，故没有修改地址族/协议。真实浏览器正式根入口最新返回 200，登录表单可见，导航至 DOM 7210.4ms；同页 health 200/981.5ms、status 200/963.7ms、Host 在线、Viewer 0，owned browser close/manager stop API 完成。之前误探测不存在的 `/login.html` 得到 404，此探测路线错误不计作应用入口故障。一次可达不抵消心跳超时与历史 formal_ok0。

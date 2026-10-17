@@ -557,3 +557,12 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 - 服务端在 Viewer map、proof epoch 和租约副作用前判定；被更新 owner 取代的旧页面在 grace 内外均不能自动夺回。当前 owner 保留独立于 grace/ticket TTL；容量满有界拒绝，不淘汰有效 ticket 的去重证据。旧版未知握手仅在服务本轮生命周期首次 zero-Viewer 时兼容，冲突或未知恢复要求显式重连。
 - 当前 owner 在 grace 内仍须 Host applied ACK 完成 rebind；grace 外仍须原 reset/regrant。拒绝后停止自动抢占链并显示原手动重连入口，保留草稿；不自动切模式或修改媒体参数。
 - proof 仍严格单次、zero-Viewer；proof 页面不得请求普通显式 ticket，已接纳 proof 同样阻止旧普通页面自动恢复。源码/离线证据见 [C5 实施报告](../superpowers/reports/2026-10-17-task-C5-admission-recovery.md)，生产与可见效果验收另记。
+
+
+## 2026-10-17 稳定性整改补充：JPEG 来源与缺测指标
+
+- JPEG 未收到反馈的发送槽使用 Host monotonic 2000ms TTL 退休；同来源 ACK 精确释放其槽，乱序不遗留阻塞。TTL 不是网络 SLA，不新增降分辨率或降档触发。
+- 严格 Viewer 的 frame、start/resume ACK 和反馈携完整 producer/production generation、connection attempt、media generation（首次允许0）、lease epoch 来源。旧帧不能通过补当前身份作为恢复证明；只有当前来源实际 image load 才确认媒体 ready。
+- JPEG 当前合格 image load 年龄达到5000ms时关闭实际输入门禁，沿既有键盘/鼠标 reset 屏障释放按住状态；新图不得清掉未确认 reset。图像 load 不是物理呈现或原生输入可见效果。
+- RTT 与 jitter buffer 缺测端到端使用 number|null；合法0保留，非法/缺失不造0，不累计“持续良好”。已测得 stall/loss 的既有恢复和身份准入规则不变。JPEG反馈RTT使用 Host 同钟 matched ACK，报告2000ms TTL右截断及每间隔最新样本合并，不能充作单向或输入可见延迟。
+- 代码及独立/整轮复审完成，运行已加载 `9e57bf4`、build `c30530f331a4def5`。此前 M6 build 的 JPEG/TURN暂停恢复加60秒短测通过，后续更长TURN在93秒因信令心跳超时中断；普通自动恢复、3小时、真实业务输入及可见效果未获生产认证。当前状态以[实施记录](../superpowers/reports/2026-10-17-remediation-execution.md)和[真实验收](../superpowers/reports/2026-10-17-live-acceptance.md)为准，不把连接/ACK/存活检查当最终全部验收。
