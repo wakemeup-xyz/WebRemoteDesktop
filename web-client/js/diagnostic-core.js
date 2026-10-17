@@ -437,7 +437,9 @@
     this._diagnosticInFlight.set(id, promise);
     const remainingMs = () => Math.max(0, deadline - monoNow());
     const socketStage = target => new Promise(done => {
-      const stageMs = Math.min(2000, remainingMs());
+      const stageStartedMs = monoNow();
+      const stageDeadline = Math.min(deadline, stageStartedMs + 2000);
+      const stageMs = Math.max(0, stageDeadline - stageStartedMs);
       if (!target?.connected || typeof target.timeout !== 'function' || stageMs <= 0) { done(null); return; }
       let settled = false; let timer;
       const finish = receipt => {
@@ -453,7 +455,8 @@
         timer = setTimeout(() => finish(null), stageMs);
         // Socket.IO's timeout modifier removes its ACK-table entry on expiry.
         target.timeout(stageMs).emit('diagnostic', diagnosticPayload, (error, receipt) => {
-          finish(!error && target.connected && remainingMs() > 0 && validReceipt(diagnosticPayload, receipt) ? receipt : null);
+          finish(!error && target.connected && monoNow() < stageDeadline
+            && validReceipt(diagnosticPayload, receipt) ? receipt : null);
         });
       } catch (_) { finish(null); }
     });

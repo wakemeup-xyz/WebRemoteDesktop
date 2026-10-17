@@ -28,7 +28,7 @@ function fixture() {
     for (const [id, timer] of [...timers]) if (timer.at <= now && timers.delete(id)) timer.fn();
     await flush();
   };
-  return { context, d, timers, advance, now: () => now };
+  return { context, d, timers, advance, elapse: ms => { now += ms; }, now: () => now };
 }
 function socketMock(f, handler) {
   const pending = new Map(); const listeners = new Set(); const emissions = [];
@@ -130,6 +130,42 @@ test('Socket timeout releases ACK entry, late ACK cannot confirm, total body dea
   assert.equal(f.d.getPendingDiagnostics().length, 1); assert.equal(f.timers.size, 0);
   assert.equal(f.d._diagnosticInFlight.size, 0);
 });
+
+for (const elapsedMs of [1999, 2000, 2500]) {
+  test(`Socket ACK at ${elapsedMs}ms obeys monotonic stage deadline before any timer callback runs`, async () => {
+    const f = fixture(); f.elapse(100); // A stage deadline is relative to this operation, not page boot.
+    let calls = 0; let finishHttp; const acknowledged = [];
+    const acknowledge = f.d._runtimeBuilder.acknowledge;
+    f.d._runtimeBuilder.acknowledge = ids => { acknowledged.push([...ids]); acknowledge(ids); };
+    f.context.LatencyMonitor = { takeClosedScopeSummaries: () => ({ summaries: [{ endedAtMs: 100, snapshot: null }] }) };
+    const payload = f.d.buildConnectionDiagnostic();
+    const socket = socketMock(f); f.context.WebRTC.socket = socket;
+    f.context.fetch = async (_url, init) => {
+      calls++;
+      assert.deepEqual(JSON.parse(init.body), JSON.parse(JSON.stringify(socket.emissions[0].payload)));
+      return new Promise(resolve => { finishHttp = resolve; });
+    };
+    const promise = f.d.sendConnectionDiagnostic(payload);
+    f.elapse(elapsedMs); // Deliberately defer both watchdog and Socket.IO timeout callbacks.
+    const emission = socket.emissions[0];
+    const validReceipt = { ...receipt(emission.payload), eventIdHashes: emission.payload.scopeEnded.events.map(e => e.eventIdHash) };
+    emission.ack(null, validReceipt); await flush();
+    if (elapsedMs < 2000) {
+      assert.equal(await promise, true); assert.equal(calls, 0);
+      assert.deepEqual(acknowledged, [Array.from(validReceipt.eventIdHashes)]);
+      assert.equal(f.d.getPendingDiagnostics().length, 0);
+    } else {
+      assert.equal(calls, 1); assert.deepEqual(acknowledged, []);
+      assert.deepEqual(Array.from(f.d.getPendingDiagnostics(), p => p.diagnosticId), [payload.diagnosticId]);
+      emission.ack(null, validReceipt); await f.advance(0);
+      assert.equal(calls, 1); assert.deepEqual(acknowledged, []);
+      finishHttp(response({ accepted: false, diagnosticId: null, eventIdHashes: [] }, 202));
+      assert.equal(await promise, false);
+      assert.equal(f.d.getPendingDiagnostics().length, 1); assert.deepEqual(acknowledged, []);
+    }
+    assert.equal(f.d._diagnosticInFlight.size, 0); assert.equal(f.timers.size, 0);
+  });
+}
 
 test('disconnect and thrown emit each fall back once', async () => {
   for (const mode of ['disconnect', 'throw']) {
