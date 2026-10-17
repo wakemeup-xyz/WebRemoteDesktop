@@ -1,6 +1,6 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `8e375fa`（含 C5 准入修复与 R1）；独立源码复审通过，公网运行验收继续进行，尚未最终验收。
+执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `8e375fa`（含 C5 准入修复与 R1）；独立源码复审通过，公网 TURN 暂停/恢复短测通过；JPEG 路径新复现 ACK 槽位与帧来源缺陷，M6 补充修复进行中，尚未最终验收。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
@@ -132,3 +132,5 @@ C5 `cd64e54` 增加显式 Start/reclaim 准入票据和独立于 socket/grace/TT
 08:53 北京时间仅更新并重启本地 Signal/Host，helper 完成耗时 16.356 秒；Signal PID 29105、Host PID 29164。08:53:43 health 200、Host 在线、Viewer 0；实际构建 `b73325b8166441a6`，保留前两构建 `7cdeb3e918582f7c` / `473f909ac58cea18`。原 checkout HEAD/index 保持不变；cloudflared PID 84671、watcher PID 897 和各自启动时间不变，quick URL 文件仍不存在。回滚快照保存于私有 `/tmp/wrd-c5-rollout-private-ilovzfv1/apply-8e375fad-2jvzvnqo`，未在版本文档保存凭据。
 
 本次公网媒体生命周期验收 `/tmp/wrd-public-c5-media-relay-20261017a`：登录页、fresh zero-Viewer proof、真实表单登录通过；69.11 秒后 readiness 超时，62 个样本均无 Socket/PC，画面和输入指标均缺测，浏览器已关闭。复核发现私有验收工具只在一次 `startBtn.is_visible()` 为 true 时点击，没有等待实际可用，也没有记录点击证明，因此该次 FAIL 不能作为 C5 服务回归证据，具体不可见原因也不能从现有样本确认。工具修订须等待 core/auth 与真实按钮可交互、验证 `start-click` 标记增加，才进入媒体验收；不绕过 UI 直接调用 Start。此失败记录保留，后续结果单列。
+
+最新公网各轮结果、实际传输分段与保留失败见[运行验收报告](2026-10-17-live-acceptance.md)。I2 Start 证明工具修订 `e2275a5` 已独立复审并同步，仅改验收脚本，无服务重启；[任务复审归档](2026-10-17-I2-start-proof-review.md)。JPEG 的运行复现与离线反例需完成 M6 后重验，不能因 TURN 短时 PASS 把整体验收关闭。
