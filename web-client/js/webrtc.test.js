@@ -7865,3 +7865,89 @@ for (const stop of ['disconnect', 'handleViewerSuperseded']) {
     assert.equal(failure.failureClass, 'timeout'); assert.equal(Object.isFrozen(failure), true);
   });
 }
+
+test('startup ownership: new explicit Start fences older admission before bootstrap and init', async () => {
+  let finishAdmission;
+  let calls = 0;
+  const h = admissionViewerFixture({ fetchAdmission: () => {
+    calls++;
+    if (calls === 1) return new Promise(resolve => { finishAdmission = resolve; });
+    return { ok: true, status: 201, json: async () => ({ admission: { ticket: 'new-ticket' } }) };
+  } });
+  const old = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  const retired = h.WebRTC._startupEpisode;
+  await h.WebRTC.startViewer(h.controller);
+  const current = h.WebRTC._startupEpisode;
+  finishAdmission({ ok: true, status: 201, json: async () => ({ admission: { ticket: 'old-ticket' } }) });
+  await old;
+  assert.equal(retired.state, 'retired');
+  assert.equal(h.WebRTC._startupEpisode, current);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.sockets[0].auth.viewerAdmission.ticket, 'new-ticket');
+});
+
+test('startup ownership: cancelled bootstrap resolution and rejection cannot revive UI or overwrite next Start', async () => {
+  for (const rejectOld of [false, true]) {
+    const h = admissionViewerFixture();
+    let finish, reject;
+    const controller = { load: () => new Promise((resolve, fail) => { finish = resolve; reject = fail; }), cancel() {} };
+    const old = h.WebRTC.startViewer(controller);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    h.WebRTC.retireStartupEpisode('startup-cancelled', { cleanup: true });
+    await h.WebRTC.startViewer(h.controller);
+    const current = h.WebRTC._startupEpisode;
+    if (rejectOld) reject(new Error('old-bootstrap-error'));
+    else finish({ webrtc: { iceServers: [{ urls: 'turn:old.invalid' }] } });
+    await old;
+    assert.equal(h.WebRTC._startupEpisode, current);
+    assert.equal(h.WebRTC.uiPhase, 'signaling');
+    assert.equal(h.WebRTC.hasTurnConfigured(), false);
+    assert.equal(h.sockets.length, 2);
+  }
+});
+
+test('startup ownership: deferred verification from older Start cannot enroll over newer Start', async () => {
+  const h = admissionViewerFixture();
+  let finish, checks = 0;
+  h.context.Auth.whenReady = () => ++checks === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(true);
+  const old = h.WebRTC.startViewer(h.controller);
+  await h.WebRTC.startViewer(h.controller);
+  const current = h.WebRTC._startupEpisode;
+  finish(true);
+  await old;
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.WebRTC._startupEpisode, current);
+});
+
+test('startup ownership: retained superseded config cannot cross auth scope before explicit reclaim', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  let finish;
+  h.controller.load = () => new Promise(resolve => { finish = resolve; });
+  const start = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  h.sockets[0].trigger('viewer-superseded', {});
+  finish({ webrtc: { turnConfigured: true, iceServers: [{ urls: 'turn:old.invalid' }] } });
+  await start;
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
+  h.context.Auth.getToken = () => 'new-auth';
+  await h.WebRTC.reclaimDesktopSession();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.WebRTC.pc, null);
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
+});
+
+test('startup ownership: detached old PC and metadata callbacks cannot act on replacement PC', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  await h.WebRTC.startViewer(h.controller);
+  const old = h.WebRTC.pc;
+  const connected = old.onconnectionstatechange, track = old.ontrack;
+  await h.WebRTC.startViewer(h.controller);
+  const current = h.WebRTC.pc, episode = h.WebRTC._startupEpisode;
+  connected();
+  track({});
+  assert.equal(h.WebRTC.pc, current);
+  assert.equal(h.WebRTC._startupEpisode, episode);
+  assert.equal(h.WebRTC.uiPhase, 'signaling');
+  assert.equal(h.WebRTC.hasPaintedFrame, false);
+});

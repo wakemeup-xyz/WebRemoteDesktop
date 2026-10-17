@@ -1024,3 +1024,467 @@ test('control reset protocol: suspension and explicit skip policies emit no keyb
     assert.equal(h.Input.keyboardTransport.getSnapshot().state, mode === 'suspend' ? 'ready' : 'revoked');
   }
 });
+
+test('initial answer after 8s and current painted frame enables actual Input with unchanged active lease', async () => {
+  const h = fixture();
+  const w = h.WebRTC;
+  w.hasPaintedFrame = false;
+  w._mediaReadyConnectionAttemptId = null;
+  w.uiPhase = 'signaling';
+  w.syncDesktopInputGate();
+  const listeners = {};
+  w.socket.on = (event, fn) => { listeners[event] = fn; };
+  h.context.RTCSessionDescription = function (value) { return value; };
+  w.pc.signalingState = 'have-local-offer';
+  w.pc.connectionState = 'connecting';
+  w.pc.setRemoteDescription = async function (answer) { this.remoteDescription = answer; this.signalingState = 'stable'; };
+  w.beginStartupEpisode?.();
+  w.setupSocketListeners();
+  const socket = w.socket, peer = w.pc, attempt = w.currentConnectionAttemptId;
+  const lease = w.controlState.lease;
+  w.beginFirstFrameDeadline(attempt, 8000);
+  h.advance(9000);
+  await listeners.answer({ answer: { type: 'answer', sdp: 'offline' } });
+  assert.equal(peer.remoteDescription.type, 'answer');
+  peer.connectionState = 'connected';
+  w.setUiPhase('media-pending', { reason: 'pc-connected' });
+  let paint;
+  const video = h.context.document.getElementById('remoteVideo');
+  video.videoWidth = 1280;
+  video.requestVideoFrameCallback = (fn) => { paint = fn; return 1; };
+  w.startVideoFrameTracking();
+  paint(10000, {});
+  assert.equal(w.socket, socket);
+  assert.equal(w.pc, peer);
+  assert.equal(w.controlState.lease, lease);
+  assert.equal(w.hasActiveControl(), true);
+  assert.equal(w.isCurrentAttemptMediaReady(attempt), true);
+  assert.equal(w.hasPaintedFrame, true);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  assert.equal(h.Input.isActive, true);
+  assert.equal(w.uiPhase, 'connected');
+});
+
+function startupFixture() {
+  const h = fixture();
+  const w = h.WebRTC;
+  w.hasPaintedFrame = false;
+  w._mediaReadyConnectionAttemptId = null;
+  w.uiPhase = 'signaling';
+  w.syncDesktopInputGate();
+  w.pc.connectionState = 'connecting';
+  w.pc.close = () => { h.closed = (h.closed || 0) + 1; };
+  w.socket.disconnect = () => { h.disconnected = (h.disconnected || 0) + 1; };
+  w.beginStartupEpisode();
+  w.beginFirstFrameDeadline(w.currentConnectionAttemptId);
+  h.paint = (width = 1280) => {
+    let callback;
+    const video = h.context.document.getElementById('remoteVideo');
+    video.videoWidth = width;
+    video.requestVideoFrameCallback = (fn) => { callback = fn; return 1; };
+    w.startVideoFrameTracking();
+    callback(h.context.performance.now(), {});
+    return callback;
+  };
+  h.connect = () => {
+    w.pc.connectionState = 'connected';
+    w.onPeerConnected();
+  };
+  return h;
+}
+
+test('startup supervision: 8s is soft, 72s is terminal exactly once without logout or mode change', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const mode = w.networkMode;
+  let logout = 0;
+  h.context.Auth = { logout() { logout++; } };
+  h.advance(8000);
+  assert.equal(w._startupEpisode.state, 'slow');
+  assert.equal(w.uiPhase, 'signaling');
+  assert.equal(h.Input.isActive, false);
+  assert.equal(w.recommendationState?.nextSuggestedMode ?? null, null);
+  h.advance(63999);
+  assert.equal(w._startupEpisode.state, 'slow');
+  h.advance(1);
+  assert.equal(w._startupEpisode.state, 'failed');
+  assert.equal(w._startupEpisode.reason, 'startup-media-timeout');
+  assert.equal(w.uiPhase, 'disconnected');
+  assert.equal(h.closed, 1);
+  assert.equal(h.disconnected, 1);
+  w.checkStartupEpisode();
+  w.scheduleSignalingRecovery();
+  w.createPeerConnection();
+  assert.equal(h.closed, 1);
+  assert.equal(w.pc, null);
+  assert.equal(w.socket, null);
+  assert.equal(logout, 0);
+  assert.equal(w.networkMode, mode);
+});
+
+test('startup supervision: DC open and duplicate connected events cannot cancel or reset 12s paint cap', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  h.advance(29000);
+  h.connect();
+  const paint = w._startupEpisode.paint;
+  assert.equal(paint.remaining, 12000);
+  w.cancelDataChannelWatchdog(false);
+  h.advance(11000);
+  h.connect();
+  assert.equal(w._startupEpisode.paint, paint);
+  assert.equal(paint.remaining, 1000);
+  h.advance(1000);
+  assert.equal(w._startupEpisode.reason, 'startup-paint-timeout');
+  assert.equal(w.uiPhase, 'disconnected');
+});
+
+test('startup supervision: hidden and intentional pause retain exact active budget over repeated cycles', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  h.connect();
+  h.advance(5000);
+  h.context.document.hidden = true;
+  w.checkStartupEpisode();
+  assert.equal(w._startupEpisode.paint.remaining, 7000);
+  h.advance(100000);
+  assert.equal(w._startupEpisode.paint.remaining, 7000);
+  h.context.document.hidden = false;
+  w.checkStartupEpisode();
+  h.advance(3000);
+  w._mediaIntent = { state: 'suspended' };
+  w.checkStartupEpisode();
+  h.advance(100000);
+  assert.equal(w._startupEpisode.paint.remaining, 4000);
+  w._mediaIntent = { state: 'active' };
+  w.checkStartupEpisode();
+  h.advance(3999);
+  assert.equal(w._startupEpisode.state, 'slow');
+  h.advance(1);
+  assert.equal(w._startupEpisode.reason, 'startup-paint-timeout');
+});
+
+test('startup supervision: early timer waits remainder; late frame settles expiration before mutating readiness', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const wake = h.timers.get(w._startupEpisode.timer).fn;
+  wake();
+  assert.equal(w._startupEpisode.feedbackRemaining, 8000);
+  assert.equal(w._startupEpisode.remaining, 72000);
+  const frame = h.paint(0);
+  assert.notEqual(w._startupEpisode.state, 'complete');
+  h.context.performance.now = () => 73000;
+  h.context.document.getElementById('remoteVideo').videoWidth = 1280;
+  frame(73000, {});
+  assert.equal(w._startupEpisode.state, 'failed');
+  assert.equal(w.hasPaintedFrame, false);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+});
+
+test('startup supervision: invalid/backwards clocks cannot extend active waiting', () => {
+  for (const now of [NaN, -1, 999]) {
+    const h = startupFixture(), w = h.WebRTC;
+    h.context.performance.now = () => now;
+    w.checkStartupEpisode();
+    assert.equal(w._startupEpisode.state, 'failed');
+    assert.equal(w._startupEpisode.remaining, 0);
+  }
+});
+
+test('startup supervision: PC/attempt replacement inherits outer remainder, paint is bounded by that remainder', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  h.advance(65000);
+  const episode = w._startupEpisode;
+  w.beginConnectionAttempt('automatic-retry');
+  w.pc = { connectionState: 'connected', close() {} };
+  h.connect();
+  assert.equal(w._startupEpisode, episode);
+  assert.equal(episode.remaining, 7000);
+  assert.equal(episode.paint.remaining, 12000);
+  h.advance(7000);
+  assert.equal(episode.state, 'failed');
+});
+
+test('startup supervision: trusted frame before control grant completes media but leaves actual Input closed', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  w.freezeControl('control-readonly');
+  h.paint();
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(w.uiPhase, 'connected');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  assert.equal(h.Input.isActive, false);
+  h.advance(80000);
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(w.uiPhase, 'connected');
+});
+
+test('startup supervision: terminal frame and queued socket events cannot revive failed owner', async () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const listeners = {};
+  w.socket.on = (event, fn) => { listeners[event] = fn; };
+  w.setupSocketListeners();
+  const frame = h.paint(0);
+  h.advance(72000);
+  await listeners.connect();
+  listeners['host-status']({ online: true });
+  listeners['control-grant']({ controller: true, ...h.lease });
+  h.context.document.getElementById('remoteVideo').videoWidth = 1280;
+  frame(73000, {});
+  assert.equal(w.uiPhase, 'disconnected');
+  assert.equal(w.pc, null);
+  assert.equal(w.hasPaintedFrame, false);
+  assert.equal(h.Input.isActive, false);
+});
+
+test('startup supervision: host offline retires old media, online retry retains episode allowance', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const listeners = {};
+  w.socket.on = (event, fn) => { listeners[event] = fn; };
+  w.setupSocketListeners();
+  const frame = h.paint(0);
+  h.advance(5000);
+  listeners['host-status']({ online: false });
+  assert.equal(w.pc, null);
+  const episode = w._startupEpisode;
+  h.context.document.getElementById('remoteVideo').videoWidth = 1280;
+  frame(6000, {});
+  assert.equal(w.hasPaintedFrame, false);
+  w.createPeerConnection = () => { w.beginConnectionAttempt('host-online'); w.pc = { connectionState: 'connecting' }; };
+  w.requestControl = () => {};
+  h.advance(5000);
+  listeners['host-status']({ online: true });
+  assert.equal(w._startupEpisode, episode);
+  assert.equal(episode.remaining, 62000);
+  assert.equal(w.uiPhase, 'signaling');
+});
+
+test('startup supervision: explicit replacement fences old frame/timer/socket and restarts media allowance only at init', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const listeners = {};
+  w.socket.on = (event, fn) => { listeners[event] = fn; };
+  w.setupSocketListeners();
+  const frame = h.paint(0);
+  const timer = h.timers.get(w._startupEpisode.timer).fn;
+  h.advance(8000);
+  const old = w._startupEpisode;
+  const next = w.beginStartupEpisode();
+  assert.equal(old.state, 'retired');
+  assert.equal(next.started, false);
+  h.advance(20000);
+  frame(29000, {}); timer(); listeners['host-status']({ online: true });
+  assert.equal(next.remaining, 72000);
+  assert.equal(w.pc, null);
+  assert.equal(w.hasPaintedFrame, false);
+  w.beginFirstFrameDeadline(w.currentConnectionAttemptId);
+  assert.equal(next.started, true);
+  assert.equal(next.remaining, 72000);
+});
+
+test('startup supervision: tunnel keeps old deadline and completed sessions keep established recovery', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  h.paint();
+  w.networkMode = 'lan';
+  w.scheduleReconnect('pc-failed');
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(w.uiPhase, 'disconnected');
+  assert.ok(w.reconnectTimer);
+  const t = fixture(), tunnel = t.WebRTC;
+  tunnel.networkMode = 'tunnel';
+  tunnel.hasPaintedFrame = false;
+  tunnel._mediaReadyConnectionAttemptId = null;
+  tunnel.uiPhase = 'signaling';
+  tunnel.pc = null;
+  tunnel.beginStartupEpisode();
+  tunnel.beginFirstFrameDeadline(tunnel.currentConnectionAttemptId);
+  assert.equal(tunnel._startupEpisode.started, false);
+  t.advance(8000);
+  assert.equal(tunnel.uiPhase, 'disconnected');
+});
+
+test('startup supervision: pending answer continuation cannot complete after hard expiry', async () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const handlers = {};
+  w.socket.on = (event, fn) => { handlers[event] = fn; };
+  h.context.RTCSessionDescription = function (value) { return value; };
+  w.pc.signalingState = 'have-local-offer';
+  let resolve;
+  w.pc.setRemoteDescription = () => new Promise(done => { resolve = done; });
+  let finished = 0;
+  w.finishDataChannelNegotiation = () => { finished++; };
+  w.setupSocketListeners();
+  const answer = handlers.answer({ answer: {} });
+  h.advance(72000);
+  resolve();
+  await answer;
+  assert.equal(finished, 0);
+  assert.equal(w.uiPhase, 'disconnected');
+  assert.equal(w.hasPaintedFrame, false);
+});
+
+test('startup supervision: first init starts once before awaited config; late config cannot create a producer', async () => {
+  const h = fixture(), w = h.WebRTC;
+  h.context.Auth = { getToken: () => 'offline-token' };
+  w.hasPaintedFrame = false;
+  w._mediaReadyConnectionAttemptId = null;
+  w.uiPhase = 'signaling';
+  let configReady, producers = 0;
+  w.loadServerConfig = () => new Promise(resolve => { configReady = resolve; });
+  w.createSignalingSocket = () => { producers++; };
+  w.createPeerConnection = () => { producers++; };
+  w.beginStartupEpisode();
+  const start = w.init();
+  h.advance(8000);
+  assert.equal(w._startupEpisode.state, 'slow');
+  assert.equal(w._startupEpisode.remaining, 64000);
+  h.advance(64000);
+  configReady();
+  await start;
+  assert.equal(producers, 0);
+  assert.equal(w._startupEpisode.state, 'failed');
+});
+
+test('startup supervision: success retires initial budget only after positive width and actual frame', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  h.paint(0);
+  assert.equal(w._startupEpisode.state, 'pending');
+  assert.equal(h.Input.isActive, false);
+  h.advance(9000);
+  h.paint(1280);
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(h.Input.isActive, true);
+  assert.equal(w._startupEpisode.timer, null);
+});
+
+test('startup supervision: hidden pending-paint warnings cannot report first-frame failure', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const errors = [];
+  h.context.Diagnostic = { autoSendFailure: (reason) => errors.push(reason) };
+  h.connect();
+  h.context.document.hidden = true;
+  w.checkStartupEpisode();
+  h.advance(80000);
+  assert.deepEqual(errors, []);
+  assert.equal(w._startupEpisode.state, 'pending');
+});
+
+test('startup supervision: connected while hidden starts paint phase and resumes its full unused remainder', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  h.context.document.hidden = true;
+  w.checkStartupEpisode();
+  h.connect();
+  h.advance(100000);
+  assert.equal(w._startupEpisode.paint.remaining, 12000);
+  h.context.document.hidden = false;
+  w.checkStartupEpisode();
+  h.advance(11999);
+  assert.equal(w._startupEpisode.state, 'slow');
+  h.advance(1);
+  assert.equal(w._startupEpisode.reason, 'startup-paint-timeout');
+});
+
+test('startup supervision: pending offer completion after cancellation cannot emit or change UI', async () => {
+  const h = startupFixture(), w = h.WebRTC;
+  let finish, localDescriptions = 0;
+  w.pc.getTransceivers = () => [{ receiver: { track: { kind: 'video' } } }];
+  w.pc.createOffer = () => new Promise(resolve => { finish = resolve; });
+  w.pc.setLocalDescription = async () => { localDescriptions++; };
+  const offer = h.originalCreateOffer.call(w);
+  w.retireStartupEpisode('startup-cancelled', { cleanup: true });
+  finish({ type: 'offer' });
+  await offer;
+  assert.equal(localDescriptions, 0);
+  assert.equal(h.emitted.filter(item => item.event === 'offer').length, 0);
+  assert.equal(w.uiPhase, 'disconnected');
+  assert.equal(h.Input.isActive, false);
+});
+
+test('startup supervision: successful peer keeps frame callbacks across signaling socket replacement', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const frame = h.paint();
+  const seq = w._videoFrameSeq;
+  w.socket = { connected: true, emit() {} };
+  frame(h.context.performance.now(), {});
+  assert.equal(w._videoFrameSeq, seq + 1);
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(w.uiPhase, 'connected');
+});
+
+test('startup supervision: slow retry/cancel controls are operable after blocking presentation is removed', async () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const doc = h.context.document;
+  const original = doc.getElementById.bind(doc);
+  let controls;
+  doc.getElementById = (id) => id === 'startupWaitControls' ? controls : original(id);
+  doc.createElement = () => ({ dataset: {}, listeners: {}, children: [],
+    addEventListener(event, callback) { this.listeners[event] = callback; },
+    append(...nodes) { this.children.push(...nodes); },
+    querySelector() { return this.children.find(child => child.dataset.startupCancel); },
+  });
+  original('loading').append = (node) => { controls = node; };
+  h.advance(8000);
+  assert.equal(controls.hidden, false);
+  assert.equal(controls.children.length, 2);
+  assert.equal(controls.children.every(button => button.className === 'start-btn'), true);
+  let starts = 0;
+  w.startViewer = async () => { starts++; };
+  await controls.children[0].listeners.click();
+  assert.equal(starts, 1);
+  controls.children[1].listeners.click();
+  assert.equal(w._startupEpisode.state, 'retired');
+  assert.equal(w.uiPhase, 'disconnected');
+  assert.equal(controls.hidden, true);
+});
+
+test('startup supervision: explicit tunnel session preserves established host-offline media readiness semantics', () => {
+  const h = fixture(), w = h.WebRTC;
+  w.networkMode = 'tunnel';
+  w.beginStartupEpisode();
+  w.beginFirstFrameDeadline(w.currentConnectionAttemptId);
+  const listeners = {};
+  w.socket.on = (event, callback) => { listeners[event] = callback; };
+  w.setupSocketListeners();
+  listeners['host-status']({ online: false });
+  assert.equal(w.hasPaintedFrame, true);
+  assert.equal(w.isCurrentAttemptMediaReady(), true);
+  assert.equal(w.uiPhase, 'disconnected');
+  assert.equal(w._startupEpisode.started, false);
+});
+
+test('startup supervision: current painted frame during intentional pause completes media while Input remains closed', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  h.advance(5000);
+  w.getMediaActivitySnapshot = () => ({ state: 'suspended' });
+  w.checkStartupEpisode();
+  h.paint();
+  assert.equal(w._startupEpisode.state, 'complete');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  assert.equal(h.Input.isActive, false);
+  h.advance(100000);
+  assert.equal(w._startupEpisode.state, 'complete');
+});
+
+test('startup supervision: queued previous-attempt frame cannot even rearm current budget timer', () => {
+  const h = startupFixture(), w = h.WebRTC;
+  const frame = h.paint(0);
+  const attempt = w.currentConnectionAttemptId;
+  w.beginConnectionAttempt('automatic-retry');
+  const timer = w._startupEpisode.timer;
+  frame(h.context.performance.now(), {});
+  w.markMediaAttemptReady(attempt);
+  assert.equal(w._startupEpisode.timer, timer);
+  assert.equal(w.hasPaintedFrame, false);
+  assert.equal(w.isCurrentAttemptMediaReady(), false);
+});
+
+test('startup supervision: legacy config await cannot initialize after auth generation changes', async () => {
+  const h = fixture(), w = h.WebRTC;
+  let token = 'old-token', generation = 1, finish, producers = 0;
+  h.context.Auth = { getToken: () => token, getGeneration: () => generation };
+  w.loadServerConfig = () => new Promise(resolve => { finish = resolve; });
+  w.createSignalingSocket = () => { producers++; };
+  w.createPeerConnection = () => { producers++; };
+  w.beginStartupEpisode();
+  const init = w.init();
+  token = 'new-token'; generation++;
+  finish();
+  await init;
+  assert.equal(producers, 0);
+  assert.equal(w._startupEpisode.reason, 'auth-changed');
+  assert.equal(w.uiPhase, 'disconnected');
+});

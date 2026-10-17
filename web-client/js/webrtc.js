@@ -721,6 +721,7 @@ const WebRTC = {
   },
 
   applyMediaActivity(snapshot = this.getMediaActivitySnapshot()) {
+    this.checkStartupEpisode({ suspended: snapshot?.state === 'suspended' });
     this.initializeMediaActivity();
     if (!this.mediaActivityRuntime && typeof MediaActivityRuntime !== 'undefined') {
       this.mediaActivityRuntime = MediaActivityRuntime.create({
@@ -1175,10 +1176,12 @@ const WebRTC = {
     // while the viewer is readonly still prove this attempt has painted; a later
     // control-grant can enable input without waiting for another frame — critical
     // on full-relay paths that regularly sit at 0 FPS for multi-second gaps.
-    if (!attemptId || attemptId !== this.currentConnectionAttemptId) return false;
+    if (!attemptId || attemptId !== this.currentConnectionAttemptId || !this.startupAllowed()) return false;
     this._mediaReadyConnectionAttemptId = attemptId;
     this.ensureDesktopSessionState()?.applyMedia({ attemptId, event: 'fresh-frame', fresh: true });
     this.clearFirstFrameDeadline();
+    this.checkStartupEpisode({ painted: true });
+    if (['retired', 'failed'].includes(this._startupEpisode?.state)) return false;
     if (this.hasPaintedFrame && this.uiPhase !== 'disconnected') {
       this.setUiPhase('connected', { reason: 'media-ready' });
     }
@@ -1339,6 +1342,8 @@ const WebRTC = {
   },
 
   beginConnectionAttempt(trigger = 'viewer-open') {
+    if (!this.startupAllowed()) return;
+    if (this.startupPending()) this._startupEpisode.paint = null;
     this.cancelDataChannelWatchdog();
     this.clearRefreshDcWaitTimer();
     this.clearMediaResumeProof();
@@ -1556,6 +1561,7 @@ const WebRTC = {
   },
 
   enterUnavailableRelayState(message) {
+    if (this.startupPending()) this.retireStartupEpisode('relay-unavailable', { cleanup: true });
     this.markRefreshSettled('unavailable-relay');
     this.offerInProgress = false;
     this._offerEpoch += 1;
@@ -1734,6 +1740,7 @@ const WebRTC = {
   },
 
   setUiPhase(phase, { reason, attemptId } = {}) {
+    if (['retired', 'failed'].includes(this._startupEpisode?.state) && phase !== 'disconnected') return this.uiPhase;
     if (phase === 'connected' && this.hasPaintedFrame !== true) {
       phase = 'media-pending';
     }
@@ -1914,9 +1921,11 @@ const WebRTC = {
   },
 
   schedulePaintPendingCopyTimers() {
+    const owner = this.captureStartupOwner();
     if (this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
     if (!this._paintPending3sTimer) {
       this._paintPending3sTimer = setTimeout(() => {
+        if (!this.ownsStartupOwner(owner)) return;
         this._paintPending3sTimer = null;
         if (this.uiPhase !== 'media-pending'
             || this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
@@ -1925,18 +1934,21 @@ const WebRTC = {
     }
     if (!this._paintPending8sTimer) {
       this._paintPending8sTimer = setTimeout(() => {
+        if (!this.ownsStartupOwner(owner)) return;
         this._paintPending8sTimer = null;
         if (this.uiPhase !== 'media-pending'
             || this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
         this.announcePaintIssue('media-pending-8s');
-        this.autoSendPaintFailure('paint-pending-timeout');
+        if (!this.startupPending()) this.autoSendPaintFailure('paint-pending-timeout');
       }, 8000);
     }
   },
 
   schedulePaintStalledCopyTimer() {
+    const owner = this.captureStartupOwner();
     if (this.networkMode !== 'relay' || this._paintStalled6sTimer) return;
     this._paintStalled6sTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this._paintStalled6sTimer = null;
       if (this.uiPhase !== 'media-stalled') return;
       this.announcePaintIssue('media-stalled-6s');
@@ -1944,8 +1956,10 @@ const WebRTC = {
   },
 
   schedulePaintStalledAutoSend() {
+    const owner = this.captureStartupOwner();
     if (this._paintStalled3sTimer) return;
     this._paintStalled3sTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this._paintStalled3sTimer = null;
       if (this.uiPhase !== 'media-stalled') return;
       this.autoSendPaintFailure('media-stalled');
@@ -1993,6 +2007,7 @@ const WebRTC = {
   },
 
   notePaintStats(stats = {}) {
+    if (!this.startupAllowed()) return;
     const canonical = this.canonicalMediaStats(stats);
     const videoWidth = Number(stats.videoWidth || 0);
     const decodedDelta = canonical.decodedDelta;
@@ -2347,8 +2362,207 @@ const WebRTC = {
     return { effectiveMode: preferredMode, changed: false, unavailable: false, reason: '' };
   },
   
-  async init({ bootstrapSnapshot = null, trigger = 'viewer-open', reuseSocket = false } = {}) {
+  // Initial media supervision belongs to an explicit Start, not to individual
+  // retries. Completed episodes deliberately leave established recovery alone.
+  beginStartupEpisode(controller = null) {
+    if (this._startupEpisode) {
+      this.retireStartupEpisode('replaced', { cleanup: true });
+      // Retired supersession may retain an inert config promise for reclaim. A
+      // new Start cancels that dependency before asking the controller to load.
+      this._startupEpisode.controller?.cancel?.();
+      this._pendingBootstrapConfig = null;
+    }
+    const episode = { state: 'pending', controller, started: false, remaining: 72000,
+      feedbackRemaining: 8000, paint: null, timer: null, lastNow: null, paused: false };
+    this._startupEpisode = episode;
+    this.manualDisconnect = false;
+    if (!this._startupVisibilityBound) {
+      this._startupVisibilityBound = true;
+      document.addEventListener('visibilitychange', () => this.checkStartupEpisode());
+    }
+    this.renderStartupControls(false);
+    return episode;
+  },
+
+  startupPending() {
+    return this.networkMode !== 'tunnel' && ['pending', 'slow'].includes(this._startupEpisode?.state);
+  },
+
+  startupAllowed(episode = this._startupEpisode || null) {
+    if (episode !== (this._startupEpisode || null)) return false;
+    if (!episode) return true;
+    if (this.startupPending()) this.checkStartupEpisode();
+    return episode.state === 'pending' || episode.state === 'slow' || episode.state === 'complete';
+  },
+
+  captureStartupOwner() {
+    return { episode: this._startupEpisode || null, peer: this.pc, socket: this.socket,
+      attempt: this.currentConnectionAttemptId, sequence: this.connectionAttemptSequence };
+  },
+
+  ownsStartupOwner(owner) {
+    // Reject stale owners before checking time: even rearming the current timer
+    // is a mutation that an older producer must not perform.
+    return owner.peer === this.pc
+      && (!this.startupPending() || owner.socket === this.socket) && owner.attempt === this.currentConnectionAttemptId
+      && owner.sequence === this.connectionAttemptSequence && this.startupAllowed(owner.episode);
+  },
+
+  checkStartupEpisode({ connected = false, painted = false, suspended = null } = {}) {
+    const e = this._startupEpisode;
+    if (!this.startupPending() || !e.started) return;
+    const now = this.signalingMonotonicNow();
+    const paused = Boolean(document.hidden || (suspended == null
+      ? this._mediaIntent?.state === 'suspended' || this.getMediaActivitySnapshot()?.state === 'suspended'
+      : suspended));
+    // Invalid time is conservative: it cannot create another active allowance.
+    const elapsed = now === null || e.lastNow === null || now < e.lastNow
+      ? 72000 : now - e.lastNow;
+    if (!e.paused) {
+      e.remaining = Math.max(0, e.remaining - elapsed);
+      e.feedbackRemaining = Math.max(0, e.feedbackRemaining - elapsed);
+      if (e.paint) e.paint.remaining = Math.max(0, e.paint.remaining - elapsed);
+    }
+    e.lastNow = now;
+    e.paused = paused;
+    if (e.timer != null) clearTimeout(e.timer);
+    e.timer = null;
+    const expired = e.remaining <= 0 || e.paint?.remaining <= 0;
+    if (!paused && expired) {
+      this.retireStartupEpisode(e.paint ? 'startup-paint-timeout' : 'startup-media-timeout', { cleanup: true, failure: true });
+      return;
+    }
+    if (connected && this.pc && e.paint?.peer !== this.pc) {
+      e.paint = { peer: this.pc, remaining: 12000 };
+    }
+    if (!expired && painted && this.uiPhase !== 'disconnected' && this.hasPaintedFrame && this.isCurrentAttemptMediaReady()) {
+      e.state = 'complete';
+      this.renderStartupControls(false);
+      return;
+    }
+    if (paused) return;
+    if (e.feedbackRemaining <= 0 && e.state === 'pending') {
+      e.state = 'slow';
+      document.getElementById('loading')?.classList.remove('is-connecting');
+      updateLoadingText('连接较慢，仍在等待画面；可以重试或取消');
+      this.renderStartupControls(true);
+    }
+    const delay = Math.min(e.remaining, e.paint?.remaining ?? Infinity,
+      e.state === 'pending' ? e.feedbackRemaining : Infinity);
+    e.timer = setTimeout(() => {
+      if (this._startupEpisode === e) this.checkStartupEpisode();
+    }, delay);
+    e.timer?.unref?.();
+  },
+
+  startStartupMediaBudget() {
+    const e = this._startupEpisode;
+    if (!this.startupPending() || e.started || this.networkMode === 'tunnel') return;
+    e.started = true;
+    e.lastNow = this.signalingMonotonicNow();
+    e.paused = Boolean(document.hidden || this._mediaIntent?.state === 'suspended'
+      || this.getMediaActivitySnapshot()?.state === 'suspended');
+    this.checkStartupEpisode();
+  },
+
+  retireStartupMediaOwner() {
+    const e = this._startupEpisode;
+    if (e) e.paint = null;
+    for (const key of ['reconnectTimer', '_disconnectedTimer', '_iceDisconnectedTimer', '_stableResetTimer']) {
+      if (this[key] != null) clearTimeout(this[key]);
+      this[key] = null;
+    }
+    this.clearRefreshDcWaitTimer();
+    this.cancelDataChannelWatchdog();
+    this.clearPaintIssueTimers();
+    this.clearMediaResumeProof();
+    this.stopMediaTelemetry();
+    this.stopVideoFrameTracking();
+    this.stopDcKeepalive();
+    this._offerEpoch += 1;
+    this.offerInProgress = false;
+    const peer = this.pc;
+    this.pc = null;
+    this.inputChannel = null;
+    this.inputMoveChannel = null;
+    this.hasPaintedFrame = false;
+    this._mediaReadyConnectionAttemptId = null;
+    if (peer) {
+      for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',
+        'onsignalingstatechange', 'onicegatheringstatechange', 'onicecandidate', 'ontrack']) peer[event] = null;
+      peer.close?.();
+    }
+    const video = document.getElementById('remoteVideo');
+    if (video) { video.onloadedmetadata = null; video.onplaying = null; video.srcObject = null; }
+    this.syncDesktopInputGate();
+  },
+
+  retireStartupEpisode(reason, { cleanup = false, failure = false, retainReclaimConfig = false } = {}) {
+    const e = this._startupEpisode;
+    if (!e || ['retired', 'failed'].includes(e.state)) return;
+    // Retire before closing producers: close/disconnect may synchronously call back.
+    e.state = failure ? 'failed' : 'retired';
+    e.reason = reason;
+    if (e.timer != null) clearTimeout(e.timer);
+    e.timer = null;
+    if (!retainReclaimConfig) {
+      e.controller?.cancel?.();
+      this._pendingBootstrapConfig = null;
+    }
+    this._deferPeerUntilConfig = false;
+    this.renderStartupControls(false);
+    if (!cleanup) return;
+    this.clearFirstFrameDeadline();
+    this.clearSignalingRecovery();
+    this.markRefreshSettled(reason);
+    for (const key of ['reconnectTimer', '_disconnectedTimer', '_iceDisconnectedTimer', '_dcReconnectTimer', '_stableResetTimer']) {
+      if (this[key] != null) clearTimeout(this[key]);
+      this[key] = null;
+    }
+    this._cancelControlAcquireIntent();
+    this.freezeControl(reason);
+    this.retireStartupMediaOwner();
+    const socket = this.socket;
+    this.socket = null;
+    socket?.disconnect?.();
+    this.setUiPhase('disconnected', { reason });
+    document.getElementById('loading')?.classList.remove('is-connecting');
+    const start = document.getElementById('startBtn');
+    if (start) start.style.display = '';
+    if (reason === 'startup-cancelled') updateLoadingText('连接已取消，可以重新开始');
+    if (failure) {
+      updateLoadingText(reason === 'startup-paint-timeout'
+        ? '媒体链路已连接，但等待画面超时，请重试' : '等待媒体连接超时，请重试');
+      this.renderStartupControls(true, false);
+    }
+  },
+
+  renderStartupControls(show, cancel = true) {
+    let controls = document.getElementById('startupWaitControls');
+    if (!controls && show && document.createElement) {
+      controls = document.createElement('div');
+      controls.id = 'startupWaitControls';
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'start-btn'; retry.textContent = '重试连接';
+      retry.addEventListener('click', () => this.startViewer(this._startupEpisode?.controller));
+      const stop = document.createElement('button');
+      stop.type = 'button'; stop.className = 'start-btn'; stop.textContent = '取消连接'; stop.dataset.startupCancel = 'true';
+      stop.addEventListener('click', () => this.retireStartupEpisode('startup-cancelled', { cleanup: true }));
+      controls.append(retry, stop);
+      document.getElementById('loading')?.append(controls);
+    }
+    if (controls) {
+      controls.hidden = !show;
+      const stop = controls.querySelector?.('[data-startup-cancel]');
+      if (stop) stop.hidden = !cancel;
+    }
+  },
+
+  async init({ bootstrapSnapshot = null, trigger = 'viewer-open', reuseSocket = false, episode = this._startupEpisode || null } = {}) {
+    if (!this.startupAllowed(episode)) return false;
+    this.startStartupMediaBudget();
     const token = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
     if (!token) {
       console.error('No token available');
       if (typeof Auth.logout === 'function') Auth.logout();
@@ -2360,7 +2574,11 @@ const WebRTC = {
     } else {
       await this.loadServerConfig();
     }
-    if (this._superseded) return false;
+    if (this._superseded || !this.startupAllowed(episode)) return false;
+    if (Auth.getToken() !== token || Auth.getGeneration?.() !== authGeneration) {
+      this.retireStartupEpisode('auth-changed', { cleanup: true });
+      return false;
+    }
     this.clearFailureRecommendation();
     const modeState = this.enforceSupportedNetworkMode(this.networkMode);
     this.beginConnectionAttempt(trigger);
@@ -2415,6 +2633,11 @@ const WebRTC = {
   },
 
   beginFirstFrameDeadline(attemptId, timeoutMs = 8000) {
+    if (this.startupPending() && this.networkMode !== 'tunnel') {
+      this.clearFirstFrameDeadline();
+      this.startStartupMediaBudget();
+      return;
+    }
     this.clearFirstFrameDeadline();
     const expectedAttemptId = attemptId || this.currentConnectionAttemptId;
     if (this.hasPaintedFrame
@@ -2433,6 +2656,10 @@ const WebRTC = {
   },
 
   endConnectingWithFailure(reason = 'first-frame-timeout') {
+    if (this.startupPending() && this.networkMode !== 'tunnel') {
+      this.retireStartupEpisode(reason, { cleanup: true, failure: true });
+      return;
+    }
     this.clearFirstFrameDeadline();
     document.getElementById('loading')?.classList.remove('is-connecting');
     this.setUiPhase('disconnected', { reason });
@@ -2448,6 +2675,7 @@ const WebRTC = {
   },
 
   enterBootstrapFailure(error) {
+    this.retireStartupEpisode('bootstrap-failure', { cleanup: true });
     this.clearFirstFrameDeadline();
     document.getElementById('loading')?.classList.remove('is-connecting');
     this.setUiPhase('disconnected', { reason: 'bootstrap-failure' });
@@ -2459,9 +2687,11 @@ const WebRTC = {
   },
 
   async startViewer(controller = null) {
+    const startRequest = this._startRequest = (this._startRequest || 0) + 1;
     // Token presence is not verification. Await the initial check only; retry is explicit.
     const verified = typeof Auth !== 'undefined' && (typeof Auth.whenReady === 'function'
       ? await Auth.whenReady() : Auth.isVerified?.() === true);
+    if (startRequest !== this._startRequest) return false;
     if (!verified || Auth.isVerified?.() !== true) {
       if (typeof Auth !== 'undefined' && !Auth.getToken()) return Auth.logout();
       if (typeof Auth !== 'undefined') Auth.showRetry?.(true);
@@ -2469,6 +2699,7 @@ const WebRTC = {
       this.syncChromeCapabilities();
       return false;
     }
+    const episode = this.beginStartupEpisode(controller);
     this.resetSignalingSession();
     this._controlUserReleased = false;
     this._cancelControlAcquireIntent();
@@ -2483,11 +2714,17 @@ const WebRTC = {
       StartupTelemetry.mark('bootstrap-start');
     }
     try {
-      await this.requestExplicitViewerAdmission();
+      await this.requestExplicitViewerAdmission(episode);
+      if (!this.startupAllowed(episode)) return false;
+      if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+          || Auth.getGeneration?.() !== authGeneration) {
+        this.retireStartupEpisode('auth-changed', { cleanup: true });
+        return false;
+      }
       this._superseded = false;
       this.hideSupersededUI();
       if (!controller) {
-        await this.init({ trigger: 'start-button' });
+        await this.init({ trigger: 'start-button', episode });
         return;
       }
       // Open signaling immediately; ICE/config can arrive in parallel via bootstrap.
@@ -2499,14 +2736,16 @@ const WebRTC = {
         mode: this.networkMode,
         turnServerId: this.selectedTurnServerId,
       }).then((snapshot) => {
-        if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+        const reclaimOnly = this._startupEpisode === episode
+          && episode.state === 'retired' && episode.reason === 'viewer-superseded';
+        if ((!this.startupAllowed(episode) && !reclaimOnly) || Auth.isVerified?.() !== true || Auth.getToken() !== authToken
             || Auth.getGeneration?.() !== authGeneration
             || this._pendingBootstrapConfig !== pendingBootstrap) {
           throw Object.assign(new Error('superseded'), { code: 'superseded' });
         }
-        // Reclaim waits on validated configuration, never on a stale response.
-        // A rejected Start may retain config without reviving its old attempt.
-        if (this._superseded) this.applyBootstrapSnapshot(snapshot);
+        // A superseded Start can only return inert config to a future explicit
+        // reclaim; it cannot publish config/UI or revive its media producer.
+        if (reclaimOnly) episode.reclaimConfig = { snapshot, authToken, authGeneration };
         return snapshot;
       });
       this._pendingBootstrapConfig = pendingBootstrap;
@@ -2520,7 +2759,7 @@ const WebRTC = {
       }
       // The promise settles before this continuation; authentication may have
       // changed in another queued microtask after configuration validation.
-      if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+      if (!this.startupAllowed(episode) || Auth.isVerified?.() !== true || Auth.getToken() !== authToken
           || Auth.getGeneration?.() !== authGeneration) {
         throw Object.assign(new Error('superseded'), { code: 'superseded' });
       }
@@ -2532,8 +2771,9 @@ const WebRTC = {
         }
       }
       if (this._superseded) return false;
-      await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true });
+      await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true, episode });
     } catch (error) {
+      if (!this.startupAllowed(episode)) return false;
       if (!this._pendingBootstrapConfig) this._deferPeerUntilConfig = false;
       if (error?.code === 'auth-invalid' && Auth.getToken() === authToken
           && Auth.getGeneration?.() === authGeneration
@@ -2541,6 +2781,10 @@ const WebRTC = {
         return Auth.logout();
       }
       if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
+      else if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+          || Auth.getGeneration?.() !== authGeneration) {
+        this.retireStartupEpisode('auth-changed', { cleanup: true });
+      }
     }
   },
 
@@ -2570,6 +2814,7 @@ const WebRTC = {
   },
 
   createSignalingSocket(forceRecreate = false) {
+    if (!this.startupAllowed()) return null;
     if (this._superseded) {
       return null;
     }
@@ -2607,7 +2852,7 @@ const WebRTC = {
     } catch (_error) { return null; }
   },
 
-  async requestExplicitViewerAdmission() {
+  async requestExplicitViewerAdmission(episode = this._startupEpisode || null) {
     // A proof-bearing page must never upgrade itself to ordinary human takeover.
     if (this.readProofAdmission()) { this._viewerAdmission = null; return; }
     const token = Auth.getToken();
@@ -2619,7 +2864,7 @@ const WebRTC = {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ viewerSessionId: this.resolveViewerSessionId() }),
     }, { timeoutMs: 5000 });
-    if (sequence !== this._explicitAdmissionSequence || Auth.getToken() !== token
+    if (!this.startupAllowed(episode) || sequence !== this._explicitAdmissionSequence || Auth.getToken() !== token
         || Auth.getGeneration?.() !== authGeneration || Auth.isVerified?.() !== true) {
       throw Object.assign(new Error('superseded'), { code: 'superseded' });
     }
@@ -2915,8 +3160,12 @@ const WebRTC = {
   },
 
   async loadServerConfig({ turnServerId } = {}) {
+    const episode = this._startupEpisode || null;
+    const token = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
+    const ownsConfig = () => Auth.getToken() === token && Auth.getGeneration?.() === authGeneration
+      && this.startupAllowed(episode);
     try {
-      const token = Auth.getToken();
       const apiBase = (typeof RuntimeConfig !== 'undefined')
         ? RuntimeConfig.getApiBase()
         : '';
@@ -2933,7 +3182,9 @@ const WebRTC = {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      this.serverConfig = await response.json();
+      const config = await response.json();
+      if (!ownsConfig()) return;
+      this.serverConfig = config;
       const resolvedId = this.setSelectedTurnServerId(
         this.serverConfig.selectedTurnServerId || requestedId || this.selectedTurnServerId,
         { persist: true },
@@ -2952,7 +3203,9 @@ const WebRTC = {
           },
         );
         if (retry.ok) {
-          this.serverConfig = await retry.json();
+          const config = await retry.json();
+          if (!ownsConfig()) return;
+          this.serverConfig = config;
         }
       }
       this.populateTurnServerSelect();
@@ -2967,6 +3220,7 @@ const WebRTC = {
         turnServers: (this.serverConfig.turnServers || []).map((server) => server.id),
       });
     } catch (err) {
+      if (!ownsConfig()) return;
       console.warn('[NETWORK] Failed to load WebRTC config, using built-in STUN only:', err);
       this.serverConfig = {
         stunUrls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
@@ -3483,11 +3737,12 @@ const WebRTC = {
     if (!socket || typeof socket.on !== 'function') return;
     if ((this._relayPendingStart && this._relayPendingStart.socket !== socket)
       || (this._relayScopeContext && this._relayScopeContext.socket !== socket)) this.clearRelayOrigin();
+    const episode = this._startupEpisode || null;
     const signalingSession = this.ensureSignalingSession();
     const signalingManager = socket.io;
     const onCurrentSocket = (event, handler) => {
       socket.on(event, (...args) => {
-        if (this.socket !== socket) return undefined;
+        if (this.socket !== socket || !this.startupAllowed(episode)) return undefined;
         return handler(...args);
       });
     };
@@ -3509,7 +3764,7 @@ const WebRTC = {
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.replayPendingDiagnostics === 'function') {
         await Diagnostic.replayPendingDiagnostics(this.socket);
       }
-      if (this.socket !== socket) return;
+      if (this.socket !== socket || !this.startupAllowed(episode)) return;
       // Reset offerInProgress on reconnect to prevent stuck state
       if (this.offerInProgress) {
         console.warn('[OFFER-DBG] Resetting stuck offerInProgress on reconnect');
@@ -3567,6 +3822,7 @@ const WebRTC = {
         this.controlState.hostOnline = true;
         this.applyHostCapabilities(data.hostCapabilities);
         this.renderPortSearchStatus();
+        if (this.startupPending()) this.setUiPhase('signaling', { reason: 'host-online' });
         updateLoadingText('Host已上线，正在连接...');
         if (!this._deferPeerUntilConfig
           && (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState))) {
@@ -3588,6 +3844,7 @@ const WebRTC = {
         } else {
           this.renderPortSearchStatus();
         }
+        if (this.startupPending()) this.retireStartupMediaOwner();
         this.freezeControl('host-offline');
         this.setUiPhase('disconnected', { reason: 'host-offline' });
         updateLoadingText('Host已离线');
@@ -3599,6 +3856,7 @@ const WebRTC = {
     });
 
     onCurrentSocket('answer', async (data) => {
+      const answerEpisode = this._startupEpisode || null;
       console.log('Received answer');
       if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
         console.warn('[NETWORK] Ignoring stale answer: pc=%s, signalingState=%s',
@@ -3613,7 +3871,7 @@ const WebRTC = {
         await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
         if (this.pc !== peer || this.socket !== socket || this.currentConnectionAttemptId !== attempt
             || this.connectionAttemptSequence !== sequence || this._offerEpoch !== epoch
-            || this.manualDisconnect || this._superseded) return;
+            || this.manualDisconnect || this._superseded || !this.startupAllowed(answerEpisode)) return;
         this.finishDataChannelNegotiation(watchdog);
       } catch (err) {
         console.error('Failed to set remote description:', err);
@@ -3873,6 +4131,7 @@ const WebRTC = {
   },
 
   handleControlGrant(data = {}) {
+    if (!this.startupAllowed()) return;
     if (this._controlUserReleased || this._superseded || this.manualDisconnect) {
       if (this.socket?.connected) this.socket.emit('control-release', { reason: 'released' });
       return;
@@ -4188,7 +4447,9 @@ const WebRTC = {
   STABLE_RECOVERY_RESET_MS: 5000,
   armStableRecoveryReset() {
     if (this._stableResetTimer) clearTimeout(this._stableResetTimer);
+    const owner = this.captureStartupOwner();
     this._stableResetTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this._stableResetTimer = null;
       if (this.pc?.connectionState !== 'connected') return;
       this._reconnectAttempt = 0;
@@ -4200,6 +4461,10 @@ const WebRTC = {
   },
 
   onPeerConnected() {
+    if (!this.startupAllowed()) return;
+    this.checkStartupEpisode({ connected: true });
+    if (!this.startupAllowed()) return;
+    const owner = this.captureStartupOwner();
     if (this._refreshing) {
       if (this.inputChannel?.readyState === 'open') {
         this.markRefreshSettled('pc-connected');
@@ -4280,6 +4545,7 @@ const WebRTC = {
     }
     // Start latency clock sync after connection is stable
     setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.requestClockSync();
       }
@@ -4288,6 +4554,7 @@ const WebRTC = {
   },
 
   createPeerConnection() {
+    if (!this.startupAllowed()) return;
     this.cancelDataChannelWatchdog();
     this.clearRefreshDcWaitTimer();
     if (this.networkMode === 'tunnel') {
@@ -4320,6 +4587,7 @@ const WebRTC = {
     }
     this.clearMediaResumeProof();
     this.pc = new RTCPeerConnection(this.config);
+    const startupOwner = this.captureStartupOwner();
     this.pc._wrdConnectionAttemptId = this.currentConnectionAttemptId;
     // Bind before the asynchronous offer finishes: media replay can run first.
     this.bindCurrentConnectionAttempt();
@@ -4333,6 +4601,7 @@ const WebRTC = {
     this.createInputChannel();
 
     this.pc.onicecandidate = (event) => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer ICE candidate:', event.candidate);
       if (event.candidate) {
         this.recordPortSearchCandidate('viewer', event.candidate);
@@ -4345,12 +4614,15 @@ const WebRTC = {
     };
 
     this.pc.onicegatheringstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer ICE gathering state:', this.pc.iceGatheringState);
     };
 
     this.pc.oniceconnectionstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer ICE connection state:', this.pc.iceConnectionState);
       if (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') {
+        this.checkStartupEpisode({ connected: true });
         if (this._mediaResumeArmPending) {
           this.ensureMediaResumeFallbackArmed('ice-connected');
         }
@@ -4361,6 +4633,7 @@ const WebRTC = {
         if (this._iceDisconnectedTimer) return;
         console.warn('[RECOVERY] ICE disconnected, waiting 5s for auto-recovery...');
         this._iceDisconnectedTimer = setTimeout(() => {
+          if (!this.ownsStartupOwner(startupOwner)) return;
           this._iceDisconnectedTimer = null;
           if (this.pc && this.pc.iceConnectionState === 'connected') {
             console.log('[RECOVERY] ICE recovered, skipping reconnect');
@@ -4374,6 +4647,7 @@ const WebRTC = {
     };
 
     this.pc.onconnectionstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer Connection state:', this.pc.connectionState);
       if (this.pc.connectionState === 'connected') {
         this.onPeerConnected();
@@ -4397,6 +4671,7 @@ const WebRTC = {
           if (this._disconnectedTimer) return;
           console.warn('[RECOVERY] PC disconnected, waiting 5s for auto-recovery...');
           this._disconnectedTimer = setTimeout(() => {
+            if (!this.ownsStartupOwner(startupOwner)) return;
             this._disconnectedTimer = null;
             if (this.pc && this.pc.connectionState === 'connected') {
               console.log('[RECOVERY] PC recovered, skipping reconnect');
@@ -4411,10 +4686,12 @@ const WebRTC = {
     };
 
     this.pc.onsignalingstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer Signaling state:', this.pc.signalingState);
     };
 
     this.pc.ontrack = (event) => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Received remote track:', event.track.kind, 'streams:', event.streams.length);
       this.remoteStream = event.streams[0];
 
@@ -4435,6 +4712,7 @@ const WebRTC = {
       });
 
       const tryPaintGate = () => {
+        if (!this.ownsStartupOwner(startupOwner)) return;
         if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0 && videoElement.readyState >= 2) {
           this.notePaintStats({
             framesDecoded: this._lastInboundFramesDecoded || 0,
@@ -4475,6 +4753,7 @@ const WebRTC = {
 
       // Last-resort fallback: stay media-pending unless a decoded frame actually landed.
       setTimeout(() => {
+        if (!this.ownsStartupOwner(startupOwner)) return;
         const video = document.getElementById('remoteVideo');
         console.warn('[LOADING] Fallback timeout: readyState=%s paused=%s size=%sx%s painted=%s',
           video ? video.readyState : 'no-video',
@@ -4490,7 +4769,8 @@ const WebRTC = {
   ownsDataChannelOwner(owner, channel = owner?.channel) {
     return !!owner && !owner.retired && this.pc === owner.peer && this.inputChannel === channel
       && this.socket === owner.socket && this.currentConnectionAttemptId === owner.attempt
-      && this.connectionAttemptSequence === owner.sequence && !this.manualDisconnect && !this._superseded;
+      && this.connectionAttemptSequence === owner.sequence && !this.manualDisconnect && !this._superseded
+      && this.startupAllowed();
   },
 
   cancelDataChannelWatchdog(retireChannel = true) {
@@ -5245,6 +5525,7 @@ if (this.tunnelLastObjectUrl) {
   },
   
   async createOffer() {
+    if (!this.startupAllowed()) return;
     console.log('[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s',
       this.networkMode, !!this.pc, this.offerInProgress);
     if (!this.hasActiveControl()) {
@@ -5276,11 +5557,12 @@ if (this.tunnelLastObjectUrl) {
     const attemptSequence = Number(this.connectionAttemptSequence) || 1;
     const lease = Object.freeze({ ...this.controlState.lease });
     peer._wrdControlLease = lease;
+    const startupEpisode = this._startupEpisode || null;
     const ownsOffer = () => epoch === this._offerEpoch && this.pc === peer
       && this.socket === socket && this.currentConnectionAttemptId === attemptId
       && (Number(this.connectionAttemptSequence) || 1) === attemptSequence
       && this.controlState?.lease?.leaseId === lease.leaseId
-      && this.controlState?.lease?.leaseEpoch === lease.leaseEpoch;
+      && this.controlState?.lease?.leaseEpoch === lease.leaseEpoch && this.startupAllowed(startupEpisode);
 
     try {
       if (!ownsOffer()) return;
@@ -5802,13 +6084,14 @@ if (this.tunnelLastObjectUrl) {
     }
     if (!this._statsSampler) {
       const pc = this.pc;
+      const owner = this.captureStartupOwner();
       this._statsPc = pc;
       this.syncLinkQualityPath({ applyProfile: false, reason: 'stats-start' });
       this.ensureLinkQualityController()?.beginConnection?.();
       this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
         getStats: () => pc.getStats(),
         intervalMs: 1000,
-        onSample: (snapshot) => this.processStatsSnapshot(snapshot),
+        onSample: (snapshot) => { if (this.ownsStartupOwner(owner)) this.processStatsSnapshot(snapshot); },
         onError: (error) => console.warn('[STATS] getStats failed:', error?.message || error),
       });
     }
@@ -5833,9 +6116,10 @@ if (this.tunnelLastObjectUrl) {
     if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
     const attemptId = this.currentConnectionAttemptId || null;
     const trackedPc = this.pc || null;
+    const startupOwner = this.captureStartupOwner();
     this._videoFrameElement = video;
     const onFrame = (now, metadata) => {
-      if (this._videoFrameElement !== video
+      if (!this.ownsStartupOwner(startupOwner) || this._videoFrameElement !== video
           || this.currentConnectionAttemptId !== attemptId
           || this.pc !== trackedPc) return;
       if (Number(video.videoWidth || 0) > 0) {
@@ -5843,7 +6127,7 @@ if (this.tunnelLastObjectUrl) {
         this._stallSince = null;
       }
       this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
-      this.markMediaAttemptReady(attemptId);
+      if (!this.markMediaAttemptReady(attemptId)) return;
       this.ensureDesktopSessionState()?.applyMedia({
         attemptId,
         event: 'fresh-frame',
@@ -6474,6 +6758,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   handleSignalingRecoveryConnected() {
+    if (!this.startupAllowed()) return false;
     if (!this._signalRecoveryPending || this.manualDisconnect || this._superseded) return false;
     this.clearSignalingRecovery();
 
@@ -6504,6 +6789,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   scheduleSignalingRecovery(reason = 'signal-disconnected') {
+    if (!this.startupAllowed()) return false;
     if (this.manualDisconnect || this._superseded) return false;
     this._signalRecoveryPending = true;
     if (this._signalRecoveryStartedAt == null) this._signalRecoveryStartedAt = performance.now();
@@ -6512,7 +6798,10 @@ if (this.tunnelLastObjectUrl) {
     const elapsed = performance.now() - this._signalRecoveryStartedAt;
     const remaining = Math.max(0, this.SIGNAL_RECOVERY_MAX_WAIT_MS - elapsed);
     const delay = Math.min(this.SIGNAL_RECOVERY_RETRY_MS, remaining || this.SIGNAL_RECOVERY_RETRY_MS);
+    const episode = this._startupEpisode || null;
+    const recoverySocket = this.socket;
     this._signalRecoveryTimer = setTimeout(() => {
+      if (!this.startupAllowed(episode) || this.socket !== recoverySocket) return;
       this._signalRecoveryTimer = null;
       if (this.manualDisconnect || this._superseded) return;
       if (this.socket?.connected) {
@@ -6536,6 +6825,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   async refresh(options = {}) {
+    if (!this.startupAllowed()) return;
     let reason = null;
     if (typeof options === 'string') {
       reason = options;
@@ -6575,7 +6865,9 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this._refreshSettleTimer);
       this._refreshSettleTimer = null;
     }
+    const episode = this._startupEpisode || null;
     this._refreshSettleTimer = setTimeout(() => {
+      if (!this.startupAllowed(episode)) return;
       this.markRefreshSettled('timeout');
     }, 8000);
     this._refreshSettleTimer.unref?.();
@@ -6724,6 +7016,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   scheduleReconnect(reason) {
+    if (!this.startupAllowed()) return;
+    const owner = this.captureStartupOwner();
     if (this._superseded) {
       return;
     }
@@ -6755,7 +7049,7 @@ if (this.tunnelLastObjectUrl) {
     if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
       Diagnostic.autoSendFailure(reason);
     }
-    this.setUiPhase('disconnected', { reason });
+    this.setUiPhase(this.startupPending() ? 'signaling' : 'disconnected', { reason });
     this._autoFailCount += 1;
 
     const hasTurn = this.hasTurnConfigured();
@@ -6776,6 +7070,7 @@ if (this.tunnelLastObjectUrl) {
         console.warn('[RECOVERY] restartIce failed, will fall back to full refresh', err);
       }
       this.reconnectTimer = setTimeout(() => {
+        if (!this.ownsStartupOwner(owner)) return;
         this.reconnectTimer = null;
         if (this.manualDisconnect || !this.socket || !this.socket.connected) {
           return;
@@ -6790,6 +7085,7 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('自动穿透失败；Strict STUN 默认不自动切 TURN，可手动选择外网中继。', 'warning');
       updateLoadingText('直连异常，正在尝试恢复...');
     } else if (this.networkMode === 'auto' && this._autoFailCount >= 2) {
+      if (this.startupPending()) this.retireStartupEpisode('strict-stun-exhausted', { cleanup: true });
       console.warn('[RECOVERY] Strict STUN auto exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.useRelayFallback = false;
       this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
@@ -6803,6 +7099,7 @@ if (this.tunnelLastObjectUrl) {
       }
       return;
     } else if (this.networkMode === 'stun' && this._autoFailCount >= 2) {
+      if (this.startupPending()) this.retireStartupEpisode('strict-stun-exhausted', { cleanup: true });
       console.warn('[RECOVERY] Strict STUN mode exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
       this.updateNetworkUI('外网直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
@@ -6815,6 +7112,7 @@ if (this.tunnelLastObjectUrl) {
       }
       return;
     } else if (this.networkMode === 'relay' && !this.getTurnServers().length) {
+      if (this.startupPending()) this.retireStartupEpisode('relay-unavailable', { cleanup: true });
       this.setFailureRecommendation('relay-unavailable-no-turn', 'danger');
       this.updateNetworkUI('外网中继无 TURN 配置，建议切换到隧道中继。', 'danger');
       updateLoadingText('TURN 未配置，无法中继…');
@@ -6826,10 +7124,11 @@ if (this.tunnelLastObjectUrl) {
       updateLoadingText('连接中断，正在自动重连...');
     }
     document.getElementById('loading').classList.remove('hidden');
-    document.getElementById('loading').classList.add('is-connecting');
+    if (this._startupEpisode?.state !== 'slow') document.getElementById('loading').classList.add('is-connecting');
     document.body.classList.remove('stream-connected');
 
     if (this.networkMode === 'relay' && (Number(this._relayHardRefreshCount) || 0) >= 5) {
+      if (this.startupPending()) this.retireStartupEpisode('relay-reconnect-exhausted', { cleanup: true });
       console.warn('[RECOVERY] relay-reconnect-exhausted');
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
         Diagnostic.autoSendFailure('relay-reconnect-exhausted');
@@ -6847,6 +7146,7 @@ if (this.tunnelLastObjectUrl) {
     console.warn('[RECOVERY] Scheduling WebRTC reconnect after %s in %sms', reason, delay);
 
     this.reconnectTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this.reconnectTimer = null;
       if (this.manualDisconnect) {
         return;
@@ -6859,6 +7159,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   disconnect() {
+    this._startRequest = (this._startRequest || 0) + 1;
+    this.retireStartupEpisode('manual-disconnect');
     this._signalingSession = null;
     this.markRefreshSettled('disconnect');
     this.clearSignalingRecovery();
@@ -6912,6 +7214,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   handleViewerSuperseded(payload = {}) {
+    this._startRequest = (this._startRequest || 0) + 1;
+    this.retireStartupEpisode('viewer-superseded', { retainReclaimConfig: true });
     if (this._superseded) {
       return;
     }
@@ -7028,11 +7332,29 @@ if (this.tunnelLastObjectUrl) {
   },
 
   async reclaimDesktopSessionOnce() {
+    const previousEpisode = this._startupEpisode;
+    let episode;
     try {
       // Keep the old Start superseded until its configuration has settled. It
       // cannot initialize media on behalf of this newer explicit operation.
       if (this._pendingBootstrapConfig) await this._pendingBootstrapConfig;
-      await this.requestExplicitViewerAdmission();
+      if (previousEpisode !== this._startupEpisode) return false;
+      episode = this.beginStartupEpisode(previousEpisode?.controller);
+      const retained = previousEpisode?.reclaimConfig;
+      if (retained && (Auth.getToken() !== retained.authToken
+          || Auth.getGeneration?.() !== retained.authGeneration || Auth.isVerified?.() !== true)) {
+        this.retireStartupEpisode('stale-reclaim-config');
+        return false;
+      }
+      await this.requestExplicitViewerAdmission(episode);
+      if (!this.startupAllowed(episode)) return false;
+      if (retained && (Auth.getToken() !== retained.authToken
+          || Auth.getGeneration?.() !== retained.authGeneration || Auth.isVerified?.() !== true)) {
+        this.retireStartupEpisode('stale-reclaim-config', { cleanup: true });
+        return false;
+      }
+      // Only the newly authorized reclaim may consume an inert snapshot.
+      if (retained) this.applyBootstrapSnapshot(retained.snapshot);
     }
     catch (error) {
       if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
@@ -7048,6 +7370,7 @@ if (this.tunnelLastObjectUrl) {
     this._autoFailCount = 0;
     this.offerInProgress = false;
     this._offerEpoch += 1;
+    this.startStartupMediaBudget();
     this.beginConnectionAttempt('reclaim');
     document.getElementById('loading')?.classList?.remove('hidden');
     document.getElementById('loading')?.classList?.add('is-connecting');
@@ -7102,6 +7425,10 @@ function bootViewerShell() {
   WebRTC.bindFullscreenLifecycle();
   if (typeof Auth !== 'undefined' && typeof Auth.subscribe === 'function') {
     Auth.subscribe((check) => {
+      if (check?.state === 'unauthorized') {
+        WebRTC._startRequest = (WebRTC._startRequest || 0) + 1;
+        WebRTC.retireStartupEpisode('auth-invalid', { cleanup: true });
+      }
       window.__WRD_SHELL__?.setAuthCheck?.(check);
       WebRTC.syncChromeCapabilities();
     });
@@ -7175,7 +7502,9 @@ function bootViewerShell() {
       turnServerId: WebRTC.selectedTurnServerId || '',
     }).catch(() => {});
   } else {
+    const episode = WebRTC._startupEpisode || null;
     WebRTC.loadServerConfig().then(() => {
+      if (!WebRTC.startupAllowed(episode)) return;
       WebRTC.configureNetworkControls();
       WebRTC.updateNetworkUI('请根据访问环境选择网络模式。');
     }).catch(() => {});
