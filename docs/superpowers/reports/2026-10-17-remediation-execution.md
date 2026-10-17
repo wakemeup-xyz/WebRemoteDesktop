@@ -1,6 +1,6 @@
 # 稳定性与延迟整改实施记录
 
-> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新一轮10800秒TURN窗口turn-long-20261017b已启动，尚无最终结论；上一轮256秒失败与真实input→visible NOT RUN保持。
+> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新TURN窗口turn-long-20261017b最终131.953秒/132样本INCOMPLETE：客户端transport-close时PC与画面仍推进，maxgap783.3ms；5次Signal ping均有pong，本次没有长停帧或ping-timeout签名。七个已登记测试身份自然退出；三小时及真实input→visible仍未通过。
 
 > **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
 
@@ -219,3 +219,12 @@ Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项�
 [两项增量](2026-10-17-auth-epoch-increment.md)及[最终复审](2026-10-17-final-auth-epoch-review.md)均通过，唯一P3历史状态歧义已独立关闭。29个路径（4个源码/测试路径）同步，既有修改与四个WATCH文件保留；本地Signal/Host由helper重载25.679s。Host文件SHA256 a9e40ef6520ce602ffa6df81c6bfe975bbb8440f612b3f0a83e2afdc92c86999。备份apply-afd598a8-fsxwqk51留本机私有目录。密码仅从运行.env读取并在会话回报，未写入版本文档。
 
 下列章节按各自时刻保留历史观察；当时的“尚未加载/待实现”不能覆盖文首最新部署。新TURN长测独立记录，不拼接此前短测，且未获得三小时或真实输入可见效果结论。
+
+## 当前剩余验收与解决方向
+
+1. 已确认代码缺陷均按各任务测试/review/部署记录处理；最新auth与图像epoch修复已加载，不再把“已review”当“线上已验收”。
+2. 之前Host停帧具有本机采集/调度停顿及大量换页证据；新窗口没有同等停顿，但仍低于目标新帧率。需要稳定资源窗口，不能通过杀其他应用或降低用户分辨率伪造改善。
+3. 本次独立WS transport-close尚无关闭码/发起方证据。先补最小关闭元数据与同条件对照；保持既有公网入口和tunnel，不直接增加timeout。
+4. 普通用户自动恢复与真实input→visible需要独立设备实际证据。已请求人工操作；自动proof不重用/重发/接管。三小时连续性仍未完成，不宣布“彻底稳定”。
+
+本轮新失败见[验收终态](2026-10-17-live-acceptance.md)。服务仍保持运行；等待人工操作期间只做不创建Viewer的离线/文档工作。

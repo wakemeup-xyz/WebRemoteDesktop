@@ -1,6 +1,6 @@
 # 2026-10-17 公网运行验收
 
-> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新一轮10800秒TURN窗口turn-long-20261017b已启动，尚无最终结论；上一轮256秒失败与真实input→visible NOT RUN保持。
+> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新TURN窗口turn-long-20261017b最终131.953秒/132样本INCOMPLETE：客户端transport-close时PC与画面仍推进，maxgap783.3ms；5次Signal ping均有pong，本次没有长停帧或ping-timeout签名。七个已登记测试身份自然退出；三小时及真实input→visible仍未通过。
 
 > **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
 
@@ -184,3 +184,13 @@ JPEG `/tmp/wrd-public-jpeg-gate-jpeg-20261017a` PASS111.235860s、97采样，真
 0ffb941受控同步27路径/5源码测试增量（含new dc_diagnostic_admission.py），备份位于/private/tmp/wrd-c5-rollout-private-ilovzfv1/apply-0ffb941a-dkrhzfun。Host-only重载11.606s，PID10658，源码sha3d54892dc58e1a69ecee619054fc07b4aaa7bd9a4d9ad4e4bcf027ac377d2a80；Signal64505及cloudflared84671/watcher897原启动身份不变，quick URL仍不存在。新版模块/Host/静态资产哈希及原HEAD/index/未触及文件全部核对，Host在线、fresh Viewer0。密码只从本机配置回报，未写文档。
 
 私有long supervisor4d96c8b0通过16项离线测试与独立spec/quality复核，旧两项P3已补。/tmp/wrd-owned-turn-probe-private/turn-long-20261017a已启动10800s目标TURN窗口，原helper/proof未改；仅在原5秒失败门槛先被满足后才可能一次采样。此段仅记录14:49启动时刻；该轮最终256.072秒结束INCOMPLETE，最大停帧8116.308ms、Host心跳超时、sample0字节，详见[失败窗口分析](2026-10-17-turn-long-failure-analysis.md)。不能用启动成功计PASS。
+
+## 15:19 新版本TURN窗口结束：媒体正常推进，信令transport-close
+
+实际131.952546秒、132条、missing/late0、failedObservations1/identityChangeObservations1，最大画面间隔783.3ms。首客户端engine close发生在清理前454ms；Signal关闭事件在browser.close调用之后，不能由后者推断初始关闭方。五次server ping→pong同钟往返843/1369/855/1298/759ms，含调度/客户端处理，非纯网络或单向传输时间；末pong在关闭前8.539s，Node窗口max106ms/missed0。本次不复现先前ping timeout。Cloudflare主日志在故障窗没有记录，watcher healthy/actionnone不能排除单条WebSocket故障。
+
+Host current loop lag最大139.052ms，rolling最大564.526ms；编码1865次、窗口count加权平均12.7384ms、单次最大601.355ms。解码约14.56/s、新截图约11.44/s、输出复用约29%；分页压力仍大，但不能据此归因这次Socket断连。未发生profile切换，仅一次真实尺寸1152×720codec打开，所以截图epoch修复的真实换档路径本窗未触发。没有真实业务输入，输入ACK/实际可见效果指标仍null/NOT RUN。
+
+supervisor未触发sample；helper正常完成清理，旁车记录的7个子进程身份自然退出且没有signal，完整子进程树证明仍false。主服务持续在线，tunnel/watcher身份未变。
+
+详见[媒体边界](2026-10-17-turn-long-b-media-analysis.md)、[信令时序](2026-10-17-turn-long-b-signal-analysis.md)。[普通用户恢复源码复核](2026-10-17-normal-transport-recovery-audit.md)确认8秒grace+Host ACK后恢复lease、超时新lease重建peer路径，无新确认代码缺陷；但一次性proof测试会停止首次断开，不能代表普通用户自动恢复已通过。已邀请用户独立设备人工连接、点击和文本输入并上传既有诊断；等待真实证据时不抢占新的Viewer会话。
