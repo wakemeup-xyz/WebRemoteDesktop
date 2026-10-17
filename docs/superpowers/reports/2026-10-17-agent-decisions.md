@@ -180,3 +180,7 @@ Ruling: supplement existing remediation with one coherent observer-module/wiring
 ## 34. JPEG transport 准入
 
 决定：每次捕获前，包括替换 producer 首帧，用当前 queue.join 的250ms持续拒绝等待；完整task/production/authority/client/eio/queue/writer身份检查，反馈亦在成功gate之后。依据：实际库离线六帧证明ACK槽退休不释放已提交图片；独立设计review确认正常单producer不变量。若判断错误，代价是媒体饥饿或生命周期死等；不得timeout放行/篡改accounting/重建transport，必须经过失败writer/取消/替换race及独立review。历史5.2s故障原因未因此确证。
+
+## 35
+
+Ruling: 本次TURN诊断采用私有独立supervisor，不包装manager或CDP；真实OS父子身份用于归属，避免launch代理引入新失败。成本是轮询不能证明完整子进程树覆盖，因此只报告已登记身份退出，保留unknown覆盖。线程采样只用于诊断，不计性能验收。
