@@ -24,7 +24,7 @@
 
 **Interfaces:** Existing `ScreenCaptureTrack.recv`, `set_suspended`, `TunnelRelayStreamer._run` and reset/stat initializations remain unchanged externally. Tests supply distinct fake wall/monotonic clocks, fake sleeps and fake worker output, while retaining the actual producer method.
 
-- [ ] Add regressions on actual `recv`: normal and ±4.24s wall jumps with mono advancing 20ms must request 30ms at 20fps. Add elapsed-over-period no pacing sleep, first/resumed frame, suspension during pacing and shutdown regression using existing fixtures. Record old failures before source edits.
+- [x] Add regressions on actual `recv`: normal and ±4.24s wall jumps with mono advancing 20ms must request 30ms at 20fps. Add elapsed-over-period no pacing sleep, first/resumed frame, suspension during pacing and shutdown regression using existing fixtures. Record old failures before source edits.
 
 ```python
 # Concrete clock case for actual-method fixture; clocks must stay independent.
@@ -36,9 +36,9 @@ expected_sleep = 0.030
 # Assert the real recv's requested pacing delay approximately equals expected_sleep.
 ```
 
-- [ ] Add actual `_run` iteration tests with fake JPEG worker/emit: 20ms monotonic work with a wall-clock jump uses the unchanged frame interval minus 20ms, not seconds of extra sleep; >period retains the 1ms yield. Stop the fake loop deterministically, preserve source/ACK scope and no native capture. Add five-second monotonic window tests for both paths, with wall time stationary/jumping; ensure JPEG emitted timestamp remains epoch-based.
-- [ ] Run the new named tests with the existing Python environment and retain RED output. A failed fixture/import is not RED evidence.
-- [ ] Implement the substitutions consistently:
+- [x] Add actual `_run` iteration tests with fake JPEG worker/emit: 20ms monotonic work with a wall-clock jump uses the unchanged frame interval minus 20ms, not seconds of extra sleep; >period retains the 1ms yield. Stop the fake loop deterministically, preserve source/ACK scope and no native capture. Add five-second monotonic window tests for both paths, with wall time stationary/jumping; ensure JPEG emitted timestamp remains epoch-based.
+- [x] Run the new named tests with the existing Python environment and retain RED output. A failed fixture/import is not RED evidence.
+- [x] Implement the substitutions consistently:
 
 ```python
 # Duration reads and matching initialization/reset, never protocol timestamps:
@@ -51,12 +51,12 @@ elapsed = time.monotonic() - started
 # stats_started_at, current_time and trace summary trigger use the same clock.
 ```
 
-- [ ] Run `test_frame_worker.py`, `test_tunnel_relay.py`, `test_relay_frame_worker.py`, `test_rtp_frame_observer.py`, `test_input_frame_causality.py`, `test_media_stage_boundaries.py`, `test_media_suspension.py` using the existing interpreter. Review changed private-field fixtures; do not broaden into native/environment tests.
-- [ ] Self-review diff for mixed clocks, unchanged PTS/TTL/epoch contract, thread/lifecycle behavior and fixture cleanup. Commit only owned changes with `fix(media): use monotonic clocks for pacing and stats`; write report containing commit, exact RED/GREEN commands/results and limitations.
+- [x] Run `test_frame_worker.py`, `test_tunnel_relay.py`, `test_relay_frame_worker.py`, `test_rtp_frame_observer.py`, `test_input_frame_causality.py`, `test_media_stage_boundaries.py`, `test_media_suspension.py` using the existing interpreter. Review changed private-field fixtures; do not broaden into native/environment tests.
+- [x] Self-review diff for mixed clocks, unchanged PTS/TTL/epoch contract, thread/lifecycle behavior and fixture cleanup. Commit only owned changes with `fix(media): use monotonic clocks for pacing and stats`; write report containing commit, exact RED/GREEN commands/results and limitations.
 
 ### Task 2: Review, Host-only rollout and real continuity
 
-- [ ] Controller packages Task 1 diff and dispatches independent spec/quality review. Resolve findings before deployment.
+- [x] Controller packages Task 1 diff and dispatches independent spec/quality review. Resolve findings before deployment.
 - [ ] Freeze reviewed candidate against primary synced baseline `536baee684f84fa0868d64bcae4491540993b1b7`; preserve four deferred WATCH files, HEAD/index, dirty docs, URL and tunnel/watcher identities; verify fresh `viewerCount=0` and Host online before apply/restart.
 - [ ] Use `python3 skills/webremote-service/scripts/wrd_service.py restart-host`; verify health, Host, production hashes, unchanged Signal/build/tunnel and report current local-config Viewer/Terminal credentials only in conversation.
 - [ ] Run existing guarded real UI short acceptance for TURN and JPEG, then strict long continuity with fresh one-use proof per new run. Never remint a consumed proof to hide a failed run. Do not adjust system time on production.

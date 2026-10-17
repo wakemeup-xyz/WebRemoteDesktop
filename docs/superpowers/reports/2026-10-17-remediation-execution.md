@@ -192,3 +192,9 @@ S1 加载后的 guarded TURN 300s 已 PASS（301样本、0missing/late/identityc
 长测 1922 样本，0 缺失/迟采/身份变化；97 failedObservations 是首次超限加累计最大 gap 的重复观察，不是 97 次断线。信令全程 connected，74 轮 ping/pong；唯一关闭为主动停止自己的测试浏览器。服务仍在线，三小时未通过。完整 [媒体事件](2026-10-17-longrun-gap-diagnosis.md)与[心跳报告](2026-10-17-server-heartbeat-runtime-diagnosis.md)保留原证据。
 
 进一步 [源码时钟审查](2026-10-17-media-clock-review.md)确证 recv 与 JPEG 循环用墙钟节流；模拟回拨 4.24s 会把 30ms 等待变为 4.27s。已补 [spec](../specs/2026-10-17-media-monotonic-clock-design.md)和[plan](../plans/2026-10-17-media-monotonic-clock-plan.md)，待实现复审。该机制与第二次停帧吻合，仍不能分摊整段 5.15s 或解释第一次真实 2.7s Host loop stall；尚未据此声明线上修复。
+
+当前阶段计时能力见[Host 清单](2026-10-17-host-stage-clock-inventory.md)：已有成功 grab、私有构图排队、编码等单调计时，但 detailed trace 默认关闭，且尚未证明当前每个边界都实际装配。不能用已有类/字段存在代替真实样本。12:26后独立两秒系统采样 load1=5.777、swap-in约18.80MiB/s、swap-out约68.33MiB/s；这是恢复后的短时现状，不是前述卡顿的逐帧资源证据，也不等于内存压力已消除。
+
+媒体时钟源码 `f492357` 已独立复审 PASS：[实现](2026-10-17-media-clock-implementation.md)、[review](2026-10-17-media-clock-task-review.md)。实际方法回归 RED14失败→GREEN104通过；尚待加载。另一个[Viewer 时钟审计](2026-10-17-viewer-clock-review.md)确证本页 ACK/恢复受墙钟跳变影响，已写[spec](../specs/2026-10-17-viewer-control-clock-design.md)和[plan](../plans/2026-10-17-viewer-control-clock-plan.md)，待实现。
+
+[已有详细 trace 操作审查](2026-10-17-existing-frame-trace-operational-review.md)发现首 offer 的 track context 未同步装配，单开 flag 不能保证有效抓图/发送关联；当前保持默认关闭。此诊断能力缺口不影响默认关闭时媒体路径，未为了补数据擅自开启更高频 trace，也未将缺测写为零。

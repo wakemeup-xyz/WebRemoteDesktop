@@ -162,3 +162,5 @@ Ruling: supplement existing remediation with one coherent observer-module/wiring
 若判断有误的成本及约束：最多增加有界观测开销及返工；独立复审通过后才加载，不把补齐日志称为修复网络。
 
 27. 增补单调时钟节流修复：源码已证明系统回拨会放大真实媒体等待，先修复该确定缺陷再做新的长测；风险是节流/统计回归，使用真实方法的模拟时钟测试和独立 review 约束。不调整系统时钟，不将其冒充全部历史停帧的唯一原因。
+
+28. 将已复现的 Viewer 本页 ACK、移动端 ACK、信令恢复及相邻新鲜度/冷却时钟作为独立窄修复：只迁移私有 duration，不改票据、lease/seq 或 epoch 协议。风险为零时刻/sentinel 或测试混钟回归，以 null 未设置值、真实对象假时钟测试和独立 review 控制。
