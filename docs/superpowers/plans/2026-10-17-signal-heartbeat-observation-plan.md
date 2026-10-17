@@ -32,7 +32,7 @@
 - `setupSignaling` 新可选 `observeViewerHeartbeat(socket, isMapCurrent)`；只在已准入 Viewer 完成 map claim/rebind/supersede、welcome 之前调用，错误不得阻断业务。
 - `server.js` 创建 registry，先注册 HTTP close/error 的 registry.stop，再调用现有 bindRuntimeObserver；runtime.close 也先 registry.stop 再 runtimeObserver.stop。
 
-- [ ] **Step 1: 先补真实模块与准入失败反例。** 使用 EventEmitter 构建 Engine/Socket、注入时钟和 logger，实际 registry 保存 packetCreate ping、flush ping、packet pong；随后 close 并等待一个 microtask。断言 last ages、次数、32ring、<=4096bytes、exact own off、close once。示例行为序列如下（测试用实际导出，无复制实现）：
+- [x] **Step 1: 先补真实模块与准入失败反例。** 使用 EventEmitter 构建 Engine/Socket、注入时钟和 logger，实际 registry 保存 packetCreate ping、flush ping、packet pong；随后 close 并等待一个 microtask。断言 last ages、次数、32ring、<=4096bytes、exact own off、close once。示例行为序列如下（测试用实际导出，无复制实现）：
 
 ```js
 const registry = createViewerHeartbeatRegistry({ now: () => time,
@@ -52,9 +52,9 @@ assert.ok(!lines[0].includes(secret));
 
 同时通过实际 setupSignaling 注册 handler 检查普通/guarded proof 的准入后唯一挂载，以及拒绝/Host/relay 不挂载、attach 抛错仍 welcome。既有普通 generation 与 strict proof 结果保持不变。
 
-- [ ] **Step 2: 运行并记录 RED。** `node --test signal-server/test/viewer-heartbeat.test.js signal-server/websocket/signaling.test.js`；失败必须源于缺失真实 observer/接入断言，不能是语法或依赖错误。
+- [x] **Step 2: 运行并记录 RED。** `node --test signal-server/test/viewer-heartbeat.test.js signal-server/websocket/signaling.test.js`；失败必须源于缺失真实 observer/接入断言，不能是语法或依赖错误。
 
-- [ ] **Step 3: 按下列完整契约实现模块和最小 wiring。** 不创建/连接/断开 socket，不修改 send/flush/timeout 方法。exact own on/off，close microtask 合并和 shutdown 同步清理；容量/异常只影响诊断，不能影响业务。
+- [x] **Step 3: 按下列完整契约实现模块和最小 wiring。** 不创建/连接/断开 socket，不修改 send/flush/timeout 方法。exact own on/off，close microtask 合并和 shutdown 同步清理；容量/异常只影响诊断，不能影响业务。
 
 ## Verified installed APIs and semantic constraints
 
@@ -140,15 +140,15 @@ Proposed commands from repository root, after red-green tests exist:
 Only broaden tests if a failure/new concern warrants it. Use no-network wiring fakes rather than unrelated tests that bind a port. Implementation report must separate offline pass, production loaded and real-session acceptance. Local reload may be separately authorized by parent/user, but this design task performs none. Tunnel is untouched. A future real proof still fails on first discontinuity; no causality or recovery success is inferred until corresponding server/client evidence is actually captured.
 
 
-- [ ] **Step 4: 运行 GREEN 与检查。** 运行本 Task 精确契约的定向命令及新增无 listen 的 server close 测试；证明 installed Engine prototype 的实际 sendPacket/flush/onPacket 顺序（fake transport、无 constructor/onOpen/timer）、namespace 先 close 与旧 scope false、getter privacy canary、ring/bytes cap、实际 runtime snapshot、logger throw，以及 HTTP close/error 和 runtime.close 三路先 diagnostic stop 后 runtime stop。不得用源码字符串检查代替真实 wiring 调用。
-- [ ] **Step 5: 自审并只提交任务文件。** `git diff --check`，读取完整 diff，`git add` 精确源码/测试路径后 `git commit -m "feat(observability): trace admitted viewer heartbeat closure"`。报告 RED/GREEN、commit、局限和生产 NOT RUN；归还 index。独立 review 通过前不能部署。
+- [x] **Step 4: 运行 GREEN 与检查。** 运行本 Task 精确契约的定向命令及新增无 listen 的 server close 测试；证明 installed Engine prototype 的实际 sendPacket/flush/onPacket 顺序（fake transport、无 constructor/onOpen/timer）、namespace 先 close 与旧 scope false、getter privacy canary、ring/bytes cap、实际 runtime snapshot、logger throw，以及 HTTP close/error 和 runtime.close 三路先 diagnostic stop 后 runtime stop。不得用源码字符串检查代替真实 wiring 调用。
+- [x] **Step 5: 自审并只提交任务文件。** `git diff --check`，读取完整 diff，`git add` 精确源码/测试路径后 `git commit -m "feat(observability): trace admitted viewer heartbeat closure"`。报告 RED/GREEN、commit、局限和生产 NOT RUN；归还 index。独立 review 通过前不能部署。
 
 ### Task 2: 主线程复审、部署与新证据验收
 
 **Files:** 本计划、spec、实施记录、真实验收报告及脱敏 review 归档。
 
-- [ ] 对 Task 1 完整 commit 范围作独立 spec compliance + quality review；必要修改由原 implementer 修复后 scoped review。
-- [ ] 基于当前主目录已同步 9e57bf4 的增量检查，保留 primary HEAD/index/dirty、四个 deferred watcher 文件、cloudflared 与 quick URL 状态。新鲜 local Host online/zeroViewer 后才应用；只用 webremote-service helper 重启本地服务并核验 build/health/Host。
-- [ ] 用已有 strict one-use proof runner 进行一次 300 秒 TURN 连续性测试，首次断线仍 INCOMPLETE；保存 browser first-close、server close 摘要及同窗口 connector 日志。禁止 remint 重连、抢占人类 Viewer、native input 或改 tunnel。
-- [ ] 按实际边界判定下一步：心跳未生成、未完整 flush、flush 意图后客户端未收到、客户端 pong 未到服务端分别保持证据层级；不得凭一次短测推导三小时或可见效果验收通过。
+- [x] 对 Task 1 完整 commit 范围作独立 spec compliance + quality review；必要修改由原 implementer 修复后 scoped review。
+- [x] 基于当前主目录已同步 9e57bf4 的增量检查，保留 primary HEAD/index/dirty、四个 deferred watcher 文件、cloudflared 与 quick URL 状态。新鲜 local Host online/zeroViewer 后才应用；只用 webremote-service helper 重启本地服务并核验 build/health/Host。
+- [x] 用已有 strict one-use proof runner 进行一次 300 秒 TURN 连续性测试，首次断线仍 INCOMPLETE；保存 browser first-close、server close 摘要及同窗口 connector 日志。禁止 remint 重连、抢占人类 Viewer、native input 或改 tunnel。
+- [x] 按实际边界判定下一步：心跳未生成、未完整 flush、flush 意图后客户端未收到、客户端 pong 未到服务端分别保持证据层级；不得凭一次短测推导三小时或可见效果验收通过。
 - [ ] 同步报告和方案；需要改变 tunnel 时必须遵守用户的直接授权边界，先给具体证据与具体操作，不能自行变更。

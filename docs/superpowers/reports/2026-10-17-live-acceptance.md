@@ -1,6 +1,8 @@
 # 2026-10-17 公网运行验收
 
-当前部署：`8e375fa`；Viewer build `b73325b8166441a6`。本报告追加真实运行证据，不能以源码复审或本地 health 代替公网可用性。所有测试使用正式入口；创建自动化 Viewer 须 fresh zero-Viewer + 一次性 proof，人工显式连接优先。未发送业务原生输入、剪贴板或 Terminal 命令。
+当前部署：`58ad766`（生产增量 `d1166ab`），网页 build `c30530f331a4def5`；本地 Signal/Host 在线，Cloudflare tunnel 未变。此前 M6 两条媒体路径生命周期短测 PASS；93.094s 信令断线仍为 INCOMPLETE。服务端心跳观测已加载，新一轮 300s TURN 连续性测试已 PASS，独立 3h 测试进行中；不能提前声明三小时或真实输入验收通过。
+
+本报告追加真实运行证据，不能以源码复审或本地 health 代替公网可用性。所有测试使用正式入口；创建自动化 Viewer 须 fresh zero-Viewer + 一次性 proof，人工显式连接优先。未发送业务原生输入、剪贴板或 Terminal 命令。
 
 ## 媒体生命周期
 
@@ -123,3 +125,14 @@ I2 observer `10d4146`+`0f0e902` 已独立复审后只同步验收脚本，无服
 本地根页 HTTP 200/load 约 150ms；三个正式域名新浏览器上下文访问约 7–8s，TLS 约 2.2–2.7s、document TTFB 约 0.8–1.35s。真正的同上下文 reload 为 868.3ms；不能把新 page/context 的第二次访问称 warm。
 
 CDP 只读事件监听核验进一步区分了页面完成与功能就绪：登录 submit listener 在 5014.9ms 尚未观察到、5124.4ms 已观察到；Cloudflare analytics module 到 7589.2ms 才结束，DCL 7593.9ms。该脚本延后 DCL/load，但没有让登录初始化等到 DCL。main document 4026.1ms 结束、最后同源 CSS 5080.8ms 结束，首次功能就绪仍慢。没有登录、提交表单或触发原生输入，不能据此认证完整登录和用户设备延迟。跨域细节受 Timing-Allow-Origin 限制的 DNS/connect/TTFB/body 必须 null；先前私有 artifact 的 0 或跨字段差值无效，原文件保留。完整归因、修正和选项见[入口加载诊断](2026-10-17-entry-loading-diagnosis.md)。
+
+
+## S1 加载后的 300 秒连续性验收
+
+`/tmp/wrd-public-server-heartbeat-turn-20261017a`：artifact 判定 PASS，请求 300s，最终持久化 elapsed 300.212081s，301 个样本，missing/late/failed/identityChange 全为 0。日志 stdout 的再次汇总时间比持久化 summary 差不足 1ms，本报告使用文件终态。真实 UI 登录及一次 Start 已验证；同一 PC/attempt/lease 持续，TURN 两端 relay/UDP、H.264。没有业务输入、可见效果或普通重连测试。
+
+客户端 firstDisconnectEvent=null；preclose 之前没有 ec/sd/mc。服务端唯一 close 为正常测试清理的 transport-close，11 次 pc、11 次 pf、11 次 pr；coverage partial、engine=true、flushScanLimited=false、valueInvalid=false，32ring 有 1 次正常覆写。最后 pingCreate/flush 距 close 21493ms、pongReceived 距 close 20593ms，下一次 25s ping 未到期。close 时 writable=true、bufferLength=0；Node 最近窗口 count60/max84ms/p95 53ms/missed0，snapshot age3862ms。这些字段是同机 age/调度证据，不称单向传输或纯网络 RTT。
+
+Connector 日志从本轮 startoffset 到终态没有新增字节，不能据此证明永不掉线，也不能把诊断-only 新代码称为网络修复。之前 93.094s 失败仍成立。本轮完整来源/边界分析见[服务端心跳运行诊断](2026-10-17-server-heartbeat-runtime-diagnosis.md)。
+
+独立三小时 TURN 验收随后启动 `/tmp/wrd-public-server-heartbeat-turn-long-20261017a`，fresh Host online/Viewer0 后重新取得本轮单次 proof；不是重用或 remint 已断会话的 proof。初始结果未完成，不与 300s 样本拼成三小时。

@@ -6,7 +6,7 @@
 
 ## 1. 基线与执行边界
 
-隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录部署至 `9e57bf4`，W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
+隔离工作区保留既有控制修复为基线 `2a2c5ff`；基于已 review 的总/子 spec 和 plan 开发。实施初期原工作区和运行中服务未加载改动；现已按本报告上线记录部署至 `58ad766`（生产增量 `d1166ab`），W2 watcher 四文件仍明确延后。不能以工作区单元测试证明线上端到端验收通过。任务详细过程暂存于对应 worktree 的 `.superpowers/sdd/2026-10-17-reliability-latency-remediation-plan/progress.md`，最终结果归档于本报告。
 
 离线阶段使用定向测试和临时目录构建，未调用 npm pretest。经独立复审后按用户授权构建并重启本地服务；真实 Viewer 测试均使用 fresh zero-Viewer 与一次性 proof，未执行业务原生输入。未修改、停止或重启 tunnel。
 
@@ -55,8 +55,8 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 |---|---|
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
-| 本轮构建部署 | 已部署至 `9e57bf4`；build `c30530f331a4def5`；W2 watcher 四文件未激活 |
-| 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；连续性 INCOMPLETE，服务端心跳观测补齐中 |
+| 本轮构建部署 | 已部署至 `58ad766`（生产增量 `d1166ab`）；build `c30530f331a4def5`；W2 watcher 四文件未激活 |
+| 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；此前连续性 INCOMPLETE；服务端心跳观测已加载，新一轮 300s 已 PASS，独立 3h 测试进行中 |
 | 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
 | 输入到真实可见效果 | NOT RUN；需要真实 producer 事件与解码 marker，ACK 或下一帧不能替代 |
@@ -176,3 +176,5 @@ I2 首断工具独立 review 初轮发现两项证据失真风险，`0f0e902` �
 在 fresh Host online/Viewer0 后，以已同步 `9e57bf4` 为基线应用冻结 `58ad766`：24 路径，5 源码/测试路径，包含此前文档更新。primary HEAD/index 原样保留；README/runbook/需求原有改动经三方合并保留。仅 webremote-service restart-local，14.906s，Signal15135、Host15287；HTTP health/status200、Host在线、Viewer0。build 仍 c30530f331a4def5，保留 f5c2a9203e47f9e5/b73325b8166441a6。cloudflared84671（10月16日19:44:27启动）、watch897（10月1日15:47:50启动）及四个 deferred watcher 文件未变；quick URL 文件仍不存在，正式入口未改。
 
 新 guarded 300s TURN 测试 `/tmp/wrd-public-server-heartbeat-turn-20261017a` 已进入真实媒体采样，结果另记真实验收；本节加载成功不等于会话稳定性通过。测试仍在首次不连续时失败，不消耗第二次 proof 重连。
+
+S1 加载后的 guarded TURN 300s 已 PASS（301样本、0missing/late/identitychange），客户端无异常首断，server正常收尾 pc/pf/pr各11；不是三小时通过。独立3h试验已启动，详见真实验收。
