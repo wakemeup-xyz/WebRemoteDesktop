@@ -1,8 +1,8 @@
 # 网页、入口与运行观测整改设计
 
-> 执行状态更新（2026-10-17）：用户已要求完成开发、验收并保持本地服务可用，已进入实施阶段。下文“本轮仅文档／未来授权／全部 NOT RUN”等初稿状态描述保留为规划历史，不再限制本次已授权工作；实际完成、复核、部署与未运行项以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。tunnel 禁止重建的限制继续有效。
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
 
-日期：2026-10-17。状态：已授权编制设计与计划，未实施、未部署。采用 superpowers 6.3.0 brainstorming 的 Architectural 路径：该子项目改变认证结果、资源生命周期、巡检结果和诊断快照契约。用户已授权直接完成文档与复审，不再逐段确认；这不授权执行后续代码、部署或 tunnel 操作。
+日期：2026-10-17。状态：设计已审查并实施，真实验收进行中。默认采用 superpowers brainstorming + writing-plans；用户已授权本轮实现及本地部署，不重复询问规划流程。
 
 ## 1. 目标、证据与所有权
 
@@ -42,7 +42,7 @@ W1–W4 分别交付认证/资源、巡检、诊断、前端开销，内部按�
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-“仅诊断和文档”约束描述当前授权。计划中的代码步骤是后续获实施授权后执行的内容，不是本轮完成声明；本地部署和tunnel操作继续遵守runbook及用户直接授权。
+用户后续已授权实施和本地部署，原仅诊断约束已解除；tunnel 操作仍须直接授权。
 
 ## 4. W1：认证和资源加载
 
@@ -114,7 +114,7 @@ health 每 60 秒一轮；login/viewer HTML 和当前 core 资产最多每 5 分
 
 恢复启动与完成分别记录。失败/超时同样消耗一次预算；只有确认本次恢复 worker 及它可能改变服务状态的子命令已结束，才记 terminal 并从该完成时刻开始 300 秒冷却。超时终止并回收本次拥有的 helper/probe 子进程，不终止 connector；无法确认结束或操作结果时保持 in-flight/unknown，继续阻断后续恢复。一次恢复在途时不启动第二次；独立采样继续运行，只记录恢复中的实际探针结果，缺测为 unknown。使用固定单调 tick deadline，慢轮次只跳过错过的 tick，绝不并发补跑积压轮次。记录 scheduledAt/start/finish/skippedTicks。
 
-执行状态由单一 watcher writer 持久化，包含 operationId、worker PID/start identity、在途状态与已消耗恢复预算。恢复互斥锁覆盖 worker 及变更子命令生命周期；丢弃迟到 result 不能代替副作用隔离。watcher 重启先核对并认领已有 worker，无法确认身份或完成状态时保持 unknown 锁定，不能仅凭 PID 或冷却到期解除。持久化 monotonic 值带 boot/clock epoch；epoch/history 不可信时不跨重启相减，保留已消耗预算并从首次确认未知时钟起完整等待 3600 秒保守窗口，不能 300 秒后重置恢复次数；仍有 unknown/in-flight 时窗口到期也不放行。现有 token connector、multiple-owner、origin-down 保护继续有效。probe unknown、仅资产失败或恢复过程中单点失败不扩大 tunnel 自动恢复条件。本轮只写其设计和测试，不运行 watcher 或恢复脚本。
+执行状态由单一 watcher writer 持久化，包含 operationId、worker PID/start identity、在途状态与已消耗恢复预算。恢复互斥锁覆盖 worker 及变更子命令生命周期；丢弃迟到 result 不能代替副作用隔离。watcher 重启先核对并认领已有 worker，无法确认身份或完成状态时保持 unknown 锁定，不能仅凭 PID 或冷却到期解除。持久化 monotonic 值带 boot/clock epoch；epoch/history 不可信时不跨重启相减，保留已消耗预算并从首次确认未知时钟起完整等待 3600 秒保守窗口，不能 300 秒后重置恢复次数；仍有 unknown/in-flight 时窗口到期也不放行。现有 token connector、multiple-owner、origin-down 保护继续有效。probe unknown、仅资产失败或恢复过程中单点失败不扩大 tunnel 自动恢复条件。本轮已实现并离线验证，但未激活 watcher 或运行恢复脚本。
 
 ## 6. W3：统一、可保留的运行诊断
 

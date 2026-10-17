@@ -1,6 +1,6 @@
 # 媒体、输入背压与延迟测量 Implementation Plan
 
-> 执行状态更新（2026-10-17）：用户已要求完成开发、验收并保持本地服务可用，已进入实施阶段。下文“本轮仅文档／未来授权／全部 NOT RUN”等初稿状态描述保留为规划历史，不再限制本次已授权工作；实际完成、复核、部署与未运行项以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。tunnel 禁止重建的限制继续有效。
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -27,13 +27,13 @@
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-“仅诊断和文档”约束描述当前授权。计划中的代码步骤是后续获实施授权后执行的内容，不是本轮完成声明；本地部署和tunnel操作继续遵守runbook及用户直接授权。
+用户后续已授权实施和本地部署，原仅诊断约束已解除；tunnel 操作仍须直接授权。
 
 ---
 
 ## 执行边界与文件结构
 
-本计划依据writing-plans 6.3.0编写；本轮只写文档和review，下列代码、测试、提交和真实验收均未执行。用户已确定superpowers路径，不再次询问规划选项。未来实施先读取dirty diff及最新C/W适配，不恢复或覆盖其他任务改动。
+执行状态：实现、测试、独立复核及提交记录见实施记录；以下步骤保留为审查版计划，复选框不作为执行账本。真实验收逐项登记，未运行项不因离线测试通过而关闭。
 
 推荐顺序：C2正确性先完成 → M3（N4已升P1） → M1 → M2 → M4 → M5。纯M1测试可与C独立进行，生产共享文件串行。W只消费M1白名单/快照和M3队列摘要，不另造统计。固定文件职责：
 
@@ -725,7 +725,7 @@ python3 scripts/eval-turn-encoder-quality.py --matrix latency-joint-v1 --output 
 
 - [ ] **M5.4 后续获维护窗口后完成真实资格记录；不阻塞M5.3代码提交。** 使用既有受控producer、真实输入guard和实际RTP+rVFC+marker记录inputToVisibleEffect；普通任意应用只报告post-apply新帧，光学时延另测。分别记录normal resources/可控慢worker/现场压力、真实direct/TURN/Socket/JPEG路径，缺测和失败都计分母。规定TURN目标loop P95≤50ms、业务ACK P95≤150ms；150–200ms稳态visible只是目标，不强行宣布达标。短时通过后各路径至少3小时连续会话，资源与queue无持续增长；没有运行就写NOT RUN。
 
-实际资格产物须再次独立review并记录代码/环境身份；报告中的未验收项不能因纯测试通过而关闭。未获实际资格继续保持disabled，不要求在本轮未授权的生产会话中凑齐3小时。
+实际资格产物须再次独立review并记录代码/环境身份；报告中的未验收项不能因纯测试通过而关闭。未获实际资格继续保持disabled，不得绕过单 Viewer 保护凑齐3小时。
 
 ## 覆盖、自查与交接
 
@@ -739,4 +739,4 @@ python3 scripts/eval-turn-encoder-quality.py --matrix latency-joint-v1 --output 
 | L12/N13 | M4 lazy codec归encode、reuse日志wire一致、pause总段不误用 |
 | N3 | M5同条件资格，失败保留current而非无证据转软件 |
 
-文档自查：接口与总spec一致；C authority只有一套；W只消费snapshot/队列五字段；strict input envelope无新增字段；M2独立能力/消息明确版本与兼容；M3失败不虚报reset成功；各任务都包含实际行为测试片段、红绿命令和review提交；真实服务、设备、光学及3小时验收为NOT RUN。本轮不执行代码、测试或commit。未来执行路径由总计划统一安排，不在本子计划重复询问用户。
+文档自查：接口与总spec一致；C authority只有一套；W只消费snapshot/队列五字段；strict input envelope无新增字段；M2独立能力/消息明确版本与兼容；M3失败不虚报reset成功；各任务都包含实际行为测试片段、红绿命令和review提交；真实服务、设备、光学及3小时验收分别记录实际状态；未运行项仍为 NOT RUN。实施由总计划统一安排。

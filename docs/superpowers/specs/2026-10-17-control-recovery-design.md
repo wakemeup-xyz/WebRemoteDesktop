@@ -1,8 +1,8 @@
 # 控制租约与断线恢复设计
 
-> 执行状态更新（2026-10-17）：用户已要求完成开发、验收并保持本地服务可用，已进入实施阶段。下文“本轮仅文档／未来授权／全部 NOT RUN”等初稿状态描述保留为规划历史，不再限制本次已授权工作；实际完成、复核、部署与未运行项以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。tunnel 禁止重建的限制继续有效。
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
 
-日期：2026-10-17。状态：设计与执行计划交付，未实施、未测试、未部署。用户已选择 superpowers brainstorming + writing-plans 并授权直接完成文档与复审；本文件不授权生产操作。
+日期：2026-10-17。状态：设计已审查并实施，真实验收进行中。默认采用 superpowers brainstorming + writing-plans；用户已授权本轮实现及本地部署，不重复询问规划流程。
 
 本设计从属于[整改总设计](2026-10-17-reliability-latency-remediation-design.md)，以其 §3 全局约束和 §5 控制身份契约为准。实施入口是[控制恢复计划](../plans/2026-10-17-control-recovery-plan.md)。需求依据为[项目需求](../../需求文档/WebRemoteDesktop-需求文档.md)中的严格单桌面 Viewer、v2 输入、同页重连、双 reset 和当前媒体恢复门禁。
 

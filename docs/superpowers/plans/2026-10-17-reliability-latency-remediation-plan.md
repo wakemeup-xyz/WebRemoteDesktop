@@ -1,6 +1,6 @@
 # 稳定性与端到端延迟整改 Implementation Plan
 
-> 执行状态更新（2026-10-17）：用户已要求完成开发、验收并保持本地服务可用，已进入实施阶段。下文“本轮仅文档／未来授权／全部 NOT RUN”等初稿状态描述保留为规划历史，不再限制本次已授权工作；实际完成、复核、部署与未运行项以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。tunnel 禁止重建的限制继续有效。
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -25,7 +25,7 @@
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-当前状态：**仅规划完成，以下实施复选框全部未执行**。用户确认默认使用superpowers规划，不等于授权本次实施、部署或tunnel操作。后续实施授权到达后从I0开始，不再询问规划路径。
+执行状态：实现、测试、独立复核及提交记录见实施记录；以下步骤保留为审查版计划，复选框不作为执行账本。真实验收逐项登记，未运行项不因离线测试通过而关闭。
 
 ## 文件结构与任务所有权
 

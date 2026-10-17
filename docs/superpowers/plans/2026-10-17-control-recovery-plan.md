@@ -1,6 +1,6 @@
 # Control Recovery Implementation Plan
 
-> 执行状态更新（2026-10-17）：用户已要求完成开发、验收并保持本地服务可用，已进入实施阶段。下文“本轮仅文档／未来授权／全部 NOT RUN”等初稿状态描述保留为规划历史，不再限制本次已授权工作；实际完成、复核、部署与未运行项以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。tunnel 禁止重建的限制继续有效。
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,7 +12,7 @@
 
 **Spec:** [控制恢复设计](../specs/2026-10-17-control-recovery-design.md)，服从[整改总设计](../specs/2026-10-17-reliability-latency-remediation-design.md) §5。
 
-本轮状态：计划已编写，以下所有实施、测试、构建、提交与生产验收步骤均未执行。获得后续实施授权后才能开始。以下命令默认从仓库根目录执行，括号内的 `cd python-host` 仅用于离线测试，不调用服务脚本。
+执行状态：实现、测试、独立复核及提交记录见实施记录；以下步骤保留为审查版计划，复选框不作为执行账本。真实验收逐项登记，未运行项不因离线测试通过而关闭。
 
 ## Global Constraints
 
@@ -29,7 +29,7 @@
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-“仅诊断和文档”约束描述当前授权。计划中的代码步骤是后续获实施授权后执行的内容，不是本轮完成声明；本地部署和tunnel操作继续遵守runbook及用户直接授权。
+用户后续已授权实施和本地部署，原仅诊断约束已解除；tunnel 操作仍须直接授权。
 
 ---
 
@@ -412,6 +412,6 @@ node --test signal-server/lib/desktop-control-lease.test.js signal-server/websoc
 | R11 | pending legacy companion 无 stream/control/frame/ACK 权限，实际旧 producer 可被清理 |
 
 - [ ] 独立 review：重点找“检查后 await 再无条件写入”、同 epoch 不同操作、按新 map 清旧资源、无限 acquire/reset 循环、异常清新 binding，以及测试只测 helper 而绕过真实 handler 的盲点。更新需求文档只能在后续用户授权的实施任务内单独列明，不把本轮计划当作已落地功能。
-- [ ] 维护窗口验收另行授权后执行：同页短断、DC 半开、Host reset failure、不同 Viewer 顶替、媒体暂停/恢复，按 direct/TURN/显式 tunnel 分别记录。每路径至少 3 小时长会话、真实设备/Quartz/IME/公网均在本轮标 **NOT RUN**。加载与回退采用经过验证的三端匹配版本；只重启授权本地服务，不操作 tunnel。
+- [ ] 在已授权的维护窗口验收：同页短断、DC 半开、Host reset failure、不同 Viewer 顶替、媒体暂停/恢复，按 direct/TURN/显式 tunnel 分别记录。每路径至少 3 小时长会话、真实设备/Quartz/IME/公网按实际完成项记录，缺测仍标 **NOT RUN**。加载与回退采用经过验证的三端匹配版本；只重启授权本地服务，不操作 tunnel。
 
 本轮完成记录：只生成 spec/plan；测试、构建、提交、生产加载及上述验收均 **NOT RUN**。
