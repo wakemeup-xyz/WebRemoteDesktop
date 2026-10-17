@@ -1,6 +1,6 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `8e375fa`（含 C5 准入修复与 R1）；独立源码复审通过，公网 TURN 暂停/恢复短测通过；JPEG 路径新复现 ACK 槽位与帧来源缺陷，M6 补充修复进行中，尚未最终验收。
+执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `966890b`（包含 C5 与 M6/R1）；build `f5c2a9203e47f9e5`。独立源码复审通过，公网 M6 生命周期验收待运行；信令首断观测工具已实现待 review，缺测转 0 修复待实施，尚未最终验收。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
@@ -146,3 +146,12 @@ M6 [补充 spec](../specs/2026-10-17-jpeg-relay-recovery-addendum.md)和[执行 
 
 
 媒体性能复查进一步区分了输出、新采集和浏览器回调：该 172s 健康窗口约 19.39 解码帧/s、8.84 新采集/s、11.18 rVFC 回调/s；后者未导出 presentedFrames，不能直接推导视觉丢帧比例。稳定捕获日志中 54.80% 输出为缓存复用；缓冲正值峰及后段 loss/NACK/解码空窗真实存在，具体传输/截图/调度瓶颈仍缺证据。另确认 `processStatsSnapshot` 的缺测 RTT/缓冲转 0 缺陷待修，不能将缺测当零延迟；本轮 artifact 原始 LatencyMonitor 值不受此转换影响。详见[媒体性能诊断](2026-10-17-turn-media-performance-diagnosis.md)。README 的旧 2 倍采集及 superfast 默认说明已按生产工厂/编码策略源码修正。
+
+
+## 9. M6 本地部署与当前验证
+
+`5e6c26c` 实现后独立 review 无 Critical/Important，一项共享延迟提示问题由 `966890b` 修复并通过 scoped R1。原实现最终 106 Python / 457 Node 通过；R1 7 项针对性检查通过，数量有重叠。[独立 review](2026-10-17-M6-independent-review.md)。
+
+约 10:39 北京时间，经过 fresh zero-Viewer 检查、逐文件基线验证和备份，将 `86c2e34..966890b` 18 条路径同步到原 checkout，保留原 HEAD/index 与既有脏文档。仅重启本地 Signal/Host，耗时 18.620 秒；Signal PID 85909，Host PID 85937。实际部署源码三文件精确匹配候选；schema 2/build `f5c2a9203e47f9e5`，保留 `b73325b8166441a6` / `7cdeb3e918582f7c`。health/status 正常、Host 在线、Viewer 0。cloudflared 84671 与 watcher 897 启动身份不变，quick URL 仍不存在；W2 四文件仍未激活。私有回滚快照 `/tmp/wrd-c5-rollout-private-ilovzfv1/apply-966890b8-8qje3zln`。这证明加载与本地存活，不代表公网 M6 验收通过。
+
+I2 信令首断 observer `10d4146` / 报告 `1e34602` 已实现：20 JS / 39 Python 通过，独立 review 进行中，尚未同步生产验收脚本。保留单次 proof 与首断严格失败；无法证明真实进程退出时保持 not-observed。媒体缺测两字段修复的[最小 plan](../plans/2026-10-17-media-null-observation-plan.md)沿 M1 契约，不扩展测量或修改网络阈值。

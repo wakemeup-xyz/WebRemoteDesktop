@@ -76,3 +76,15 @@ Live JPEG/TURN acceptance, actual deployed identity, true input-visible effect a
 - `WebRTC._relayPendingStart`: pending existence/request binding; raw object includes socket and leaseId, so sanitize rather than serializing it. `_relayAcceptedStartRequestId` is diagnostic identity only, not readiness.
 
 Index ownership is released after the source/test commit. Root's existing and concurrent README/runbook/requirements/review-anchor/report changes and node_modules symlink are preserved unstaged.
+
+## R1 — shared RTT label scope correction
+
+Independent review approved M6.1–M6.3 with one minor label-scope issue. Starting from `1772a5156078aa1f80a466c4bc28970fcd0f3883`, commit `966890b83521915721f9e2a64c28a2b402062082` (`fix(media): preserve WebRTC RTT labels during relay cleanup`) changes only `web-client/js/webrtc.js` and `web-client/js/webrtc.test.js`.
+
+`clearRelayOrigin()` continues to clear all JPEG proof/feedback state, but resets the shared latency UI only while `tunnelRelayActive` is true. Actual TURN/STUN attempt and control-freeze lifecycles preserve their existing WebRTC RTT label/value; stopping an active relay still clears its stale displayed RTT to 未测量. No protocol, source proof, freshness/null handling, media/input gates or runtime operation changed.
+
+RED: `node --test --test-reporter=tap --test-name-pattern='JPEG origin cleanup' web-client/js/webrtc.test.js` → **4 failed, 1 passed**, reproducing both real lifecycle calls in both modes. Output `/tmp/m6-r1-red.log`.
+
+GREEN: `node --test --test-reporter=tap --test-name-pattern='JPEG origin cleanup|JPEG feedback uses real collector|JPEG single scope timer' web-client/js/webrtc.test.js` → **7 passed, 0 failed, 0 skipped**. Output `/tmp/m6-r1-green.log`. `git diff --check` and cached diff check passed. Full suites were not repeated for this isolated label fix.
+
+The regression invokes real `beginConnectionAttempt`, `freezeControl`, and `stopTunnelRelay`; it asserts the displayed text/title and confirms JPEG state cleanup. Existing real-collector origin retention and shared timer expiry checks also pass. No services, primary checkout, network, browser, native capture, dependencies or build commands were used. Root/I2 dirty files were preserved; Git index is released after this commit.
