@@ -68,3 +68,27 @@ Host summary进入现有back-debug.log（或显式WRD_HOST_LOG_FILE）；`observ
 在已授权Host重载范围内，使用现有flag进行300秒短测在机制上可行，且比开profiler/第二套抓图路径窄；必须接受它是带观测开销的对照条件。当前首连接context装配与现有sampler不导出raw trace的限制，意味着不能承诺只改flag即可完成所需stage诊断。若实际summary已有非零grab/worker/encode、有效scope与可解释drop/coverage，则可利用这些现有日志分析局部stage；其余等待保持unknown。不要为补观测而自动操作tunnel、切媒体档位、另建Lab或扩展新设计。
 
 本次未设置flag、未重载Host、未改变其它应用或访问公网。服务技能只用于确认操作边界，未执行任何服务动作。
+
+
+## 追加交叉确认：M2基础输入因果关联独立于DETAIL（只读）
+
+结论：WRD_FRAME_TRACE_DETAIL默认关闭、首offer的track detailed context=None，只影响可选逐帧stage trace；不使当前M2的inputToPostApplyFrameMs永久无法出样。基础链具有独立的pending输入、capture reservation、首RTP绑定和Viewer rVFC consumer。以下为实际生产接线，不依据受控场景或临时lab推断。
+
+Host链路：
+
+1.`host.py:140–144`无条件安装稀疏RTP observer（按本地aiortc ABI检查），并不受DETAIL flag控制。2036无条件创建InputFrameCausality；只有2039–2040的detailed registry/metrics受DETAIL控制。Capability在2216/3490按observer可用状态声明inputFrameCorrelationVersion=1，失效保持缺测。
+2.真实输入adapter成功返回后2546以monotonic_ns取applied边界，2548调用_note_input_applied。2939–2951要求authority/scope与observer有效，独立note_applied；没有读取_frame_trace_context。InputFrameCausality33–44仅接收applied状态，保存有界inputIds和Host applied_ns。
+3.recv1632–1639的detailed注册是条件块；其后的1640–1646是独立if，不嵌在trace_context条件里。满足fresh_output、selected_scope、grab_bounds时，无论DETAIL是否开启都按input scope构造FrameKey并reserve_for_capture。真实grab边界1384/1390与source sidecar也不受DETAIL控制。input_frame_causality46–58要求capture_started严格晚于applied、fresh/non-reused、scope一致，避免缓存帧充当输入后新采集证据。
+4.offer_sender在3642始终绑定_wrd_input_frame_host，跟3641的可选detailed context是两个字段。rtp_frame_observer93–123分别查询registry key和input_key；即使registry=None，也可用input_key建立pending，111–113仅在两者都缺失时拒绝。
+5.sender实际transport send await成功后才commit（observer282–297）。169–182的commit在没有detailed registry时仍执行180–181的Host _commit_input_frame；不以bound=true作为input commit前提。Host2953–2963取reservation，发送独立input_frame_binding，带attempt/generation/lease、capture identity、wireTimestamp、ssrc和inputIds。这条消息不是frame_trace_batch，也不依赖stage sidecar注册。
+
+Viewer链路：
+
+1.`webrtc.js:4500–4504`独立处理input_frame_binding；5745–5753只要求server capability=1、LatencyMonitor存在且有待匹配输入，创建单独inputFrameCollector。
+2.每个rVFC回调5676先由真实receiver/source识别frame identity。5678–5680才是optional detailed/ROI/loss分支；基础5682–5683在该分支之外调用input collector.observeVideoFrame并consume。因此_frameTraceEnabled=false不会屏蔽M2回调。
+3.5745的collector scope与latencyScope同源；5735–5742要求唯一实际video receiver和唯一同步source，携带rVFC metadata.rtpTimestamp。acceptBinding280–297检查scope、fresh/after-applied等字段，随后以相同ssrc/wire RTP identity进行匹配；matchedVisual179–199把inputIds/scope与原始callback clock保留下来。允许binding先到或callback先到，不用join时刻替代callback时刻。
+4.consumeInputFrameMatches5756–5758调用LatencyMonitor.onPostApplyFrame。latency-monitor185–203验证scope/匹配/两秒迟到边界及input状态，193计算`row.viewerClockMs - record.sent`：同一Viewer时钟内的输入发送→确认属于applied之后新capture的rVFC。不是Host applied时钟减Viewer时钟，也不等于物理可见效果。
+
+仍会合法缺测的边界：无用户输入的被动run、ABI observer不兼容/失效、输入未applied、scope变化、复用缓存/抓图早于applied、超过10秒pending期限、首RTP失败或binding未送达、浏览器没有可验证唯一ssrc/rtpTimestamp、缺失rVFC或metadata匹配过迟。它们保持null而非制造数值，但不存在“仅因DETAIL默认关闭而基础metric永远不能出样”的装配阻塞。
+
+本交叉确认只读代码与现有测试，未跑native、服务或真实输入。前文首offer detailed context缺口的结论保持，但范围严格限定为可选stage trace，不扩大到M2基础关联或输入控制本身。

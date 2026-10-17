@@ -1,6 +1,6 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `58ad766`（生产增量 `d1166ab`），build `c30530f331a4def5`；源码/整轮增量与新增心跳观测 review 通过。M6 版本 JPEG 和 TURN 暂停恢复短测均通过；后续 93s 首断证实客户端心跳超时、同窗 connector edge loss，精确服务端心跳边界继续排查。三小时、普通用户重连、业务输入与可见效果未完成，不能宣布全部验收通过。
+执行开始：2026-10-17。状态：本地 Signal/Host 已部署至 `836dccd`（Host 时钟修复 `f492357`；Signal 心跳观测 `d1166ab`），build `c30530f331a4def5`；源码/整轮增量与新增心跳观测 review 通过。M6 版本 JPEG 和 TURN 暂停恢复短测均通过；后续 93s 首断证实客户端心跳超时、同窗 connector edge loss，精确服务端心跳边界继续排查。三小时、普通用户重连、业务输入与可见效果未完成，不能宣布全部验收通过。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
@@ -27,7 +27,7 @@
 | W2b 分层入口探测 | 入口错误分类、统一截止时间和子进程归属；探测失败不等同于允许恢复 | R1 修复嵌套 DNS/curl 子进程归属；10 项定向、2 项最终回归通过，独立 R1 通过 |
 | M2 新鲜帧因果关联 | 仅真实 applied 输入关联后续新捕获；首包成功后提交；晚到 trace 保留原呈现时间；SSRC 唯一匹配 | `b61d37d` 已提交，定向验证及 15 分钟模拟流通过；`827688f` 修正真实回调时间接线后独立 R1 通过，已部署；真实输入因果呈现仍未测 |
 | W3a 统一诊断 | 原始 capture/ID 重试，M1 指标直接快照，有界结束事件与持久化回执，长会话 schema 3 | 初始 203 项通过；独立复核发现同连接第二报告重试丢失和错误 dropped，`fe31866` 修复后 77 项通过，独立 R1 通过 |
-| I2 持续验收工具 | 单次准入、流式采样、同身份与实际路径连续性、明确缺测；普通连接后不发送业务输入 | 原工具误判 PASS 已用反例修复于 `d2b5b80`，13 项 Python、10 项 JS 通过；独立 R1 通过；已运行生产短时测试，尚无连续性 PASS |
+| I2 持续验收工具 | 单次准入、流式采样、同身份与实际路径连续性、明确缺测；普通连接后不发送业务输入 | 原工具误判 PASS 已用反例修复于 `d2b5b80`，13 项 Python、10 项 JS 通过；独立 R1 通过；已运行生产短时测试，已有独立 300s 连续性 PASS，三小时未通过 |
 | W3b 留存 | 同一 Viewer 最新报告、有界日摘要、共享回执 ledger | `56f3987` + `30bd409`；R1 修复崩溃锁、首次接收查询漂移和状态字段路径问题，40 项定向验证与独立复核通过 |
 | W3c 资源与事件循环 | 当前/峰值 RSS 区分，全量低频 lag、实际换页差分缓存、非阻塞队列摘要、断开原因白名单 | `40450f3`，14 项 Python、2 项 CLI、4 项 Node、3 项最终 Signal 通过；独立复核通过 |
 | M4 捕获与编码阶段 | generator 消费计入编码，pause 独立；失败回退保留真实旧帧身份，reuse 日志/消息一致 | `3d88e1c`，16 项阶段、23 项前端指标、23 项相邻回归通过，独立复核通过 |
@@ -55,7 +55,7 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 |---|---|
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
-| 本轮构建部署 | 已部署至 `58ad766`（生产增量 `d1166ab`）；build `c30530f331a4def5`；W2 watcher 四文件未激活 |
+| 本轮构建部署 | 已部署至 `836dccd`（Host 时钟修复 `f492357`；Signal 心跳观测 `d1166ab`）；build `c30530f331a4def5`；W2 watcher 四文件未激活 |
 | 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；此前连续性 INCOMPLETE；服务端心跳观测已加载，新一轮 300s 已 PASS，独立 3h 测试实际约 1922.5s 后因 5149.8ms 画面间隔取消，INCOMPLETE / 媒体连续性不合格 |
 | 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
@@ -198,3 +198,17 @@ S1 加载后的 guarded TURN 300s 已 PASS（301样本、0missing/late/identityc
 媒体时钟源码 `f492357` 已独立复审 PASS：[实现](2026-10-17-media-clock-implementation.md)、[review](2026-10-17-media-clock-task-review.md)。实际方法回归 RED14失败→GREEN104通过；尚待加载。另一个[Viewer 时钟审计](2026-10-17-viewer-clock-review.md)确证本页 ACK/恢复受墙钟跳变影响，已写[spec](../specs/2026-10-17-viewer-control-clock-design.md)和[plan](../plans/2026-10-17-viewer-control-clock-plan.md)，待实现。
 
 [已有详细 trace 操作审查](2026-10-17-existing-frame-trace-operational-review.md)发现首 offer 的 track context 未同步装配，单开 flag 不能保证有效抓图/发送关联；当前保持默认关闭。此诊断能力缺口不影响默认关闭时媒体路径，未为了补数据擅自开启更高频 trace，也未将缺测写为零。
+
+
+## Host 单调时钟修复加载
+
+审核源码 `f492357` 随文档冻结树 `836dccd` 同步到主工作区；只调用既有 helper 的 restart-host，耗时5.913s。新 Host42127、Signal15135保持，build仍c30530f331a4def5；本地health/Host在线、Viewer0，源文件hash匹配冻结提交，HEAD/index/四个延后WATCH文件/tunnel84671/watcher897/quick文件不存在状态均保留。备份和验证存本机 apply-836dccd2-0_vtrc9c。未调整系统时钟或高频trace配置。
+
+新300秒TURN观察 `/tmp/wrd-public-media-clock-turn-20261017a` 已启动，属于修复后新会话，不能与旧300秒PASS合并。Viewer本页控制时钟源码仍在实现，尚未部署。
+
+
+Host时钟修复后新TURN300s PASS：301样本0missing/late/failed/identitychange，maxgap449.998ms；decoded18.71fps、rVFC18.49/s、新capture约10.11/s、reuse48.52%。[性能细节](2026-10-17-media-clock-short-performance.md)、[信令细节](2026-10-17-media-clock-short-signal.md)。这不是三小时或真实业务输入验收。
+
+随后JPEG媒体生命周期测试实际69.744991s/69样本FAIL：初始/暂停/恢复全部通过，但恢复后qualified load age到5200ms，输入门禁按新鲜度保护关闭；socket仍connected。失败原因是post-recovery-not-healthy，完整现场在本机`/tmp/wrd-public-media-clock-jpeg-20261017a`，继续分层诊断，不能用前一TURN通过覆盖此失败。
+
+Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项失败独立确认为缺M6认证scope的旧fixture，正在单独修复测试，生产校验不放宽。[实现](2026-10-17-viewer-clock-implementation.md)、[review](2026-10-17-viewer-clock-task-review.md)。临时候选buildb6d77cd86c6f9d02保留c305/f5，尚未上线。

@@ -1,6 +1,6 @@
 # 2026-10-17 公网运行验收
 
-当前部署：`58ad766`（生产增量 `d1166ab`），网页 build `c30530f331a4def5`；本地 Signal/Host 在线，Cloudflare tunnel 未变。此前 M6 两条媒体路径生命周期短测 PASS；93.094s 信令断线仍为 INCOMPLETE。服务端心跳观测已加载，新一轮 300s TURN 连续性测试已 PASS，独立 3h 测试实际约 1922.5s 后因 5149.8ms 画面间隔取消，INCOMPLETE / 媒体连续性不合格；不能提前声明三小时或真实输入验收通过。
+当前部署：`836dccd`（Host `f492357`，Signal `d1166ab`），网页 build `c30530f331a4def5`；本地 Signal/Host 在线，Cloudflare tunnel 未变。此前 M6 两条媒体路径生命周期短测 PASS；93.094s 信令断线仍为 INCOMPLETE。服务端心跳观测已加载，新一轮 300s TURN 连续性测试已 PASS，独立 3h 测试实际约 1922.5s 后因 5149.8ms 画面间隔取消，INCOMPLETE / 媒体连续性不合格；不能提前声明三小时或真实输入验收通过。
 
 本报告追加真实运行证据，不能以源码复审或本地 health 代替公网可用性。所有测试使用正式入口；创建自动化 Viewer 须 fresh zero-Viewer + 一次性 proof，人工显式连接优先。未发送业务原生输入、剪贴板或 Terminal 命令。
 
@@ -148,3 +148,13 @@ Connector 日志从本轮 startoffset 到终态没有新增字节，不能据此
 长测 1922 样本，0 缺失/迟采/身份变化；97 failedObservations 是首次超限加累计最大 gap 的重复观察，不是 97 次断线。信令全程 connected，74 轮 ping/pong；唯一关闭为主动停止自己的测试浏览器。服务仍在线，三小时未通过。完整 [媒体事件](2026-10-17-longrun-gap-diagnosis.md)与[心跳报告](2026-10-17-server-heartbeat-runtime-diagnosis.md)保留原证据。
 
 进一步 [源码时钟审查](2026-10-17-media-clock-review.md)确证 recv 与 JPEG 循环用墙钟节流；模拟回拨 4.24s 会把 30ms 等待变为 4.27s。已补 [spec](../specs/2026-10-17-media-monotonic-clock-design.md)和[plan](../plans/2026-10-17-media-monotonic-clock-plan.md)，待实现复审。该机制与第二次停帧吻合，仍不能分摊整段 5.15s 或解释第一次真实 2.7s Host loop stall；尚未据此声明线上修复。
+
+
+Host 时钟修复已通过104项离线回归与独立review后于本轮加载；新Host42127，Signal15135/buildc305/tunnel保持。新的300秒TURN测试进行中，终态以随后结果为准；旧失败记录不覆盖。Viewer计时修复尚未加载。
+
+
+Host时钟修复后新TURN300s PASS：301样本0missing/late/failed/identitychange，maxgap449.998ms；decoded18.71fps、rVFC18.49/s、新capture约10.11/s、reuse48.52%。[性能细节](2026-10-17-media-clock-short-performance.md)、[信令细节](2026-10-17-media-clock-short-signal.md)。这不是三小时或真实业务输入验收。
+
+随后JPEG媒体生命周期测试实际69.744991s/69样本FAIL：初始/暂停/恢复全部通过，但恢复后qualified load age到5200ms，输入门禁按新鲜度保护关闭；socket仍connected。失败原因是post-recovery-not-healthy，完整现场在本机`/tmp/wrd-public-media-clock-jpeg-20261017a`，继续分层诊断，不能用前一TURN通过覆盖此失败。
+
+Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项失败独立确认为缺M6认证scope的旧fixture，正在单独修复测试，生产校验不放宽。[实现](2026-10-17-viewer-clock-implementation.md)、[review](2026-10-17-viewer-clock-task-review.md)。临时候选buildb6d77cd86c6f9d02保留c305/f5，尚未上线。

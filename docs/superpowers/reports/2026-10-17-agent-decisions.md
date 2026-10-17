@@ -164,3 +164,5 @@ Ruling: supplement existing remediation with one coherent observer-module/wiring
 27. 增补单调时钟节流修复：源码已证明系统回拨会放大真实媒体等待，先修复该确定缺陷再做新的长测；风险是节流/统计回归，使用真实方法的模拟时钟测试和独立 review 约束。不调整系统时钟，不将其冒充全部历史停帧的唯一原因。
 
 28. 将已复现的 Viewer 本页 ACK、移动端 ACK、信令恢复及相邻新鲜度/冷却时钟作为独立窄修复：只迁移私有 duration，不改票据、lease/seq 或 epoch 协议。风险为零时刻/sentinel 或测试混钟回归，以 null 未设置值、真实对象假时钟测试和独立 review 控制。
+
+29. 单独同步两项遗留 M6 集成测试的认证 scope/ACK fixture：独立 review 已确认是旧测试报文，保留真实 ACK/图片加载及旧身份拒绝断言。风险是测试被弱化，因此不改生产校验并独立复审。

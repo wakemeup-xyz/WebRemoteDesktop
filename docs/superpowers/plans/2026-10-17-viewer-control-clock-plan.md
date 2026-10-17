@@ -24,7 +24,7 @@
 
 **Interfaces:** Private mouse pending sentAt, mobile down/up deadlines, WebRTC signal-start/inbound-progress/last-refresh/last-keyframe origins. No external signature change; all producers/consumers of each selected field use one clock. Existing null-safe reset/clear and callbacks retain ownership checks.
 
-- [ ] Add actual Input regressions with two pending reliable writes and distinct wall/mono clocks. Assert oldest remaining2900ms after real100ms with ±60000ms wall steps, true3000ms timeout still invokes guarded recovery once, ACK removal advances to next oldest, obsolete scope cannot recover. Add mobile down/up ACK and rearm cases, true-late ACK and stale gesture/seq rejection.
+- [x] Add actual Input regressions with two pending reliable writes and distinct wall/mono clocks. Assert oldest remaining2900ms after real100ms with ±60000ms wall steps, true3000ms timeout still invokes guarded recovery once, ACK removal advances to next oldest, obsolete scope cannot recover. Add mobile down/up ACK and rearm cases, true-late ACK and stale gesture/seq rejection.
 
 ```javascript
 let mono = 0;
@@ -37,9 +37,9 @@ wall += 60100;
 // A valid first edge ACK at mono100 must not become late due to wall.
 ```
 
-- [ ] Add actual WebRTC signaling recovery callbacks at mono0/1500/12000/13500 with wall ±60000. Preserve initial0 origin, recreate only at threshold, and clear/cancel on success/manualDisconnect/superseded. Add media freshness and refresh/keyframe cooldown checks with valid0 and unsetnull, real elapsed expiration, and wall jumps.
-- [ ] Run named new tests before production edit, record assertion-based RED. Fixture/import failures do not count.
-- [ ] Replace selected clocks and matching resets atomically. Representative code shape (adapt owner field names consistently):
+- [x] Add actual WebRTC signaling recovery callbacks at mono0/1500/12000/13500 with wall ±60000. Preserve initial0 origin, recreate only at threshold, and clear/cancel on success/manualDisconnect/superseded. Add media freshness and refresh/keyframe cooldown checks with valid0 and unsetnull, real elapsed expiration, and wall jumps.
+- [x] Run named new tests before production edit, record assertion-based RED. Fixture/import failures do not count.
+- [x] Replace selected clocks and matching resets atomically. Representative code shape (adapt owner field names consistently):
 
 ```javascript
 const now = performance.now();
@@ -49,13 +49,26 @@ const elapsed = now - this._signalRecoveryStartedAt;
 // including zero, before subtracting; unset null never becomes a fake sample.
 ```
 
-- [ ] Preserve first refresh/keyframe admission when origin is unset; after a request at mono0 the immediate duplicate remains cooled down. Do not change retry thresholds, epoch payload fields, keyboard owner or no-replay behavior. Update changed private-field fixtures from Date.now to their fake monotonic clock.
-- [ ] Run `node --test web-client/js/input.test.js web-client/js/keyboard-transport.test.js web-client/js/webrtc.test.js`; syntax-check two production files and `git diff --check`. Use installed Node; do not npm test/pretest/build/dependency install.
-- [ ] Self-review producer/consumer inventory, exact tests and no new wire timestamps; commit only owned files `fix(control): use monotonic clocks for local recovery deadlines`. Write full report with RED/GREEN commands/results and source commit.
+- [x] Preserve first refresh/keyframe admission when origin is unset; after a request at mono0 the immediate duplicate remains cooled down. Do not change retry thresholds, epoch payload fields, keyboard owner or no-replay behavior. Update changed private-field fixtures from Date.now to their fake monotonic clock.
+- [x] Run `node --test web-client/js/input.test.js web-client/js/keyboard-transport.test.js web-client/js/webrtc.test.js`; syntax-check two production files and `git diff --check`. Use installed Node; do not npm test/pretest/build/dependency install.
+- [x] Self-review producer/consumer inventory, exact tests and no new wire timestamps; commit only owned files `fix(control): use monotonic clocks for local recovery deadlines`. Write full report with RED/GREEN commands/results and source commit.
 
 ### Task 2: Independent review and controller-owned delivery
 
-- [ ] Package exact task diff; independent spec/quality review before deploy, resolve all important findings.
+- [x] Package exact task diff; independent spec/quality review before deploy, resolve all important findings.
 - [ ] Build reviewed frontend in temporary output, preserve current and previous retained assets; verify frozen source/manifest. Deploy only reviewed increment with fresh zeroViewer proof and baseline/hash checks.
 - [ ] Restart only the authorized local component needed by deployment; never tunnel. Verify actual build, Host online, formal normal-browser login and current credentials.
 - [ ] New proof-guarded TURN/JPEG sessions must use real UI Start and final report their actual durations, identities, frame gaps and signal events. Keep earlier failed runs and native input-to-visible NOT RUN explicit; proceed to long-run qualification after short cases pass.
+
+
+### Task 3: Synchronize adjacent relay fixtures with M6
+
+**Files:** Only `web-client/js/input-signaling-continuity.test.js`. Production sources remain unchanged.
+
+**Interfaces:** Follow the current M6 authenticated relay scope and initial start/media activity ACK contract, as specified in `docs/superpowers/specs/2026-10-17-jpeg-relay-recovery-addendum.md`; precise stale fixture classification is in `docs/superpowers/reports/2026-10-17-viewer-clock-task-review.md`.
+
+- [ ] Reproduce the two named adjacent failures on current source: retained relay image load and real tunnel refresh. Run only these existing tests initially; they must fail at the documented stale frame/ACK boundary, not setup/import.
+- [ ] Add a relay-only helper that supplies `relayFrameSchemaVersion: 1` and exact `relayScope = { producerId, productionGeneration, connectionAttemptId, mediaGeneration, leaseEpoch }`. Authenticate each current origin through real ACK handling before delivering its image. Echo actual pending start request ID/generation if using ordinary start. Keep non-relay fixtures unchanged.
+- [ ] In retained-load test, obtain an actual valid image callback, replace attempt or producer, invoke old callback and assert replacement remains blocked; authenticate and load a current replacement frame for the positive case. In refresh test, establish initial scoped ACK+image, refresh, reject old ACK/frame, accept current ACK while remaining resuming, then load current scoped image to become active. Do not use generic noteMediaRenderedFrame to bypass qualified relay loading.
+- [ ] Run the complete continuity suite and the previously failing adjacent command (input-backpressure, input-recovery, input-signaling-continuity, webrtc.frame-trace, diagnostic). Keep all existing negative identity/freshness assertions. No browser/network/native/runtime operations.
+- [ ] Self-review, commit only this test file, report exact RED/GREEN and independent review before marking complete. No changes to thresholds, production validation or success criteria.
