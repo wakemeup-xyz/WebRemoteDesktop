@@ -21,6 +21,16 @@ Host producer 只格式化并准入完整有界文本；64 queued + 1 in-flight�
 
 ## 上线与验收门槛
 
-最终整体审查 尚未执行，上线前必须通过。上线前冻结确切提交、备份并保留主仓HEAD/index、已有修改、四个未部署watcher文件、tunnel/watcher进程和quick URL状态。先在临时目录验证冻结 Viewer 的完整构建；Signal正常启动还会从同一源码重新生成资产，不改变其启动契约。仅重载本地Signal/Host，读取并回报当前两种密码，核对实际新进程、build、源码和在线状态。
+最终整体审查 b443475..081c6d0 发现一项Important，候选暂未获准上线；380b250修订的定向最终复审通过，原I1已关闭，无新增Critical/Important/Minor，可进入已授权源码上线。上线前冻结确切提交、备份并保留主仓HEAD/index、已有修改、四个未部署watcher文件、tunnel/watcher进程和quick URL状态。先在临时目录验证冻结 Viewer 的完整构建；Signal正常启动还会从同一源码重新生成资产，不改变其启动契约。仅重载本地Signal/Host，读取并回报当前两种密码，核对实际新进程、build、源码和在线状态。
 
 再运行全新一次Start的正式300秒被动测试及独立长会话；不得合并短场次、复用proof或以旧版本通过替代新版本。实际用户连接优先。当前共享GUI不能安全隔离全局HID，真实input→visible仍需独立环境/用户设备的真实证据，不能伪造隔离标志、把ACK或下一帧称为真实可见效果。此次文件隔离只消除一个已确认的同步I/O边界，不证明所有历史停顿来自日志。
+
+## 最终整体审查新增 I1 与修订
+
+整体审查覆盖22个提交差异路径（包括生产、测试及文档），确认此前各项审查发现已关闭，未发现Critical或单列Minor。新增Important I1：初始PC已connected但尚无可信paint时，隐藏/主动暂停可以保留解码进展；信令重建socket的既有恢复分支因此保留PC，而新增PC/stats/rVFC归属检查仍持旧socket，有效当前帧被拒绝，剩余paint预算到期。实际Viewer、实际Input与实际恢复方法的纯VM反例确认，不是仅用UI reducer推断。
+
+原Task1实现agent已不在当前live inventory，root将完整spec、旧审查和新反例交给新的最高能力实现者，仍限定两个既有Viewer路径。380b250显式转移保留PC的回调归属，退休旧PC/track/metadata/channel/stats/frame callbacks，停旧统计及帧跟踪后只装一份新生产者；已退休回调在启动成功后也保持无效。metadata重绑不把已有解码画面直接认作paint；不重新初始化link-quality控制器。DC watchdog的阶段/截止/扩展与已存在3秒fault timer也保留原截止。
+
+七个新增实际集成回归覆盖隐藏及主动暂停恢复、旧排队回调、新生产者、无租约时Input保持关闭、重复socket替换。转移前后同一PC/episode/paint对象，outer余额68000ms、paint余额8000ms，重复替换不延长。初RED为3失败/1通过；当次shell尾接tail，未独立保存Node退出码，保留TAP失败证据并明确该限制。最终76项Input、130项受影响Viewer、22项DC/stats共228项离线检查通过，已成功会话的socket替换也覆盖；已知负向fixture诊断已说明。该228范围与此前379/97等存在重叠，不相加。
+
+定向最终复审已通过；核对了退休旧回调、当前生产者恢复、原剩余预算与DC截止，没有重跑套件或操作运行环境。源码修订、纯测试、生产加载、真实三小时及业务input→visible分别记账；当前产品仍为f4202b7/build07ad960b331ccc4b。
