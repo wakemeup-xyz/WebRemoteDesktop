@@ -1,5 +1,7 @@
 # 稳定性与延迟整改实施记录
 
+> **2026-10-18 01:18 更新：** 新版证据工具已同步，未重启产品服务。正式 TURN 300.290 秒/301 样本 PASS，全部有效输入门禁为开启状态，最大帧间隔1433.2ms；点击至首帧5533.3ms。此前133样本失败、11.766秒停帧和输入关闭证据仍保留，不能用短测抵消。退出后的控制 reset 完成结果 UNKNOWN，因成功ACK缺少正向日志。服务保持在线；真实输入→可见效果及三小时尚未通过。见[证据与复审](2026-10-18-passive-gate-evidence-review.md)和[后续整改设计](../specs/2026-10-18-slow-start-idle-io-resilience-design.md)。
+
 > **23:13 最新更新：** 启动DC阶段修复3cafc64/build22d13d54ac6b458a已加载，仅Signal重启3.371秒，Host/tunnel/watch保持。正式300秒被动测试PASS（301样本/maxgap916.7ms），启动仍有一次unknown信令错误后恢复；继续核查，真实输入和三小时未验收。[本轮review与部署](2026-10-17-startup-watchdog-review-and-rollout.md)。
 
 > **22:08 晚间续查更新：** 已部署诊断保存回执、固定入口摘要及独立抓屏状态观测，冻结候选db5d2b1/build067dfc41e8374b4e。Signal89188/Host89291在线；本地重启25.829s，tunnel/watcher与主HEAD/index保留。实际HTTP首次/重复提交均确认、pending0，入口完整JSONL与Host空闲capture已核对。旧版本正式短测maxgap10.566s；空闲窗口也有15.647s迟到及高换页，新版本短测继续复现，整体稳定性仍未通过。[晚间诊断](2026-10-17-evening-connectivity-followup.md)、[增量review](2026-10-17-evening-evidence-review.md)。下文按时间保留历史版本和失败证据。
