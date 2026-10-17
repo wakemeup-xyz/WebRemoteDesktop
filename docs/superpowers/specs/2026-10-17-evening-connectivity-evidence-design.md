@@ -8,7 +8,7 @@
 
 已确认代码缺陷：Socket diagnostic emit后立即返回true，HTTP202也可能在receipt拒绝/错ID时返回true；手动UI据此宣称上传成功。早期Socket拒绝不回ACK。重放另走发送分支、可能用旧pending快照覆盖异步更新。确认修复这些问题能恢复证据可信度，但不是证明连接根因已消除。
 
-同版本本地入口短对照：300.177秒、301样本、maxgap266.7ms通过；7个已登记测试进程自然退出。仅被动媒体连续性，主动输入/真实可见效果和三小时均未验收。公网独立对照进行中。
+同版本本地入口短对照：300.177秒、301样本、maxgap266.7ms通过；7个已登记测试进程自然退出。仅被动媒体连续性，主动输入/真实可见效果和三小时均未验收。随后正式入口同TURN的301样本出现31个失败观测、maxgap10566.326ms，结果INCOMPLETE；系统负载不受控，不能将差异归因入口或Cloudflare。
 
 ## 方案比较与决定
 
@@ -30,7 +30,7 @@ UI成功：“服务端已确认保存诊断（按保留策略清理）”；失
 
 新增一个小的entry observer，HTTP middleware在CORS、JSON解析和auth之前，只比较固定method/path，不保存URL/query/headers/IP/body/token/socketId/raw error。固定类别：viewer_login（POST /api/auth/login、/api/auth/login/viewer），auth_verify（GET /api/auth/verify），viewer_admission（POST /api/auth/viewer-admission），diagnostics（POST /api/diagnostics），viewer_html（GET/HEAD /、/index.html、/viewer.html），viewer_bootstrap（GET /api/viewer-bootstrap）。其他路由、health/status轮询、Terminal和OPTIONS不计。
 
-每类计started、completed、aborted、closedUnfinished、untracked、expiredUnfinished、stoppedInflight、当前inflight；完成状态只用固定1xx–5xx/other桶及401/403/429子计数；时长固定<=10/50/100/500/1000/5000/15000/>15000ms桶及count/sum/max/unknown。完成跨窗归入完成窗口，不能要求窗口内started=completed。finish/close/aborted只终结一次并移除自有listeners。最多256个tracker；满时只增untracked、标明completionCoverage=false。每60秒flush时释放已观察至少60秒仍未完成的tracker（实际60–120秒，event loop延迟另计）；不取消业务请求。单调时钟失效记unknown，不能伪造0。
+每类计started、completed、aborted、closedUnfinished、untracked、expiredUnfinished、stoppedInflight、当前inflight；完成状态只用固定1xx–5xx/other桶及401/403/429子计数；时长固定<=10/50/100/500/1000/5000/15000/>15000ms桶及count/sum/max/unknown。时长统计包括实际finish/aborted/unfinished-close的终结观测，不是只统计成功HTTP响应；observerstop/expiry是截断观察，仅计对应结果、不伪造完成时长。完成跨窗归入完成窗口，不能要求窗口内started=completed。finish/close/aborted只终结一次并移除自有listeners。最多256个tracker；满时只增untracked、标明completionCoverage=false。每60秒flush时释放已观察至少60秒仍未完成的tracker（实际60–120秒，event loop延迟另计）；不取消业务请求。单调时钟失效记unknown，不能伪造0。
 
 Socket默认namespace只记录accepted/missing_auth/invalid_auth三个聚合计数；namespace计数可能包含Host，HTTP入口也可能包含巡检或自动测试，均不等于独立用户数。Engine.IO connection_error仅读取code，映射0..5/other，不能当作一定来自Viewer。入口观察不改变原始next、状态码、鉴权或连接行为；观察异常隔离。
 
