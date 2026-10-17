@@ -194,3 +194,11 @@ Host current loop lag最大139.052ms，rolling最大564.526ms；编码1865次、
 supervisor未触发sample；helper正常完成清理，旁车记录的7个子进程身份自然退出且没有signal，完整子进程树证明仍false。主服务持续在线，tunnel/watcher身份未变。
 
 详见[媒体边界](2026-10-17-turn-long-b-media-analysis.md)、[信令时序](2026-10-17-turn-long-b-signal-analysis.md)。[普通用户恢复源码复核](2026-10-17-normal-transport-recovery-audit.md)确认8秒grace+Host ACK后恢复lease、超时新lease重建peer路径，无新确认代码缺陷；但一次性proof测试会停止首次断开，不能代表普通用户自动恢复已通过。已邀请用户独立设备人工连接、点击和文本输入并上传既有诊断；等待真实证据时不抢占新的Viewer会话。
+
+## 15:51 诊断工具同步复核
+
+验收工具1677473与截至0f29c45的文档已同步到主工作区，22项Node、42项Python离线检查及独立task/final增量review均通过。只更新4个验收脚本/测试，无产品服务代码和build变化，无重启。原HEAD/index、未改文件、tunnel/watcher/quick状态保留；服务健康、Host在线、Viewer0。
+
+私有supervisor仅成对更新已审查helper/sampler SHA，现SHA为76106a958fde1fe80650524ca43952a12bc7c7ce36ee348f30ebebce95e0e884；16项纯fake回归通过，3项会启动真实子进程的测试按本次边界未运行。历史run、失败结果和hash未改。真实关闭元数据尚未采到，人工输入、普通恢复和三小时资格仍待验收。
+
+15:55只读HTTP复查：正式根入口经测量进程现有代理环境返回200，TTFB1.272042s、总计1.272231s；本地health显式绕过代理返回200，TTFB6.159ms、总计6.230ms。未登录、未Start、未创建Viewer。此次HTTP可达不等于页面功能或连接连续性通过。15:52独立status仍Host在线、Viewer0。

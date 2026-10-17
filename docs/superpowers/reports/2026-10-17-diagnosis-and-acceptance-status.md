@@ -60,3 +60,13 @@
 4. **完成连续性和输入验收。** 普通用户可操作后，再做独立完整三小时；正常资源与现场压力分开记录。指标必须包括超时、丢失和取消，不能只报成功样本的分位数。若再次失败，保持失败状态并继续定位，不能降低分辨率或换测量口径制造通过。
 
 独立增量review未发现新的可行动代码缺陷；[关闭边界审计](2026-10-17-ws-transport-boundaries-review.md)没有发现可解释约132秒断线的固定超时。当前不具备通过增加心跳超时、重建tunnel或默认切换网络策略来“解决”的证据。
+
+## 15:51 诊断工具同步复核
+
+验收工具1677473与截至0f29c45的文档已同步到主工作区，22项Node、42项Python离线检查及独立task/final增量review均通过。只更新4个验收脚本/测试，无产品服务代码和build变化，无重启。原HEAD/index、未改文件、tunnel/watcher/quick状态保留；服务健康、Host在线、Viewer0。
+
+私有supervisor仅成对更新已审查helper/sampler SHA，现SHA为76106a958fde1fe80650524ca43952a12bc7c7ce36ee348f30ebebce95e0e884；16项纯fake回归通过，3项会启动真实子进程的测试按本次边界未运行。历史run、失败结果和hash未改。真实关闭元数据尚未采到，人工输入、普通恢复和三小时资格仍待验收。
+
+15:55只读HTTP复查：正式根入口经测量进程现有代理环境返回200，TTFB1.272042s、总计1.272231s；本地health显式绕过代理返回200，TTFB6.159ms、总计6.230ms。未登录、未Start、未创建Viewer。此次HTTP可达不等于页面功能或连接连续性通过。15:52独立status仍Host在线、Viewer0。
+
+条件性本地/公网对照工具准备完成，私有supervisor只增加两端点精确白名单及固定originClass。19项纯fake测试和独立spec/quality/integration review通过；当前supervisor SHA为2bfc3e7c5cffa72ad3fda45ae78c91bb4c83cb9684d05356acffeaab84b39f7a（替代15:51的仅pin更新版本），helper/sampler配对hash不变。工具尚未运行真实对照，人工测试仍pending、未创建Viewer；输入origin类别不等于实际路由证明。维护授权仍有效，无需重新询问许可。见[对照设计](2026-10-17-origin-comparison-design-review.md)和[独立review](2026-10-17-origin-comparison-task-review.md)。

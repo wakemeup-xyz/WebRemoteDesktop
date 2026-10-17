@@ -27,3 +27,11 @@ ec仅在reason精确为`transport close`、details.description精确为固定字
 schemaVersion1保留：旧ec无ws仍有效，新ws仅允许ec且恰有上述两个键，Python拒绝其他终态/未知键/非有限数值/boolean-code/string-bool；192B每event及全部ring/delta/final上限保持。元数据若出现在晚于sd/mc的ec，仅留在该ec，不能事后重写firstDisconnectEvent归因。code1006不证明具体网络节点，wasClean也不证明发起方，cause仍unknown。
 
 仅合成Node事件/Python validator回归；无真实连接/生产重启。本次不新增原生WebSocket包装器、CDP或日志框架。等待人工实测期间不创建Viewer；下一次自动实验仍须fresh zeroViewer和一次性proof。
+
+## 后续增量：条件性源站对照准备（Task 4）
+
+为在人工窗口结束后区分Viewer公网信令路径与本机源站，扩展已有私有supervisor，不能新建测试框架或修改产品/helper。只准两条精确origin：`https://link.stockhub.wiki`→formal、`http://127.0.0.1:8080`→loopback。CLI保留formal默认；execute最先验证字符串属于字典，拒绝别名、userinfo、路径/查询/片段、尾斜杠、其他端口和非字符串，拒绝先于hash、Host检查、mkdir和Popen。
+
+supervisor自己的preflight/final加固定originClass，原origin逐字传给helper；mode继续固定relay。duration仅300/10800、相应门槛/单次sample、duration+300截止、pairedhash、两PID文件+birth、0700/0600、容量和归属清理均不改。旧run不改，helper文件不改。fake测试覆盖2origin×2duration与无效输入在任何副作用前拒绝、hash不匹配仍fail-closed、参数及类别、不泄漏URL/秘密、旧阈值/cleanup/sample边界回归；不执行真实子进程用例。
+
+本项仅准备工具并离线验证，不启动Viewer。人工测试pending时不执行；未来调用仍须fresh zeroViewer和正常UI登录/一次性proof，失败不补签/重连或普通ticket降级。originClass只按输入归类，不证明实际Socket路径；比较需实际build、所见传输协议与relay类型一致，同relay不证明同物理TURN节点。300s只是诊断，触发sample则保留干预标记；loopback10800也不能替代formal资格。认证/CORS/重定向/baseoverride导致前置条件不足则如实报告，不修改生产配置。细节与局限见[设计核对](../reports/2026-10-17-origin-comparison-design-review.md)。

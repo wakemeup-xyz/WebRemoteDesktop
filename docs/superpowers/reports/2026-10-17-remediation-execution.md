@@ -228,3 +228,11 @@ Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项�
 4. 普通用户自动恢复与真实input→visible需要独立设备实际证据。已请求人工操作；自动proof不重用/重发/接管。三小时连续性仍未完成，不宣布“彻底稳定”。
 
 本轮新失败见[验收终态](2026-10-17-live-acceptance.md)。服务仍保持运行；等待人工操作期间只做不创建Viewer的离线/文档工作。
+
+## 15:51 诊断工具同步复核
+
+验收工具1677473与截至0f29c45的文档已同步到主工作区，22项Node、42项Python离线检查及独立task/final增量review均通过。只更新4个验收脚本/测试，无产品服务代码和build变化，无重启。原HEAD/index、未改文件、tunnel/watcher/quick状态保留；服务健康、Host在线、Viewer0。
+
+私有supervisor仅成对更新已审查helper/sampler SHA，现SHA为76106a958fde1fe80650524ca43952a12bc7c7ce36ee348f30ebebce95e0e884；16项纯fake回归通过，3项会启动真实子进程的测试按本次边界未运行。历史run、失败结果和hash未改。真实关闭元数据尚未采到，人工输入、普通恢复和三小时资格仍待验收。
+
+条件性本地/公网对照工具准备完成，私有supervisor只增加两端点精确白名单及固定originClass。19项纯fake测试和独立spec/quality/integration review通过；当前supervisor SHA为2bfc3e7c5cffa72ad3fda45ae78c91bb4c83cb9684d05356acffeaab84b39f7a（替代15:51的仅pin更新版本），helper/sampler配对hash不变。工具尚未运行真实对照，人工测试仍pending、未创建Viewer；输入origin类别不等于实际路由证明。维护授权仍有效，无需重新询问许可。见[对照设计](2026-10-17-origin-comparison-design-review.md)和[独立review](2026-10-17-origin-comparison-task-review.md)。
