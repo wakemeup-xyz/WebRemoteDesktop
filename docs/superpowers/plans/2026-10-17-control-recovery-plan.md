@@ -411,7 +411,7 @@ node --test signal-server/lib/desktop-control-lease.test.js signal-server/websoc
 | R10 | 新 attempt frame 在新 ACK 前不能 active；合法早帧保留 |
 | R11 | pending legacy companion 无 stream/control/frame/ACK 权限，实际旧 producer 可被清理 |
 
-- [ ] 独立 review：重点找“检查后 await 再无条件写入”、同 epoch 不同操作、按新 map 清旧资源、无限 acquire/reset 循环、异常清新 binding，以及测试只测 helper 而绕过真实 handler 的盲点。更新需求文档只能在后续用户授权的实施任务内单独列明，不把本轮计划当作已落地功能。
+- [ ] 独立 review：重点找“检查后 await 再无条件写入”、同 epoch 不同操作、按新 map 清旧资源、无限 acquire/reset 循环、异常清新 binding，以及测试只测 helper 而绕过真实 handler 的盲点。更新需求文档须对应实际实现和验证结果，不把计划步骤本身当作已落地证据。
 - [ ] 在已授权的维护窗口验收：同页短断、DC 半开、Host reset failure、不同 Viewer 顶替、媒体暂停/恢复，按 direct/TURN/显式 tunnel 分别记录。每路径至少 3 小时长会话、真实设备/Quartz/IME/公网按实际完成项记录，缺测仍标 **NOT RUN**。加载与回退采用经过验证的三端匹配版本；只重启授权本地服务，不操作 tunnel。
 
-本轮完成记录：只生成 spec/plan；测试、构建、提交、生产加载及上述验收均 **NOT RUN**。
+本轮完成记录见实施报告：C1–C4 已通过代码复核并部署，真实验收发现的 C5 缺陷正在修复；业务原生输入和长会话未验收项仍保持 NOT RUN。

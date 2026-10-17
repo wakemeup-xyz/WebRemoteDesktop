@@ -143,4 +143,4 @@ flowchart TD
 
 ## 当前review与交付状态
 
-本轮只完成文档与证据复查。所有子任务代码步骤、I0–I2运行步骤未勾选。审查记录见[文档review](../reports/2026-10-17-remediation-document-review.md)，并以总spec作为共同契约，后续任何接口变更应同步四份spec及调用方plan。
+本计划保留原审查版步骤，复选框不代表当前执行状态；实现、I1 回归与 I2 部署/验收分别记录在实施报告。审查记录见[文档review](../reports/2026-10-17-remediation-document-review.md)，并以总spec作为共同契约，后续任何接口变更应同步四份spec及调用方plan。

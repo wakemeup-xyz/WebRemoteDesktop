@@ -1,6 +1,6 @@
 # 稳定性与延迟整改实施记录
 
-执行开始：2026-10-17。状态：已部署至 `adfcb48` 的本地 Signal/Host；此前分支复审通过，真实验收发现的 C5 准入缺陷正在修复，尚未最终验收。
+执行开始：2026-10-17。状态：已部署至 `adfcb48` 的本地 Signal/Host；此前分支复审通过，真实验收发现的 C5 准入缺陷已提交 `cd64e54`、独立复审进行中，尚未最终验收。
 
 用户本轮已授权开发、验收、启动本地 Signal/Host 并保持可用；原来的“仅诊断、不修复/重启”限制已被本轮指令取代。tunnel 的禁止停止、重启、重建限制保持有效。
 
@@ -99,10 +99,27 @@ I2 启动补丁 `adfcb48`：独立 scoped review 通过，125 项 Host + 258 项
 重连验收工具边界：一次性 proof admission 在首次连接后被消费，Socket.IO 重连继续携带它会被保护逻辑拒绝；在 grace 内旧 Viewer 仍占 map，不能重新申请 zero-Viewer proof。因此这个工具不能直接证明普通用户的无修改自动重连；不清 proof、不绕过保护，不把保护拒绝误报成普通用户重连故障。
 
 
-## 6. C5：自动恢复不得抢占更新会话（实施中）
+## 6. C5：自动恢复不得抢占更新会话（复审中）
 
 真实短时验收先后出现普通 Viewer 接入、page-hidden 和租约到期。这些日志无法识别来源设备或区分人工动作与旧页自动重连，不作为特定客户端有故障的结论。独立审查另用真实 Signal handlers 固化两种源码反例：A 失联、B 已接入后，A 在 grace 内或 grace 到期后恢复，均会把 B 顶掉。离线时漏收 superseded 的旧页没有可靠的本地拒绝依据。
 
 采用[准入补充设计](../specs/2026-10-17-viewer-admission-recovery-addendum.md)和[执行计划](../plans/2026-10-17-viewer-admission-recovery-plan.md)：服务端校验有界、单次的显式用户准入意图；自动恢复仅允许恢复当前 owner，不能顶替更新会话。保持单 Viewer、Host reset/rebind 屏障、一次性 proof 和人工 Viewer 优先。C5 完成独立复审后才同步生产。
 
 验收尝试均保留完整失败/中断：`/tmp/wrd-public-relay-acceptance-20261017a` 为修复前首次媒体启动失败；`/tmp/wrd-public-relay-reconnect-20261017b` 为修复后短时 readiness 成功、baseline 被顶替；`/tmp/wrd-public-relay-acceptance-20261017c` 为另一轮 media-start-deadline，缺少足够 observer 证据，不能确定与同期普通 Viewer 活动的因果；`/tmp/wrd-public-relay-acceptance-20261017d` 在正式 admission guard 遇到现有 Viewer 而退出，未建立测试会话。均未计入连续性通过。
+
+
+## 7. 已部署版本的补充观察（07:56:48–08:18:00 北京时间）
+
+该固定窗口长 21 分 12 秒，Host 最后匹配日志止于 08:17:58；不与原 72 小时窗口混算。证据来自 `back-debug.log:17673` 起及 `/tmp/signal-server.log:64040` 起；脱敏提取与完整异常时间线见私有 `/tmp/wrd-postdeploy-evidence-review.md`。
+
+- 08:17:28 左右本地 health 200/6.17ms、status 200/1.43ms，Host 在线、Viewer 1；这是本地瞬时存活证据。Signal 89620、Host 2777、cloudflared 84671 和 watcher 897 均存活，tunnel 起始时间未变。
+- Signal 记录 14 次 Viewer socket 断开（10 次 ping timeout、4 次 server namespace disconnect）、8 次 lease-expired fail-closed 和 1 次 controller-disconnect；Host 有 8 个 offer、6 次 WebRTC connected、8 次 page-hidden 暂停。事件可重叠，不能当作独立故障/用户数，也不能据此归因到某个客户端。
+- 首轮有真实捕获：一条 CAPTURE_STATS 的区间 fps=12.1、61 frames、1152×720，recv_total 平均 48.5ms（含 sleep 平均 33.2ms、convert 平均 2.9ms）。首轮关闭时 captureSeq=52；其后七次关闭仅 1、2、1、2、2、7、1。这不能代表持续投屏性能。
+- 227 份完整低频 lag 摘要对应重叠的 60 秒滚动窗口，最大 lag 168.661ms，missedSampleCount 全为 0；窗口 p95 范围 4.977–112.316ms。不能把这些重叠 p95 再合成总体 p95。209/227 份 pcState=none，主要是空闲/恢复期，并非持续视频负载；不据此宣称 TURN loop P95≤50ms 已达标。
+- Host task 7–14、线程 3–5，当前 RSS 44.80–352.24MiB；systemLoad1 为 3.486–19.710。整机短时 swap-in 最高约 449.06MiB/s、swap-out 最高约 1057.40MiB/s，来源为约 5 秒计数差分，缓存可能重复；不外推至整个窗口，也不归因给单个服务。当前窗口未见明显累计 task 爆涨，但不是无泄漏证明。
+- 08:16:09.465 有一次 aiortc 内部 `RTCPeerConnection.__connect` 未取回异常：`InvalidStateError: RTCIceTransport is closed`。lease-expired 与受控关闭先发生；Host 在 await close 前已同步 detach 当前 PC，完成日志证明没有覆盖新 PC，下一 offer 在约 16 秒后才开始。尚无证据它导致本次租约丢失或破坏新连接；保留为未关联到具体 PC 的关闭竞态异常，不擅自过滤或计为独立断线。
+- 所有 Host 摘要 inputEventCount/inputWaiters 均为 0，没有真实输入 timing/encoder sample。故该窗口的业务 ACK、输入应用到新帧、纯传输和实际可见效果仍缺测；本地 health RTT、capture 均值和 connected 状态不能替代。
+
+原生可见效果验收的具体能力缺口和最小环境见[验收边界](2026-10-17-visible-effect-acceptance-boundary.md)。当前共享桌面不能建立独立输入/捕获边界；不伪造 probe、不改用 DOM 事件冒充原生输入，该项保持 BLOCKED。
+
+C5 实现 `cd64e54`：真实 handler 原两项 RED 已转绿，实际 API/Socket.IO、Viewer Start/reclaim/自动恢复及原有控制回归共 473 项通过。30 秒/128 条有界 ticket 与固定大小 owner/顺序状态；proof 不申请普通 ticket，恢复不产生新意图。服务重启后未知恢复保守拒绝，旧页面需刷新并显式连接；这一兼容取舍已写入设计和[实现报告](2026-10-17-task-C5-admission-recovery.md)。独立复审未完成前不部署。
