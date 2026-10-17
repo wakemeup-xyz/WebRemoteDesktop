@@ -54,3 +54,21 @@ TURN c 的恢复后 61 个 1Hz 快照覆盖约 60s，rVFC 增加 928（约 15.5 
 前 3 次 Login HTML 的 TLS 阶段分别 3715.4/3707.8/4250.9ms，后两次 720.0/650.2ms。Login 导航到 DOMContentLoaded 12648.5/17463.3/15257.3/2907.6/2241.9ms；响应结束后到 DOMContentLoaded 8035.9/9255.8/10033.9/1175.5/1124.4ms。TLS 属于建连子阶段，不能重复求和；后者包含资源依赖和执行调度，不是纯网络耗时。第 3 次登录失败窗口 09:05:57.023–09:06:47.061（末值是落盘上界），只见 POST 发起，不能确认请求最终 pending/failed/abort，也不能据 harness TimeoutError 认定产品 8s deadline 已触发。
 
 旧资源 probe 的状态检查使用独立 urllib，将 HTTP、TLS/网络、body/JSON/schema 问题折叠为 unavailable，因此 10 次不可用不能判定浏览器网页宕机。后续采用浏览器同源且保留固定错误分类的只读 probe 继续定位。Playwright `Response.finished` 后台 watcher 的 Target closed warning 已在私有工具离线修正；原数据未改，不是已证实的服务端错误。
+
+## 未登录资源与同源接口复查
+
+09:24–09:28 的三次新 context 导航均取得登录 HTML 200 和预期 build，没有登录 POST、Start、Viewer Socket 或 Terminal。第一轮因工具尚未识别额外跨域资源/自动 POST 而停止；这是工具保护分类失败，不是产品连接失败。后两轮确认该自动行为为边缘遥测类别后完成；三个 context、两个 browser 均已关闭。
+
+三次 DOMContentLoaded 分别为 2134.1/2044.4/1958.1ms；HTML body 结束至 DCL 为 964.1/960.3/989.8ms，没有复现先前的 8–10s。HTML TLS 为 680.6/606.3/555.3ms，TTFB 469.1/464.0/410.8ms，body 1.0/3.4/0.7ms，均为 HTTP/2。应用 CSS 约 417–460ms，主要在 TTFB；应用 JS 约 210–615ms，其中一次约 418ms 在 requestStart 之前，缺少队列/优先级 trace，不能归为网络 TTFB。
+
+额外脚本耗时约 886–912ms，并在 DCL 前约 5–6ms 完成；时间相邻支持继续检查该依赖，但没有 defer 属性、主线程 trace 或禁用对照，不能判定因果，更不能用这些新样本解释先前慢样本。跨域资源缺少 TAO 细分数据，DNS/TLS/TTFB/body 保持缺测。第一轮原 JSON 将不可见 body 错算为 2128.8ms，报告已更正为缺测，原始证据未覆盖。
+
+09:28 的两轮浏览器同源 `/health` 和 `/api/status` 均 200、有效 JSON；Host 在线、Viewer 数为 0。health 耗时 1003/1077ms，status 1001.2/1058.2ms。与旧 urllib 检查的方法和时间均不同，不能倒推出旧失败属于哪一层。小样本只证明这些时点可达，不构成 P95、连续可用率或输入验收。
+
+可复核私有证据：`/tmp/wrd-login-resource-private-J11qtb-20261017/REPORT.txt`、`analysis.json`、`STATIC_REVIEW.txt`。
+
+## TURN 长测启动失败的界定
+
+`c5-turn-soak-a` 的日志关联窗口为 09:21:40–09:23:30。Host 持续采样但 PC/ICE 为 none、relay 未运行、captureSeq=0，未见新 offer 或新媒体 producer；Signal 有 bootstrap 与 dc-stuck 诊断，但未留足本次浏览器准入、控制 grant/reset 和媒体状态。日志中的无时间戳 `Connection:viewer` 在准入检查之前输出，不能证明成功准入。未观察到普通 Viewer 顶替，也没有证据支持上一轮 JPEG generation 2 污染新 TURN generation 0；代码在新 attempt 上初始化 generation 0，且本窗尚未到 offer 阶段。
+
+因此原因保持未知，不能归因 TURN 网络或认定 proof 过期。现有工具在登录前领取默认 30s 一次性 proof，慢登录可能消耗有效期；整改将证明领取移至真实 UI/auth 就绪之后、Start 之前，并加入启动阶段白名单快照。仍需 fresh zero-Viewer、当前登录 token、一次领取一次使用；不能通过重领、清除 proof 或普通票据绕过准入。该调整是验收可靠性修复，不是前次故障因果结论。私有诊断：`/tmp/wrd-turn-soak-start-diagnosis.md`。
