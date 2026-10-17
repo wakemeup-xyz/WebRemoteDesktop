@@ -184,3 +184,7 @@ Ruling: supplement existing remediation with one coherent observer-module/wiring
 ## 35
 
 Ruling: 本次TURN诊断采用私有独立supervisor，不包装manager或CDP；真实OS父子身份用于归属，避免launch代理引入新失败。成本是轮询不能证明完整子进程树覆盖，因此只报告已登记身份退出，保留unknown覆盖。线程采样只用于诊断，不计性能验收。
+
+## 36
+
+Ruling: 可丢诊断采用固定4096B同步准入、本轮不额外限频；纯内存复现确认无界入队，而可靠ACK/绑定/时钟/flush保持原路径。成本是大detail批次更易丢失，必须保留丢失计数和缺测，不能宣称完整SCTP内存或ACK时延有界。
