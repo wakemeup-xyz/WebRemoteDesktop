@@ -136,3 +136,8 @@ CDP 只读事件监听核验进一步区分了页面完成与功能就绪：登�
 Connector 日志从本轮 startoffset 到终态没有新增字节，不能据此证明永不掉线，也不能把诊断-only 新代码称为网络修复。之前 93.094s 失败仍成立。本轮完整来源/边界分析见[服务端心跳运行诊断](2026-10-17-server-heartbeat-runtime-diagnosis.md)。
 
 独立三小时 TURN 验收随后启动 `/tmp/wrd-public-server-heartbeat-turn-long-20261017a`，fresh Host online/Viewer0 后重新取得本轮单次 proof；不是重用或 remint 已断会话的 proof。初始结果未完成，不与 300s 样本拼成三小时。
+
+
+## 三小时测试进行中的 4 秒卡顿（尚非终态）
+
+`server-heartbeat-turn-long-a` 首次完成4033.276ms的rVFC间隔在tick802；ticks798–801浏览器bytesReceived/framesDecoded/callbacks均停止，802恢复。PC/path/generation/lease/socket/input gate无变化，低于现有5000ms连续性失败阈值，但仍是实质性能问题。Host同窗11:55:37.271记录最新event-loop lag2710.327ms、missed2；随后captureSeq速率约2.13/s、编码最大928.125ms，证明存在本地媒体与调度扰动。早期资源快照age8.68s，后续timeout/age9.53s，不应称当时新鲜资源证据。无法从现有日志确定哪一个同步调用或OS资源因素阻塞，不能将本次只归于网络或直接选代码修复。随后信令/画面持续，本轮尚未结束；详见[长测卡顿诊断](2026-10-17-longrun-gap-diagnosis.md)。
