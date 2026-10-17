@@ -178,3 +178,10 @@ I2 首断工具独立 review 初轮发现两项证据失真风险，`0f0e902` �
 新 guarded 300s TURN 测试 `/tmp/wrd-public-server-heartbeat-turn-20261017a` 已进入真实媒体采样，结果另记真实验收；本节加载成功不等于会话稳定性通过。测试仍在首次不连续时失败，不消耗第二次 proof 重连。
 
 S1 加载后的 guarded TURN 300s 已 PASS（301样本、0missing/late/identitychange），客户端无异常首断，server正常收尾 pc/pf/pr各11；不是三小时通过。独立3h试验已启动，详见真实验收。
+
+
+## 12. 最新媒体性能与资源限制
+
+300s 已通过会话内：解码18.210帧/s、rVFC17.913次/s，严格位于浏览器窗口内的新captureSeq速率9.7408次/s；60个Host输出窗口49.14%复用缓存。窗口范围不完全相同，不强行一一相除。接收buffer snapshot的last中位7.9ms、最大121.7ms，>=100ms仅startup tick4/6；稳定后最大70.4ms，实际framesDropped0。Host编码有448.357ms长尾、事件循环滚动max最高312.539ms及明显swap-in；这些是局部/重叠窗口统计，不是每帧全量P95，也不证明哪一资源因素造成截图频率约9.7/s。没有新确认的源码缺陷，真实MSS grab阶段仍缺证据。详见[最新媒体复核](2026-10-17-latest-media-performance-review.md)。
+
+11:44左右只读进程快照969进程；最高RSS为Chrome Renderer约2897MiB、VS Code Helper约1670MiB、若干Codex Renderer约1278–1548MiB，Host约400MiB。RSS不能当作物理内存独占量相加，也不能仅凭这个瞬时排序归责换页。没有退出其他应用或清理身份不明的进程；保存私有resource-snapshot-longrun-20261017a.json用于后续同窗口关联。
