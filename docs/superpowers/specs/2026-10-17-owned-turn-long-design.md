@@ -15,3 +15,15 @@
 ## 验证
 
 原10项回归、新300与10800参数/workerdeadline、动态Host拒绝/匹配、long4999不触发/5000触发且单次、short2000不触发/>2000触发、sample超时独立于worker清理、RLIMIT配置、original artifacts不改。独立复核后root在最终Host部署稳定且fresh zeroViewer时开始一次长会话。
+
+## 后续增量：关闭码观测（Task 3）
+
+新版本131.953秒窗口的首事件为客户端transport-close；五次ping均有pong，媒体正常推进。Cloudflare没有本会话关闭日志，已有reason不足以唯一归因。已安装Engine.IO及实际构建使用的Socket.IO bundle确认：原生ws.onclose事件经`{description:'websocket connection closed',context:closeEvent}`原样作为engine close第二参传递。
+
+本增量仅允许修改验收工具`passive_session_sampler.js`的ec projector与`passive_session_soak.py`的严格事件验证，不改变页面业务、proof、启动、恢复或测量阈值。此前“原helper不改”约束对这项明确的诊断字段扩展更新：仅扩展数据schema的向后兼容可选字段，所有准入/连接行为仍原样；private supervisor必须在review后显式更新为新确切文件SHA，旧run及其hash不改。
+
+ec仅在reason精确为`transport close`、details.description精确为固定字符串时读取details.context的code/wasClean。code必须非boolean整数1000..4999，wasClean必须真正布尔；两者完整且有效才记录可选`ws:{code,wasClean}`。缺失/类型错/getter抛错全部省略ws，不能填false/0。安全读取的异常不逃出监听器。只复制这两个原语，不记录CloseEvent.reason、error/message、URL/IP、payload或对象；不读取它们。已有r固定枚举保持。
+
+schemaVersion1保留：旧ec无ws仍有效，新ws仅允许ec且恰有上述两个键，Python拒绝其他终态/未知键/非有限数值/boolean-code/string-bool；192B每event及全部ring/delta/final上限保持。元数据若出现在晚于sd/mc的ec，仅留在该ec，不能事后重写firstDisconnectEvent归因。code1006不证明具体网络节点，wasClean也不证明发起方，cause仍unknown。
+
+仅合成Node事件/Python validator回归；无真实连接/生产重启。本次不新增原生WebSocket包装器、CDP或日志框架。等待人工实测期间不创建Viewer；下一次自动实验仍须fresh zeroViewer和一次性proof。
