@@ -4422,6 +4422,7 @@ const WebRTC = {
     const record = this._dataChannelWatchdog;
     if (record?.timer != null) clearTimeout(record.timer);
     this._dataChannelWatchdog = null;
+    this._dataChannelWatchdogFailure = null;
     this._dcTimeout = null;
     if (this._dcReconnectTimer != null) clearTimeout(this._dcReconnectTimer);
     this._dcReconnectTimer = null;

@@ -134,3 +134,41 @@ test('diagnostic capture failure cannot stop timeout recovery', () => {
   const f = fixture(); f.context.Diagnostic.autoSendFailure = () => { throw Error('capture unavailable'); };
   f.tick(30000); assert.deepEqual(f.faults, ['negotiation-timeout']);
 });
+test('failure report stays immutable while retirement, open and a new attempt expose current inactive state', () => {
+  for (const lifecycle of ['retire', 'open', 'new-attempt', 'synchronous-recovery']) {
+    const f = fixture(); const rtc = f.rtc; let report;
+    const build = f.context.createRuntimeDiagnosticBuilder({ getStartup: () => ({ dataChannelWatchdog: rtc.getDataChannelWatchdogSnapshot() }) });
+    f.context.Diagnostic.autoSendFailure = reason => { report = build({ reason }); };
+    const oldCallback = [...f.timers.values()][0].fn;
+    if (lifecycle === 'synchronous-recovery') rtc.scheduleReconnect = () => rtc.cancelDataChannelWatchdog();
+    f.tick(30000);
+    const saved = JSON.stringify(report);
+    assert.equal(report.startup.dataChannelWatchdog.phase, 'negotiation');
+    assert.equal(report.startup.dataChannelWatchdog.timedOut, true);
+    assert.equal(report.startup.dataChannelWatchdog.elapsedMs, 30000);
+    assert.equal(report.startup.dataChannelWatchdog.pcState, 'new');
+    rtc.pc.connectionState = 'connected'; rtc.pc.iceConnectionState = 'connected';
+    rtc.pc.signalingState = 'stable'; rtc.inputChannel.readyState = 'open';
+    if (lifecycle === 'open') rtc.inputChannel.onopen();
+    if (lifecycle === 'retire') rtc.cancelDataChannelWatchdog();
+    if (lifecycle === 'new-attempt') {
+      // Isolate the actual attempt boundary from unrelated media/UI collectors.
+      for (const key of ['clearRefreshDcWaitTimer', 'clearMediaResumeProof', 'syncLatencyScope',
+        'ensureFrameTraceCollector', 'currentFrameTraceIdentity', '_recordInputTrace', 'ensureDesktopSessionState',
+        'clearRelayOrigin', 'clearMediaResumeFallback', 'clearPaintIssueTimers', 'setUiPhase',
+        'bindCurrentConnectionAttempt', 'syncDesktopInputGate']) rtc[key] = () => undefined;
+      rtc.createConnectionAttemptId = () => 'b'; rtc.beginConnectionAttempt('test-retirement');
+      assert.equal(rtc.currentConnectionAttemptId, 'b');
+    }
+    const inactive = rtc.getDataChannelWatchdogSnapshot();
+    assert.equal(inactive.phase, 'inactive'); assert.equal(inactive.timedOut, false);
+    assert.equal(inactive.elapsedMs, null); assert.equal(inactive.remainingMs, null);
+    assert.equal(inactive.pcState, 'connected'); assert.equal(inactive.inputState, 'open');
+    assert.equal(JSON.stringify(report), saved);
+    rtc.inputChannel = null; rtc.createInputChannel(); const current = rtc._dataChannelWatchdog;
+    oldCallback(); assert.equal(rtc._dataChannelWatchdog, current);
+    assert.equal(rtc.getDataChannelWatchdogSnapshot().phase, 'channel-open');
+    assert.equal(rtc.getDataChannelWatchdogSnapshot().timedOut, false);
+    assert.equal(JSON.stringify(report), saved);
+  }
+});
