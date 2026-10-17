@@ -5,6 +5,7 @@ Captures screen using MSS and streams via aiortc (WebRTC)
 """
 
 import asyncio
+import uuid
 from input_timing import relay_ack_duration_ms
 import contextvars
 import hashlib
@@ -640,6 +641,28 @@ class RelayJpegProcessor:
             self.sct = None
 
 
+RELAY_FRAME_SLOT_TTL_MS = 2000
+RELAY_SAFE_INTEGER = 9007199254740991
+
+
+def valid_relay_nonce(value, limit):
+    return isinstance(value, str) and 0 < len(value) <= limit and all(32 <= ord(c) <= 126 for c in value)
+
+
+def valid_relay_integer(value, minimum=0):
+    return type(value) is int and minimum <= value <= RELAY_SAFE_INTEGER
+
+
+def valid_relay_scope(scope):
+    return (isinstance(scope, dict)
+            and set(scope) == {'producerId', 'productionGeneration', 'connectionAttemptId', 'mediaGeneration', 'leaseEpoch'}
+            and valid_relay_nonce(scope.get('producerId'), 64)
+            and valid_relay_nonce(scope.get('connectionAttemptId'), 128)
+            and valid_relay_integer(scope.get('productionGeneration'), 1)
+            and valid_relay_integer(scope.get('mediaGeneration'))
+            and valid_relay_integer(scope.get('leaseEpoch'), 1))
+
+
 class TunnelRelayStreamer:
     """Low-FPS JPEG stream over Socket.IO/Cloudflare for networks where WebRTC ICE fails."""
     _retiring_worker = None
@@ -659,6 +682,10 @@ class TunnelRelayStreamer:
         self.profile_name = "medium"
         self.jpeg_quality = 26
         self.frame_id = 0
+        self.producer_id = None
+        self._relay_binding = None
+        self._authority_is_current = None
+        self._reset_relay_observation()
         self.ack_event = asyncio.Event()
         self.last_acked_frame_id = 0
         self.inflight_frames = {}
@@ -746,6 +773,84 @@ class TunnelRelayStreamer:
     def should_wait_before_capture(self):
         return self.pending_frame_count() >= self.max_in_flight_frames
 
+    @property
+    def relay_scope(self):
+        if not self.producer_id or not self._relay_binding:
+            return None
+        scope = {**self._relay_binding, 'producerId': self.producer_id,
+                 'productionGeneration': self.production_generation}
+        return scope if valid_relay_scope(scope) else None
+
+    def _reset_relay_observation(self):
+        self.expired_frame_count = 0
+        self.unmatched_ack_count = 0
+        self.timeout_count = 0
+        self.coalesced_count = 0
+        self.feedback_sequence = 0
+        self.sample_sequence = 0
+        self._pending_feedback_sample = None
+        self._last_feedback_at_ms = None
+        self._last_sent_at_ms = None
+        self._last_ack_at_ms = None
+        self._feedback_unavailable = False
+
+    def bind_media_scope(self, binding):
+        previous = self.relay_scope
+        self._relay_binding = dict(binding) if binding else None
+        if self.relay_scope != previous:
+            self.inflight_frames.clear()
+            self.ack_event.set()
+            self._reset_relay_observation()
+
+    def _increment(self, name, amount=1):
+        setattr(self, name, min(RELAY_SAFE_INTEGER, getattr(self, name) + amount))
+
+    def expire_inflight(self, now_ms):
+        expired = [fid for fid, meta in self.inflight_frames.items()
+                   if now_ms - meta['sent_at_ms'] >= RELAY_FRAME_SLOT_TTL_MS]
+        for fid in expired:
+            self.inflight_frames.pop(fid, None)
+        if expired:
+            self._increment('expired_frame_count', len(expired))
+            self.ack_event.set()
+        return len(expired)
+
+    async def emit_feedback_if_due(self, now_ms):
+        scope = self.relay_scope
+        if not scope or self.suspended or self._feedback_unavailable:
+            return
+        if self._last_feedback_at_ms is not None and now_ms - self._last_feedback_at_ms < 1000:
+            return
+        if self.feedback_sequence >= RELAY_SAFE_INTEGER:
+            self._feedback_unavailable = True
+            logger.warning('Tunnel relay feedback sequence exhausted; observation unavailable')
+            return
+        self.feedback_sequence += 1
+        self._last_feedback_at_ms = now_ms
+        sample = self._pending_feedback_sample
+        self._pending_feedback_sample = None
+        ages = [now_ms - meta['sent_at_ms'] for meta in self.inflight_frames.values()]
+        payload = {
+            'relayFrameSchemaVersion': 1, 'relayScope': scope, 'viewerId': self.viewer_id,
+            'feedbackSequence': self.feedback_sequence, 'sample': sample,
+            'pendingCount': self.pending_frame_count(),
+            'oldestPendingAgeMs': max(ages) if ages else None,
+            'expiredCount': self.expired_frame_count, 'unmatchedAckCount': self.unmatched_ack_count,
+            'timeoutCount': self.timeout_count, 'coalescedCount': self.coalesced_count,
+            'lastSentAgeMs': None if self._last_sent_at_ms is None else max(0, now_ms - self._last_sent_at_ms),
+            'lastAckAgeMs': None if self._last_ack_at_ms is None else max(0, now_ms - self._last_ack_at_ms),
+        }
+        try:
+            await self.sio.emit('relay-frame-feedback', payload)
+        except Exception:
+            # Diagnostics never stop or queue the media producer.
+            logger.debug('Tunnel relay feedback emit failed')
+
+    def _production_is_current(self, generation, scope):
+        return (self.enabled and not self.suspended and generation == self.production_generation
+                and scope == self.relay_scope
+                and (self._authority_is_current is None or self._authority_is_current()))
+
     def _record_ack_feedback(self, latency_ms):
         try:
             latency_ms = float(latency_ms)
@@ -770,7 +875,7 @@ class TunnelRelayStreamer:
         else:
             self.good_ack_streak = 0
 
-    async def start(self, viewer_id, width=960, height=540, fps=8, *, authority_is_current=None):
+    async def start(self, viewer_id, width=960, height=540, fps=8, *, authority_is_current=None, media_scope=None):
         operation = await self.stop()
         # stop() reserves its generation before awaiting the old producer. A
         # newer stop/start invalidates this continuation even on a detached relay.
@@ -799,6 +904,10 @@ class TunnelRelayStreamer:
         self.last_ack_latency_ms = None
         self.suspended = False
         self.production_generation += 1
+        self.producer_id = str(uuid.uuid4())
+        self._relay_binding = dict(media_scope) if media_scope else None
+        self._authority_is_current = authority_is_current
+        self._reset_relay_observation()
         self.enabled = True
         self.task = asyncio.create_task(self._run())
         logger.info(
@@ -819,6 +928,9 @@ class TunnelRelayStreamer:
         self.enabled = False
         self.suspended = False
         self.inflight_frames = {}
+        self.ack_event.set()
+        self._relay_binding = None
+        self._reset_relay_observation()
         closing_task = self.task
         worker = getattr(self, '_jpeg_worker', None)
         if worker is not None:
@@ -840,7 +952,7 @@ class TunnelRelayStreamer:
         # A timed-out worker stays retained and forbids another native thread.
         return operation
 
-    def set_suspended(self, suspended):
+    def set_suspended(self, suspended, *, media_scope=None, authority_is_current=None):
         """Pause production without tearing down the relay task lifecycle."""
         suspended = bool(suspended)
         self.suspended = suspended
@@ -852,32 +964,56 @@ class TunnelRelayStreamer:
         else:
             self.production_generation += 1
             self.ack_event.set()
+        if media_scope is not None:
+            self._relay_binding = dict(media_scope)
+        if authority_is_current is not None:
+            self._authority_is_current = authority_is_current
+        self.inflight_frames.clear()
+        self._reset_relay_observation()
         worker = getattr(self, '_jpeg_worker', None)
         if worker is not None:
             worker.invalidate(self.production_generation)
         return self.production_generation
 
-    def ack(self, frame_id, latency_ms=None):
-        try:
-            frame_id = int(frame_id)
-        except Exception:
-            return
-        frame_meta = self.inflight_frames.get(frame_id)
-        if not frame_meta or frame_meta.get("generation") != self.production_generation:
-            return
-        if frame_id <= self.last_acked_frame_id:
-            return
+    def ack(self, frame_id, latency_ms=None, *, relay_scope=None, relay_frame_schema_version=None):
+        now_ms = time.monotonic() * 1000.0
+        self.expire_inflight(now_ms)
+        if (self.relay_scope is not None and (
+                type(relay_frame_schema_version) is not int or relay_frame_schema_version != 1
+                or not valid_relay_scope(relay_scope) or relay_scope != self.relay_scope)):
+            self._increment('unmatched_ack_count')
+            return False
+        if not valid_relay_integer(frame_id, 1):
+            self._increment('unmatched_ack_count')
+            return False
+        meta = self.inflight_frames.get(frame_id)
+        if not meta or meta.get('generation') != self.production_generation or meta.get('relayScope') != self.relay_scope:
+            self._increment('unmatched_ack_count')
+            return False
         self.inflight_frames.pop(frame_id, None)
-        measured_ms = relay_ack_duration_ms(frame_meta.get("sent_at_ms"), time.monotonic() * 1000.0)
-        if measured_ms is None or measured_ms >= 10000:
-            return
-        self.last_acked_frame_id = frame_id
-        self.stats_acked += 1
         self.ack_event.set()
+        self.last_acked_frame_id = max(self.last_acked_frame_id, frame_id)
+        measured_ms = relay_ack_duration_ms(meta.get('sent_at_ms'), now_ms)
+        if measured_ms is None:
+            return False
+        self.stats_acked += 1
+        self._last_ack_at_ms = now_ms
         self._record_ack_feedback(measured_ms)
+        if self.relay_scope and not self._feedback_unavailable:
+            if self.sample_sequence >= RELAY_SAFE_INTEGER:
+                self._feedback_unavailable = True
+                logger.warning('Tunnel relay sample sequence exhausted; observation unavailable')
+            else:
+                self.sample_sequence += 1
+                if self._pending_feedback_sample is not None:
+                    self._increment('coalesced_count')
+                self._pending_feedback_sample = {'sampleSequence': self.sample_sequence,
+                                                'relayFrameAckRttMs': measured_ms}
+        return True
 
     def note_ack_timeout(self, reason):
         self.stats_timeout_count += 1
+        self._increment('timeout_count')
         self.good_ack_streak = 0
         self.step_down_profile(reason)
 
@@ -894,6 +1030,15 @@ class TunnelRelayStreamer:
                 # No new capture/encode/emit while media is intentionally suspended.
                 await asyncio.sleep(max(0.05, frame_interval))
                 continue
+            self.expire_inflight(time.monotonic() * 1000.0)
+            await self.emit_feedback_if_due(time.monotonic() * 1000.0)
+            if not self.enabled or self.suspended:
+                continue
+            if self._authority_is_current is not None and not self._authority_is_current():
+                self.inflight_frames.clear()
+                self.ack_event.set()
+                await asyncio.sleep(max(0.05, frame_interval))
+                continue
             if self.should_wait_before_capture():
                 try:
                     await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
@@ -908,18 +1053,21 @@ class TunnelRelayStreamer:
                         self.profile_name,
                     )
                     self.note_ack_timeout("pre-capture-backpressure")
+                    self.expire_inflight(time.monotonic() * 1000.0)
+                    await self.emit_feedback_if_due(time.monotonic() * 1000.0)
                     continue
 
             started = time.time()
             production_generation = self.production_generation
+            relay_scope = self.relay_scope
             try:
-                if self.suspended:
+                if not self._production_is_current(production_generation, relay_scope):
                     continue
                 frame = await self._jpeg_worker.submit_latest({
-                    'generation': production_generation, 'width': self.width,
+                    'generation': production_generation, 'relayScope': relay_scope, 'width': self.width,
                     'height': self.height, 'quality': self.jpeg_quality,
                 })
-                if frame is None or self.suspended or production_generation != self.production_generation:
+                if frame is None or not self._production_is_current(production_generation, relay_scope):
                     continue
                 jpeg_bytes = frame['data']
                 encode_ms = frame['encodeMs']
@@ -929,16 +1077,18 @@ class TunnelRelayStreamer:
                 self.inflight_frames[frame_id] = {
                     "sent_at_ms": sent_at_ms,
                     "generation": production_generation,
+                    "relayScope": relay_scope,
                     "profile": self.profile_name,
                     "quality": self.jpeg_quality,
                     "width": frame['width'],
                     "height": frame['height'],
                 }
-                if self.suspended or production_generation != self.production_generation:
+                if not self._production_is_current(production_generation, relay_scope):
                     self.inflight_frames.pop(frame_id, None)
                     continue
                 try:
                     await self.sio.emit("relay-frame", {
+                        **({"relayFrameSchemaVersion": 1, "relayScope": relay_scope} if relay_scope else {}),
                         "viewerId": self.viewer_id,
                         "frameId": frame_id,
                         "width": frame['width'],
@@ -952,11 +1102,14 @@ class TunnelRelayStreamer:
                         "productionGeneration": production_generation,
                         "data": jpeg_bytes,
                     })
+                    if self._production_is_current(production_generation, relay_scope):
+                        self._last_sent_at_ms = sent_at_ms
                     self.stats_frames += 1
                     self.stats_bytes += len(jpeg_bytes)
                     self.stats_encode_ms += encode_ms
                 except Exception:
                     self.inflight_frames.pop(frame_id, None)
+                    self.ack_event.set()
                     raise
             except asyncio.TimeoutError:
                 logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
@@ -4481,10 +4634,10 @@ class WebRemoteHost:
         if state not in ("active", "suspended"):
             return False, "invalid-state", None
         generation = data.get("generation")
-        if not isinstance(generation, int) or generation < 1:
+        if not valid_relay_integer(generation, 1):
             return False, "invalid-generation", None
         attempt_id = data.get("connectionAttemptId")
-        if not isinstance(attempt_id, str) or not attempt_id:
+        if not valid_relay_nonce(attempt_id, 128):
             return False, "invalid-attempt", None
         viewer_id = data.get("viewerId")
         if not isinstance(viewer_id, str) or not viewer_id:
@@ -4493,7 +4646,7 @@ class WebRemoteHost:
         lease_epoch = data.get("leaseEpoch")
         if not isinstance(lease_id, str) or len(lease_id) < 16:
             return False, "invalid-lease", None
-        if not isinstance(lease_epoch, int) or lease_epoch < 1:
+        if not valid_relay_integer(lease_epoch, 1):
             return False, "invalid-lease", None
 
         binding = getattr(self, "_active_input_binding", None)
@@ -4844,6 +4997,8 @@ class WebRemoteHost:
         connection_attempt_id,
         applied,
         reject_reason=None,
+        start_request_id=None,
+        relay_scope=None,
     ):
         sio = getattr(self, "sio", None)
         if sio is None:
@@ -4856,6 +5011,10 @@ class WebRemoteHost:
             "applied": bool(applied),
             "viewerId": viewer_id if isinstance(viewer_id, str) else None,
         }
+        if valid_relay_scope(relay_scope):
+            payload.update(relayFrameSchemaVersion=1, relayScope=dict(relay_scope))
+        if start_request_id is not None:
+            payload.update(relayControlKind='start', relayStartRequestId=start_request_id)
         if reject_reason:
             payload["reason"] = str(reject_reason)[:64]
         await sio.emit("relay-stream-control-ack", payload)
@@ -4909,6 +5068,8 @@ class WebRemoteHost:
         def owns_relay():
             return self._authority_matches(authority) and self.relay_streamer is relay
 
+        media_scope = {'connectionAttemptId': attempt_id, 'mediaGeneration': generation,
+                       'leaseEpoch': lease_epoch}
         applied = False
         try:
             if not self.relay_streamer:
@@ -4941,6 +5102,7 @@ class WebRemoteHost:
                         height=data.get("height", 540),
                         fps=data.get("fps", 8),
                         authority_is_current=owns_relay,
+                        media_scope=media_scope,
                     )
                     if not owns_relay():
                         return
@@ -4951,6 +5113,9 @@ class WebRemoteHost:
                 self._media_activity_suspended = False
                 applied = True
 
+            if hasattr(relay, 'bind_media_scope'):
+                relay.bind_media_scope(media_scope)
+                relay._authority_is_current = owns_relay
             self._media_activity_binding = {
                 **self._retained_media_attempt_sequence(attempt_id),
                 "viewerId": viewer_id,
@@ -4979,6 +5144,7 @@ class WebRemoteHost:
             generation=generation,
             connection_attempt_id=attempt_id,
             applied=applied,
+            relay_scope=getattr(relay, 'relay_scope', None) if applied else None,
             reject_reason=None if applied else "execution-failed",
         )
 
@@ -4994,6 +5160,15 @@ class WebRemoteHost:
                     if not self._authority_matches(authority):
                         return
                     await self._apply_tunnel_media_control(data)
+                return
+            if 'relayFrameSchemaVersion' in data and data.get('enabled'):
+                lock = getattr(self, '_media_activity_lock', None)
+                if lock is None:
+                    lock = self._media_activity_lock = asyncio.Lock()
+                async with lock:
+                    if not self._authority_matches(authority):
+                        return
+                    await self._start_scoped_relay(data, authority)
                 return
             enabled = bool(data.get("enabled"))
             viewer_id = data.get("viewerId")
@@ -5027,6 +5202,52 @@ class WebRemoteHost:
                 logger.info("Tunnel relay stream stopped viewer=%s", viewer_id)
         except Exception as e:
             logger.error(f"Error handling relay stream control: {e}")
+
+    async def _start_scoped_relay(self, data, authority):
+        """Ordinary generation-zero start uses existing bound authority, not media applyAck."""
+        binding = getattr(self, '_active_input_binding', None) or {}
+        media = getattr(self, '_media_activity_binding', None) or {}
+        request_id = data.get('relayStartRequestId')
+        attempt = data.get('connectionAttemptId')
+        generation = data.get('relayMediaGeneration')
+        valid = (type(data.get('schemaVersion')) is int and data['schemaVersion'] == 2
+                 and type(data.get('relayFrameSchemaVersion')) is int and data['relayFrameSchemaVersion'] == 1
+                 and valid_relay_nonce(request_id, 64) and valid_relay_nonce(attempt, 128)
+                 and valid_relay_integer(generation) and valid_relay_integer(data.get('leaseEpoch'), 1)
+                 and binding.get('viewerId') == data.get('viewerId')
+                 and binding.get('leaseId') == data.get('leaseId') and bool(binding.get('leaseId'))
+                 and binding.get('leaseEpoch') == data.get('leaseEpoch')
+                 and binding.get('connectionAttemptId') == attempt
+                 and media.get('viewerId') == binding.get('viewerId')
+                 and media.get('connectionAttemptId') == attempt
+                 and media.get('generation') == generation and media.get('state') == 'active'
+                 and not getattr(self, '_media_activity_suspended', False))
+        if not valid:
+            await self._emit_relay_stream_control_ack(
+                viewer_id=data.get('viewerId'), state='active', generation=generation,
+                connection_attempt_id=attempt, applied=False, start_request_id=request_id,
+                reject_reason='invalid-relay-start')
+            return
+        if not self.relay_streamer:
+            self.relay_streamer = TunnelRelayStreamer(self.sio)
+        relay = self.relay_streamer
+        self._relay_start_request = request = object()
+        def owns_relay():
+            return (self._authority_matches(authority) and self.relay_streamer is relay
+                    and self._relay_start_request is request
+                    and self._media_activity_binding is media)
+        started = await relay.start(
+            binding['viewerId'], width=data.get('width', 960), height=data.get('height', 540),
+            fps=data.get('fps', 8), authority_is_current=owns_relay,
+            media_scope={'connectionAttemptId': binding['connectionAttemptId'],
+                         'mediaGeneration': media['generation'], 'leaseEpoch': binding['leaseEpoch']})
+        if not owns_relay():
+            return
+        await self._emit_relay_stream_control_ack(
+            viewer_id=binding['viewerId'], state='active', generation=media['generation'],
+            connection_attempt_id=binding['connectionAttemptId'], applied=started is not False,
+            start_request_id=request_id, relay_scope=relay.relay_scope if started is not False else None,
+            reject_reason='relay-start-failed' if started is False else None)
 
     async def on_connection_attempt_bind(self, data):
         """Adopt Signal's authoritative viewer/attempt bind for tunnel (no SDP offer)."""
@@ -5109,8 +5330,24 @@ class WebRemoteHost:
 
     async def on_relay_frame_ack(self, data):
         try:
-            if self.relay_streamer and data.get("viewerId") == self.relay_streamer.viewer_id:
-                self.relay_streamer.ack(data.get("frameId"), latency_ms=data.get("latencyMs"))
+            relay = self.relay_streamer
+            if not relay or data.get('viewerId') != relay.viewer_id:
+                return
+            if relay.relay_scope is not None:
+                binding = getattr(self, '_active_input_binding', None) or {}
+                media = getattr(self, '_media_activity_binding', None) or {}
+                if (data.get('schemaVersion') != 2
+                    or binding.get('viewerId') != relay.viewer_id
+                    or data.get('leaseId') != binding.get('leaseId')
+                    or type(data.get('leaseEpoch')) is not int
+                    or data.get('leaseEpoch') != binding.get('leaseEpoch')
+                    or binding.get('connectionAttemptId') != relay.relay_scope['connectionAttemptId']
+                    or media.get('generation') != relay.relay_scope['mediaGeneration']
+                    or media.get('state') != 'active' or relay.suspended
+                    or (relay._authority_is_current and not relay._authority_is_current())):
+                    return
+            relay.ack(data.get('frameId'), relay_scope=data.get('relayScope'),
+                      relay_frame_schema_version=data.get('relayFrameSchemaVersion'))
         except Exception as e:
             logger.debug(f"Error handling relay frame ack: {e}")
 

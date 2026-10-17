@@ -16,6 +16,21 @@ const {
   summarizeMediaActivity,
 } = require('../lib/media-activity-contract');
 
+function validRelayNonce(value, limit) {
+  return typeof value === 'string' && value.length > 0 && value.length <= limit && !(/[^\x20-\x7e]/.test(value));
+}
+
+function validRelayScope(scope) {
+  return scope && typeof scope === 'object' && !Array.isArray(scope)
+    && Object.keys(scope).length === 5
+    && ['producerId', 'productionGeneration', 'connectionAttemptId', 'mediaGeneration', 'leaseEpoch']
+      .every(key => Object.prototype.hasOwnProperty.call(scope, key))
+    && validRelayNonce(scope.producerId, 64) && validRelayNonce(scope.connectionAttemptId, 128)
+    && Number.isSafeInteger(scope.productionGeneration) && scope.productionGeneration >= 1
+    && Number.isSafeInteger(scope.mediaGeneration) && scope.mediaGeneration >= 0
+    && Number.isSafeInteger(scope.leaseEpoch) && scope.leaseEpoch >= 1;
+}
+
 // Kept deliberately static during the protocol migration. Do not add an
 // environment override: deployment must not silently re-enable v1 after its
 // documented removal criteria are met.
@@ -772,6 +787,13 @@ function setupSignaling(io, options = {}) {
     return prior && isValidConnectionAttemptId(prior.connectionAttemptId)
       ? prior.connectionAttemptId
       : null;
+  }
+
+  function relayScopeHasCurrentOwner(viewerId, scope) {
+    const current = controlSnapshot();
+    return validRelayScope(scope) && current.state === 'ACTIVE'
+      && current.controllerViewerId === viewerId && current.leaseEpoch === scope.leaseEpoch
+      && currentViewerConnectionAttempt(viewerId) === scope.connectionAttemptId;
   }
 
   function resolveViewerRecoveryKey(viewerId, data = {}) {
@@ -1720,6 +1742,16 @@ function setupSignaling(io, options = {}) {
         && !authorizeViewer(socket, data, { legacy: false })) {
         return;
       }
+      if (role === 'viewer' && !isMediaControl && data.enabled && 'relayFrameSchemaVersion' in data) {
+        if (data.schemaVersion !== 2 || !authorizeViewer(socket, data, { legacy: false })
+          || data.relayFrameSchemaVersion !== 1 || !validRelayNonce(data.relayStartRequestId, 64)
+          || !isValidConnectionAttemptId(data.connectionAttemptId) || !validRelayNonce(data.connectionAttemptId, 128)
+          || currentViewerConnectionAttempt(socket.id) !== data.connectionAttemptId
+          || !Number.isSafeInteger(data.relayMediaGeneration) || data.relayMediaGeneration < 0) {
+          socket.emit('relay-stream-control-rejected', { reason: 'invalid-relay-start' });
+          return;
+        }
+      }
       let viewerId = socket.id;
       if (role === 'relay-viewer') {
         if (connections.relayViewers.get(socket.id) !== socket) return;
@@ -1761,6 +1793,16 @@ function setupSignaling(io, options = {}) {
         connectionAttemptId: typeof data.connectionAttemptId === 'string' ? data.connectionAttemptId : null,
         applied: data.applied === true,
       };
+      if ('relayFrameSchemaVersion' in data) {
+        if (data.relayFrameSchemaVersion !== 1 || !relayScopeHasCurrentOwner(viewerId, data.relayScope)) return;
+        ack.relayFrameSchemaVersion = 1;
+        ack.relayScope = { ...data.relayScope };
+      }
+      if (data.relayControlKind === 'start') {
+        if (!validRelayNonce(data.relayStartRequestId, 64)) return;
+        ack.relayControlKind = 'start';
+        ack.relayStartRequestId = data.relayStartRequestId;
+      }
       if (typeof data.reason === 'string' && data.reason) {
         ack.reason = data.reason.slice(0, 64);
       }
@@ -1774,6 +1816,8 @@ function setupSignaling(io, options = {}) {
         console.warn(`Relay frame rejected: role=${role} from ${socket.id}`);
         return;
       }
+      if ('relayFrameSchemaVersion' in data
+        && (data.relayFrameSchemaVersion !== 1 || !relayScopeHasCurrentOwner(data.viewerId, data.relayScope))) return;
       if (legacyRelayOwnerIds.has(data.viewerId)) {
         const companionId = hasActiveLegacyRelayOwner(data.viewerId)
           ? legacyRelayCompanionByOwner.get(data.viewerId)
@@ -1788,6 +1832,25 @@ function setupSignaling(io, options = {}) {
       }
     });
 
+    socket.on('relay-frame-feedback', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket || data.relayFrameSchemaVersion !== 1
+        || !relayScopeHasCurrentOwner(data.viewerId, data.relayScope)) return;
+      const viewer = connections.viewers.get(data.viewerId);
+      if (!isActiveViewerSocket(viewer)) return;
+      const counters = ['feedbackSequence', 'pendingCount', 'expiredCount', 'unmatchedAckCount', 'timeoutCount', 'coalescedCount'];
+      if (!counters.every(k => Number.isSafeInteger(data[k]) && data[k] >= (k === 'feedbackSequence' ? 1 : 0))) return;
+      const ages = ['oldestPendingAgeMs', 'lastSentAgeMs', 'lastAckAgeMs'];
+      if (!ages.every(k => data[k] === null || (typeof data[k] === 'number' && Number.isFinite(data[k]) && data[k] >= 0))) return;
+      const sample = data.sample;
+      if (sample !== null && (!sample || !Number.isSafeInteger(sample.sampleSequence) || sample.sampleSequence < 1
+        || typeof sample.relayFrameAckRttMs !== 'number' || !Number.isFinite(sample.relayFrameAckRttMs)
+        || sample.relayFrameAckRttMs < 0 || sample.relayFrameAckRttMs >= 2000)) return;
+      const forwarded = { relayFrameSchemaVersion: 1, relayScope: { ...data.relayScope }, viewerId: data.viewerId,
+        sample: sample === null ? null : { sampleSequence: sample.sampleSequence, relayFrameAckRttMs: sample.relayFrameAckRttMs } };
+      for (const key of [...counters, ...ages]) forwarded[key] = data[key];
+      viewer.emit('relay-frame-feedback', forwarded);
+    });
+
     socket.on('relay-frame-ack', (data) => {
       if (role !== 'viewer' && role !== 'relay-viewer') {
         return;
@@ -1796,6 +1859,9 @@ function setupSignaling(io, options = {}) {
         if (role === 'relay-viewer' && connections.relayViewers.get(socket.id) !== socket) return;
         if (role === 'viewer' && !isActiveViewerSocket(socket)) return;
         if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+        if ('relayFrameSchemaVersion' in data && (role !== 'viewer' || data.schemaVersion !== 2
+          || data.relayFrameSchemaVersion !== 1 || !authorizeViewer(socket, data, { legacy: false })
+          || !relayScopeHasCurrentOwner(socket.id, data.relayScope))) return;
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
         const viewerId = role === 'relay-viewer' && hasActiveLegacyRelayOwner(boundOwnerId)
           ? boundOwnerId

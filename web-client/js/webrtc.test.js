@@ -928,13 +928,15 @@ test('buildSignalingSocketOptions forwards the Lab proof admission from session 
 test('tunnel relay uses the authenticated viewer socket instead of a second relay socket', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 6 } };
   WebRTC.tunnelRelayActive = true;
 
   WebRTC.emitRelayStreamControl();
 
-  assert.equal(emitted[0][0], 'relay-stream-control');
+  assert.equal(emitted.at(-1)[0], 'relay-stream-control');
   assert.equal(Object.prototype.hasOwnProperty.call(WebRTC, 'relaySocket'), false);
 });
 
@@ -959,6 +961,8 @@ test('tunnel start binds the current connection attempt before media controls us
 test('tunnel relay stream control caps request size to medium profile', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 6 } };
   WebRTC.currentResolution = { width: 1280, height: 720, label: '720p' };
@@ -1061,6 +1065,8 @@ test('control-acquire-result clears sticky switching label on occupied reset bar
 test('relay control and frame acknowledgements require and carry the active v2 lease', () => {
   const emitted = [];
   const { WebRTC, elements } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.emitRelayStreamControl();
   assert.equal(emitted.length, 0);
@@ -1073,7 +1079,8 @@ test('relay control and frame acknowledgements require and carry the active v2 l
   });
 
   WebRTC.tunnelRelayActive = true;
-  WebRTC.handleRelayFrame({ data: 'ZmFrZQ==', frameId: 3, timestamp: Date.now() });
+  const fields = prepareOrdinaryRelay(WebRTC);
+  WebRTC.handleRelayFrame({ ...fields, data: 'ZmFrZQ==', frameId: 3, timestamp: Date.now() });
   elements.get('relayImage').onload();
   const ack = emitted.at(-1)[1];
   assert.equal(emitted.at(-1)[0], 'relay-frame-ack');
@@ -2407,8 +2414,11 @@ test('auto fallback handles relay frames while tunnel relay is active', () => {
 
   WebRTC.networkMode = 'auto';
   WebRTC.tunnelRelayActive = true;
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.socket = { connected: true, emit() {} };
+  const fields = prepareOrdinaryRelay(WebRTC);
 
-  WebRTC.handleRelayFrame({
+  WebRTC.handleRelayFrame({ ...fields,
     data: 'ZmFrZS1mcmFtZQ==',
     mime: 'image/jpeg',
     frameId: 1,
@@ -2438,7 +2448,9 @@ test('base64 relay frames ack after the browser image loads', () => {
     },
   };
 
-  WebRTC.handleRelayFrame({
+  const fields = prepareOrdinaryRelay(WebRTC);
+  emitted.length = 0;
+  WebRTC.handleRelayFrame({ ...fields,
     data: 'ZmFrZS1mcmFtZQ==',
     mime: 'image/jpeg',
     frameId: 7,
@@ -2453,7 +2465,8 @@ test('base64 relay frames ack after the browser image loads', () => {
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].event, 'relay-frame-ack');
   assert.equal(emitted[0].payload.frameId, 7);
-  assert.equal(typeof emitted[0].payload.latencyMs, 'number');
+  assert.equal(emitted[0].payload.latencyMs, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(emitted[0].payload.relayScope)), fields.relayScope);
 });
 
 test('main viewer socket emits start control during auto tunnel fallback', () => {
@@ -2469,6 +2482,8 @@ test('main viewer socket emits start control during auto tunnel fallback', () =>
   WebRTC.networkMode = 'auto';
   WebRTC.tunnelRelayActive = true;
   WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 6 } };
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = socket;
 
   WebRTC.emitRelayStreamControl();
@@ -3414,6 +3429,7 @@ test('suspended media blocks tunnel start while authorized resume mounts receive
   };
   WebRTC.networkMode = 'tunnel';
   WebRTC.currentConnectionAttemptId = 'wrd-1';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
 
   WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
@@ -3442,9 +3458,10 @@ test('suspended media blocks tunnel start while authorized resume mounts receive
   assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), false);
 
   WebRTC.handleMediaActivityAck({
-    state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true,
+    ...relayAckFields(WebRTC, 2), state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true,
   });
-  WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1 });
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 1, data: 'AAAA' });
+  context.document.getElementById('relayImage').onload();
   WebRTC.startTunnelRelay();
   assert.equal(WebRTC.tunnelRelayActive, true);
   assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), true);
@@ -4338,7 +4355,7 @@ test('tunnel media activity waits for Host applied ack and fresh relay frame', (
   WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
   WebRTC.handleMediaActivityAck({
-    state: 'active',
+    ...relayAckFields(WebRTC, 2), state: 'active',
     generation: 2,
     connectionAttemptId: 'attempt-tunnel-1',
     applied: true,
@@ -4348,15 +4365,12 @@ test('tunnel media activity waits for Host applied ack and fresh relay frame', (
 
   // Fresh relay frame unlocks.
   WebRTC.tunnelLastFrameId = 10;
-  WebRTC.observeFreshResumeFrame({
-    source: 'video-callback',
-    frameSeq: (WebRTC._videoFrameSeq || 0) + 1,
-    connectionAttemptId: 'attempt-tunnel-1',
-  });
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 11, data: 'AAAA' });
+  context.document.getElementById('relayImage').onload();
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
 });
 
-test('tunnel active ack promotes a relay frame rendered before the ack', () => {
+test('tunnel drops pre-ACK frames and requires a new scoped load after ACK', () => {
   const emitted = [];
   const { WebRTC, context, elements } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
@@ -4379,13 +4393,17 @@ test('tunnel active ack promotes a relay frame rendered before the ack', () => {
   WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
 
-  WebRTC.handleRelayFrame({ frameId: 1, timestamp: Date.now(), mime: 'image/jpeg', data: 'AAAA' });
-  elements.get('relayImage').onload();
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 1, timestamp: Date.now(), mime: 'image/jpeg', data: 'AAAA' });
+  assert.equal(elements.get('relayImage')?.onload ?? null, null);
+  assert.equal(WebRTC.tunnelLastFrameId, 0);
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
 
   WebRTC.handleMediaActivityAck({
-    state: 'active', generation: 2, connectionAttemptId: 'attempt-tunnel-race', applied: true,
+    ...relayAckFields(WebRTC, 2), state: 'active', generation: 2, connectionAttemptId: 'attempt-tunnel-race', applied: true,
   });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 2, data: 'AAAA' });
+  elements.get('relayImage').onload();
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 });
@@ -4858,7 +4876,7 @@ test('stale attempt relay frame cannot unlock a newer resume attempt', () => {
     connectionAttemptId: 'attempt-old',
   };
   WebRTC.handleMediaActivityAck({
-    state: 'active',
+    ...relayAckFields(WebRTC, 5), state: 'active',
     generation: 5,
     connectionAttemptId: 'attempt-new',
     applied: true,
@@ -4947,6 +4965,8 @@ test('control grant still creates offer when PC is missing', () => {
 test('starting a new tunnel producer resets the frame-id cursor', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
   WebRTC.controlState = {
     state: 'ACTIVE', controller: true, hostOnline: true,
@@ -4996,7 +5016,7 @@ test('tunnel fresh-frame fallback keeps the current attempt', () => {
     WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 5 });
     for (const timer of timers) timer.cleared = true;
     WebRTC.handleMediaActivityAck({
-      state: 'active', generation: 5, connectionAttemptId: 'attempt-tunnel-stable', applied: true,
+      ...relayAckFields(WebRTC, 5), state: 'active', generation: 5, connectionAttemptId: 'attempt-tunnel-stable', applied: true,
     });
     assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
 
@@ -5102,6 +5122,7 @@ test('stable viewport while adaptive relay frame sizes change', () => {
     lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
   };
   WebRTC.socket = { connected: true, emit() {}, on() {} };
+  const fields = prepareOrdinaryRelay(WebRTC);
   const relayImage = elements.get('relayImage') || context.document.getElementById('relayImage');
   // Fake bounding box independent of intrinsic image size.
   let box = { width: 800, height: 450, left: 0, top: 0 };
@@ -5110,7 +5131,7 @@ test('stable viewport while adaptive relay frame sizes change', () => {
   let frameId = 0;
   for (const [width, height] of sizes) {
     frameId += 1;
-    WebRTC.handleRelayFrame({
+    WebRTC.handleRelayFrame({ ...fields,
       frameId,
       width,
       height,
@@ -5239,6 +5260,25 @@ test('WebRTC.init consumes supplied snapshot and does not fetch config', async (
   assert.equal(WebRTC.serverConfig.iceServers.length, 0);
   assert.equal(signalingSockets.length, 1);
 });
+
+function relayAckFields(WebRTC, generation = 0, producerId = 'fixture-producer') {
+  return { relayFrameSchemaVersion: 1, relayScope: { producerId, productionGeneration: generation + 1,
+    connectionAttemptId: WebRTC.currentConnectionAttemptId, mediaGeneration: generation,
+    leaseEpoch: WebRTC.controlState.lease.leaseEpoch } };
+}
+
+function prepareOrdinaryRelay(WebRTC, producerId = 'fixture-producer') {
+  WebRTC.currentConnectionAttemptId ||= 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence ||= 1;
+  WebRTC.tunnelRelayActive = true;
+  assert.equal(WebRTC.emitRelayStreamControl(), true);
+  const pending = WebRTC._relayPendingStart;
+  const fields = relayAckFields(WebRTC, pending.mediaGeneration, producerId);
+  assert.equal(WebRTC.handleMediaActivityAck({ ...fields, relayControlKind: 'start',
+    relayStartRequestId: pending.requestId, generation: pending.mediaGeneration,
+    state: 'active', applied: true, connectionAttemptId: pending.attempt }), true);
+  return fields;
+}
 
 test('first-frame timeout exits connecting without reviving a stale attempt', () => {
   let timerCallback = null;
@@ -7062,4 +7102,441 @@ test('auth change between bootstrap validation and Start continuation cannot cre
   await start;
   assert.equal(h.WebRTC.pc, null);
   assert.equal(h.WebRTC.hasTurnConfigured(), false);
+});
+
+function relayIntegrationFixture({ initialReady = false, withCrypto = true } = {}) {
+  let now = 1000, timerId = 0;
+  const timers = new Map(), sent = [], docHandlers = new Map();
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  class RelayDate extends Date { static now() { return now; } }
+  const h = loadWebRTC({ realInput: true, LatencyMonitor: monitor, Date: RelayDate,
+    crypto: withCrypto ? require('node:crypto').webcrypto : undefined, TextEncoder, Blob, URL,
+    performance: { now: () => now },
+    setTimeout(fn, delay = 0) { const id = ++timerId; timers.set(id, { fn, due: now + delay, delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const { WebRTC, context } = h, Input = context.__Input;
+  for (const name of ['media-activity-controller.js', 'media-activity-runtime.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, name), 'utf8'), context);
+  }
+  context.MediaActivityController = context.window.MediaActivityController;
+  WebRTC.socket = { id: 'viewer-1', connected: true, on() {}, emit(event, data) { sent.push([event, data]); } };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.currentConnectionAttemptId = 'attempt-1'; WebRTC.connectionAttemptSequence = 1;
+  WebRTC.networkMode = initialReady ? 'relay' : 'tunnel';
+  WebRTC.initializeMediaActivity();
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create();
+  assert.equal(WebRTC.getMediaActivitySnapshot().generation, 0);
+  assert.equal(WebRTC.mediaActivityRuntime.snapshot().desiredGeneration, 0);
+  const video = context.document.getElementById('remoteVideo');
+  video.tagName = 'VIDEO'; video.videoWidth = 960; video.videoHeight = 540;
+  video.getBoundingClientRect = () => ({ left: 0, top: 0, width: 960, height: 540 });
+  video.hasPointerCapture = () => false; video.setPointerCapture = () => {};
+  video.focus = () => { context.document.activeElement = video; };
+  context.document.activeElement = video;
+  context.document.addEventListener = (type, fn) => docHandlers.set(type, fn);
+  context.window.addEventListener = () => {};
+  context.document.querySelectorAll = () => [];
+  Input.videoElement = video;
+  Input.setControlLease(WebRTC.controlState.lease);
+  Input.setupEventListeners();
+  if (initialReady) {
+    WebRTC.hasPaintedFrame = true; WebRTC._mediaReadyConnectionAttemptId = WebRTC.currentConnectionAttemptId;
+    WebRTC.uiPhase = 'connected'; WebRTC.syncDesktopInputGate();
+  }
+  const writes = () => sent.filter(([event, d]) => event === 'input' && ['mouse', 'keyboard'].includes(d?.type)).map(([,d]) => d);
+  const business = () => writes().filter(d => d.action !== 'reset' && d.action !== 'up');
+  const key = (phase = 'keydown') => docHandlers.get(phase)?.({ type: phase, target: video,
+    code: 'KeyA', key: 'a', location: 0, repeat: false, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+    preventDefault() {}, getModifierState() { return false; } });
+  const pointer = (phase = 'pointerdown') => video.listeners.get(phase)?.({ type: phase, target: video,
+    currentTarget: video, pointerType: 'mouse', pointerId: 1, button: 0, buttons: 1,
+    clientX: 400, clientY: 300, timeStamp: now, preventDefault() {} });
+  function ackWrite(payload, extra = {}) {
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: payload.type, inputIds: payload.inputIds,
+      appliedSeq: payload.seq, leaseEpoch: payload.leaseEpoch, status: 'applied',
+      pressedKeyCount: 0, modifierMask: 0, ...extra }, { socket: WebRTC.socket, transport: 'socket' });
+  }
+  function currentResets() {
+    const keyboard = Input._captureKeyboardReset(), mouseId = Input._pendingMouseResetId;
+    const list = writes();
+    return [keyboard && list.find(d => d.inputIds.includes(keyboard.inputId)),
+      mouseId && list.find(d => d.inputIds.includes(mouseId))].filter(Boolean);
+  }
+  function settleResets() {
+    const current = currentResets();
+    current.forEach(d => ackWrite(d));
+    return current;
+  }
+  function advance(ms) {
+    now += ms;
+    for (let iterations = 0; iterations < 100; iterations++) {
+      const due = [...timers].find(([,timer]) => timer.due <= now);
+      if (!due) return;
+      timers.delete(due[0]); due[1].fn();
+    }
+    throw new Error('unexpected timer loop');
+  }
+  function replyStart(producerId = 'producer-1') {
+    const p = WebRTC._relayPendingStart;
+    assert.ok(p);
+    const fields = relayAckFields(WebRTC, p.mediaGeneration, producerId);
+    const data = { ...fields, relayControlKind: 'start', relayStartRequestId: p.requestId,
+      generation: p.mediaGeneration, connectionAttemptId: p.attempt, state: 'active', applied: true };
+    assert.equal(WebRTC.handleMediaActivityAck(data), true);
+    return { fields, data };
+  }
+  function frame(fields, frameId = 1, load = true) {
+    WebRTC.handleRelayFrame({ ...fields, frameId, data: 'AAAA', timestamp: Date.now() + 86400000 });
+    const onload = context.document.getElementById('relayImage').onload;
+    if (load) { assert.equal(typeof onload, 'function'); onload(); }
+    return onload;
+  }
+  return { ...h, Input, monitor, sent, timers, writes, business, key, pointer, ackWrite, currentResets,
+    settleResets, advance, replyStart, frame, now: () => now };
+}
+
+function relayFeedback(fields, sequence, sample = null) {
+  return { ...fields, feedbackSequence: sequence, sample, pendingCount: 0,
+    oldestPendingAgeMs: null, expiredCount: 0, unmatchedAckCount: 0, timeoutCount: 0,
+    coalescedCount: 0, lastSentAgeMs: null, lastAckAgeMs: null };
+}
+
+for (const mode of ['same-attempt-restart', 'webrtc-fallback']) test(`pending JPEG ${mode} immediately closes real business gate through current reset ACKs`, () => {
+  const h = relayIntegrationFixture({ initialReady: true }), { WebRTC, Input } = h;
+  assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer();
+  const held = h.writes();
+  assert.ok(held.some(d => d.type === 'keyboard' && d.action === 'key'));
+  assert.ok(held.some(d => d.type === 'mouse' && d.action === 'down'));
+  held.forEach(d => h.ackWrite(d, d.type === 'keyboard' ? { pressedKeyCount: 1 } : {}));
+  if (mode === 'same-attempt-restart') {
+    // Obtain a first producer through the ordinary handshake, settle it, then restart it.
+    assert.equal(WebRTC.startTunnelRelay(), true);
+    const first = h.replyStart('first-producer'); h.frame(first.fields); h.settleResets();
+    assert.equal(Input.getEffectiveInputGate().allowed, true);
+    h.key(); h.pointer(); h.writes().slice(held.length).filter(d => d.action !== 'reset').forEach(d => h.ackWrite(d));
+  } else {
+    WebRTC.pc = { close() {} };
+  }
+  const before = h.business().length;
+  assert.equal(WebRTC.startTunnelRelay(), true);
+  assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC._mediaReadyConnectionAttemptId, null);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  assert.ok(h.writes().some(d => d.type === 'keyboard' && d.action === 'reset'));
+  assert.ok(h.writes().some(d => d.type === 'mouse' && d.action === 'reset'));
+  const previousResets = h.currentResets();
+  const { fields, data } = h.replyStart('new-producer');
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  WebRTC.handleMediaActivityAck(data); // Duplicate route cannot reset or ready.
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  h.frame(fields);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  const current = h.currentResets();
+  const superseded = previousResets.filter(old => !current.some(d => d.inputIds[0] === old.inputIds[0]));
+  superseded.forEach(d => h.ackWrite(d));
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.settleResets();
+  assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer(); assert.ok(h.business().length > before);
+});
+
+test('ordinary generation-zero start travels actual Viewer → registered Signal → real Host → Signal → Viewer', () => {
+  process.env.ACCESS_PASSWORD ||= 'test-viewer-password';
+  process.env.JWT_SECRET ||= '12345678'; process.env.HOST_PASSWORD ||= 'test-host-password';
+  const { setupSignaling, connections } = require('../../signal-server/websocket/signaling');
+  const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('../../signal-server/websocket/signaling-test-fixture');
+  resetConnections();
+  const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host'), viewer = new FakeSocket('viewer-1', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  host.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer);
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  assert.equal(grant.leaseEpoch, 1);
+  WebRTC.controlState.lease = { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  h.Input.setControlLease(WebRTC.controlState.lease);
+  WebRTC.socket.emit = (event, data) => { h.sent.push([event, data]); viewer.trigger(event, data); };
+  assert.equal(WebRTC.startTunnelRelay(), true);
+  const bind = host.sent.filter(e => e.event === 'connection-attempt-bind').at(-1).data;
+  const request = host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data;
+  assert.equal(request.relayMediaGeneration, 0);
+  for (const key of ['generation', 'state', 'mediaControlSchemaVersion']) assert.equal(key in request, false);
+  const bridge = require('node:child_process').spawnSync('python3', ['-B', path.join(__dirname, '../../python-host/test_tunnel_relay.py')], {
+    input: JSON.stringify({ bind, request, leaseBinding: { viewerId: viewer.id, leaseId: grant.leaseId,
+      leaseEpoch: grant.leaseEpoch, connectionGeneration: 1 } }), encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(bridge.status, 0, bridge.stderr);
+  const ack = JSON.parse(bridge.stdout.trim());
+  assert.equal(ack.applied, true); assert.equal(ack.generation, 0);
+  const fields = { relayFrameSchemaVersion: 1, relayScope: ack.relayScope };
+  h.frame(fields, 1, false);
+  assert.equal(WebRTC.tunnelLastFrameId, 0, 'before start ACK the frame is discarded');
+  host.trigger('relay-stream-control-ack', ack);
+  const routes = viewer.sent.filter(e => ['media-activity-ack', 'relay-stream-control-ack'].includes(e.event));
+  assert.equal(routes.length, 2);
+  assert.deepEqual(routes[0].data, routes[1].data);
+  routes.forEach(e => WebRTC.handleMediaActivityAck(e.data));
+  assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC.mediaActivityRuntime.snapshot().desiredGeneration, 0);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  h.frame(fields, 2);
+  assert.equal(WebRTC.isCurrentAttemptMediaReady(), true);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  h.key(); assert.equal(h.business().length, 1);
+  resetConnections();
+});
+
+test('JPEG stale image load closes real gate, resets held keys/pointer, and only current reset ACKs reopen', () => {
+  const h = relayIntegrationFixture(), { WebRTC, Input } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer(); h.writes().forEach(d => h.ackWrite(d, d.type === 'keyboard' ? { pressedKeyCount: 1 } : {}));
+  const before = h.business().length;
+  h.advance(4999); assert.equal(WebRTC.canEnableDesktopInput(), true);
+  assert.equal(Input.lastKeyboardResetReason, null);
+  h.advance(1);
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  assert.equal(Input.isActive, false);
+  assert.equal(Input.lastKeyboardResetReason, 'relay-frame-stale');
+  assert.ok(h.writes().some(d => d.type === 'mouse' && d.action === 'reset'));
+  const previous = h.currentResets();
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  h.frame(fields, 2);
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  const current = h.currentResets();
+  previous.filter(a => !current.some(b => a.inputIds[0] === b.inputIds[0])).forEach(d => h.ackWrite(d));
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.settleResets(); assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer(); assert.ok(h.business().length > before);
+});
+
+for (const failure of ['inactive', 'rejected', 'timeout']) test(`JPEG freshness preserves real ${failure} reset barriers`, () => {
+  const h = relayIntegrationFixture(), { WebRTC, Input } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  h.key(); h.writes().forEach(d => h.ackWrite(d, { pressedKeyCount: 1 }));
+  if (failure === 'inactive') Input.setActive(false, { resetKeyboard: false });
+  h.advance(5000);
+  assert.equal(Input.lastKeyboardResetReason, 'relay-frame-stale');
+  const resets = h.currentResets();
+  assert.ok(resets.some(d => d.type === 'keyboard'));
+  h.frame(fields, 2);
+  const before = h.business().length;
+  if (failure === 'rejected') h.currentResets().forEach(d => h.ackWrite(d, { status: 'execution-failed' }));
+  if (failure === 'timeout') h.advance(3001);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  if (failure === 'inactive') { h.settleResets(); assert.equal(Input.getEffectiveInputGate().allowed, true); }
+  else {
+    const count = h.writes().length;
+    h.frame(fields, 3, failure !== 'timeout');
+    h.key(); h.pointer();
+    assert.equal(Input.getEffectiveInputGate().allowed, false);
+    assert.ok(h.writes().slice(count).every(d => d.action === 'reset' || d.action === 'up'));
+  }
+});
+
+async function waitRelayDigest(WebRTC) {
+  for (let i = 0; i < 100 && !WebRTC._relayOriginDigest; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.match(WebRTC._relayOriginDigest, /^[a-f0-9]{64}$/);
+}
+
+test('JPEG feedback uses real collector, keeps old producer samples, isolates UI, and deduplicates full origins', async () => {
+  const h = relayIntegrationFixture(), { WebRTC, monitor } = h;
+  WebRTC.startTunnelRelay(); const a = h.replyStart('producer-A');
+  h.frame(a.fields); // Decode and input readiness do not await the optional digest.
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  await waitRelayDigest(WebRTC);
+  assert.equal(WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 100 })), true);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.last, 100);
+  monitor.recordStage('inputAckRttMs', 15, { scope: WebRTC.latencyScope(), atMs: h.now(), sampleKey: 'input-other-metric' });
+  h.advance(100);
+  WebRTC.startTunnelRelay(); const b = h.replyStart('producer-B');
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '未测量');
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 1);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 1);
+  await waitRelayDigest(WebRTC);
+  const firstB = relayFeedback(b.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 200 });
+  WebRTC.handleRelayFrameFeedback(firstB);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 2);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.last, 200);
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '200 ms');
+  WebRTC.handleRelayFrameFeedback(firstB);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(b.fields, 2, { sampleSequence: 1, relayFrameAckRttMs: 999 }));
+  WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 3, { sampleSequence: 2, relayFrameAckRttMs: 777 }));
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 2);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(b.fields, 3, null));
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 2);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null, 'feedback never refreshes image load age');
+  WebRTC.applyMediaActivity({ state: 'suspended', generation: 1, reasons: ['manual-pause'] });
+  WebRTC.handleMediaActivityAck({ state: 'suspended', generation: 1, applied: true, connectionAttemptId: 'attempt-1' });
+  WebRTC.applyMediaActivity({ state: 'active', generation: 2, reasons: [] });
+  const resumed = relayAckFields(WebRTC, 2, 'producer-B');
+  WebRTC.handleMediaActivityAck({ ...resumed, state: 'active', generation: 2, applied: true, connectionAttemptId: 'attempt-1' });
+  await waitRelayDigest(WebRTC);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(resumed, 1, { sampleSequence: 1, relayFrameAckRttMs: 300 }));
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 3);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.last, 300);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 1);
+  h.advance(5000); WebRTC.renderRelayFeedbackRtt();
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '未测量');
+});
+
+test('JPEG maximum source strings produce collision-resistant bounded keys without resetting collector', async () => {
+  const h = relayIntegrationFixture(), { WebRTC, monitor } = h;
+  WebRTC.currentConnectionAttemptId = 'a'.repeat(128);
+  WebRTC.syncLatencyScope();
+  WebRTC.startTunnelRelay(); const a = h.replyStart('p'.repeat(64));
+  await waitRelayDigest(WebRTC);
+  const keyCalls = [];
+  const record = monitor.recordStage;
+  monitor.recordStage = (name, value, options) => { keyCalls.push(options.sampleKey); return record(name, value, options); };
+  WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 1, { sampleSequence: Number.MAX_SAFE_INTEGER, relayFrameAckRttMs: 12 }));
+  assert.equal(keyCalls[0].length, 87);
+  assert.match(keyCalls[0], /^relay:[a-f0-9]{64}:[0-9]+$/);
+  const canonical = JSON.stringify(['p'.repeat(64), 1, 'a'.repeat(128), 0, 1]);
+  assert.equal(keyCalls[0], `relay:${require('node:crypto').createHash('sha256').update(canonical).digest('hex')}:${Number.MAX_SAFE_INTEGER}`);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 1);
+});
+
+test('JPEG missing or late diagnostics hash never gates media or backfills misleading sample timestamps', async () => {
+  const h = relayIntegrationFixture({ withCrypto: false }), { WebRTC } = h;
+  const pendingDigests = [];
+  h.context.crypto = { subtle: { digest(_alg, bytes) { return new Promise(resolve => pendingDigests.push({ bytes, resolve })); } } };
+  WebRTC.startTunnelRelay(); const a = h.replyStart('producer-A');
+  h.frame(a.fields);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 50 }));
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+  h.advance(100);
+  WebRTC.startTunnelRelay(); const b = h.replyStart('producer-B');
+  pendingDigests[0].resolve(new Uint8Array(32).fill(1).buffer);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(WebRTC._relayOriginDigest, null);
+  pendingDigests[1].resolve(new Uint8Array(32).fill(2).buffer);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(WebRTC._relayOriginDigest, '02'.repeat(32));
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(b.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 150 }));
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.last, 150);
+  const noCrypto = relayIntegrationFixture({ withCrypto: false });
+  noCrypto.WebRTC.startTunnelRelay(); const c = noCrypto.replyStart(); noCrypto.frame(c.fields);
+  assert.equal(noCrypto.Input.getEffectiveInputGate().allowed, true);
+  noCrypto.WebRTC.handleRelayFrameFeedback(relayFeedback(c.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 100 }));
+  assert.equal(noCrypto.monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+});
+
+test('JPEG source validation precedes watermark, and replaced onload/socket/scope cannot ACK or recover', () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const p = WebRTC._relayPendingStart;
+  const expected = relayAckFields(WebRTC);
+  h.frame(expected, 99, false);
+  assert.equal(WebRTC.tunnelLastFrameId, 0);
+  const first = h.replyStart();
+  for (const patch of [{ producerId: 'foreign' }, { productionGeneration: 99 }, { mediaGeneration: true },
+    { mediaGeneration: -1 }, { leaseEpoch: 2 }, { connectionAttemptId: 'wrong' }, { producerId: 'x'.repeat(65) }, { producerId: 'producer-1\n' }]) {
+    h.frame({ ...first.fields, relayScope: { ...first.fields.relayScope, ...patch } }, 99, false);
+    assert.equal(WebRTC.tunnelLastFrameId, 0);
+  }
+  const oldLoad = h.frame(first.fields, 1, false);
+  const newLoad = h.frame(first.fields, 2, false);
+  const before = h.sent.filter(([e]) => e === 'relay-frame-ack').length;
+  oldLoad(); assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  newLoad(); newLoad();
+  assert.equal(h.sent.filter(([e]) => e === 'relay-frame-ack').length, before + 1);
+  const ack = h.sent.filter(([e]) => e === 'relay-frame-ack').at(-1)[1];
+  assert.equal(ack.frameId, 2); assert.equal(ack.latencyMs, undefined); assert.equal(ack.renderedAt, undefined);
+  assert.equal(JSON.stringify(ack.relayScope), JSON.stringify(first.fields.relayScope));
+  const timer = [...h.timers].find(([,t]) => t.delay === 5000)[1];
+  WebRTC.startTunnelRelay(); const next = h.replyStart('new-producer');
+  timer.fn(); assert.equal(WebRTC.uiPhase, 'signaling');
+  const load = h.frame(next.fields, 1, false);
+  WebRTC.socket = { connected: true, emit() {} };
+  load(); assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC.relayScopeMatches(next.fields.relayScope), false);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  assert.equal(p.mediaGeneration, 0);
+});
+
+test('JPEG superseded start and suspend reject stale generation-zero ACK/request and foreign leases', () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const oldPending = WebRTC._relayPendingStart;
+  const oldAck = { ...relayAckFields(WebRTC), relayControlKind: 'start', relayStartRequestId: oldPending.requestId,
+    state: 'active', generation: 0, applied: true, connectionAttemptId: 'attempt-1' };
+  WebRTC.startTunnelRelay(); assert.notEqual(WebRTC._relayPendingStart.requestId, oldPending.requestId);
+  assert.equal(WebRTC.handleMediaActivityAck(oldAck), false);
+  const latest = WebRTC._relayPendingStart;
+  assert.equal(WebRTC.handleMediaActivityAck({ ...oldAck, relayStartRequestId: latest.requestId,
+    relayScope: { ...oldAck.relayScope, leaseEpoch: 2 } }), false);
+  WebRTC.applyMediaActivity({ state: 'suspended', generation: 1, reasons: ['manual-pause'] });
+  assert.equal(WebRTC._relayPendingStart, null);
+  assert.equal(WebRTC.handleMediaActivityAck({ ...oldAck, relayStartRequestId: latest.requestId }), false);
+  assert.equal(WebRTC._relayExpectedScope, null);
+  assert.equal(WebRTC._relayFreshnessTimer, null);
+});
+
+for (const offset of [-86400000, 86400000]) test(`JPEG image timestamp offset ${offset} never changes monotonic feedback RTT`, async () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart();
+  WebRTC.handleRelayFrame({ ...fields, frameId: 1, data: 'AAAA', timestamp: h.now() + offset });
+  h.context.document.getElementById('relayImage').onload();
+  const ack = h.sent.filter(([e]) => e === 'relay-frame-ack').at(-1)[1];
+  assert.equal('latencyMs' in ack, false); assert.equal('renderedAt' in ack, false);
+  await waitRelayDigest(WebRTC);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 321 }));
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '321 ms');
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.last, 321);
+  assert.match(h.context.document.getElementById('latencyDisplay').title, /JPEG反馈往返/);
+});
+
+test('JPEG single scope timer expires RTT after stall and arrival-only traffic never refreshes load age', async () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  await waitRelayDigest(WebRTC);
+  h.advance(4000);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 42 }));
+  h.frame(fields, 2, false);
+  assert.equal(WebRTC._relayLastLoadedAtMs, 1000);
+  const timerFn = h.timers.get(WebRTC._relayFreshnessTimer).fn;
+  h.advance(1000);
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '42 ms');
+  const count = h.writes().length;
+  timerFn(); timerFn();
+  assert.equal(h.writes().length, count, 'repeated stall does not reissue reset');
+  h.settleResets(); // Complete safety release without supplying a fresh media frame.
+  h.advance(4000);
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '未测量');
+  assert.equal(WebRTC._relayFreshnessTimer, null);
+  assert.equal(WebRTC._relayLastLoadedAtMs, 1000);
+});
+
+test('JPEG socket replacement clears origin/pending callbacks and ignores the old registered socket', () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  const oldHandlers = new Map(), newHandlers = new Map();
+  WebRTC.socket.on = (event, fn) => oldHandlers.set(event, fn);
+  WebRTC.setupSocketListeners();
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); const load = h.frame(fields, 1, false);
+  WebRTC.socket = { id: 'viewer-new', connected: true, emit() {}, on: (event, fn) => newHandlers.set(event, fn) };
+  WebRTC.setupSocketListeners();
+  assert.equal(WebRTC._relayExpectedScope, null);
+  assert.equal(WebRTC._relayPendingStart, null);
+  load();
+  oldHandlers.get('relay-frame')({ ...fields, frameId: 2, data: 'AAAA' });
+  oldHandlers.get('relay-frame-feedback')(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 1 }));
+  assert.equal(WebRTC.tunnelLastFrameId, 0);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  assert.equal(WebRTC._relayRttView, null);
+  assert.equal(WebRTC._relayFreshnessTimer, null);
 });

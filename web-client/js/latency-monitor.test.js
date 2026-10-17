@@ -406,3 +406,28 @@ test('late post-apply evidence uses saved presentation time and never settles AC
   monitor.onInputAck({ status: 'applied', inputIds: ['one'] }, { scope });
   assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, 800);
 });
+
+test('relay origin keys preserve earlier samples in the current collector scope and expire independently', () => {
+  let now = 1000;
+  const monitor = createLatencyMonitor({ now: () => now });
+  monitor.setScope(testScope);
+  const keyA = `relay:${'a'.repeat(64)}:1`, keyB = `relay:${'b'.repeat(64)}:1`;
+  assert.equal(monitor.recordStage('relayFrameAckRttMs', 100, { scope: testScope, atMs: now, sampleKey: keyA }), true);
+  assert.equal(monitor.recordStage('inputAckRttMs', 10, { scope: testScope, atMs: now, sampleKey: 'independent' }), true);
+  now = 1100;
+  assert.equal(monitor.recordStage('relayFrameAckRttMs', 200, { scope: testScope, atMs: now, sampleKey: keyB }), true);
+  assert.equal(monitor.recordStage('relayFrameAckRttMs', 999, { scope: testScope, atMs: now, sampleKey: keyB }), false);
+  for (const value of [null, undefined, '', false, NaN, Infinity, -1]) {
+    assert.equal(monitor.recordStage('relayFrameAckRttMs', value, { scope: testScope, atMs: now, sampleKey: 'invalid' }), false);
+  }
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 2);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.last, 200);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 1);
+  assert.equal(monitor.recordStage('relayFrameAckRttMs', 300, { scope: testScope, atMs: 1099, sampleKey: 'late-clock' }), false);
+  now = 6000;
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 1);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.available, false);
+  now = 6100;
+  const absent = monitor.snapshot().metrics.relayFrameAckRttMs;
+  assert.equal(absent.available, false); assert.equal(absent.last, null); assert.equal(absent.count, 0);
+});

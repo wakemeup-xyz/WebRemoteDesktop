@@ -3581,3 +3581,86 @@ test('disconnect telemetry sink failure cannot prevent existing relay cleanup', 
   assert.doesNotThrow(() => relay.trigger('disconnect', 'transport close'));
   assert.equal(context.connections.relayViewers.has(relay.id), false);
 });
+
+function strictRelayFixture() {
+  resetConnections();
+  const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('m6-host', 'host'), viewer = new FakeSocket('m6-viewer', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  host.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer);
+  const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', { ...lease, schemaVersion: 1,
+    connectionAttemptId: 'm6-attempt', connectionAttemptSequence: 1 });
+  const relayScope = { producerId: 'm6-producer', productionGeneration: 1,
+    connectionAttemptId: 'm6-attempt', mediaGeneration: 0, leaseEpoch: grant.leaseEpoch };
+  return { io, host, viewer, lease, relayScope };
+}
+
+test('strict ordinary generation-zero relay start preserves authenticated binding and dual ACK source', () => {
+  const { host, viewer, lease, relayScope } = strictRelayFixture();
+  const request = { ...lease, enabled: true, relayFrameSchemaVersion: 1,
+    relayStartRequestId: 'm6-start', relayMediaGeneration: 0, connectionAttemptId: 'm6-attempt' };
+  viewer.trigger('relay-stream-control', request);
+  const forwarded = host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data;
+  assert.deepEqual(forwarded, { ...request, viewerId: viewer.id });
+  assert.equal('generation' in forwarded, false);
+  assert.equal('mediaControlSchemaVersion' in forwarded, false);
+  const ack = { viewerId: viewer.id, schemaVersion: 1, state: 'active', generation: 0,
+    connectionAttemptId: 'm6-attempt', applied: true, relayControlKind: 'start',
+    relayStartRequestId: 'm6-start', relayFrameSchemaVersion: 1, relayScope };
+  host.trigger('relay-stream-control-ack', ack);
+  const routes = viewer.sent.filter(e => ['relay-stream-control-ack', 'media-activity-ack'].includes(e.event));
+  assert.equal(routes.length, 2); assert.deepEqual(routes[0].data, routes[1].data);
+  assert.deepEqual(routes[0].data.relayScope, relayScope);
+  assert.equal(routes[0].data.relayStartRequestId, 'm6-start');
+  assert.equal(routes[0].data.relayControlKind, 'start');
+  assert.equal('leaseId' in routes[0].data, false);
+  const count = host.sent.filter(e => e.event === 'relay-stream-control').length;
+  for (const patch of [{ relayMediaGeneration: true }, { relayMediaGeneration: -1 },
+    { relayMediaGeneration: Number.MAX_SAFE_INTEGER + 1 }, { relayStartRequestId: 'a'.repeat(65) },
+    { relayFrameSchemaVersion: true }, { connectionAttemptId: 'foreign' }, { leaseEpoch: lease.leaseEpoch + 1 }]) {
+    viewer.trigger('relay-stream-control', { ...request, ...patch });
+  }
+  assert.equal(host.sent.filter(e => e.event === 'relay-stream-control').length, count);
+});
+
+test('registered relay frame, ACK and feedback handlers preserve exact source and reject old owners', () => {
+  const { io, host, viewer, lease, relayScope } = strictRelayFixture();
+  const fields = { relayFrameSchemaVersion: 1, relayScope };
+  const frame = { ...fields, viewerId: viewer.id, frameId: 1, data: 'AAAA' };
+  host.trigger('relay-frame', frame);
+  assert.deepEqual(viewer.sent.filter(e => e.event === 'relay-frame').at(-1).data, frame);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame').at(-1).volatile, true);
+  viewer.trigger('relay-frame-ack', { ...lease, ...fields, frameId: 1 });
+  assert.deepEqual(host.sent.filter(e => e.event === 'relay-frame-ack').at(-1).data,
+    { ...lease, ...fields, frameId: 1, viewerId: viewer.id });
+  const feedback = { ...fields, viewerId: viewer.id, feedbackSequence: 1,
+    sample: { sampleSequence: 1, relayFrameAckRttMs: 1999, privateValue: 'discard' },
+    pendingCount: 1, oldestPendingAgeMs: 500, expiredCount: 2, unmatchedAckCount: 3,
+    timeoutCount: 4, coalescedCount: 5, lastSentAgeMs: 100, lastAckAgeMs: 0,
+    leaseId: 'must-not-be-forwarded', payload: 'must-not-be-forwarded' };
+  host.trigger('relay-frame-feedback', feedback);
+  const received = viewer.sent.filter(e => e.event === 'relay-frame-feedback').at(-1).data;
+  assert.equal(received.coalescedCount, 5);
+  assert.deepEqual(received.relayScope, relayScope);
+  assert.deepEqual(received.sample, { sampleSequence: 1, relayFrameAckRttMs: 1999 });
+  assert.equal('leaseId' in received, false); assert.equal('payload' in received, false);
+  const count = viewer.sent.filter(e => e.event === 'relay-frame-feedback').length;
+  for (const patch of [{ relayScope: { ...relayScope, mediaGeneration: true } },
+    { relayScope: { ...relayScope, producerId: 'a'.repeat(65) } },
+    { relayScope: { ...relayScope, connectionAttemptId: 'foreign' } },
+    { relayScope: { ...relayScope, leaseEpoch: relayScope.leaseEpoch + 1 } },
+    { sample: { sampleSequence: 1, relayFrameAckRttMs: null } },
+    { sample: { sampleSequence: 1, relayFrameAckRttMs: 2000 } }, { coalescedCount: true }]) {
+    host.trigger('relay-frame-feedback', { ...feedback, ...patch });
+  }
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame-feedback').length, count);
+  viewer.trigger('relay-frame-feedback', feedback);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame-feedback').length, count);
+  const replacementHost = new FakeSocket('m6-new-host', 'host'); io.connect(replacementHost);
+  host.trigger('relay-frame', frame); host.trigger('relay-frame-feedback', feedback);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame-feedback').length, count);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame').length, 1);
+});
