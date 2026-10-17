@@ -770,6 +770,13 @@ class CancellationCooperationError(RuntimeError):
     """The backend did not settle within its cancellation allowance."""
 
 
+def cleanup_allowance(key, caps, deadline, now):
+    available = deadline - now
+    if key == 'browserClose':
+        available -= caps['managerStop']
+    return max(0, min(caps[key], available))
+
+
 async def lifecycle_stage(operation, timeout, *, settlement=0.25):
     """Own the task and include cancellation settlement in the stage deadline.
 
@@ -807,7 +814,7 @@ async def run(args, *, manager_factory=None, limits=None):
     if manager_factory is None:
         from playwright.async_api import async_playwright
         manager_factory = async_playwright
-    caps = {'managerStart':10,'managerLaunch':15,'export':1,'browserClose':3,'managerStop':3,'cleanup':8}
+    caps = {'managerStart':10,'managerLaunch':15,'export':1,'browserClose':5,'managerStop':3,'cleanup':8}
     if limits:
         for key,value in limits.items():
             if key not in caps or not nonnegative(value) or value > caps[key]: raise ValueError('lifecycle-limit')
@@ -965,7 +972,7 @@ async def run(args, *, manager_factory=None, limits=None):
         nonlocal diagnostic, capture_status, cleanup_failed, cooperation_failure
         deadline = time.monotonic()+caps['cleanup']
         python_state['cleanupStatus'] = 'running'
-        def remaining(key): return max(0,min(caps[key],deadline-time.monotonic()))
+        def remaining(key): return cleanup_allowance(key,caps,deadline,time.monotonic())
         if failure is not None and page is not None and remaining('export') > 0:
             try:
                 await lifecycle_stage(startup_summary(page,capture=failure_capture),remaining('export'),
@@ -1000,8 +1007,9 @@ async def run(args, *, manager_factory=None, limits=None):
         # Ordered pre-close evidence survives browser.close and manager.stop.
         persist()
         if browser is not None:
-            if remaining('browserClose') > 0:
-                try: await tracked('browserClose',browser.close(),remaining('browserClose'))
+            close_budget = remaining('browserClose')
+            if close_budget > 0:
+                try: await tracked('browserClose',browser.close(),close_budget)
                 except CancellationCooperationError as exc:
                     cooperation_failure = exc; cleanup_failed = True
                 except BaseException: cleanup_failed = True
@@ -1011,10 +1019,11 @@ async def run(args, *, manager_factory=None, limits=None):
         # A manager may exist after an unsuccessful start or launch. Teardown is
         # attempted independently of browser close, inside this one total budget.
         if manager is not None:
-            if remaining('managerStop') > 0:
+            stop_budget = remaining('managerStop')
+            if stop_budget > 0:
                 try:
                     operation = playwright.stop() if playwright is not None and hasattr(playwright,'stop') else manager.stop() if hasattr(manager,'stop') else manager.__aexit__(None,None,None)
-                    await tracked('managerStop',operation,remaining('managerStop'))
+                    await tracked('managerStop',operation,stop_budget)
                 except CancellationCooperationError as exc:
                     cooperation_failure = exc; cleanup_failed = True
                 except BaseException: cleanup_failed = True

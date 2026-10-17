@@ -564,6 +564,21 @@ class LifecycleSchemaTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             soak.validate_diagnostic({**diagnostic, 'private-canary': 'secret'})
 
+class CleanupAllocationTest(unittest.TestCase):
+    def test_close_reserves_stop_inside_one_absolute_cleanup_deadline(self):
+        caps = {'export':1,'browserClose':5,'managerStop':3,'cleanup':8}
+        for now,close,stop in ((0,5,3),(.5,4.5,3),(2,3,3),
+                               (4.75,.25,3),(5,0,3),(7.5,0,.5),(9,0,0)):
+            with self.subTest(now=now):
+                self.assertEqual(soak.cleanup_allowance('browserClose',caps,8,now),close)
+                self.assertEqual(soak.cleanup_allowance('managerStop',caps,8,now),stop)
+        self.assertEqual(soak.cleanup_allowance('export',caps,8,7.5),.5)
+        caps['browserClose'] = 2
+        self.assertEqual(soak.cleanup_allowance('browserClose',caps,8,0),2)
+        caps['browserClose'] = 5
+        caps['managerStop'] = 1
+        self.assertEqual(soak.cleanup_allowance('browserClose',caps,8,2),5)
+
 class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
     class Rig:
         def __init__(self, output, *, fail_at=None, timeout_at=None, pause_at=None,
@@ -696,13 +711,14 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
     async def execute(self, rig, **kwargs):
         modules = {'dotenv':SimpleNamespace(dotenv_values=lambda _: {})}
         factory = kwargs.pop('manager_factory',lambda:rig)
+        limits = kwargs.pop('limits', {key:.08 for key in
+            ('managerStart','managerLaunch','export','browserClose','managerStop')})
         with patch.dict('sys.modules',modules), \
              patch.dict(os.environ,{'VIEWER_ACCESS_PASSWORD':'private-password-canary'}), \
              patch('builtins.print'):
             return await soak.run(SimpleNamespace(origin='https://fixture.invalid',output_dir=rig.output,
                 duration_seconds=1,mode='relay',runtime_config=None),manager_factory=factory,
-                limits={key:.08 for key in ('managerStart','managerLaunch','export','browserClose','managerStop')},
-                **kwargs)
+                limits=limits,**kwargs)
 
     def artifacts(self, rig):
         lifecycle = json.loads((rig.output/'lifecycle.json').read_text())
@@ -919,6 +935,79 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(summary['visibleEffect'],'NOT_RUN')
             self.assertEqual(summary['lifecycle']['ownedProcessExitEvidence'],'not-observed')
             self.assertEqual((rig.proofs,rig.clicks),(1,1))
+
+    async def test_healthy_close_uses_unspent_cleanup_budget_and_keeps_one_start(self):
+        class SlowClose(self.Rig):
+            async def close(self):
+                await asyncio.sleep(.35)
+                await super().close()
+
+        real_stage = soak.lifecycle_stage
+        async def scaled_close_stage(operation, timeout, *, settlement=.25):
+            if getattr(getattr(operation,'cr_code',None),'co_name',None) == 'close':
+                return await real_stage(operation,timeout*.1,settlement=settlement*.1)
+            return await real_stage(operation,timeout,settlement=settlement)
+
+        with tempfile.TemporaryDirectory() as directory:
+            rig = SlowClose(Path(directory)/'evidence',disconnected=False)
+            with patch.object(soak,'lifecycle_stage',scaled_close_stage):
+                code = await self.execute(rig,limits={'managerStart':.08,'managerLaunch':.08,
+                    'export':.08,'managerStop':.08})
+            lifecycle = json.loads((rig.output/'lifecycle.json').read_text())
+            summary = json.loads((rig.output/'summary.json').read_text())
+            self.assertEqual(lifecycle['python']['browserClose']['status'],'closed')
+            self.assertEqual(code,0)
+            self.assertEqual(summary['status'],'PASS')
+            self.assertEqual(lifecycle['python']['managerStop']['status'],'ok')
+            self.assertEqual(lifecycle['python']['cleanupStatus'],'api-finished-exit-unknown')
+            self.assertEqual((rig.proofs,rig.clicks),(1,1))
+            self.assertEqual(rig.events.count('close'),1)
+            self.assertEqual(rig.events.count('manager-stop'),1)
+
+    async def test_close_returning_during_cancel_settlement_stays_incomplete(self):
+        class LateClose(self.Rig):
+            async def close(self):
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    await super().close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            rig = LateClose(Path(directory)/'evidence',disconnected=False)
+            code = await self.execute(rig,limits={'managerStart':.08,'managerLaunch':.08,
+                'export':.08,'browserClose':.04,'managerStop':.08,'cleanup':.2})
+            lifecycle = json.loads((rig.output/'lifecycle.json').read_text())
+            summary = json.loads((rig.output/'summary.json').read_text())
+            self.assertEqual(code,1)
+            self.assertTrue(rig.closed)
+            self.assertEqual(lifecycle['python']['browserClose']['status'],'timeout')
+            self.assertEqual(lifecycle['python']['managerStop']['status'],'ok')
+            self.assertEqual(lifecycle['python']['cleanupStatus'],'incomplete')
+            self.assertEqual(summary['status'],'INCOMPLETE')
+            self.assertEqual(summary['failure']['reason'],'cleanup-failed')
+            self.assertEqual((rig.proofs,rig.clicks),(1,1))
+            self.assertEqual(rig.events.count('close'),1)
+            self.assertEqual(rig.events.count('manager-stop'),1)
+
+    async def test_no_close_allowance_records_timeout_and_still_attempts_stop(self):
+        original = soak.cleanup_allowance
+        def no_close(key,caps,deadline,now):
+            return 0 if key == 'browserClose' else original(key,caps,deadline,now)
+
+        with tempfile.TemporaryDirectory() as directory:
+            rig = self.Rig(Path(directory)/'evidence',disconnected=False)
+            with patch.object(soak,'cleanup_allowance',no_close):
+                code = await self.execute(rig)
+            lifecycle = json.loads((rig.output/'lifecycle.json').read_text())
+            summary = json.loads((rig.output/'summary.json').read_text())
+            self.assertEqual(code,1)
+            self.assertEqual(lifecycle['python']['browserClose']['status'],'timeout')
+            self.assertEqual(lifecycle['python']['managerStop']['status'],'ok')
+            self.assertEqual(lifecycle['python']['cleanupStatus'],'incomplete')
+            self.assertEqual(summary['status'],'INCOMPLETE')
+            self.assertEqual(summary['failure']['reason'],'cleanup-failed')
+            self.assertNotIn('close',rig.events)
+            self.assertEqual(rig.events.count('manager-stop'),1)
 
     async def test_missing_observer_and_sample_exception_are_explicit_incomplete(self):
         for fail_sample in (False,True):
