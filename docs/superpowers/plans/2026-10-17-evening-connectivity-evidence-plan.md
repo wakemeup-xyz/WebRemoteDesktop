@@ -1,0 +1,40 @@
+# Evening connectivity evidence repair implementation plan
+
+> Use superpowers:subagent-driven-development in this session. Spec: ../specs/2026-10-17-evening-connectivity-evidence-design.md
+
+## Global Constraints
+
+- Work only in /Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop. Preserve existing README/runbook/requirements/review-anchor dirt and untracked node_modules symlink. One implementation/index writer at a time. Stage explicit task paths only.
+- No live service, browser, native input, tunnel/watcher operations by implementers/reviewers. No npm test/pretest/install or live dist build. No production credential/body/input/socket identity logging. Controller owns guarded live acceptance/deployment and docs.
+- Existing authentication, network modes, media quality and input/control behavior stay intact. Diagnostic success means a matching durable receipt, never emit/HTTP status alone. Origin silence never proves no user attempts.
+- Use Node /Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node for isolated unit tests. No tests while controller announces a live probe; wait for explicit offline-test release. Do not dispatch subagents. Task report must name commits, exact tests/counts and concerns. Self-review before commit; independent review follows.
+
+### Task 1: Reliable bounded diagnostic delivery receipts
+
+Files: web-client/js/diagnostic-core.js, diagnostic.js, webrtc.js (only static diagnostic success wording), bounded-request.js and focused existing/new tests; signal-server/websocket/signaling.js diagnostic handler and focused tests.
+
+1. Read sending/build/queue APIs and relevant existing tests, then implement Promise<boolean> true only for receipt accepted===true, exact nonempty diagnosticId, eventIdHashes array <=4 lowercase hex identifiers matching /^[a-f0-9]{16,64}$/ (existing producer emits32hex; not necessarily SHA256). Only acknowledge owned scope event hashes. Do not clear pending on invalid/unconfirmed receipt.
+2. Bound/prepare each operation once, freeze payload across transport stages. One in-flight Promise per ID, <=10 distinct in flight, always release. Total monotonic budget8000ms; Socket.IO timeout ACK stage<=2000ms with correct error-first callback. Use library timeout to release ACK table; Socket-stage-late ACK ignored. On unavailable/rejected/invalid/timeout/throw/disconnected Socket, one HTTP fallback within remaining budget. No second capture/drain/rebuild. SameID Socket/HTTP de-duplication already exists server-side.
+3. Extend fetchJsonWithin with optional maxResponseBytes, default unchanged. Use cap4096 for receipts, incremental bytes from reader, content-length early reject optional, cancel/abort on overrun/timeout; no reader => invalid response; total timeout includes body read/parse. No unbounded response.json/text for capped calls. HTTP non2xx/202 false/mismatch false, matching receipt true before deadline only.
+4. Replay via same sender (allow explicit target socket without breaking existing API) max2 per replay and existing attempt cooldown. Never overwrite pending with stale snapshot, preserve newly enqueued and remove only matching confirmed ID. Synchronous ACK and concurrent sameID correctly coalesce. Pending stays bounded10; capacity failure must not claim durability.
+5. UI success exact“服务端已确认保存诊断（按保留策略清理）”; failure exact“未获服务端保存确认，请稍后重试”. Static webrtc “诊断日志已发送” must not imply confirmation. Autosends remain silent. Negative Socket role/inactive/malformed diagnostics ACK existing accepted:false/diagnosticId:null/eventIdHashes:[] safely; do not otherwise change signaling.
+6. Focused tests cover sync/error-first ACK, invalid IDs/hashes/reject, fallback single/samebody, response202 rejection, absentreader/header+chunk cap/infinitebody deadline, lateACK not changing result, sameID concurrency/inflight cap, timeoutcleanup, replay/newenqueue interleaving, localStorage failure wording. Reuse service persistence tests for cross-transport dedup and disabled/writefailure receipt semantics as relevant. Existing mocked sockets may need timeout mocks without weakening assertions.
+7. Run only focused tests after controller release, inspect diff and commit explicit paths. Report exact counts and unresolved issues. No live deploy/build/probe.
+
+### Task 2: Fixed-cardinality entry-stage observation
+
+Files: new signal-server/lib/observability/entry.js and focused tests; server.js; websocket/signaling.js only namespace auth outcome hook, integration tests. Task1 receipt changes must remain.
+
+1. Implement spec's fixed six route classes and exact methods/paths, middleware before CORS/JSON/auth; exclude health/status/Terminal/options/other routes. Never retain or emit URL/query/body/headers/IP/token/socket identity/raw errors; only fixed counters.
+2. HTTP once-only finish/close/aborted lifecycle, started/completed/aborted/closedUnfinished/untracked/expiredUnfinished/stoppedInflight/inflight; 1xx–5xx/other plus401403429 subsets; duration bins<=10/50/100/500/1000/5000/15000/>15000ms, count/sum/max/unknown. At most256 trackers; overflow increments untracked and coverage false. Single60s flush sweeps >=60s trackers (60–120s normal expiry), does not cancel request; cross-window completions correctly attributed.
+3. Default namespace hook accepted/missing_auth/invalid_auth; injected safe callback failure cannot alter next/error/role semantics. Engine.IO error numeric codes0..5/other only; don't access other error data. Remove only owned listener on shutdown.
+4. Exactly one unref timer60s; start on server listening, stop once on close/error/runtime.close and finalflush; listener cleanup including trackers. Fixedentry_window schema<16KiB, integer saturation999999999+clipped, max duration1h/saturated sum, no raw serialization/writes per event. Reuse structuredLogger/recentEventStore, all observation data under meta in existing envelope; no new ring. Empty window explicit; elapsed/missedWindows; monotonic invalid=>unknown. Fixed origin vantage and coverage start/end, sink errors isolated and reported in next window without recursion. Snapshot bounded; no request references. No catchup storm.
+5. Tests with fake clocks/timers/eventemitters cover allowlist/malformedJSON/rate429/auth failure/static unchanged, finalize races/cross-window/expiry/overflow, idle/delayed/backwardclock, saturation/fixedkeys/size, injected observer/logger failures, exactnext/stopcleanup, hostile error getters and credential/query exclusion. Assert real createStructuredLogger output preserves all six categories/coverage/timing within size limit and agrees with event-store envelope. Use isolated ephemeral server fixtures only if existing tests need them; no production access. Assert bounded operations instead of flaky CPU thresholds.
+6. Run focused tests after controller release; self-review and commit only task paths. Report exact evidence. No live deploy/build/probe.
+
+### Task 3: Controller integration, deployment and continued diagnosis
+
+1. Review both increments independently then final cross-layer diff; resolve important findings. Update current diagnostic report with evening frozen prefixes, local/formal outcomes, limits and bugs fixed.
+2. Isolated frontend build; freeze reviewed change manifests using current primary baseline6e45276, retain previous assets and all unrelated edits. Apply only approved changes; never deploy W2 watcher four files. Verify main HEAD/index/untouched checksums.
+3. Fresh zeroViewer maintenance gate, restart only localSignal via webremote-service helper; preserve Host where possible and cloudflared/watch identities. Verify running build and receipt/entry coverage without secret output in files. Restore service if operation fails. Report runtime credentials only in conversation.
+4. Continue root cause from exact user failure time/status and origin comparison. Short passive probes are not native input/ordinary reconnect/threehour PASS. If no failure reproduced, report unknown with next evidence needs, not a fabricated cure. Keep currentservices running.
