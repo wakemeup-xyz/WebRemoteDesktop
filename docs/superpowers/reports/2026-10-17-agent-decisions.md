@@ -160,3 +160,5 @@ Ruling: allow media-null source/test work in parallel with a possible I2 harness
 Ruling: supplement existing remediation with one coherent observer-module/wiring task and root-owned deployment, reusing this plan ledger — exact heartbeat boundary is missing from confirmed first-disconnect evidence, so another identical run alone cannot diagnose it — cost if wrong is diagnostic overhead and rework, bounded by one close log and independent review; no tunnel/auth/timeout changes.
 
 若判断有误的成本及约束：最多增加有界观测开销及返工；独立复审通过后才加载，不把补齐日志称为修复网络。
+
+27. 增补单调时钟节流修复：源码已证明系统回拨会放大真实媒体等待，先修复该确定缺陷再做新的长测；风险是节流/统计回归，使用真实方法的模拟时钟测试和独立 review 约束。不调整系统时钟，不将其冒充全部历史停帧的唯一原因。

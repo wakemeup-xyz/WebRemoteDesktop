@@ -83,3 +83,61 @@ Matched VIEWER_STATS around11:55:37 show zero decoded/received/packets and null 
 A new source-code defect is not proved. Local Host disruption is now directly proved and is a necessary part of the diagnosis; treating the episode purely as TURN packet loss or a browser callback artifact would ignore that evidence. The strongest remaining discrimination is application/OS scheduling and memory pressure versus a blocking Host operation, plus any additional network delay. Stable identity only excludes observed path/PC replacement, not changing transport performance.
 
 The next useful authorized observation is bounded Host call-stack/scheduler evidence or existing stage timing aligned within the Host clock, real screenshot duration/completion-gap/error aggregates and fresh/reused output counters, while retaining resource age/status and browser per-callback metadata. The current data support this investigation, not an untested FPS/bitrate/encoder/TURN change. The running session was preserved.
+
+
+# Finalized run and second threshold event — supersedes earlier ACTIVE status
+
+The run is now stopped and finalized INCOMPLETE. Final summary: requested10800s, elapsed1922.498895s,1922samples (ticks0–1921),0missing,0late,0identity changes,97failedObservations, maximum no-progress5149.8ms. Root's stop record `/tmp/wrd-c5-rollout-private-ilovzfv1/longrun-owned-stop.json` records SIGINT to the owned soak PID19194 after verifying its script/output/start identity. Failure category is sampling/runtime/cancelled. This review performed no process action. Three-hour continuity was not met. Active control/visible effect/physical display remain NOT_RUN.
+
+The97failedObservations are not97distinct stalls. In the newly inspected212rows1710–1921, tick1825 first crosses the5000ms limit with an unfinished frame age5132.1ms. Tick1826 first contains the completed5149.8ms gap. That cumulative maximum remains above threshold through1921: one open-gap failure at1825 plus96subsequent repeated cumulative-maximum failures equals97. The collector's continued sampling is not evidence of a false PASS. Per the caller's implementation check, ContinuitySummary correctly records the gap failure while collect_samples only auto-aborts missing/session-disconnect categories. The terminal INCOMPLETE does not satisfy continuity acceptance regardless of its later recovered frame progress.
+
+## Second bounded evidence window
+
+Read sample ticks1710–1921 inclusive and the final existing summary/lifecycle/owned-stop artifacts. Host log was read from the same verified inode42866929/long-run saved offset8,207,482, a bounded~1.53MB tail, then filtered to12:10:35–12:14:24 CST inclusive:698lines,42event-loop summaries,46encoder samples,45capture windows,224VIEWER_STATS and0sender frame traces. No source/index/runtime/service/network/browser/native/dependency operations occurred.
+
+| Tick | Browser now ms | Decoder / callback totals | Received bytes | Frame age ms | Completed max gap ms | Buffer last / age ms |
+|---:|---:|---:|---:|---:|---:|---:|
+|1820|1834919.9|32879 /32484|4077731|126.9|4033.276|26.4 /494.5|
+|1821|1835916.5|32879 /32484|4077731|1123.5|4033.276|19.6 /494.4|
+|1822|1836918.4|32879 /32484|4077731|2125.4|4033.276|19.6 /1494.5|
+|1823|1837918.1|32879 /32484|4077731|3125.1|4033.276|19.6 /2495.9|
+|1824|1838980.9|32879 /32484|4077731|4187.9|4033.276|19.6 /3558.8|
+|1825|1839925.1|32879 /32484|4077731|5132.1|4033.276|19.6 /4501.5|
+|1826|1840917.7|32884 /32489|4086471|8.3|5149.8|0.5 /486.3|
+
+The browser's last pre-gap callback is1834793ms; first recovery is inferred at1839942.8ms from that plus the completed5149.8ms maximum. Browser-clock stall duration is valid without wall-clock alignment. Tick1826 has five recovered callbacks ending1840909.4ms. As in the first event, bytes/decode/callbacks are all flat during the stall. Buffer/decode last values age rather than representing ongoing delivery.
+
+All212rows retain stable Scope/Socket/PC/control/path: PCidentity1, generation1, leaseEpoch3, active/inputAllowed true, buildc30530f331a4def5, relay/relay UDP path-1. No identity transition is evidenced. All212statuses areobserved; maximum external lateness54.824ms. Diagnostic deltas contain only tx/flush/ping/pong, with no lifecycle transition events in this window.
+
+Browser throughput before/after this event varies: ticks1710→1819 yield13.055decoded/s and12.835callbacks/s;1820→1826 only5decoded/5callbacks in5.9978s;1826→1840 recover to17.360/s each;1840→1921 yield18.741decoded/s and18.543callbacks/s. This is a later recovery, not removal of the failed gap. Final sampled frame age is10.4ms.
+
+The now-finalized browser lifecycle reports visibility=visible, focus/online=true, hide/show/freeze/resume0, no disconnect event, maximum sampled main-thread lag88ms across1932probes, missedIntervals0. Coverage remains partial and old ring events are dropped. These are positive lifecycle/sampled-scheduling observations; they do not supply per-frame optical presentation or exclude sub-probe scheduling gaps. They supersede the earlier report's unavailable final client-lag/visibility information.
+
+## Wall-clock discontinuity: do not align stages by subtraction
+
+Final lifecycle supplies browserTimeOrigin1792208521258ms. A naive projection labels the second callback gap12:12:36.051–12:12:41.2008 CST. However Host log file order explicitly runs from encoder timestamp12:12:35.732 backwards to VIEWER_STATS12:12:31.801, and the subsequent matched buffer/RTT sequence continues on that earlier wall timeline. The matching Host zero-frame records are12:12:33.987/.34.791/.36.079/.36.937 and recovery12:12:37.855. The Host loop records also move from12:12:33.561 to12:12:35.324 while their resource/probe progression is consistent with a longer interval.
+
+This is an observed wall-timestamp chronology discontinuity around the event. It is consistent with a wall-clock adjustment and/or record scheduling effects, but this review did not read OS time-change evidence and does not assert its mechanism. The fixed browser timeOrigin must therefore not be used as an exact contemporaneous Host wall-clock mapping across this interval. Do not calculate a negative pipeline time, treat an encoder window as preceding/following a callback solely by these wall labels, or use local log wall differences as a reliable window duration here. Monotonic browser durations remain the basis for5149.8ms and browser throughput.
+
+CAPTURE's affected reported FPS/sleep/window durations consequently should be treated as reported values without interpreting them as a verified monotonic stage trace; this is a timing-observation question, not a source defect established by this review. No source formula was inspected in this new task.
+
+## Host second-event evidence differs from the first event
+
+Around the matched second stall, Host encoder/output metrics degrade again:
+
+- Encoder12:12:35.732:98calls, mean4.961ms,max17.251ms; next12:12:36.908:only6calls, mean113.151ms,max/p95658.18ms; next12:12:42.037:68calls,mean16.492ms,max485.482ms, one media-stalled recovery IDR. The ordering of these records is preserved even though their wall labels have a discontinuity. These timings cover calls, not executor waits or RTP-send awaits; six slow calls alone cannot account for the full5.15s gap.
+- CAPTURE12:12:37.036 reports87outputs/35reuse,FPS16.0,sleep82.5ms,convert4.2ms,recv_total95.1ms;12:12:42.047 reports68outputs/21reuse,FPS13.6,convert6.4ms,recv_total51.8ms. The excess reported sleep/recv averages are evidence to inspect alongside monotonic stage timings, not proof of a particular sleep/clock implementation bug.
+- Nearby latest Host event-loop lags are0.327ms at12:12:33.561,5.676ms at12:12:35.324 and1.933ms at12:12:41.320. Their rolling max578.748→135.296ms and missedSampleCount0 do not show another2.7s main-loop stall at this event. The earlier first-gap mechanism cannot simply be assigned to the second gap. Across the wider new Host window, latest lag max578.748ms and rolling missed counts up to2 reflect other/overlapping events, not a measured5s block at the second event.
+- CaptureSeq17490→17546→17598 across these loop records proves captures continue at the coarse probe boundaries. Because wall chronology changes and actual grab completion gaps are absent, no reliable per-second capture rate or allocation of the5s stall is inferred for this specific interval. It remains possible to have a capture gap inside a progressing coarse interval.
+
+Resource evidence here has both fresh and stale samples. At12:12:35.324 a successful resource sample has elapsed5078.33ms, age884.73ms, swap-in256,453,619B/s (~244.57MiB/s),swap-out59,927,739B/s (~57.15MiB/s),RSS200.06MiB versus330.08MiB in the preceding12:12:33.561 record. At12:12:41.320 an independently refreshed successful sample has elapsed4947.97ms,age1932.93ms,swap-in375,628,684B/s (~358.23MiB/s),swap-out353,624,572B/s (~337.24MiB/s),RSS221.16MiB. System load1 remains62.933/66.301. These are coarse resource intervals near this incident, not instantaneous samples of a specific frame. memoryPressure isunknown. An earlier12:11:39.137 timeout has available=false and all resource rate/RSS valuesnull,age10201.95ms; those unknowns must remain unknown. No specific unrelated application is blamed for system swap/load.
+
+The wider224VIEWER_STATS records report lost/dropped0 and total NACKincrement1; the matched five-second outage itself has zero received/decoded/packets and null buffer, then PLI/recovery. This again lacks a receiver lost/NACK burst explaining the event. Stable candidate path does not prove constant network quality. Encoder/resource degradation provides a local contributor candidate; absent sender timing and exact shared clock boundaries, additional network/receiver effects are unresolved.
+
+## What actual evidence should come next
+
+1. First preserve a monotonic boundary record for each relevant existing stage: real MSS grab start/completion/duration and exceptions; capture sequence completion gaps; fresh/reused output; executor submit/start/complete; encoder duration; RTP send start/finish/await duration. Use bounded aggregate windows and retain missingness. A wall-clock/monotonic anchor pair per window is necessary to recognize the chronology discontinuity; avoid changing media policy while measuring. Existing logs lack the real grab and sender-stage data, so another uninstrumented long run would repeat the same attribution limit.
+2. A safe profiler is an optional complementary discriminator when the next authorized observation can capture the degraded interval: use a short bounded sample of the owned Host PID only, with aggregate stacks/timing and no screen/input/environment capture. It can distinguish time in native grab/encode, runnable/scheduling delay or waits; a profile missing the event cannot prove absence. Avoid profiling every application or allocating large continuous traces under existing resource pressure. No profiler was run in this review.
+3. Choose a code fix only after a reproducible blocking boundary or erroneous timing/pacing decision is established. The first event proves a2.7s Host loop delay; the second proves a5.15s delivery gap plus slow encoder/resource variation without a matching multi-second loop probe. A general off-process redesign, capture-isolation repeat, FPS/bitrate/encoder change, or TURN change is not justified from these artifacts alone. Existing M3/M4 isolation and other-app ownership remain respected.
+
+The result is a failed continuity criterion in an INCOMPLETE canceled run, with recovery afterward and concrete diagnostic gaps. It is neither a successful three-hour run nor97separate stalls, and it is not evidence of a false-PASS implementation defect.

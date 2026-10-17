@@ -56,7 +56,7 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
 | 本轮构建部署 | 已部署至 `58ad766`（生产增量 `d1166ab`）；build `c30530f331a4def5`；W2 watcher 四文件未激活 |
-| 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；此前连续性 INCOMPLETE；服务端心跳观测已加载，新一轮 300s 已 PASS，独立 3h 测试进行中 |
+| 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；此前连续性 INCOMPLETE；服务端心跳观测已加载，新一轮 300s 已 PASS，独立 3h 测试实际约 1922.5s 后因 5149.8ms 画面间隔取消，INCOMPLETE / 媒体连续性不合格 |
 | 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
 | 输入到真实可见效果 | NOT RUN；需要真实 producer 事件与解码 marker，ACK 或下一帧不能替代 |
@@ -185,3 +185,10 @@ S1 加载后的 guarded TURN 300s 已 PASS（301样本、0missing/late/identityc
 300s 已通过会话内：解码18.210帧/s、rVFC17.913次/s，严格位于浏览器窗口内的新captureSeq速率9.7408次/s；60个Host输出窗口49.14%复用缓存。窗口范围不完全相同，不强行一一相除。接收buffer snapshot的last中位7.9ms、最大121.7ms，>=100ms仅startup tick4/6；稳定后最大70.4ms，实际framesDropped0。Host编码有448.357ms长尾、事件循环滚动max最高312.539ms及明显swap-in；这些是局部/重叠窗口统计，不是每帧全量P95，也不证明哪一资源因素造成截图频率约9.7/s。没有新确认的源码缺陷，真实MSS grab阶段仍缺证据。详见[最新媒体复核](2026-10-17-latest-media-performance-review.md)。
 
 11:44左右只读进程快照969进程；最高RSS为Chrome Renderer约2897MiB、VS Code Helper约1670MiB、若干Codex Renderer约1278–1548MiB，Host约400MiB。RSS不能当作物理内存独占量相加，也不能仅凭这个瞬时排序归责换页。没有退出其他应用或清理身份不明的进程；保存私有resource-snapshot-longrun-20261017a.json用于后续同窗口关联。
+
+
+## 32 分钟终态与单调时钟缺陷
+
+长测 1922 样本，0 缺失/迟采/身份变化；97 failedObservations 是首次超限加累计最大 gap 的重复观察，不是 97 次断线。信令全程 connected，74 轮 ping/pong；唯一关闭为主动停止自己的测试浏览器。服务仍在线，三小时未通过。完整 [媒体事件](2026-10-17-longrun-gap-diagnosis.md)与[心跳报告](2026-10-17-server-heartbeat-runtime-diagnosis.md)保留原证据。
+
+进一步 [源码时钟审查](2026-10-17-media-clock-review.md)确证 recv 与 JPEG 循环用墙钟节流；模拟回拨 4.24s 会把 30ms 等待变为 4.27s。已补 [spec](../specs/2026-10-17-media-monotonic-clock-design.md)和[plan](../plans/2026-10-17-media-monotonic-clock-plan.md)，待实现复审。该机制与第二次停帧吻合，仍不能分摊整段 5.15s 或解释第一次真实 2.7s Host loop stall；尚未据此声明线上修复。
