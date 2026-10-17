@@ -172,3 +172,11 @@ Ruling: supplement existing remediation with one coherent observer-module/wiring
 31. 在同次前端加载前修正 freezeControl/releaseControl 两个调用处的键盘复位协议值。真实 UI 已复现坏报文，但服务端释放屏障已有兜底，不扩大为已证实的永久失控根因。风险是撤销/暂停租约行为回归；保留原诊断、释放事件及三个跳过分支，用真实方法测试和独立复核控制。
 
 32. 在用户明确说明“不是我在使用，可进入维护验收”后，允许对刚核对的同一Viewer身份/epoch执行一次已审查源码同步及本地Signal维护重启。最初零Viewer检查已无修改地停止；维护脚本仅匹配该次精确授权快照，未绕过自动验收proof或接管。代价是一次授权连接中断；普通客户端随后自动恢复，后续自动验收仍等待零Viewer。
+
+## 33. JPEG worker 阶段观测
+
+决定：沿现有非阻塞 runtime snapshot 增加固定单调时钟阶段，区分 processor 与 loop delivery；不扩展协议/采样任务。依据：原末次 worker inFlight=1 混合两个阶段。若判断错误，代价是观测开销或语义误导；通过实际 worker 零时刻/暂停回送/锁争用和独立 review 约束。已实现00d1a81，未部署。
+
+## 34. JPEG transport 准入
+
+决定：每次捕获前，包括替换 producer 首帧，用当前 queue.join 的250ms持续拒绝等待；完整task/production/authority/client/eio/queue/writer身份检查，反馈亦在成功gate之后。依据：实际库离线六帧证明ACK槽退休不释放已提交图片；独立设计review确认正常单producer不变量。若判断错误，代价是媒体饥饿或生命周期死等；不得timeout放行/篡改accounting/重建transport，必须经过失败writer/取消/替换race及独立review。历史5.2s故障原因未因此确证。
