@@ -1120,3 +1120,27 @@ test('multiple captures for one attempt remain within the pending count and byte
   assert.ok(pending.every(payload => Buffer.byteLength(JSON.stringify(payload)) <= 128 * 1024));
   assert.ok(Buffer.byteLength(JSON.stringify(pending)) <= 10 * 128 * 1024);
 });
+
+test('connection diagnostic keeps nullable buffer separate from measured zero and M1 snapshot', () => {
+  const unknowns = [null, undefined, '', '0', true, false, {}, NaN, Infinity, -Infinity, -1];
+  for (const value of [...unknowns, 0, 0.1, 725.1]) {
+    const { context } = createDiagnosticContext();
+    context.WebRTC._lastPaintStats = { jitterBufferMs: value, decodedDelta: 19, receivedDelta: 20, derivedFps: 19 };
+    const scope = { connectionAttemptId: 'nullable', generation: 1, leaseEpoch: 1 };
+    const monitor = require('./latency-monitor').createLatencyMonitor({ now: () => 0 });
+    monitor.setScope(scope);
+    monitor.recordStage('inputAckRttMs', 42, { scope, atMs: 0, sampleKey: 'ack' });
+    context.LatencyMonitor = monitor;
+    context.WebRTC.latencyScope = () => scope;
+    const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+    const report = Diagnostic.buildConnectionDiagnostic({ trigger: 'manual' });
+    assert.equal(report.traceSummary.jitterBufferMs, typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null);
+    assert.equal(report.traceSummary.decodedDelta, 19);
+    assert.equal(report.traceSummary.receivedDelta, 20);
+    assert.equal(report.latency.windowMs, 5000);
+    assert.equal(report.latency.metrics.inputAckRttMs.last, 42);
+    assert.equal(report.latency.metrics.inputAckRttMs.count, 1);
+    assert.equal(report.latency.metrics.jitterBufferMs.last, null);
+    assert.equal(report.latency.metrics.jitterBufferMs.count, 0);
+  }
+});

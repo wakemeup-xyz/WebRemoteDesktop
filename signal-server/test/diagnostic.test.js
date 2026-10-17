@@ -981,3 +981,16 @@ test('runtime summary retains actual redacted gate runtime phase and unavailable
     }
   } finally {if(previousDir===undefined)delete process.env.WRD_DIAG_DIR;else process.env.WRD_DIAG_DIR=previousDir;fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('nullable buffer redactor omits unknown optional scalar and preserves measured zero', () => {
+  for (const value of [null, undefined, '', '0', true, false, {}, NaN, Infinity, -Infinity, -1, 0, 0.1, 725.1]) {
+    const payload = { ...runtimeFixture(), traceSummary: { jitterBufferMs: value, decodedDelta: 19 } };
+    const clean = redactDiagnosticPayload(payload);
+    const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data: payload, config: { enableDiagPersist: false } });
+    assert.deepEqual(result.report.traceSummary, clean.traceSummary);
+    const known = typeof value === 'number' && Number.isFinite(value) && value >= 0;
+    assert.equal(Object.hasOwn(clean.traceSummary, 'jitterBufferMs'), known);
+    if (known) assert.equal(clean.traceSummary.jitterBufferMs, value);
+    assert.equal(clean.traceSummary.decodedDelta, 19);
+  }
+});

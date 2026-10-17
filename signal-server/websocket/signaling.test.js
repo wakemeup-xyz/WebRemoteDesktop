@@ -3664,3 +3664,40 @@ test('registered relay frame, ACK and feedback handlers preserve exact source an
   assert.equal(viewer.sent.filter(e => e.event === 'relay-frame-feedback').length, count);
   assert.equal(viewer.sent.filter(e => e.event === 'relay-frame').length, 1);
 });
+
+test('viewer-stats normalizes only nullable latency after current viewer identity admission', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2; viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer, 'nullable-latency');
+  const identity = { schemaVersion: 2, connectionAttemptId: 'nullable-current', connectionAttemptSequence: 2,
+    generation: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', { ...identity, schemaVersion: 1 });
+  const unknowns = [null, undefined, '', '0', '725.1', true, false, {}, NaN, Infinity, -Infinity, -1];
+  const reports = () => host.sent.filter(entry => entry.event === 'viewer-stats');
+  for (const value of [...unknowns, 0, 0.1, 725.1]) {
+    const before = reports().length;
+    const payload = { ...identity, viewerId: 'forged', derivedFps: 19, decodedDelta: 19,
+      framesDecoded: 19, customLegacyAlias: 17, rttMs: value, jitterBufferMs: value };
+    if (value === undefined) { delete payload.rttMs; delete payload.jitterBufferMs; }
+    viewer.trigger('viewer-stats', payload);
+    assert.equal(reports().length, before + 1);
+    const forwarded = reports().at(-1).data;
+    const expected = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    assert.equal(forwarded.rttMs, expected); assert.equal(forwarded.jitterBufferMs, expected);
+    assert.equal(forwarded.viewerId, viewer.id);
+    for (const [key, val] of Object.entries(identity)) assert.equal(forwarded[key], val);
+    assert.equal(forwarded.customLegacyAlias, 17); assert.equal(forwarded.framesDecoded, 19);
+  }
+  const before = reports().length;
+  host.trigger('viewer-stats', { ...identity, rttMs: null });
+  viewer.trigger('viewer-stats', { ...identity, connectionAttemptId: 'old', connectionAttemptSequence: 1, generation: 1 });
+  assert.equal(reports().length, before);
+  viewer.trigger('disconnect');
+  viewer.trigger('viewer-stats', { ...identity, rttMs: null });
+  assert.equal(reports().length, before);
+});

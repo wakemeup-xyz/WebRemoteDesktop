@@ -4,6 +4,22 @@ from unittest.mock import MagicMock
 
 from host import WebRemoteHost
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def forbid_native_capture_and_input(monkeypatch):
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("native capture/input is prohibited in offline stats tests")
+
+    monkeypatch.setattr("host.MSS", forbidden)
+    monkeypatch.setattr("host.InputHandler", forbidden)
+    yield
+    assert not calls, "offline stats fixture attempted native capture/input"
+
 
 class ListHandler(logging.Handler):
     def __init__(self):
@@ -331,7 +347,8 @@ def test_viewer_stats_logs_stall_sample_every_five_zero_fps():
     assert "dropped=3" in stats[-1]
 
 
-def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_samples():
+@pytest.mark.parametrize("latency", [40, None, "INVALID_LATENCY", False, float("nan")])
+def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_samples(latency):
     import asyncio
 
     class FakeEncoder:
@@ -364,8 +381,8 @@ def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_sample
         "receivedDelta": 19,
         "decodedDelta": 0,
         "warmup": False,
-        "rttMs": 40,
-        "jitterBufferMs": 0,
+        "rttMs": latency,
+        "jitterBufferMs": latency,
         "packetsLost": 0,
         "bytesReceived": 1234,
         "codec": "H264",
@@ -393,6 +410,7 @@ def test_viewer_stats_reopens_decoder_only_after_sent_idr_and_two_stalled_sample
     asyncio.run(host.on_viewer_stats(healthy))
     asyncio.run(host.on_viewer_stats(freeze))
     assert encoder.calls == 1
+    assert host._stall_sample_count == 1
 
 
 def test_keyframe_rejects_stale_generation_and_resets_cooldown_for_new_generation():
@@ -574,3 +592,41 @@ def test_bind_session_presentation_publishes_direct_policy():
     policy = host._h264_policy_provider.current_policy()
     assert policy.codec_name == "h264_videotoolbox"
     assert policy.periodic_idr_frames == 40
+
+
+@pytest.mark.parametrize("bound", [False, True])
+@pytest.mark.parametrize("value", [None, "", "0", "UNTRUSTED_LATENCY", True, False, {},
+                                    float("nan"), float("inf"), -float("inf"), -1, 0, 0.1, 725.1])
+def test_viewer_stats_nullable_latency_logs_without_coercion(value, bound):
+    import asyncio
+    import math
+
+    host = _make_host() if bound else object.__new__(WebRemoteHost)
+    host._last_diag_network = {}
+    handler = ListHandler()
+    log = logging.getLogger("host")
+    previous = log.level
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    try:
+        payload = {"viewerId": "viewer-1", "fps": 19, "receivedDelta": 20, "decodedDelta": 19,
+                   "rttMs": value, "jitterBufferMs": value}
+        if bound:
+            payload.update(connectionAttemptId="attempt-quality", connectionAttemptSequence=1, generation=1)
+        asyncio.run(host.on_viewer_stats(payload))
+        if value is None:  # Absent fields obey the same unavailable contract.
+            del payload["rttMs"]
+            del payload["jitterBufferMs"]
+            asyncio.run(host.on_viewer_stats(payload))
+    finally:
+        log.removeHandler(handler)
+        log.setLevel(previous)
+    messages = [record.getMessage() for record in handler.records]
+    assert not any("Error handling viewer stats" in msg for msg in messages)
+    known = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+    for msg in messages:
+        if "VIEWER_STATS" in msg:
+            assert f"rtt={value}ms jitter_buffer={value}ms" in msg if known else "rtt=nullms jitter_buffer=nullms" in msg
+        if "WRD_VIEWER_SUMMARY" in msg:
+            assert f"rtt={value} " in msg if known else "rtt=null " in msg
+        assert "UNTRUSTED_LATENCY" not in msg

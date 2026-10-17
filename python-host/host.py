@@ -18,6 +18,7 @@ import time
 import re
 import subprocess
 import io
+import math
 import os
 import inspect
 import resource
@@ -3866,13 +3867,19 @@ class WebRemoteHost:
     async def on_viewer_stats(self, data):
         """Handle periodic WebRTC stats from viewer."""
         try:
+            def nullable_latency(value):
+                return value if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                                 and value >= 0 and (isinstance(value, int) or math.isfinite(value))) else None
+
+            rtt_ms = nullable_latency(data.get("rttMs"))
+            jitter_buffer_ms = nullable_latency(data.get("jitterBufferMs"))
             logger.info(
                 "VIEWER_STATS viewer=%s codec=%s fps=%.1f rtt=%sms jitter_buffer=%sms decoded=%s received=%s lost=%s dropped=%s packets=%s nack=%s pli=%s fir=%s freeze=%s candidate=%s bytes=%.2fMB",
                 data.get("viewerId", "-"),
                 data.get("codec") or "unknown",
                 float(data.get("fps") or 0),
-                data.get("rttMs", 0),
-                data.get("jitterBufferMs", 0),
+                rtt_ms if rtt_ms is not None else "null",
+                jitter_buffer_ms if jitter_buffer_ms is not None else "null",
                 data.get("framesDecoded", 0),
                 data.get("framesReceived", 0),
                 data.get("packetsLost", 0),
@@ -3890,7 +3897,7 @@ class WebRemoteHost:
                 data.get("viewerId", "-"),
                 data.get("selectedCandidateType") or "unknown",
                 float(data.get("fps") or 0),
-                data.get("rttMs", 0),
+                rtt_ms if rtt_ms is not None else "null",
                 (self._last_diag_network or {}).get("networkMode", "-"),
                 (self._last_diag_network or {}).get("turnConfigured", False),
                 (self._last_diag_network or {}).get("turnStatus", "unknown"),

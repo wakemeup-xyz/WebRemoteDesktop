@@ -254,3 +254,49 @@ test('unlock mode: repeated zero fps still enters survival critical', () => {
   assert.equal(result.shouldRestartIce, true);
   assert.ok(result.profileConfig);
 });
+
+const nullableLatencyUnknowns = [null, undefined, '', '0', '725.1', true, false, {}, NaN, Infinity, -Infinity, -1];
+const flowingSample = { derivedFps: 20, decodedDelta: 20, receivedDelta: 20,
+  packetsLostDelta: 0, selectedCandidateType: 'host', rttMs: 0, jitterBufferMs: 0 };
+
+for (const path of ['direct', 'relay']) for (const qualityLock of [true, false]) {
+  test(`${path} lock=${qualityLock}: unknown latency breaks good streak and cannot act on stale evidence`, () => {
+    for (const field of ['rttMs', 'jitterBufferMs']) for (const value of nullableLatencyUnknowns) {
+      const c = LinkQualityController.create({ path, qualityLock, initialProfile: 'medium', now: () => 20000 });
+      for (let i = 0; i < 9; i++) assert.equal(c.observe(flowingSample).action, 'hold');
+      assert.equal(c.goodCount, 9);
+      c.degradedCount = 2; c.criticalCount = 2;
+      for (let i = 0; i < 12; i++) {
+        const result = c.observe({ ...flowingSample, [field]: value });
+        assert.equal(result.action, 'hold', `${field}=${String(value)}`);
+        assert.equal(result.shouldRestartIce, false);
+        assert.equal(result.shouldRequestKeyframe, false);
+        assert.equal(c.currentProfile, 'medium');
+        assert.equal(c.goodCount, 0);
+        assert.equal(c.degradedCount, 0);
+        assert.equal(c.criticalCount, 0);
+      }
+      for (let i = 0; i < 9; i++) assert.equal(c.observe(flowingSample).action, 'hold');
+      assert.equal(c.observe(flowingSample).action, 'upgrade', 'numeric zero remains measured low latency');
+    }
+  });
+}
+
+test('unknown peer latency does not hide known congestion or decoder stalls', () => {
+  for (const patch of [{ rttMs: 400, jitterBufferMs: null }, { rttMs: null, jitterBufferMs: 200 },
+    { rttMs: null, jitterBufferMs: null, packetsLostDelta: 20 }]) {
+    const c = LinkQualityController.create({ qualityLock: false });
+    c.beginConnection(0);
+    c.observe({ ...flowingSample, ...patch });
+    assert.ok(['critical', 'degrade'].includes(c.observe({ ...flowingSample, ...patch }).action));
+  }
+  for (const path of ['direct', 'relay']) for (const qualityLock of [true, false]) {
+    const known = LinkQualityController.create({ path, qualityLock });
+    const unknown = LinkQualityController.create({ path, qualityLock });
+    known.beginConnection(0); unknown.beginConnection(0);
+    for (let i = 0; i < 7; i++) {
+      const stall = { ...flowingSample, derivedFps: 0, decodedDelta: 0 };
+      assert.deepEqual(unknown.observe({ ...stall, rttMs: null, jitterBufferMs: null }), known.observe(stall));
+    }
+  }
+});

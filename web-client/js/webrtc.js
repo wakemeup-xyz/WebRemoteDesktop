@@ -2005,7 +2005,7 @@ const WebRTC = {
       receivedDelta,
       derivedFps,
       warmup: canonical.warmup,
-      jitterBufferMs: Number(stats.jitterBufferMs || 0),
+      jitterBufferMs: canonical.jitterBufferMs,
       bytesDelta: canonical.bytesDelta,
       framesDroppedDelta: canonical.framesDroppedDelta,
       packetsReceivedDelta: canonical.packetsReceivedDelta,
@@ -5973,10 +5973,16 @@ if (this.tunnelLastObjectUrl) {
     this.stopVideoFrameTracking();
   },
 
+  nullableMediaLatency(value) {
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  },
+
   canonicalMediaStats(stats = {}) {
       const number = (canonical, legacy) => Number(stats[canonical] ?? stats[legacy] ?? 0) || 0;
       return {
         ...stats,
+        rttMs: this.nullableMediaLatency(stats.rttMs),
+        jitterBufferMs: this.nullableMediaLatency(stats.jitterBufferMs),
         derivedFps: number('derivedFps', 'fps'),
         receivedDelta: number('receivedDelta', 'framesReceived'),
         decodedDelta: number('decodedDelta', 'framesDecoded'),
@@ -5995,8 +6001,8 @@ if (this.tunnelLastObjectUrl) {
   processStatsSnapshot(stats = {}) {
       const canonical = this.canonicalMediaStats(stats);
       const fps = canonical.derivedFps;
-      const latencyMs = Number(stats.rttMs || 0);
-      const jitterBufferDelay = Number(stats.jitterBufferMs || 0);
+      const latencyMs = canonical.rttMs;
+      const jitterBufferDelay = canonical.jitterBufferMs;
       const framesReceived = canonical.receivedDelta;
       const framesDecoded = canonical.decodedDelta;
       const packetsLost = canonical.packetsLostDelta;
@@ -6017,25 +6023,30 @@ if (this.tunnelLastObjectUrl) {
         // Each positive delta is progress, even when smaller than the prior interval.
         this._lastInboundFramesDecodedAt = Date.now();
       }
-      this.selectedCandidatePair = stats.selectedCandidatePair || {
+      this.selectedCandidatePair = stats.selectedCandidatePair ? {
+        ...stats.selectedCandidatePair,
+        rttMs: this.nullableMediaLatency(stats.selectedCandidatePair.rttMs),
+      } : {
         localType: '', remoteType: '', protocol: '', localAddress: '', remoteAddress: '',
-        localAddressFamily: '', remoteAddressFamily: '', rttMs: 0,
+        localAddressFamily: '', remoteAddressFamily: '', rttMs: null,
       };
 
       const fpsEl = document.getElementById('fpsDisplay');
       if (fpsEl) fpsEl.textContent = `${Math.round(fps)} FPS`;
       const latencyEl = document.getElementById('latencyDisplay');
       if (latencyEl) {
-        if (latencyMs > 0 && jitterBufferDelay > 0) {
-          latencyEl.textContent = `RTT ${Math.round(latencyMs)} · 缓冲 ${Math.round(jitterBufferDelay)} ms`;
-          latencyEl.title = `网络 RTT ${Math.round(latencyMs)} ms；播放缓冲 ${Math.round(jitterBufferDelay)} ms`;
-        } else if (latencyMs > 0) {
-          latencyEl.textContent = `RTT ${Math.round(latencyMs)} ms`;
-          latencyEl.title = `网络 RTT ${Math.round(latencyMs)} ms`;
-        } else {
-          latencyEl.textContent = '- ms';
-          latencyEl.title = '';
+        const labels = [];
+        const descriptions = [];
+        if (latencyMs !== null) {
+          labels.push(`RTT ${Math.round(latencyMs)} ms`);
+          descriptions.push(`网络 RTT ${Math.round(latencyMs)} ms`);
         }
+        if (jitterBufferDelay !== null) {
+          labels.push(`缓冲 ${Math.round(jitterBufferDelay)} ms`);
+          descriptions.push(`播放缓冲 ${Math.round(jitterBufferDelay)} ms`);
+        }
+        latencyEl.textContent = labels.join(' · ') || '未测量';
+        latencyEl.title = descriptions.join('；') || '未测量';
       }
       const candidateEl = document.getElementById('candidateDisplay');
       const portSearchStatus = this.portSearchController?.snapshot?.()?.status || null;
@@ -6044,7 +6055,7 @@ if (this.tunnelLastObjectUrl) {
         || portSearchStatus === 'exhausted';
       if (candidateEl && !portSearchOwnsDisplay) {
         const linkLabel = selectedCandidateType === 'relay' ? 'TURN中继' : selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx' ? 'STUN直连' : selectedCandidateType === 'host' ? '本地直连' : selectedCandidateType || '-';
-        candidateEl.textContent = `当前链路：${linkLabel}${latencyMs > 0 ? ` · ${latencyMs} ms` : ''}`;
+        candidateEl.textContent = `当前链路：${linkLabel}${latencyMs !== null ? ` · ${latencyMs} ms` : ''}`;
       }
       this.lastCandidateType = selectedCandidateType || '';
       if (this.networkMode === 'relay' || selectedCandidateType === 'relay') {
@@ -6084,7 +6095,7 @@ if (this.tunnelLastObjectUrl) {
       } else if (selectedCandidateType === 'relay') {
         if (!this.shouldPreservePaintIssueAdvisor()) {
           this.clearFailureRecommendation();
-          this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs || '-'} ms，适合受限外网但延迟会高于本地直连。`);
+          this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs !== null ? latencyMs : '未测量'} ms，适合受限外网但延迟会高于本地直连。`);
         }
 
         // TURN channel dead detection: ICE stays "completed" via STUN consent probes
@@ -6106,12 +6117,12 @@ if (this.tunnelLastObjectUrl) {
       } else if (selectedCandidateType === 'host') {
         if (!this.shouldPreservePaintIssueAdvisor()) {
           this.clearFailureRecommendation();
-          this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs || '-'} ms，这是最低延迟路径。`);
+          this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs !== null ? latencyMs : '未测量'} ms，这是最低延迟路径。`);
         }
       } else if (selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx') {
         if (!this.shouldPreservePaintIssueAdvisor()) {
           this.clearFailureRecommendation();
-          this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs || '-'} ms；若画面不稳定可切换外网中继。`);
+          this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs !== null ? latencyMs : '未测量'} ms；若画面不稳定可切换外网中继。`);
         }
       } else if (this.noMediaTicks >= 3) {
         const hasTurn = this.hasTurnConfigured();
@@ -6133,7 +6144,7 @@ if (this.tunnelLastObjectUrl) {
         );
       }
 
-      console.log(`[STATS] DerivedFPS=${fps.toFixed(1)}, RTT=${latencyMs}ms, Jitter=${jitterBufferDelay}ms, ` +
+      console.log(`[STATS] DerivedFPS=${fps.toFixed(1)}, RTT=${latencyMs !== null ? `${latencyMs}ms` : 'unavailable'}, Jitter=${jitterBufferDelay !== null ? `${jitterBufferDelay}ms` : 'unavailable'}, ` +
                   `Codec=${codec || 'unknown'}, Candidate=${selectedCandidateType || 'unknown'}, ` +
                   `RecvDelta=${framesReceived}, DecodedDelta=${framesDecoded}, LostDelta=${packetsLost}, ` +
                   `Dropped=${framesDropped}, Packets=${packetsReceived}, NACK=${nackCount}, ` +
@@ -6144,7 +6155,7 @@ if (this.tunnelLastObjectUrl) {
       }
 
       if (typeof LatencyMonitor !== 'undefined' && typeof LatencyMonitor.onMediaStats === 'function') {
-        LatencyMonitor.onMediaStats(stats);
+        LatencyMonitor.onMediaStats({ ...stats, rttMs: latencyMs, jitterBufferMs: jitterBufferDelay });
       }
 
       if (!canonical.warmup && !this.isMediaHealthSuppressed()) {
@@ -6152,7 +6163,7 @@ if (this.tunnelLastObjectUrl) {
           ...canonical,
           interval: true,
           rttMs: latencyMs,
-          jitterBufferMs: Number(jitterBufferDelay) || 0,
+          jitterBufferMs: jitterBufferDelay,
           codec,
           selectedCandidateType,
         });
@@ -6163,7 +6174,7 @@ if (this.tunnelLastObjectUrl) {
           derivedFps: fps,
           browserReportedFps: Number(stats.browserReportedFps || 0),
           rttMs: latencyMs,
-          jitterBufferMs: Number(jitterBufferDelay) || 0,
+          jitterBufferMs: jitterBufferDelay,
           receivedDelta: framesReceived,
           decodedDelta: framesDecoded,
           packetsLostDelta: packetsLost,

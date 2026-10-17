@@ -412,7 +412,9 @@
         videoHeight: Number(lastStats.videoHeight || videoEl?.videoHeight || 0),
         readyState: Number(videoEl?.readyState || 0),
         ...mediaStats,
-        jitterBufferMs: Number(lastStats.jitterBufferMs || 0),
+        jitterBufferMs: typeof lastStats.jitterBufferMs === 'number'
+          && Number.isFinite(lastStats.jitterBufferMs) && lastStats.jitterBufferMs >= 0
+          ? lastStats.jitterBufferMs : null,
         // Compatibility aliases for the versioned diagnostic payload only.
         framesReceived: mediaStats.receivedDelta,
         framesDecoded: mediaStats.decodedDelta,

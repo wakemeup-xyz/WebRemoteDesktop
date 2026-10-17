@@ -7571,3 +7571,63 @@ test('JPEG origin cleanup still clears the just-ended active relay RTT display',
   assert.equal(WebRTC._relayExpectedScope, null);
   assert.equal(WebRTC._relayRttView, null);
 });
+
+// Exercise the real consumer chain: process -> handleReceiverStats -> controller.
+test('nullable media latency survives DOM, paint cache, controller and viewer-stats without losing zero', () => {
+  const { LinkQualityController } = require('./link-quality-controller');
+  const unknowns = [null, undefined, '', '0', '725.1', true, false, {}, NaN, Infinity, -Infinity, -1];
+  const pairs = [...unknowns.flatMap(value => [[value, value], [value, 0], [40, value]]), [0, 0], [0.1, 725.1]];
+  for (const [rttMs, jitterBufferMs] of pairs) {
+    const reports = [], observed = [];
+    const monitor = require('./latency-monitor').createLatencyMonitor({ now: () => 0 });
+    const { WebRTC, context } = loadWebRTC({ LinkQualityController, LatencyMonitor: monitor, console: { log() {}, warn() {}, error() {} } });
+    WebRTC.networkMode = 'stun'; WebRTC.adaptiveMediaEnabled = true;
+    WebRTC.currentConnectionAttemptId = 'nullable-attempt'; WebRTC.connectionAttemptSequence = 1;
+    WebRTC.socket = { connected: true, emit(event, payload) { if (event === 'viewer-stats') reports.push(payload); } };
+    const controller = WebRTC.ensureLinkQualityController();
+    const observe = controller.observe.bind(controller);
+    controller.observe = stats => { observed.push(stats); return observe(stats); };
+    WebRTC.uiPhase = 'connected'; WebRTC.hasPaintedFrame = true;
+    const valid = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    WebRTC.processStatsSnapshot({ derivedFps: 20, receivedDelta: 20, decodedDelta: 20,
+      packetsLostDelta: 0, bytesDelta: 4000, totals: { framesDecoded: 20 },
+      selectedCandidateType: 'host', rttMs, jitterBufferMs, videoWidth: 1280, videoHeight: 720 });
+    assert.equal(observed.length, 1, 'real handleReceiverStats must invoke controller');
+    for (const stats of [observed[0], reports[0]]) {
+      assert.equal(stats.rttMs, valid(rttMs)); assert.equal(stats.jitterBufferMs, valid(jitterBufferMs));
+    }
+    assert.equal(WebRTC._lastPaintStats.jitterBufferMs, valid(jitterBufferMs));
+    assert.equal(monitor.snapshot().metrics.candidateRttMs.last, valid(rttMs));
+    assert.equal(monitor.snapshot().metrics.jitterBufferMs.last, valid(jitterBufferMs));
+    assert.equal(WebRTC.selectedCandidatePair.rttMs, null);
+    assert.equal(WebRTC.uiPhase, 'connected');
+    assert.equal(controller.goodCount, valid(rttMs) !== null && valid(jitterBufferMs) !== null && rttMs < controller.highRttMs && jitterBufferMs < 150 ? 1 : 0);
+    const latency = context.document.getElementById('latencyDisplay');
+    const expected = [];
+    if (valid(rttMs) !== null) expected.push(`RTT ${Math.round(rttMs)} ms`);
+    if (valid(jitterBufferMs) !== null) expected.push(`缓冲 ${Math.round(jitterBufferMs)} ms`);
+    assert.equal(latency.textContent, expected.join(' · ') || '未测量');
+    if (valid(rttMs) !== null) {
+      assert.match(latency.title, new RegExp(`RTT ${Math.round(rttMs)} ms`));
+      assert.match(context.document.getElementById('candidateDisplay').textContent, new RegExp(`· ${rttMs} ms`));
+    } else assert.doesNotMatch(context.document.getElementById('candidateDisplay').textContent, /· .* ms/);
+    if (valid(jitterBufferMs) !== null) assert.match(latency.title, new RegExp(`缓冲 ${Math.round(jitterBufferMs)} ms`));
+    if (!expected.length) assert.equal(latency.title, '未测量');
+    WebRTC.processStatsSnapshot({ derivedFps: 20, decodedDelta: 20, receivedDelta: 20,
+      selectedCandidateType: 'host', selectedCandidatePair: { localType: 'host', remoteType: 'srflx', rttMs } });
+    assert.equal(WebRTC.selectedCandidatePair.rttMs, valid(rttMs));
+    assert.equal(WebRTC.selectedCandidatePair.remoteType, 'srflx');
+  }
+});
+
+for (const selectedCandidateType of ['host', 'prflx', 'relay']) test(`${selectedCandidateType} guidance distinguishes RTT zero from unavailable`, () => {
+  const { WebRTC, context } = loadWebRTC({ console: { log() {}, warn() {}, error() {} } });
+  WebRTC.networkMode = selectedCandidateType === 'relay' ? 'relay' : 'stun';
+  WebRTC.uiPhase = 'connected'; WebRTC.hasPaintedFrame = true;
+  for (const rttMs of [0, null]) {
+    WebRTC.processStatsSnapshot({ derivedFps: 20, decodedDelta: 20, receivedDelta: 20,
+      bytesDelta: 4000, selectedCandidateType, rttMs, jitterBufferMs: 0, videoWidth: 1280 });
+    assert.match(context.document.getElementById('networkAdvisorText').textContent,
+      rttMs === null ? /RTT 未测量/ : /RTT 0 ms/);
+  }
+});

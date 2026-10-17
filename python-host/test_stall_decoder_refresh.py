@@ -4,6 +4,22 @@ import host as host_module
 from h264_encoder_policy import H264SessionPolicyProvider, MediaSessionIntent
 from host import WebRemoteHost
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def forbid_native_capture_and_input(monkeypatch):
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("native capture/input is prohibited in offline stats tests")
+
+    monkeypatch.setattr("host.MSS", forbidden)
+    monkeypatch.setattr("host.InputHandler", forbidden)
+    yield
+    assert not calls, "offline stats fixture attempted native capture/input"
+
 
 class FakeEncoder:
     def __init__(self):

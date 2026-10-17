@@ -1521,9 +1521,12 @@ function setupSignaling(io, options = {}) {
       }
       const recoveryKey = resolveViewerRecoveryKey(socket.id, data);
       if (!recoveryKey) return;
+      const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
       if (connections.host) {
         connections.host.emit('viewer-stats', {
           ...data,
+          rttMs: duration(data.rttMs),
+          jitterBufferMs: duration(data.jitterBufferMs),
           ...recoveryKey,
           viewerId: socket.id,
         });
