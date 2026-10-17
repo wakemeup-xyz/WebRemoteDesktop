@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import unittest
+from scripts import passive_session_soak as soak
 from scripts.passive_session_soak import (ContinuitySummary, EvidenceWriter, collect_samples,
     private_row, record_missed_ticks)
 
@@ -157,6 +158,92 @@ class ScheduleBudgetTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stream.getvalue(), '')
         self.assertEqual(writer.total_bytes, 0)
         self.assertEqual(summary.missing, 0)
+
+
+class StartUiTest(unittest.IsolatedAsyncioTestCase):
+    class Page:
+        def __init__(self, *, ready_after=0, state=None, mark_delta=1, click_error=False):
+            self.now = 0
+            self.ready_after = ready_after
+            self.state = state or {}
+            self.mark_delta, self.click_error = mark_delta, click_error
+            self.clicks = 0
+
+        async def evaluate(self, expression):
+            return {'shellAvailable': True, 'clientAvailable': True, 'marksAvailable': True,
+                'coreInstalled': True, 'authVerified': self.now >= self.ready_after,
+                'queuedStart': False, 'socketPresent': False, 'pcPresent': False,
+                'attemptPresent': False, 'htmlShellMarks': 1, 'coreInteractiveMarks': 1,
+                'startClickMarks': self.clicks * self.mark_delta, **self.state}
+
+        def locator(self, selector):
+            if selector != '#startBtn': raise AssertionError(selector)
+            return self
+
+        async def is_visible(self):
+            return self.now >= self.ready_after and not self.state.get('hidden', False)
+
+        async def is_enabled(self):
+            return self.now >= self.ready_after and not self.state.get('disabled', False)
+
+        async def click(self, *, timeout):
+            if timeout <= 0 or not await self.is_visible() or not await self.is_enabled():
+                raise AssertionError('click before ready or outside deadline')
+            self.clicks += 1
+            if self.click_error: raise RuntimeError('private credential canary')
+
+        async def sleep(self, delay):
+            self.now += delay
+
+    async def start(self, page):
+        helper = getattr(soak, 'start_via_ui', None)
+        self.assertIsNotNone(helper, 'Start must be a required asynchronous proof step')
+        return await helper(page, timeout_s=0.5, monotonic=lambda: page.now, sleep=page.sleep)
+
+    async def test_delayed_auth_and_visible_enabled_button_get_exactly_one_ui_click(self):
+        page = self.Page(ready_after=0.3)
+        proof = await self.start(page)
+        self.assertGreaterEqual(page.now, 0.3)
+        self.assertEqual(page.clicks, 1)
+        self.assertEqual(proof, {'status': 'verified', 'freshPage': True,
+            'coreInstalled': True, 'authVerified': True,
+            'startClickMarksBefore': 0, 'startClickMarksAfter': 1})
+
+    async def test_missing_shell_client_or_marks_and_unavailable_button_cannot_skip_start(self):
+        for state in ({'shellAvailable': False}, {'clientAvailable': False},
+                      {'marksAvailable': False}, {'htmlShellMarks': 0},
+                      {'coreInteractiveMarks': 0}, {'hidden': True}, {'disabled': True},
+                      {'coreInstalled': False}, {'authVerified': False}):
+            with self.subTest(state=state):
+                page = self.Page(state=state)
+                with self.assertRaisesRegex(RuntimeError, '^start-ui-(unavailable|deadline)$'):
+                    await self.start(page)
+                self.assertEqual(page.clicks, 0)
+                self.assertLessEqual(page.now, 0.5)
+
+    async def test_prior_socket_pc_attempt_queued_or_click_fails_before_click(self):
+        for state in ({'socketPresent': True}, {'pcPresent': True}, {'attemptPresent': True},
+                      {'queuedStart': True}, {'startClickMarks': 1}):
+            with self.subTest(state=state):
+                page = self.Page(state=state)
+                with self.assertRaisesRegex(RuntimeError, '^start-ui-not-fresh$'):
+                    await self.start(page)
+                self.assertEqual(page.clicks, 0)
+
+    async def test_missing_or_duplicate_click_mark_is_never_verified_or_retried(self):
+        for delta in (0, 2):
+            with self.subTest(delta=delta):
+                page = self.Page(mark_delta=delta)
+                with self.assertRaisesRegex(RuntimeError, '^start-ui-click-unproven$'):
+                    await self.start(page)
+                self.assertEqual(page.clicks, 1)
+                self.assertLessEqual(page.now, 0.5)
+
+    async def test_click_exception_has_fixed_private_safe_reason_and_no_retry(self):
+        page = self.Page(click_error=True)
+        with self.assertRaisesRegex(RuntimeError, '^start-ui-unavailable$'):
+            await self.start(page)
+        self.assertEqual(page.clicks, 1)
 
 
 if __name__ == '__main__': unittest.main()

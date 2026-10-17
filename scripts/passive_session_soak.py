@@ -27,6 +27,67 @@ MAX_ROW_BYTES = 32768
 MAX_RUN_BYTES = 67108864
 
 
+# Only fixed booleans and bounded relevant mark counts cross this boundary.
+# Never return shell mark details, session/auth objects or connection identities.
+START_UI_SNAPSHOT = '''() => {
+  const shell = window.__WRD_SHELL__;
+  const state = typeof shell?.snapshot === 'function' ? shell.snapshot() : null;
+  const client = typeof WebRTC === 'undefined' ? null : WebRTC;
+  const marks = Array.isArray(state?.marks) && state.marks.length <= 1024 ? state.marks : null;
+  const count = name => marks ? marks.filter(mark => mark?.name === name).length : null;
+  return {shellAvailable: !!state, clientAvailable: !!client, marksAvailable: !!marks,
+    coreInstalled: state?.coreInstalled === true, authVerified: state?.authVerified === true,
+    queuedStart: state?.queuedStart === true, socketPresent: !!client?.socket,
+    pcPresent: !!client?.pc, attemptPresent: !!client?.currentConnectionAttemptId,
+    htmlShellMarks: count('html-shell'), coreInteractiveMarks: count('core-interactive'),
+    startClickMarks: count('start-click')};
+}'''
+
+
+async def start_via_ui(page, *, timeout_s=30, monotonic=time.monotonic, sleep=asyncio.sleep):
+    """Require a fresh, authenticated core and prove exactly one normal UI Start."""
+    deadline = monotonic() + timeout_s
+    clicked = False
+    reason = 'start-ui-unavailable'
+
+    async def bounded(operation):
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise RuntimeError(reason)
+        try:
+            return await asyncio.wait_for(operation(remaining), timeout=remaining)
+        except Exception:
+            raise RuntimeError(reason if monotonic() >= deadline else 'start-ui-unavailable') from None
+
+    button = page.locator('#startBtn')
+    while monotonic() < deadline:
+        state = await bounded(lambda _: page.evaluate(START_UI_SNAPSHOT))
+        available = (state['shellAvailable'] and state['clientAvailable'] and state['marksAvailable']
+            and state['htmlShellMarks'] == 1)
+        if clicked:
+            if not available or state['startClickMarks'] not in (0, 1):
+                raise RuntimeError('start-ui-click-unproven')
+            if state['startClickMarks'] == 1:
+                return {'status': 'verified', 'freshPage': True, 'coreInstalled': True,
+                    'authVerified': True, 'startClickMarksBefore': 0, 'startClickMarksAfter': 1}
+        else:
+            if (state['socketPresent'] or state['pcPresent'] or state['attemptPresent']
+                or state['queuedStart'] or state['startClickMarks'] not in (None, 0)):
+                raise RuntimeError('start-ui-not-fresh')
+            core_ready = available and state['coreInstalled'] and state['coreInteractiveMarks'] == 1
+            reason = 'start-ui-deadline' if core_ready else 'start-ui-unavailable'
+            if (core_ready and state['authVerified']
+                and await bounded(lambda _: button.is_visible())
+                and await bounded(lambda _: button.is_enabled())):
+                # Exactly one real Playwright click, with normal actionability checks.
+                await bounded(lambda remaining: button.click(timeout=max(1, remaining * 1000)))
+                clicked = True
+                reason = 'start-ui-click-unproven'
+                continue
+        await sleep(min(0.1, max(0, deadline - monotonic())))
+    raise RuntimeError(reason)
+
+
 def nonnegative(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
 
@@ -200,6 +261,7 @@ async def run(args):
     interrupted = True
     stage = 'browser-start'
     failure = None
+    start_proof = {'status': 'NOT_VERIFIED'}
     with os.fdopen(fd, 'w') as stream:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -248,11 +310,9 @@ async def run(args):
                 await page.locator('#password').fill(password)
                 await page.locator('#loginForm').dispatch_event('submit')
                 await page.wait_for_url('**/viewer.html', timeout=30000)
-                await page.wait_for_function("typeof WebRTC !== 'undefined'", timeout=30000)
+                stage = 'start-ui'
+                start_proof = await start_via_ui(page)
                 await page.evaluate(Path(__file__).with_name('passive_session_sampler.js').read_text())
-                start_button = page.locator('#startBtn')
-                if await start_button.is_visible():
-                    await start_button.click()
                 stage = 'media-start'
                 for _ in range(45):
                     sample = await asyncio.wait_for(page.evaluate('() => window.__wrdPassiveSampler.sample()'), timeout=2)
@@ -274,13 +334,15 @@ async def run(args):
                 # Only our own fixed reason vocabulary may reach evidence.
                 if str(exc) in {'entry-unavailable','viewer-present-or-unknown','authentication-unavailable',
                     'admission-refused','media-start-deadline','sample-continuity-lost',
-                    'session-changed-or-disconnected','evidence-budget-exceeded','sampling-deadline-overrun'}:
+                    'session-changed-or-disconnected','evidence-budget-exceeded','sampling-deadline-overrun',
+                    'start-ui-unavailable','start-ui-deadline','start-ui-not-fresh','start-ui-click-unproven'}:
                     failure['reason'] = str(exc)
             finally:
                 await browser.close()
     elapsed = time.monotonic()-start if start is not None else 0
     result = summary.result(elapsed_s=elapsed, interrupted=interrupted)
-    result.update(mode=args.mode, failure=failure, originClass='loopback' if parsed.hostname in ('localhost','127.0.0.1','::1') else 'formal')
+    result.update(mode=args.mode, failure=failure, startProof=start_proof,
+        originClass='loopback' if parsed.hostname in ('localhost','127.0.0.1','::1') else 'formal')
     report_fd = os.open(output/'summary.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(report_fd, 'w') as report:
         encoded = json.dumps(result, indent=2, allow_nan=False)
