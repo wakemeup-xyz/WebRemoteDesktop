@@ -1,0 +1,98 @@
+{
+  "sourceCommit": "db5d2b194f6eb6203f143b2e851e73faf196ece1",
+  "buildId": "067dfc41e8374b4e",
+  "probe": {
+    "status": "INCOMPLETE",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 303.0110592590645,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 301,
+    "identityChangeObservations": 0,
+    "maxObservedNoProgressMs": 8666.300000000003,
+    "progressAfterBaseline": true,
+    "frameStallThresholdMs": 5000,
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "mode": "relay",
+    "originClass": "formal",
+    "failure": {
+      "stage": "cleanup",
+      "category": "runtime",
+      "reason": "cleanup-failed"
+    },
+    "startProof": {
+      "status": "verified",
+      "freshPage": true,
+      "coreInstalled": true,
+      "authVerified": true,
+      "startClickMarksBefore": 0,
+      "startClickMarksAfter": 1
+    },
+    "startupSummary": {
+      "observerAvailable": true,
+      "socketPresent": true,
+      "socketConnected": true,
+      "pcState": "connected",
+      "uiPhase": "connected",
+      "controlState": "ACTIVE",
+      "hostOnline": true,
+      "desiredMediaState": "active",
+      "desiredGeneration": 0,
+      "authState": "verified",
+      "superseded": false,
+      "failureCause": "unknown"
+    },
+    "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+  },
+  "interpretation": {
+    "failedObservationsUseCumulativeMaxGap": true,
+    "instantaneousFrameAgeOver5000Count": 5,
+    "firstBaselineMaxGapMs": 6133,
+    "signalClosedDuringCleanup": true,
+    "nativeInputMeasured": false
+  },
+  "host": {
+    "structuredObservations": 66,
+    "populatedCaptureObservations": 56,
+    "captureFailedObserved": 0,
+    "maximumCurrentGrabAgeMs": 5137.551,
+    "maximumCompletedGrabMs": 5938.428,
+    "maximumLoopLagMs": 4753.737
+  },
+  "sampler": {
+    "exitCode": 0,
+    "bytes": 166369,
+    "commandObservationEnvelopeSeconds": 10.074,
+    "diagnosticPerturbed": true
+  },
+  "cleanup": {
+    "registeredWorkers": 7,
+    "allRegisteredExited": true,
+    "signalsSent": false,
+    "completeProcessTreeExitEstablished": false
+  },
+  "idleEvidence": {
+    "reports": 472,
+    "seconds": 2695.232,
+    "cpuSecondsDelta": 15.083,
+    "largestLatestLoopLagMs": 15647.243,
+    "latestLagOver1000Reports": 35,
+    "notFullSampleDistribution": true
+  },
+  "httpReceiptCheck": {
+    "firstConfirmed": true,
+    "duplicateConfirmed": true,
+    "statuses": [
+      202,
+      202
+    ],
+    "pendingCount": 0,
+    "renderedUi": "NOT_RUN"
+  },
+  "newConfirmedDefect": "startup DataChannel watchdog fires before first Host answer; fix pending"
+}

@@ -1,5 +1,7 @@
 # 稳定性与延迟整改实施记录
 
+> **22:08 晚间续查更新：** 已部署诊断保存回执、固定入口摘要及独立抓屏状态观测，冻结候选db5d2b1/build067dfc41e8374b4e。Signal89188/Host89291在线；本地重启25.829s，tunnel/watcher与主HEAD/index保留。实际HTTP首次/重复提交均确认、pending0，入口完整JSONL与Host空闲capture已核对。旧版本正式短测maxgap10.566s；空闲窗口也有15.647s迟到及高换页，新版本短测继续复现，整体稳定性仍未通过。[晚间诊断](2026-10-17-evening-connectivity-followup.md)、[增量review](2026-10-17-evening-evidence-review.md)。下文按时间保留历史版本和失败证据。
+
 > **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新TURN窗口turn-long-20261017b最终131.953秒/132样本INCOMPLETE：客户端transport-close时PC与画面仍推进，maxgap783.3ms；5次Signal ping均有pong，本次没有长停帧或ping-timeout签名。七个已登记测试身份自然退出；三小时及真实input→visible仍未通过。
 
 > **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
