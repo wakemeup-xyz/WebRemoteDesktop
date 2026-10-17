@@ -1,5 +1,7 @@
 # 传输耗时与输入到画面延迟专项诊断
 
+> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新一轮10800秒TURN窗口turn-long-20261017b已启动，尚无最终结论；上一轮256秒失败与真实input→visible NOT RUN保持。
+
 > **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
 
 

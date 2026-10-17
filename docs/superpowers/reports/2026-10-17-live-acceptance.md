@@ -1,11 +1,13 @@
 # 2026-10-17 公网运行验收
 
+> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新一轮10800秒TURN窗口turn-long-20261017b已启动，尚无最终结论；上一轮256秒失败与真实input→visible NOT RUN保持。
+
 > **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
 
 
 > **前次状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
 
-当前部署：`0ffb941`，Host `e279060` / PID10658、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。13:12后的普通Viewer曾自动重连；该连接13:32后已退出，后续新build proof会话结果见文末。
+当前部署：`afd598a`，Host `83c513e` / PID28181、Signal `e996467`（含d1166ab）/ PID28142、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。13:12后的普通Viewer曾自动重连；该连接13:32后已退出，后续新build proof会话结果见文末。
 
 此前上一build曾TURN300s PASS，随后JPEG69.744991s在恢复后发生5200.4ms加载停顿而FAIL；当前build追加JPEG111.236s短测PASS、TURN31.004s失败及独立TURN300.158s诊断PASS，最新256.072s长测仍失败。此前93.094s信令超时和约1922.5s长测5149.8ms间隔均保留。连续三小时、普通用户重连及真实原生输入/可见效果均未完成。
 

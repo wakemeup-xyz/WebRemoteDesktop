@@ -1,11 +1,13 @@
 # 稳定性与延迟整改实施记录
 
+> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新一轮10800秒TURN窗口turn-long-20261017b已启动，尚无最终结论；上一轮256秒失败与真实input→visible NOT RUN保持。
+
 > **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
 
 
 > **前次状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
 
-执行开始：2026-10-17。当前已同步 `0ffb941`，网页 build **`a6e8b15122bde656`**（保留 `c30530f331a4def5` / `f5c2a9203e47f9e5`）。Host源码 `e279060`（含d5ecb23/f492357）/ PID10658，Signal心跳源码 `d1166ab` / 新PID64505；13:12仅重启Signal，耗时5.861s，Host自动恢复，tunnel/watcher保持。Viewer本页时钟 `3ca62fe`、M6复位 `d057853`、控制撤销/释放复位 `c3abb21` 均已加载；最终534项相关回归和跨层独立复审通过，不能据此宣布运行验收完成。
+执行开始：2026-10-17。当前已同步 `afd598a`，网页 build **`a6e8b15122bde656`**（保留 `c30530f331a4def5` / `f5c2a9203e47f9e5`）。Host源码 `83c513e`（含e279060/d5ecb23/f492357）/ PID28181，Signal认证源码 `e996467`（心跳d1166ab）/ PID28142；13:12仅重启Signal，耗时5.861s，Host自动恢复，tunnel/watcher保持。Viewer本页时钟 `3ca62fe`、M6复位 `d057853`、控制撤销/释放复位 `c3abb21` 均已加载；最终534项相关回归和跨层独立复审通过，不能据此宣布运行验收完成。
 
 加载后正式登录入口200、新build正确、登录表单可见，DOMContentLoaded约9.565s；同源health/status均200，Host在线。13:12时原普通Viewer自动重连、连接数1；该连接13:32已离线。后续自动化均重新核对零Viewer并取得一次性proof，不使用普通ticket接管。只读探测未登录/Start，browser.close API超时，manager.stop已完成，OS进程退出未取证，不能写为全部清理已确认。
 
@@ -64,7 +66,7 @@ M5 `47cd1c5` + `36dec3a` 已通过 R1 独立复核，修正旧媒体策略覆盖
 |---|---|
 | 正常浏览器访问登录页 | 初步独立 Chromium：本地和正式域名均 200，登录表单可见；未登录、未创建 Viewer |
 | 命令行 HTTP 客户端 | Python urllib 对正式域名返回 Cloudflare 403/1010；正常浏览器成功说明此结果不能单独代表网页不可用 |
-| 本轮构建部署 | 已同步 `0ffb941`；Host `e279060`、Signal `d1166ab`、Viewer `c3abb21`；build `a6e8b15122bde656`；W2 watcher 四文件未激活 |
+| 本轮构建部署 | 已同步 `afd598a`；Host `83c513e`、Signal `e996467`（含d1166ab）、Viewer `c3abb21`；build `a6e8b15122bde656`；W2 watcher 四文件未激活 |
 | 真实登录与媒体启动 | M6 公网 JPEG 85.034s / TURN 86.272s 暂停恢复短测均 PASS，含恢复后 60s 同会话。后续 TURN 93.094s 首次信令 ping timeout，视频仍出帧；此前连续性 INCOMPLETE；服务端心跳观测已加载，新一轮 300s 已 PASS，独立 3h 测试实际约 1922.5s 后因 5149.8ms 画面间隔取消，INCOMPLETE / 媒体连续性不合格 |
 | 真实可靠输入与自动重连 | 业务输入 NOT RUN；proof 单次约束下普通用户自动重连未验收；C5 已部署，普通用户自动重连仍未作生产验收 |
 | 输入应用到捕获/RTP/rVFC | M1/M2/M4 实现及离线关联验证已通过；NOT RUN 生产测量 |
@@ -211,3 +213,9 @@ Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项�
 ## 可丢诊断通道准入增量（已于14:47部署）
 
 `e279060`仅对frame_timing、capture_stats和两类detail批次增加4096B同步字节准入，拥塞时丢弃并按固定字段统计；可靠input_ack、M2binding、时钟及labflush路径不变，不重试/补发旧诊断。65项Python及45项Node回归通过，独立task review通过；一个已有trace fixture失败经独立归类，在`616a79d`补当前receiver/SSRC及detail启用条件，保留全部原断言，6项安全Python/21项Node检查及独立复核通过。测试范围有重叠，不相加为唯一用例数。详见[实现](2026-10-17-dc-diagnostic-admission-implementation.md)、[准入复核](2026-10-17-dc-diagnostic-admission-review.md)、[fixture复核](2026-10-17-trace-integration-fixture-review.md)。跨层最终复核通过，独立66项Python/45项Node通过；现已随冻结候选0ffb941加载。4KiB不是完整SCTP/ACK内存界，也不是13.8s停帧根因修复的证明。
+
+## 15:15 登录与截图失效修复加载
+
+[两项增量](2026-10-17-auth-epoch-increment.md)及[最终复审](2026-10-17-final-auth-epoch-review.md)均通过，唯一P3历史状态歧义已独立关闭。29个路径（4个源码/测试路径）同步，既有修改与四个WATCH文件保留；本地Signal/Host由helper重载25.679s。Host文件SHA256 a9e40ef6520ce602ffa6df81c6bfe975bbb8440f612b3f0a83e2afdc92c86999。备份apply-afd598a8-fsxwqk51留本机私有目录。密码仅从运行.env读取并在会话回报，未写入版本文档。
+
+下列章节按各自时刻保留历史观察；当时的“尚未加载/待实现”不能覆盖文首最新部署。新TURN长测独立记录，不拼接此前短测，且未获得三小时或真实输入可见效果结论。
