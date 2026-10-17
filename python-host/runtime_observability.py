@@ -42,7 +42,10 @@ def unavailable_capture_observation():
     return {'scope': 'track-lifetime', 'state': 'unavailable',
             'attempted': None, 'completed': None, 'failed': None,
             'currentGrabAgeMs': None, 'lastCompletionAgeMs': None,
-            'lastDurationMs': None, 'maxDurationMs': None, 'clipped': False}
+            'lastDurationMs': None, 'maxDurationMs': None,
+            'lastThreadCpuMs': None, 'lastNonCpuMs': None,
+            'maxDurationThreadCpuMs': None, 'maxDurationNonCpuMs': None,
+            'clipped': False}
 
 
 class _CaptureState(NamedTuple):
@@ -56,6 +59,11 @@ class _CaptureState(NamedTuple):
     max_duration_ns: int | None = None
     last_failed: bool = False
     clipped: bool = False
+    started_thread_cpu_ns: int | None = None
+    last_thread_cpu_ns: int | None = None
+    last_non_cpu_ns: int | None = None
+    max_duration_thread_cpu_ns: int | None = None
+    max_duration_non_cpu_ns: int | None = None
 
 
 class CaptureObservation:
@@ -67,33 +75,48 @@ class CaptureObservation:
     def __init__(self):
         self._state = _CaptureState()
 
-    def begin(self, started_ns):
+    def begin(self, started_ns, *, thread_cpu_ns=None):
         state = self._state
         self._state = state._replace(
             attempted=min(state.attempted + 1, _CAPTURE_COUNT_CAP),
             inflight=True, started_ns=_capture_timestamp(started_ns),
+            started_thread_cpu_ns=_capture_timestamp(thread_cpu_ns),
             clipped=state.clipped or state.attempted >= _CAPTURE_COUNT_CAP)
 
-    def finish(self, finished_ns, *, succeeded):
+    def finish(self, finished_ns, *, succeeded, thread_cpu_ns=None):
         state = self._state
         finished_ns = _capture_timestamp(finished_ns)
         if (state.started_ns is not None and finished_ns is not None
                 and finished_ns < state.started_ns):
             finished_ns = None
-        duration = _capture_elapsed(state.started_ns, finished_ns)
+        raw_duration = _capture_elapsed(state.started_ns, finished_ns)
         clipped = (state.clipped or
-                   (duration is not None and duration > _CAPTURE_DURATION_CAP_NS))
-        duration = min(duration, _CAPTURE_DURATION_CAP_NS) if duration is not None else None
+                   (raw_duration is not None and raw_duration > _CAPTURE_DURATION_CAP_NS))
+        duration = min(raw_duration, _CAPTURE_DURATION_CAP_NS) if raw_duration is not None else None
+        cpu_duration = _capture_elapsed(state.started_thread_cpu_ns,
+                                        _capture_timestamp(thread_cpu_ns))
+        if (raw_duration is None or raw_duration > _CAPTURE_DURATION_CAP_NS
+                or cpu_duration is None or cpu_duration > raw_duration):
+            cpu_duration = non_cpu_duration = None
+        else:
+            non_cpu_duration = raw_duration - cpu_duration
         maximum = state.max_duration_ns
-        if duration is not None:
-            maximum = duration if maximum is None else max(maximum, duration)
+        max_cpu = state.max_duration_thread_cpu_ns
+        max_non_cpu = state.max_duration_non_cpu_ns
+        if raw_duration is not None and (maximum is None or raw_duration > maximum):
+            maximum = duration
+            max_cpu, max_non_cpu = cpu_duration, non_cpu_duration
         completed = state.completed + int(succeeded)
         failed = state.failed + int(not succeeded)
         self._state = _CaptureState(
-            state.attempted, min(completed, _CAPTURE_COUNT_CAP), min(failed, _CAPTURE_COUNT_CAP),
-            False, None, finished_ns if succeeded else state.last_success_ns,
-            duration, maximum, not succeeded,
-            clipped or completed > _CAPTURE_COUNT_CAP or failed > _CAPTURE_COUNT_CAP)
+            attempted=state.attempted,
+            completed=min(completed, _CAPTURE_COUNT_CAP),
+            failed=min(failed, _CAPTURE_COUNT_CAP),
+            last_success_ns=finished_ns if succeeded else state.last_success_ns,
+            last_duration_ns=duration, max_duration_ns=maximum, last_failed=not succeeded,
+            clipped=clipped or completed > _CAPTURE_COUNT_CAP or failed > _CAPTURE_COUNT_CAP,
+            last_thread_cpu_ns=cpu_duration, last_non_cpu_ns=non_cpu_duration,
+            max_duration_thread_cpu_ns=max_cpu, max_duration_non_cpu_ns=max_non_cpu)
 
     def snapshot(self, now_ns, *, running, suspended, thread_alive, thread_started):
         state = self._state
@@ -122,6 +145,10 @@ class CaptureObservation:
                 'lastCompletionAgeMs': _capture_milliseconds(success_age),
                 'lastDurationMs': _capture_milliseconds(state.last_duration_ns),
                 'maxDurationMs': _capture_milliseconds(state.max_duration_ns),
+                'lastThreadCpuMs': _capture_milliseconds(state.last_thread_cpu_ns),
+                'lastNonCpuMs': _capture_milliseconds(state.last_non_cpu_ns),
+                'maxDurationThreadCpuMs': _capture_milliseconds(state.max_duration_thread_cpu_ns),
+                'maxDurationNonCpuMs': _capture_milliseconds(state.max_duration_non_cpu_ns),
                 'clipped': state.clipped or any(age is not None and age > _CAPTURE_DURATION_CAP_NS
                                                for age in (current_age, success_age))}
 

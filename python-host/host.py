@@ -1432,6 +1432,12 @@ class ScreenCaptureTrack(VideoStreamTrack):
     def _capture_loop(self):
         """Continuously capture screenshots in background thread.
         Capture pacing follows the current media profile to avoid wasted work."""
+        def current_thread_cpu_ns():
+            try:
+                return time.thread_time_ns()
+            except Exception:
+                return None
+
         while self._capture_running:
             with self._activity_condition:
                 while self._capture_running and self._suspended:
@@ -1446,14 +1452,19 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 # Gate again immediately before MSS grab.
                 if self._suspended or not self._capture_running:
                     continue
-                self._capture_observation.begin(grab_started_ns)
+                cpu_started_ns = current_thread_cpu_ns()
+                self._capture_observation.begin(grab_started_ns, thread_cpu_ns=cpu_started_ns)
                 try:
                     shot = self.sct.grab(self.monitor)
                 except Exception:
-                    self._capture_observation.finish(time.monotonic_ns(), succeeded=False)
+                    cpu_finished_ns = current_thread_cpu_ns()
+                    self._capture_observation.finish(time.monotonic_ns(), succeeded=False,
+                                                     thread_cpu_ns=cpu_finished_ns)
                     raise
+                cpu_finished_ns = current_thread_cpu_ns()
                 grab_finished_ns = time.monotonic_ns()
-                self._capture_observation.finish(grab_finished_ns, succeeded=True)
+                self._capture_observation.finish(grab_finished_ns, succeeded=True,
+                                                 thread_cpu_ns=cpu_finished_ns)
                 captured = False
                 with self._capture_lock:
                     if self._suspended:

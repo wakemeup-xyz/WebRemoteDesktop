@@ -11,7 +11,9 @@ from runtime_observability import (
 
 
 KEYS = {'scope', 'state', 'attempted', 'completed', 'failed', 'currentGrabAgeMs',
-        'lastCompletionAgeMs', 'lastDurationMs', 'maxDurationMs', 'clipped'}
+        'lastCompletionAgeMs', 'lastDurationMs', 'maxDurationMs', 'clipped',
+        'lastThreadCpuMs', 'lastNonCpuMs', 'maxDurationThreadCpuMs',
+        'maxDurationNonCpuMs'}
 FLAGS = dict(running=True, suspended=False, thread_alive=True, thread_started=True)
 CAP = 999_999_999
 NS_CAP = 3_600_000_000_000
@@ -30,6 +32,87 @@ def method(class_name, method_name, **namespace):
 
 
 class CaptureObservationTest(unittest.TestCase):
+    def test_wall_and_thread_cpu_pairs_share_one_completed_grab(self):
+        observer = CaptureObservation()
+        observer.begin(1_000_000, thread_cpu_ns=5_000_000)
+        observer.finish(11_000_000, succeeded=True, thread_cpu_ns=8_000_000)
+        result = snapshot(observer, 11_000_000)
+        self.assertEqual((result['lastDurationMs'], result['lastThreadCpuMs'], result['lastNonCpuMs']),
+                         (10, 3, 7))
+        self.assertEqual((result['maxDurationMs'], result['maxDurationThreadCpuMs'],
+                          result['maxDurationNonCpuMs']), (10, 3, 7))
+        observer.begin(20_000_000, thread_cpu_ns=8_000_000)
+        self.assertEqual(snapshot(observer, 21_000_000)['lastThreadCpuMs'], 3)
+        observer.finish(25_000_000, succeeded=False, thread_cpu_ns=12_000_000)
+        result = snapshot(observer, 25_000_000)
+        self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs']), (4, 1))
+        self.assertEqual((result['maxDurationThreadCpuMs'], result['maxDurationNonCpuMs']), (3, 7))
+        observer.begin(30_000_000)
+        observer.finish(40_000_000, succeeded=True)
+        result = snapshot(observer, 40_000_000)
+        self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs']), (None, None))
+        self.assertEqual((result['maxDurationThreadCpuMs'], result['maxDurationNonCpuMs']), (3, 7))
+
+    def test_invalid_cpu_pair_never_changes_wall_or_carries_previous_pair(self):
+        invalid_cases = ((None, 1), (0, None), (True, 1), (0, False), (-1, 1),
+                         (0, -1), (1.5, 2), (0, 'secret-canary'), (object(), 1),
+                         (2, 1), (0, 12))
+        for cpu_start, cpu_end in invalid_cases:
+            with self.subTest(cpu_start=cpu_start, cpu_end=cpu_end):
+                observer = CaptureObservation()
+                observer.begin(0, thread_cpu_ns=0)
+                observer.finish(1, succeeded=True, thread_cpu_ns=0)
+                observer.begin(10, thread_cpu_ns=cpu_start)
+                observer.finish(20, succeeded=False, thread_cpu_ns=cpu_end)
+                result = snapshot(observer, 20)
+                self.assertEqual((result['attempted'], result['completed'], result['failed']), (2, 1, 1))
+                self.assertEqual(result['lastDurationMs'], 0)
+                self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs']), (None, None))
+                self.assertFalse(result['clipped'])
+                self.assertNotIn('secret-canary', repr(observer._state) + json.dumps(result))
+        observer = CaptureObservation()
+        observer.begin(0, thread_cpu_ns=0)
+        observer.finish(0, succeeded=True, thread_cpu_ns=0)
+        result = snapshot(observer, 0)
+        self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs']), (0, 0))
+        observer.begin(10, thread_cpu_ns=10)
+        observer.finish(9, succeeded=True, thread_cpu_ns=10)
+        result = snapshot(observer, 10)
+        self.assertIsNone(result['lastDurationMs'])
+        self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs']), (None, None))
+
+    def test_max_companion_follows_raw_wall_ties_and_cap(self):
+        observer = CaptureObservation()
+        observer.begin(0, thread_cpu_ns=0)
+        observer.finish(10_000_000, succeeded=True, thread_cpu_ns=2_000_000)
+        observer.begin(20_000_000, thread_cpu_ns=2_000_000)
+        observer.finish(25_000_000, succeeded=True, thread_cpu_ns=6_000_000)
+        observer.begin(30_000_000, thread_cpu_ns=6_000_000)
+        observer.finish(40_000_000, succeeded=False, thread_cpu_ns=7_000_000)
+        result = snapshot(observer, 40_000_000)
+        self.assertEqual((result['maxDurationMs'], result['maxDurationThreadCpuMs'],
+                          result['maxDurationNonCpuMs']), (10, 2, 8))
+        observer.begin(50_000_000)
+        observer.finish(61_000_000, succeeded=False)
+        result = snapshot(observer, 61_000_000)
+        self.assertEqual(result['maxDurationMs'], 11)
+        self.assertEqual((result['maxDurationThreadCpuMs'], result['maxDurationNonCpuMs']), (None, None))
+        capped = CaptureObservation()
+        capped.begin(0, thread_cpu_ns=0)
+        capped.finish(NS_CAP, succeeded=True, thread_cpu_ns=1_000_000)
+        self.assertEqual(snapshot(capped, NS_CAP)['maxDurationThreadCpuMs'], 1)
+        capped.begin(0, thread_cpu_ns=0)
+        capped.finish(NS_CAP + 1, succeeded=False, thread_cpu_ns=1_000_000)
+        result = snapshot(capped, NS_CAP + 1)
+        self.assertEqual(result['maxDurationMs'], 3_600_000)
+        self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs'],
+                          result['maxDurationThreadCpuMs'], result['maxDurationNonCpuMs']),
+                         (None, None, None, None))
+        self.assertTrue(result['clipped'])
+        capped.begin(0, thread_cpu_ns=0)
+        capped.finish(NS_CAP, succeeded=True, thread_cpu_ns=2_000_000)
+        self.assertEqual(snapshot(capped, NS_CAP)['maxDurationThreadCpuMs'], None)
+
     def test_initialized_zero_and_unavailable_are_distinct_fixed_schemas(self):
         result = snapshot(CaptureObservation())
         missing = unavailable_capture_observation()
@@ -241,23 +324,42 @@ class Guard:
 
 
 class CaptureLoopTest(unittest.TestCase):
-    def run_loop(self, action=None, publication_error=False, gate_cancel=False, suspended=False):
-        clock = SimpleNamespace(now=0, sleeps=[])
+    def run_loop(self, action=None, publication_error=False, gate_cancel=False, suspended=False,
+                 cpu_fail_at=None):
+        clock = SimpleNamespace(now=0, cpu=1_000_000, sleeps=[], events=[])
+        def wall_ns():
+            clock.events.append('wall')
+            return clock.now
+        def cpu_ns():
+            clock.events.append('cpu')
+            if clock.events.count('cpu') == cpu_fail_at:
+                raise OSError('clock-secret-canary')
+            return clock.cpu
         def sleep(delay):
             clock.sleeps.append(delay)
             clock.now += int(delay * 1_000_000_000)
+        class ObservedCapture(CaptureObservation):
+            def begin(self, *args, **kwargs):
+                clock.events.append('begin')
+                clock.cpu += 1_000_000
+                return super().begin(*args, **kwargs)
+            def finish(self, *args, **kwargs):
+                clock.events.append('finish')
+                return super().finish(*args, **kwargs)
         track = SimpleNamespace(_capture_running=True, _suspended=suspended,
             _target_fps=20, _capture_strategy=None, _activity_condition=Guard(),
-            _target_lock=Guard(), _capture_lock=Guard(), _capture_observation=CaptureObservation(),
+            _target_lock=Guard(), _capture_lock=Guard(), _capture_observation=ObservedCapture(),
             monitor=object(), _capture_buffer=None, _capture_seq=0, _capture_bounds_ns={},
             _frame_trace_context=None,
             capture_fps_for_target=lambda fps, **kwargs: fps)
         if gate_cancel:
             track._target_lock.enter = lambda: setattr(track, '_capture_running', False)
         def grab(monitor):
+            clock.events.append('grab')
             self.assertIs(monitor, track.monitor)
             track.inside = snapshot(track._capture_observation, clock.now)
             clock.now = 10_000_000
+            clock.cpu += 2_000_000
             track._capture_running = False
             if action:
                 action(track)
@@ -272,7 +374,7 @@ class CaptureLoopTest(unittest.TestCase):
                 track._suspended = False
             track._activity_condition.wait = resume
         loop = method('ScreenCaptureTrack', '_capture_loop', time=SimpleNamespace(
-            monotonic_ns=lambda: clock.now, sleep=sleep))
+            monotonic_ns=wall_ns, thread_time_ns=cpu_ns, sleep=sleep))
         loop(track)
         return track, clock, snapshot(track._capture_observation, clock.now, running=False)
 
@@ -291,12 +393,40 @@ class CaptureLoopTest(unittest.TestCase):
         self.assertEqual(track._activity_condition.notifications, 1)
         self.assertNotIn('canary', json.dumps(result))
 
+    def test_real_loop_samples_current_thread_cpu_inside_wall_bracket(self):
+        track, clock, result = self.run_loop()
+        self.assertEqual(clock.events, ['wall', 'cpu', 'begin', 'grab', 'cpu', 'wall', 'finish', 'wall'])
+        self.assertEqual((result['lastDurationMs'], result['lastThreadCpuMs'], result['lastNonCpuMs']),
+                         (10, 3, 7))
+        self.assertEqual((result['maxDurationThreadCpuMs'], result['maxDurationNonCpuMs']), (3, 7))
+        self.assertEqual(track._capture_bounds_ns, {1: (0, 10_000_000)})
+        self.assertEqual(clock.sleeps, [.04])
+
+    def test_cpu_clock_exception_does_not_prevent_grab_or_failed_grab_settlement(self):
+        for at in (1, 2):
+            with self.subTest(at=at):
+                track, clock, result = self.run_loop(cpu_fail_at=at)
+                self.assertEqual(clock.events.count('grab'), 1)
+                self.assertEqual(clock.events.count('cpu'), 2)
+                self.assertEqual((result['completed'], result['failed']), (1, 0))
+                self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs']), (None, None))
+                self.assertEqual(clock.sleeps, [.04])
+                self.assertNotIn('clock-secret-canary', json.dumps(result))
+        def fail(_):
+            raise RuntimeError('grab-secret-canary')
+        _, clock, result = self.run_loop(fail, cpu_fail_at=2)
+        self.assertEqual(clock.events[:7], ['wall', 'cpu', 'begin', 'grab', 'cpu', 'wall', 'finish'])
+        self.assertEqual((result['attempted'], result['completed'], result['failed']), (1, 0, 1))
+        self.assertEqual(clock.sleeps, [.005])
+
+
     def test_grab_exception_counts_failure_only_and_keeps_existing_retry(self):
         def fail(track):
             raise RuntimeError('native-secret-canary')
         track, clock, result = self.run_loop(fail)
         self.assertEqual((result['attempted'], result['completed'], result['failed']), (1, 0, 1))
         self.assertEqual(result['lastDurationMs'], 10)
+        self.assertEqual((result['lastThreadCpuMs'], result['lastNonCpuMs']), (3, 7))
         self.assertEqual(clock.sleeps, [.005])
         self.assertEqual(track._capture_seq, 0)
         self.assertIsNone(track._capture_buffer)
@@ -340,6 +470,7 @@ class CaptureLoopTest(unittest.TestCase):
     def test_stop_before_final_gate_does_not_count_attempt(self):
         track, clock, result = self.run_loop(gate_cancel=True)
         self.assertEqual(result['attempted'], 0)
+        self.assertEqual(clock.events.count('cpu'), 0)
         self.assertEqual(clock.sleeps, [])
         self.assertEqual(track._capture_seq, 0)
 
