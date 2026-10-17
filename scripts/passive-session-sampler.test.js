@@ -430,3 +430,193 @@ test('all compact schema variants remain within exact event and aggregate alloca
   assert.equal(f.sampler.diagnosticSnapshot().attribution.firstDisconnectEvent,null);
   f.sampler.stop();
 });
+
+const expectedGateEnums = {
+  uiPhase:['idle','signaling','media-pending','connected','media-stalled','disconnected','unknown'],
+  desiredMediaState:['active','suspended','unknown'],
+  mediaRuntimePhase:['active','suspending','suspended','resuming','unknown'],
+  keyboardControllerState:['INACTIVE','READY','BLOCKED','RESET_REQUIRED','unknown'],
+  keyboardTransportState:['ready','blocked','reacquire-required','revoked','unknown'],
+  surfaceState:['settled','pending','uncertain','unknown'],
+  desktopWriteRecoveryState:['none','reacquire-required','reconciled','unknown'],
+  recoveryState:['idle','waiting','recovered','failed','unknown'],
+};
+const expectedGateReasons = ['no-active-control','inactive','viewport-unsupported','manual-disconnect',
+  'media-not-ready-for-attempt','media-gate',
+  ...['active','suspending','suspended','resuming','unknown'].map(v => `runtime-phase:${v}`),
+  ...['active','suspended','unknown'].map(v => `media-state:${v}`),
+  'keyboard-transport-blocked','keyboard-transport-reacquire-required','keyboard-transport-revoked',
+  'keyboard-reset-pending','keyboard-blocked','surface-pending','surface-uncertain','mouse-reset-pending',
+  'desktop-write-reacquire-required','draft-composing','draft-pending','draft-uncertain',
+  'recovery-waiting','recovery-failed','unknown'];
+const expectedGateBooleans = ['allowed','inputActive','hasInputLease','viewportSupported','hasPaintedFrame',
+  'currentAttemptReady','hasActiveControl','socketConnected','manualDisconnect','superseded',
+  'mouseResetPending','draftComposing','draftPending','draftUncertain','firstFrameTimerHandlePresent'];
+function gateFixture() {
+  const f = fixture(async () => new Map());
+  const controller = {state:'READY', private:'secret-controller-canary'};
+  const transport = {state:'ready',private:'secret-transport-canary'};
+  const draft = {composing:false,hasPending:false,deliveryUncertain:false,
+    get text() { throw Error('secret draft inspected'); },get length() { throw Error('draft length inspected'); }};
+  const effective = {allowed:false,blockedReasons:['inactive']};
+  let reads = 0;
+  Object.assign(f.context.Input, {isActive:false,activeControlLease:{private:'secret-lease'},
+    _viewportInputSupported:true,_pendingMouseReset:null,_mobileSurfaceState:'settled',
+    _desktopWriteRecovery:null,_recoveryCycle:{state:'idle'},
+    keyboardController:{getSnapshot:() => controller},keyboardTransport:{getSnapshot:() => transport},
+    mobileTextInputAdapter:{getSnapshot:() => draft},getEffectiveInputGate:() => {reads++;return effective;}});
+  Object.assign(f.context.WebRTC,{uiPhase:'disconnected',hasPaintedFrame:true,manualDisconnect:false,
+    _superseded:false,hasActiveControl:() => true,currentConnectionAttemptId:'secret-attempt',
+    _mediaReadyConnectionAttemptId:'secret-attempt',_firstFrameTimer:37,
+    mediaActivityRuntime:{phase:'active',snapshot:() => ({desiredState:'active',private:'secret-runtime'})}});
+  return {...f,controller,transport,draft,effective,reads:() => reads};
+}
+
+test('emitted row uses actual effective verdict once, preserving disconnected painted ready factors', async () => {
+  const f = gateFixture();
+  const sample = await f.sampler.sample(), gate = sample.inputGate;
+  assert.equal(f.reads(),1);
+  assert.equal(sample.inputAllowed,false);
+  assert.equal(gate.allowed,false);
+  assert.deepEqual(plain(gate.blockedReasons),['inactive']);
+  assert.equal(gate.uiPhase,'disconnected');
+  for (const key of ['hasPaintedFrame','currentAttemptReady','hasActiveControl','socketConnected','hasInputLease']) assert.equal(gate[key],true);
+  assert.deepEqual(Object.keys(gate).sort(),['status','blockedReasons',...expectedGateBooleans,...Object.keys(expectedGateEnums)].sort());
+  assert.ok(bytes(gate) <=4096);
+  assert.doesNotMatch(JSON.stringify(sample),/secret-|text|private.*runtime/);
+  f.effective.allowed = true;
+  assert.equal((await f.sampler.sample()).inputAllowed,true);
+  assert.equal(f.reads(),2);
+  f.sampler.stop();
+});
+
+test('all gate reasons are closed unique bounded enums in actual emitted rows', async () => {
+  const f = gateFixture();
+  for (const reason of expectedGateReasons) {
+    f.effective.blockedReasons = [reason,reason,'secret-reason-canary',{},null];
+    const gate = (await f.sampler.sample()).inputGate;
+    assert.deepEqual(plain(gate.blockedReasons),reason === 'unknown' ? ['unknown']:[reason,'unknown']);
+    assert.ok(bytes(gate) <=4096);
+  }
+  for (const reasons of [null,{},Array(33).fill('secret-reason-canary')]) {
+    f.effective.blockedReasons = reasons;
+    assert.deepEqual(plain((await f.sampler.sample()).inputGate.blockedReasons),['unknown']);
+  }
+  f.effective.blockedReasons = expectedGateReasons;
+  const sample = await f.sampler.sample();
+  assert.equal(sample.inputGate.blockedReasons.length,expectedGateReasons.length);
+  assert.ok(bytes(sample) <=32768);
+  assert.doesNotMatch(JSON.stringify(sample),/secret-/);
+  f.sampler.stop();
+});
+
+test('each gate enum maps exact states and unknown canaries without arbitrary snapshot export', async () => {
+  const f = gateFixture(), c = f.context.WebRTC, input = f.context.Input;
+  const assign = {
+    uiPhase:v => c.uiPhase=v, desiredMediaState:v => c.mediaActivityRuntime.snapshot=() => ({desiredState:v}),
+    mediaRuntimePhase:v => c.mediaActivityRuntime.phase=v,keyboardControllerState:v => f.controller.state=v,
+    keyboardTransportState:v => f.transport.state=v,surfaceState:v => input._mobileSurfaceState=v,
+    desktopWriteRecoveryState:v => input._desktopWriteRecovery=v === 'none' ? null:{state:v},
+    recoveryState:v => input._recoveryCycle.state=v,
+  };
+  for (const [key,values] of Object.entries(expectedGateEnums)) for (const value of [...values,'secret-enum-canary',{},null]) {
+    assign[key](value);
+    const gate = (await f.sampler.sample()).inputGate;
+    assert.equal(gate[key],values.includes(value) ? value:'unknown',key);
+    assert.doesNotMatch(JSON.stringify(gate),/secret-/);
+  }
+  f.sampler.stop();
+});
+
+test('gate booleans distinguish true false and unknown; timer only reports own handle presence', async () => {
+  const f = gateFixture(), c = f.context.WebRTC, input = f.context.Input;
+  const assign = {
+    allowed:v => f.effective.allowed=v,inputActive:v => input.isActive=v,
+    hasInputLease:v => input.activeControlLease=v,viewportSupported:v => input._viewportInputSupported=v,
+    hasPaintedFrame:v => c.hasPaintedFrame=v,hasActiveControl:v => c.hasActiveControl=() => v,
+    socketConnected:v => c.socket.connected=v,manualDisconnect:v => c.manualDisconnect=v,superseded:v => c._superseded=v,
+    mouseResetPending:v => input._pendingMouseReset=v,draftComposing:v => f.draft.composing=v,
+    draftPending:v => f.draft.hasPending=v,draftUncertain:v => f.draft.deliveryUncertain=v,
+  };
+  for (const [key,set] of Object.entries(assign)) for (const value of [true,false]) {
+    set(value);assert.equal((await f.sampler.sample()).inputGate[key],value,key);
+  }
+  c._mediaReadyConnectionAttemptId='other-secret-attempt';
+  assert.equal((await f.sampler.sample()).inputGate.currentAttemptReady,false);
+  c._firstFrameTimer = null;
+  assert.equal((await f.sampler.sample()).inputGate.firstFrameTimerHandlePresent,false);
+  delete c._firstFrameTimer;
+  assert.equal((await f.sampler.sample()).inputGate.firstFrameTimerHandlePresent,null);
+  f.context.Input = {getEffectiveInputGate:() => ({allowed:null,blockedReasons:[]})};
+  const gate = (await f.sampler.sample()).inputGate;
+  for (const key of ['allowed','inputActive','hasInputLease','viewportSupported','mouseResetPending','draftComposing','draftPending','draftUncertain']) assert.equal(gate[key],null,key);
+  delete f.context.Input;
+  const missing = (await f.sampler.sample()).inputGate;
+  assert.equal(missing.status,'unavailable');
+  for (const key of expectedGateBooleans) assert.equal(missing[key],null,key);
+  f.sampler.stop();
+});
+
+for (const field of ['client','pc','socket','input','build','connectionAttemptId','generation','leaseEpoch']) {
+  test(`gate ${field} ownership is fenced across stats and snapshot getters`, async () => {
+    for (const duringGetter of [false,true]) {
+      let finish;
+      const f = gateFixture(), c=f.context.WebRTC;
+      const scope = {connectionAttemptId:'secret-attempt',generation:1,leaseEpoch:2};
+      c.latencyScope=() => scope;
+      const change = () => {
+        if (field === 'client') f.context.WebRTC={...c};
+        else if (field === 'pc') c.pc={};
+        else if (field === 'socket') c.socket={connected:true};
+        else if (field === 'input') f.context.Input={...f.context.Input};
+        else if (field === 'build') f.context.window.__WRD_BUILD__={id:'release-b'};
+        else scope[field] = field === 'connectionAttemptId' ? 'other-secret-attempt':4;
+      };
+      if (duringGetter) f.context.Input.keyboardController.getSnapshot=() => {change();return f.controller;};
+      else c.pc.getStats=() => new Promise(resolve => {finish=resolve;});
+      const pending = f.sampler.sample();
+      if (!duringGetter) {await Promise.resolve();change();finish(new Map());}
+      const sample = await pending;
+      assert.equal(sample.scopeStable,false);
+      assert.equal(sample.transport.status,'scope-changed');
+      assert.equal(sample.inputGate.status,'scope-changed');
+      assert.equal(sample.inputAllowed,false);
+      assert.deepEqual(plain(sample.inputGate.blockedReasons),[]);
+      for (const key of expectedGateBooleans) assert.equal(sample.inputGate[key],null,key);
+      f.sampler.stop();
+    }
+  });
+}
+
+test('throwing getters do not export partial factors or fail sample control flow', async () => {
+  const f=gateFixture();
+  f.context.Input.keyboardController.getSnapshot=() => {throw Error('secret-error');};
+  const gate=(await f.sampler.sample()).inputGate;
+  assert.equal(gate.status,'unavailable');
+  assert.deepEqual(plain(gate.blockedReasons),[]);
+  assert.doesNotMatch(JSON.stringify(gate),/secret-/);
+  f.sampler.stop();
+});
+
+test('emitted startup marks retain first original valid time only with fixed keys and no details', async () => {
+  const f=gateFixture();
+  f.context.StartupTelemetry={snapshot:() => ({marks:[
+    {name:'start-click',atMs:12.5,get detail(){throw Error('secret detail read');}},
+    {name:'start-click',atMs:99}, {name:'first-frame',atMs:8009}, {name:'active',atMs:8009},
+    {name:'bootstrap-ready',atMs:Infinity},{name:'bootstrap-ready',atMs:45},
+    {name:'signal-connected',atMs:-1},{name:'secret-name',atMs:22,detail:'secret-detail'},
+  ],get resources(){throw Error('secret resources read');},build:{id:'secret-build'}})};
+  const sample=await f.sampler.sample();
+  assert.deepEqual(plain(sample.startupMarks),{'start-click':12.5,'bootstrap-start':null,
+    'bootstrap-ready':45,'bootstrap-degraded':null,'signal-connected':null,'first-frame':8009,'active':8009});
+  assert.equal(sample.inputAllowed,false);
+  const capture=f.sampler.evidenceSnapshot();
+  assert.equal(capture.browserNowMs,500);
+  assert.deepEqual(plain(capture.startupMarks),plain(sample.startupMarks));
+  assert.doesNotMatch(JSON.stringify(capture),/secret-/);
+  delete f.context.StartupTelemetry;
+  assert.ok(Object.values((await f.sampler.sample()).startupMarks).every(v => v === null));
+  f.context.StartupTelemetry={snapshot:() => {f.context.Input={};return {marks:[]};}};
+  assert.equal(f.sampler.evidenceSnapshot().inputGate.status,'scope-changed');
+  f.sampler.stop();
+});

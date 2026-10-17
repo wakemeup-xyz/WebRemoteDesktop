@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import secrets
 import time
@@ -106,7 +107,8 @@ STARTUP_SUMMARY = '''() => {
     desiredGeneration: Number.isSafeInteger(media?.desiredGeneration) && media.desiredGeneration >= 0
       ? media.desiredGeneration : null,
     authState: oneOf(auth?.getCheck?.()?.state, ['verified','unavailable','unauthorized']),
-    superseded: client?._superseded === true, failureCause:'unknown'};
+    superseded: client?._superseded === true, failureCause:'unknown',
+    ...(window.__wrdPassiveSampler?.evidenceSnapshot?.() || {browserNowMs:null})};
 }'''
 
 
@@ -122,29 +124,51 @@ async def issue_start_proof(page, timeout_s):
         raise RuntimeError(result if result in ADMISSION_FAILURES else 'admission-unavailable')
 
 
-async def startup_summary(page, *, required=False):
+def validate_startup(value):
+    allowed = {'observerAvailable':bool,'socketPresent':bool,'socketConnected':bool,'hostOnline':bool,
+        'superseded':bool,'pcState':('new','connecting','connected','disconnected','failed','closed','unknown'),
+        'uiPhase':('idle','signaling','media-pending','connected','media-stalled','disconnected','unknown'),
+        'controlState':('FREE','GRANTING','ACTIVE','REVOKING','unknown'),
+        'desiredMediaState':('active','suspended','unknown'),'authState':('verified','unavailable','unauthorized','unknown'),
+        'failureCause':('unknown',),'desiredGeneration':None,'browserNowMs':None,'inputGate':None,'startupMarks':None}
+    if not isinstance(value,dict) or set(value)-set(allowed): raise ValueError('startup-schema')
+    for key,field in value.items():
+        rule = allowed[key]
+        if rule is bool and type(field) is not bool: raise ValueError('startup-schema')
+        if isinstance(rule,tuple): enum(field,rule)
+        if key == 'desiredGeneration' and field is not None: bounded_int(field)
+    validate_gate_fields(value)
+    byte_cap(value,6144)
+    return value
+
+
+def empty_capture(stage):
+    return {'stage':stage,'status':'not-reached','browserClock':'performance-now','pythonClock':'monotonic','browserNowMs':None,
+        'pythonRequestedMs':None,'pythonCompletedMs':None,'state':None}
+
+
+def monotonic_ms(): return min(9999999999999,max(0,round(time.monotonic()*1000)))
+
+
+async def startup_summary(page, *, required=False, capture=None):
+    if capture is not None: capture['pythonRequestedMs'] = monotonic_ms()
     try:
-        value = await asyncio.wait_for(page.evaluate(STARTUP_SUMMARY), timeout=2)
-        allowed = {'observerAvailable':bool,'socketPresent':bool,'socketConnected':bool,'hostOnline':bool,
-            'superseded':bool,'pcState':('new','connecting','connected','disconnected','failed','closed','unknown'),
-            'uiPhase':('idle','signaling','media-pending','connected','media-stalled','disconnected','unknown'),
-            'controlState':('FREE','GRANTING','ACTIVE','REVOKING','unknown'),
-            'desiredMediaState':('active','suspended','unknown'),'authState':('verified','unavailable','unauthorized','unknown'),
-            'failureCause':('unknown',),'desiredGeneration':None}
-        if not isinstance(value,dict) or set(value)-set(allowed): raise ValueError('startup-schema')
-        for key,field in value.items():
-            rule = allowed[key]
-            if rule is bool and type(field) is not bool: raise ValueError('startup-schema')
-            if isinstance(rule,tuple) and field not in rule: raise ValueError('startup-schema')
-            if key == 'desiredGeneration' and field is not None: bounded_int(field)
-        byte_cap(value,1024)
+        value = validate_startup(await asyncio.wait_for(page.evaluate(STARTUP_SUMMARY), timeout=2))
+        if capture is not None:
+            capture.update(status='ok',browserNowMs=value.get('browserNowMs'),state=value)
         return value
+    except asyncio.CancelledError:
+        if capture is not None: capture['status'] = 'cancelled'
+        raise
     except TimeoutError:
+        if capture is not None: capture['status'] = 'timeout'
         if required: raise RuntimeError('startup-summary-deadline') from None
-        return {'observerAvailable': False, 'failureCause': 'unknown'}
-    except Exception:
+    except Exception as exc:
+        if capture is not None: capture['status'] = 'schema-rejected' if isinstance(exc,ValueError) else 'error'
         if required: raise RuntimeError('startup-summary-unavailable') from None
-        return {'observerAvailable': False, 'failureCause': 'unknown'}
+    finally:
+        if capture is not None: capture['pythonCompletedMs'] = monotonic_ms()
+    return {'observerAvailable': False, 'failureCause': 'unknown'}
 
 
 # Only fixed booleans and bounded relevant mark counts cross this boundary.
@@ -320,6 +344,7 @@ class EvidenceWriter:
         self.total_bytes = 0
 
     def write(self, row):
+        validate_additive_evidence(row)
         encoded = json.dumps(row, separators=(',', ':'), allow_nan=False) + '\n'
         size = len(encoded.encode('utf-8'))
         if size > self.max_row_bytes or self.total_bytes + size > self.max_bytes:
@@ -371,8 +396,165 @@ async def collect_samples(sample_once, writer, summary, salt, *, start, duration
         raise RuntimeError('sampling-deadline-overrun')
 
 
+GATE_ENUMS = {
+    'uiPhase':('idle','signaling','media-pending','connected','media-stalled','disconnected','unknown'),
+    'desiredMediaState':('active','suspended','unknown'),
+    'mediaRuntimePhase':('active','suspending','suspended','resuming','unknown'),
+    'keyboardControllerState':('INACTIVE','READY','BLOCKED','RESET_REQUIRED','unknown'),
+    'keyboardTransportState':('ready','blocked','reacquire-required','revoked','unknown'),
+    'surfaceState':('settled','pending','uncertain','unknown'),
+    'desktopWriteRecoveryState':('none','reacquire-required','reconciled','unknown'),
+    'recoveryState':('idle','waiting','recovered','failed','unknown')}
+GATE_BOOLEANS = ('allowed','inputActive','hasInputLease','viewportSupported','hasPaintedFrame',
+    'currentAttemptReady','hasActiveControl','socketConnected','manualDisconnect','superseded',
+    'mouseResetPending','draftComposing','draftPending','draftUncertain','firstFrameTimerHandlePresent')
+GATE_REASONS = frozenset(('no-active-control','inactive','viewport-unsupported','manual-disconnect',
+    'media-not-ready-for-attempt','media-gate',
+    *('runtime-phase:'+v for v in ('active','suspending','suspended','resuming','unknown')),
+    *('media-state:'+v for v in ('active','suspended','unknown')),
+    'keyboard-transport-blocked','keyboard-transport-reacquire-required','keyboard-transport-revoked',
+    'keyboard-reset-pending','keyboard-blocked','surface-pending','surface-uncertain','mouse-reset-pending',
+    'desktop-write-reacquire-required','draft-composing','draft-pending','draft-uncertain',
+    'recovery-waiting','recovery-failed','unknown'))
+MARK_NAMES = ('start-click','bootstrap-start','bootstrap-ready','bootstrap-degraded','signal-connected','first-frame','active')
+
+
+def bounded_time(value):
+    if value is not None and (not nonnegative(value) or value > 9999999999999):
+        raise ValueError('evidence-time-schema')
+
+
+def validate_gate(value):
+    exact_keys(value, ('status','blockedReasons',*GATE_BOOLEANS,*GATE_ENUMS))
+    enum(value['status'], ('observed','unavailable','scope-changed'))
+    for key in GATE_BOOLEANS:
+        if value[key] is not None and type(value[key]) is not bool: raise ValueError('gate-schema')
+    for key,allowed in GATE_ENUMS.items(): enum(value[key],allowed)
+    reasons = value['blockedReasons']
+    if not isinstance(reasons,list) or len(reasons) > 32: raise ValueError('gate-schema')
+    for reason in reasons: enum(reason,GATE_REASONS)
+    if len(set(reasons)) != len(reasons): raise ValueError('gate-schema')
+    if value['status'] != 'observed' and (reasons or any(value[k] is not None for k in GATE_BOOLEANS)
+        or any(value[k] != 'unknown' for k in GATE_ENUMS)): raise ValueError('gate-schema')
+    byte_cap(value,4096)
+    return value
+
+
+def validate_gate_fields(value):
+    if 'browserNowMs' in value: bounded_time(value['browserNowMs'])
+    if 'inputGate' in value: validate_gate(value['inputGate'])
+    if 'startupMarks' in value:
+        exact_keys(value['startupMarks'],MARK_NAMES)
+        for field in value['startupMarks'].values(): bounded_time(field)
+        byte_cap(value['startupMarks'],512)
+
+
+def validate_capture(value):
+    exact_keys(value, ('stage','status','browserClock','pythonClock','browserNowMs','pythonRequestedMs','pythonCompletedMs','state'))
+    enum(value['stage'], ('startup-baseline','post-failure-preclose'))
+    enum(value['browserClock'], ('performance-now',))
+    enum(value['pythonClock'], ('monotonic',))
+    enum(value['status'], ('ok','not-reached','unavailable','timeout','schema-rejected','cancelled','error'))
+    for key in ('browserNowMs','pythonRequestedMs','pythonCompletedMs'): bounded_time(value[key])
+    if value['state'] is not None: validate_startup(value['state'])
+    if value['status'] == 'ok':
+        if value['state'] is None or value['pythonRequestedMs'] is None or value['pythonCompletedMs'] is None:
+            raise ValueError('capture-schema')
+        if value['browserNowMs'] != value['state'].get('browserNowMs'): raise ValueError('capture-schema')
+    elif value['state'] is not None or value['browserNowMs'] is not None: raise ValueError('capture-schema')
+    if value['status'] == 'not-reached' and any(value[k] is not None for k in ('pythonRequestedMs','pythonCompletedMs')):
+        raise ValueError('capture-schema')
+    if value['pythonRequestedMs'] is not None and value['pythonCompletedMs'] is not None \
+        and value['pythonCompletedMs'] < value['pythonRequestedMs']: raise ValueError('capture-schema')
+    byte_cap(value,6656)
+
+
+class TimeoutConsoleObserver:
+    # A positive page transition only. No argument/location/stack access.
+    pattern = re.compile(r'\[PAINT-GATE\] uiPhase=disconnected reason=first-frame-timeout painted=(true|false)\Z')
+
+    def __init__(self):
+        self.page = None
+        self.active = False
+        self.handler = self.observe
+        self.value = {'status':'unavailable','installedBeforeStart':False,'attachedMs':None,'detachedMs':None,
+            'error':'none','capped':False,'acceptedCount':0,'firstEvent':None}
+
+    def attach(self,page):
+        if not callable(getattr(page,'on',None)) or not callable(getattr(page,'remove_listener',None)):
+            return
+        self.page = page
+        self.active = True
+        try:
+            page.on('console',self.handler)
+            self.value.update(status='attached',installedBeforeStart=True,attachedMs=monotonic_ms())
+        except Exception:
+            self.value.update(status='failed',error='attach-error')
+            self.detach()
+
+    def observe(self,message):
+        if not self.active: return
+        try:
+            if message.type != 'log': return
+            text = message.text
+            if not isinstance(text,str) or len(text) > 128: return
+            match = self.pattern.fullmatch(text)
+            if match is None: return
+            if self.value['acceptedCount'] >= 64:
+                self.value['capped'] = True
+                return
+            event = {'class':'first-frame-timeout-transition','painted':match[1] == 'true',
+                'pythonReceiptMs':monotonic_ms()}
+            self.value['acceptedCount'] += 1
+            if self.value['firstEvent'] is None: self.value['firstEvent'] = event
+        except Exception:
+            self.value['error'] = 'parser-error'
+
+    def detach(self):
+        if not self.active: return
+        self.active = False
+        try: self.page.remove_listener('console',self.handler)
+        except Exception: self.value['error'] = 'detach-error'
+        finally:
+            self.value['detachedMs'] = monotonic_ms()
+            if self.value['status'] == 'attached': self.value['status'] = 'detached'
+
+
+def validate_console(value):
+    exact_keys(value, ('status','installedBeforeStart','attachedMs','detachedMs','error','capped','acceptedCount','firstEvent'))
+    enum(value['status'], ('unavailable','attached','detached','failed'))
+    enum(value['error'], ('none','attach-error','parser-error','detach-error'))
+    for key in ('installedBeforeStart','capped'):
+        if type(value[key]) is not bool: raise ValueError('console-schema')
+    for key in ('attachedMs','detachedMs'): bounded_time(value[key])
+    bounded_int(value['acceptedCount'],64)
+    event = value['firstEvent']
+    if event is not None:
+        exact_keys(event, ('class','painted','pythonReceiptMs'))
+        enum(event['class'], ('first-frame-timeout-transition',))
+        if type(event['painted']) is not bool: raise ValueError('console-schema')
+        bounded_time(event['pythonReceiptMs'])
+        if event['pythonReceiptMs'] is None: raise ValueError('console-schema')
+    if (event is None) != (value['acceptedCount'] == 0): raise ValueError('console-schema')
+    byte_cap(value,1024)
+
+
+def validate_additive_evidence(value):
+    validate_gate_fields(value)
+    if 'sample' in value and isinstance(value['sample'],dict): validate_gate_fields(value['sample'])
+    if 'startupSummary' in value and value['startupSummary'] is not None: validate_startup(value['startupSummary'])
+    for key in ('startupSnapshot','failureSnapshot'):
+        if key in value: validate_capture(value[key])
+    if value.get('failureObservation') is not None:
+        observation = value['failureObservation']
+        exact_keys(observation, ('browserNowMs','inputGate'))
+        validate_gate_fields(observation)
+    if 'timeoutConsole' in value: validate_console(value['timeoutConsole'])
+
+
 def private_row(sample, salt):
     sample = dict(sample)
+    validate_gate_fields(sample)
     attempt = sample.pop('attempt', None)
     sample['attemptHash'] = hashlib.sha256(salt + attempt.encode()).hexdigest()[:16] if isinstance(attempt, str) else None
     if 'diagnostics' in sample: validate_delta(sample['diagnostics'])
@@ -562,6 +744,7 @@ def diagnostic_from_delta(previous, delta):
 
 
 def atomic_evidence(path, value, *, initial=False):
+    validate_additive_evidence(value)
     encoded = compact(value)
     if len(encoded) > MAX_ROW_BYTES: raise ValueError('evidence-budget-exceeded')
     if initial:
@@ -648,6 +831,10 @@ async def run(args, *, manager_factory=None, limits=None):
     manager = playwright = browser = page = None
     start_proof = {'status':'NOT_VERIFIED'}
     startup = None
+    startup_capture = empty_capture('startup-baseline')
+    failure_capture = empty_capture('post-failure-preclose')
+    failure_observation = last_gate_observation = None
+    console = TimeoutConsoleObserver()
     diagnostic = empty_diagnostic()
     python_state = {'failureDetectedMs':None,'failureWallEpochMs':None,
         'managerStart':{'startedMs':None,'finishedMs':None,'status':'not-started'},
@@ -670,7 +857,7 @@ async def run(args, *, manager_factory=None, limits=None):
     def now(): return min(9999999999999,round(time.monotonic()*1000))
 
     def fail(exc, *, at=None):
-        nonlocal failure, interrupted
+        nonlocal failure, interrupted, failure_observation
         interrupted = True
         if failure is not None: return
         at = at or stage
@@ -678,6 +865,8 @@ async def run(args, *, manager_factory=None, limits=None):
         reason = 'cancelled' if isinstance(exc,asyncio.CancelledError) else 'timeout' if isinstance(exc,TimeoutError) else str(exc)
         failure = {'stage':at,'category':'startup-guard' if at == 'start-ui' else 'media-wait' if at == 'media-start' else 'runtime',
             'reason':reason if reason in reasons else 'unknown'}
+        if at == 'sampling' and last_gate_observation is not None:
+            failure_observation = json.loads(compact(last_gate_observation))
         python_state['failureDetectedMs'] = now()
         python_state['failureWallEpochMs'] = min(9999999999999,max(0,round(time.time()*1000)))
 
@@ -685,6 +874,8 @@ async def run(args, *, manager_factory=None, limits=None):
         elapsed = time.monotonic()-start if start is not None else 0
         value = summary.result(elapsed_s=elapsed,interrupted=interrupted or cleanup_failed or write_status != 'ok' or python_state['cleanupStatus'] != 'api-finished-exit-unknown')
         value.update(mode=args.mode,failure=failure,startProof=start_proof,startupSummary=startup,
+            startupSnapshot=startup_capture,failureSnapshot=failure_capture,
+            failureObservation=failure_observation,timeoutConsole=console.value,
             originClass='loopback' if parsed.hostname in ('localhost','127.0.0.1','::1') else 'formal',
             lifecycle={'file':'lifecycle.json','captureStatus':capture_status,
                 'cleanupStatus':python_state['cleanupStatus'],'writeStatus':write_status,
@@ -755,24 +946,32 @@ async def run(args, *, manager_factory=None, limits=None):
         finally: record['finishedMs'] = now()
 
     async def sample_once():
-        nonlocal diagnostic
+        nonlocal diagnostic, last_gate_observation
+        last_gate_observation = None
         value = await page.evaluate('() => window.__wrdPassiveSampler.sample()')
+        if isinstance(value,dict):
+            validate_gate_fields(value)
+            if value.get('inputGate',{}).get('status') == 'observed' and value.get('browserNowMs') is not None:
+                last_gate_observation = json.loads(compact({key:value[key] for key in ('browserNowMs','inputGate')}))
         if isinstance(value,dict) and 'diagnostics' in value:
             diagnostic = diagnostic_from_delta(diagnostic,value['diagnostics'])
         return value
 
     async def cleanup():
-        nonlocal diagnostic, capture_status, cleanup_failed, startup, cooperation_failure
+        nonlocal diagnostic, capture_status, cleanup_failed, cooperation_failure
         deadline = time.monotonic()+caps['cleanup']
         python_state['cleanupStatus'] = 'running'
         def remaining(key): return max(0,min(caps[key],deadline-time.monotonic()))
         if failure is not None and page is not None and remaining('export') > 0:
             try:
-                startup = await lifecycle_stage(startup_summary(page),remaining('export'),
+                await lifecycle_stage(startup_summary(page,capture=failure_capture),remaining('export'),
                     settlement=min(.25,remaining('export')/4))
             except CancellationCooperationError as exc:
                 cooperation_failure = exc; cleanup_failed = True
+            except TimeoutError: failure_capture['status'] = 'timeout'
             except BaseException: pass
+        elif failure is not None:
+            failure_capture['status'] = 'unavailable'
         if page is not None and remaining('export') > 0:
             try:
                 value = await lifecycle_stage(page.evaluate(FINAL_EXPORT),remaining('export'),
@@ -793,6 +992,7 @@ async def run(args, *, manager_factory=None, limits=None):
                 cooperation_failure = exc; capture_status = 'noncooperative'; cleanup_failed = True
             except Exception: capture_status = 'error'; cleanup_failed = True
         else: capture_status = 'unavailable'
+        console.detach()
         # Ordered pre-close evidence survives browser.close and manager.stop.
         persist()
         if browser is not None:
@@ -848,6 +1048,7 @@ async def run(args, *, manager_factory=None, limits=None):
             await lifecycle_stage(login_via_ui(page,password),39)
             stage = 'observer-install'
             await lifecycle_stage(page.evaluate(Path(__file__).with_name('passive_session_sampler.js').read_text()),8)
+            console.attach(page)
             stage = 'start-ui'
             start_proof = await start_via_ui(page)
             stage = 'media-start'
@@ -859,7 +1060,7 @@ async def run(args, *, manager_factory=None, limits=None):
                 await asyncio.sleep(1)
             else: raise RuntimeError('media-start-deadline')
             stage = 'startup-summary'
-            startup = await startup_summary(page,required=True)
+            startup = await startup_summary(page,required=True,capture=startup_capture)
             stage = 'sampling'
             start = time.monotonic()
             await collect_samples(sample_once,EvidenceWriter(stream),summary,salt,

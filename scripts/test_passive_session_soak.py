@@ -21,6 +21,11 @@ def row(tick, **changes):
     return {'status':'observed', 'elapsedSeconds':tick, 'sample':sample}
 
 
+def gate_value(status='observed'):
+    return {'status':status,'blockedReasons':[],**dict.fromkeys(soak.GATE_BOOLEANS),
+        **dict.fromkeys(soak.GATE_ENUMS,'unknown')}
+
+
 class ContinuityTest(unittest.TestCase):
     def test_complete_sequence_passes_only_passive_continuity(self):
         summary = ContinuitySummary(duration_s=10, mode='relay')
@@ -405,7 +410,7 @@ process.stdin.on('end', async () => {
             'socketConnected':True, 'pcState':'unknown', 'uiPhase':'unknown',
             'controlState':'unknown', 'hostOnline':True, 'desiredMediaState':'unknown',
             'desiredGeneration':None, 'authState':'unknown', 'superseded':True,
-            'failureCause':'unknown'})
+            'failureCause':'unknown','browserNowMs':None})
         self.assertNotIn('private-', json.dumps(result))
         self.assertLess(len(json.dumps(result)), 1024)
 
@@ -472,8 +477,10 @@ class StartupRunTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(summary['failure']['reason'],
                         'viewer-present-or-unknown' if guard_failure else 'media-start-deadline')
                     self.assertEqual(summary['startProof']['status'], 'NOT_VERIFIED' if guard_failure else 'verified')
-                    self.assertEqual(summary['startupSummary']['uiPhase'], 'idle' if guard_failure else 'signaling')
-                    self.assertEqual(summary['startupSummary']['failureCause'], 'unknown')
+                    self.assertIsNone(summary['startupSummary'])
+                    self.assertEqual(summary['startupSnapshot']['status'],'not-reached')
+                    self.assertEqual(summary['failureSnapshot']['state']['uiPhase'], 'idle' if guard_failure else 'signaling')
+                    self.assertEqual(summary['failureSnapshot']['state']['failureCause'], 'unknown')
                     self.assertEqual(summary['status'], 'INCOMPLETE')
                     self.assertEqual((summary['samples'], summary['elapsedSeconds']), (0, 0))
                     self.assertFalse(summary['threeHourContinuityMet'])
@@ -502,6 +509,9 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
             self.entered = asyncio.Event()
             self.proofs = self.clicks = self.sample_count = 0
             self.closed = False
+            self.console_listeners = []
+            self.product_console = lambda message: None
+            self.console_listeners.append(self.product_console)
             self.chromium = self
             self.diagnostic = soak.empty_diagnostic()
             self.diagnostic['coverage']['status'] = 'partial'
@@ -524,6 +534,16 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
                 try: await asyncio.Event().wait()
                 finally: self.events.append(name+'-settled')
             if self.fail_at == name: raise RuntimeError('private-error-canary https://private.invalid')
+
+        def on(self, name, handler):
+            assert name == 'console'
+            self.events.append('console-attach')
+            self.console_listeners.append(handler)
+
+        def remove_listener(self, name, handler):
+            assert name == 'console'
+            self.events.append('console-detach')
+            self.console_listeners.remove(handler)
 
         async def start(self):
             # Initial committed files must predate manager entry.
@@ -596,6 +616,7 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
             # Both preliminary artifacts, original strict failure and exported
             # preclose event are committed before the first browser close call.
             self.events.append('preliminary-check')
+            assert self.console_listeners == [self.product_console], 'owned console observer must detach before close'
             lifecycle = json.loads((self.output/'lifecycle.json').read_text())
             summary = json.loads((self.output/'summary.json').read_text())
             assert lifecycle['python']['browserClose']['status'] == 'not-created'
@@ -628,6 +649,102 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary['status'],'INCOMPLETE')
         return lifecycle,summary
 
+    async def test_startup_is_immutable_when_post_failure_state_changes(self):
+        class ChangedRig(self.Rig):
+            captures = 0
+            async def evaluate(self, expression, arg=None):
+                if expression == soak.STARTUP_SUMMARY:
+                    self.captures += 1
+                    return {'observerAvailable':True, 'failureCause':'unknown','browserNowMs':104 if self.captures == 1 else 207,
+                        'uiPhase':'connected' if self.captures == 1 else 'disconnected',
+                        'inputGate':gate_value(),'startupMarks':dict.fromkeys(soak.MARK_NAMES)}
+                return await super().evaluate(expression, arg)
+        with tempfile.TemporaryDirectory() as directory:
+            rig = ChangedRig(Path(directory)/'evidence')
+            self.assertEqual(await self.execute(rig), 1)
+            _, summary = self.artifacts(rig)
+            self.assertEqual(summary['startupSummary']['uiPhase'], 'connected')
+            self.assertEqual(summary['failureSnapshot']['state']['uiPhase'], 'disconnected')
+            self.assertEqual(summary['startupSnapshot']['state'],summary['startupSummary'])
+            self.assertEqual(summary['startupSnapshot']['browserNowMs'],104)
+            self.assertEqual(summary['failureSnapshot']['browserNowMs'],207)
+            self.assertEqual(summary['startupSnapshot']['browserClock'],'performance-now')
+            self.assertEqual(summary['startupSnapshot']['pythonClock'],'monotonic')
+            self.assertEqual(summary['startupSnapshot']['stage'], 'startup-baseline')
+            self.assertEqual(summary['failureSnapshot']['stage'], 'post-failure-preclose')
+            self.assertLessEqual(summary['startupSnapshot']['pythonCompletedMs'],
+                summary['failureSnapshot']['pythonRequestedMs'])
+
+    async def test_persisted_gate_failure_observation_and_prestart_console_are_separate(self):
+        class EvidenceRig(self.Rig):
+            captures = 0
+            async def click(self,**kwargs):
+                await super().click(**kwargs)
+                message=SimpleNamespace(type='log',text='[PAINT-GATE] uiPhase=disconnected reason=first-frame-timeout painted=false')
+                for listener in list(self.console_listeners): listener(message)
+            async def evaluate(self,expression,arg=None):
+                if expression == soak.STARTUP_SUMMARY:
+                    self.captures += 1
+                    return {'observerAvailable':True,'uiPhase':'disconnected','browserNowMs':100*self.captures,
+                        'inputGate':{**gate_value(),'allowed':False,'inputActive':False,'blockedReasons':['inactive']},
+                        'startupMarks':{**dict.fromkeys(soak.MARK_NAMES),'active':91,'first-frame':91}}
+                value=await super().evaluate(expression,arg)
+                if expression == '() => window.__wrdPassiveSampler.sample()':
+                    value.update(browserNowMs=self.sample_count*1000,inputGate={**gate_value(),
+                        'allowed':False,'inputActive':False,'uiPhase':'disconnected',
+                        'hasPaintedFrame':True,'currentAttemptReady':True,'hasActiveControl':True,
+                        'socketConnected':value['socketConnected'],'blockedReasons':['inactive']},inputAllowed=False)
+                return value
+            async def close(self):
+                self.preclose_summary=(self.output/'summary.json').read_bytes()
+                await super().close()
+        with tempfile.TemporaryDirectory() as directory:
+            rig=EvidenceRig(Path(directory)/'evidence')
+            self.assertEqual(await self.execute(rig),1)
+            _,summary=self.artifacts(rig)
+            preliminary=json.loads(rig.preclose_summary)
+            self.assertEqual(preliminary['startupSummary'],summary['startupSummary'])
+            self.assertEqual(preliminary['startupSnapshot'],summary['startupSnapshot'])
+            self.assertEqual(preliminary['failureSnapshot'],summary['failureSnapshot'])
+            self.assertEqual(summary['startupSnapshot']['browserNowMs'],100)
+            self.assertEqual(summary['failureSnapshot']['browserNowMs'],200)
+            self.assertEqual(summary['failureObservation']['browserNowMs'],2000)
+            self.assertEqual(summary['failureObservation']['inputGate']['blockedReasons'],['inactive'])
+            self.assertEqual(summary['timeoutConsole']['acceptedCount'],1)
+            self.assertEqual(summary['timeoutConsole']['firstEvent']['painted'],False)
+            self.assertEqual(summary['timeoutConsole']['status'],'detached')
+            self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+            rows=[json.loads(line) for line in (rig.output/'samples.jsonl').read_text().splitlines()]
+            self.assertFalse(rows[0]['sample']['inputAllowed'])
+            self.assertEqual(rows[0]['sample']['inputGate'],summary['failureObservation']['inputGate'])
+            self.assertLessEqual(summary['timeoutConsole']['firstEvent']['pythonReceiptMs'],summary['startupSnapshot']['pythonRequestedMs'])
+
+    async def test_postfailure_snapshot_errors_timeout_cancellation_preserve_startup_and_original_failure(self):
+        for outcome in ('error','timeout','cancelled','schema-rejected'):
+            class Rig(self.Rig):
+                captures = 0
+                async def evaluate(self,expression,arg=None):
+                    if expression == soak.STARTUP_SUMMARY:
+                        self.captures += 1
+                        if self.captures > 1:
+                            if outcome == 'error': raise RuntimeError('private-canary')
+                            if outcome == 'timeout': await asyncio.Event().wait()
+                            if outcome == 'cancelled': raise asyncio.CancelledError()
+                            return {'secret':'private-canary'}
+                        return {'uiPhase':'connected','browserNowMs':77}
+                    return await super().evaluate(expression,arg)
+            with self.subTest(outcome=outcome),tempfile.TemporaryDirectory() as directory:
+                rig=Rig(Path(directory)/'evidence')
+                self.assertEqual(await self.execute(rig),1)
+                _,summary=self.artifacts(rig)
+                self.assertEqual(summary['startupSummary'],{'uiPhase':'connected','browserNowMs':77})
+                self.assertEqual(summary['startupSnapshot']['status'],'ok')
+                self.assertEqual(summary['failureSnapshot']['status'],outcome)
+                self.assertIsNone(summary['failureSnapshot']['state'])
+                self.assertEqual(summary['failure']['reason'],'session-changed-or-disconnected')
+                self.assertEqual(rig.captures,2)
+                self.assertLess(rig.events.index('console-detach'),rig.events.index('close'))
+
     async def test_strict_disconnect_commits_preclose_before_close_and_preserves_first_terminal(self):
         with tempfile.TemporaryDirectory() as directory:
             rig = self.Rig(Path(directory)/'evidence')
@@ -640,7 +757,9 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
             self.assertLess(rig.events.index('preclose'),rig.events.index('close'))
             self.assertLess(rig.events.index('close'),rig.events.index('manager-stop'))
             self.assertEqual((rig.proofs,rig.clicks),(1,1))
-            self.assertLess(rig.events.index('observer-install'),rig.events.index('proof'))
+            self.assertLess(rig.events.index('observer-install'),rig.events.index('console-attach'))
+            self.assertLess(rig.events.index('console-attach'),rig.events.index('start-click'))
+            self.assertLess(rig.events.index('console-detach'),rig.events.index('close'))
             self.assertLessEqual(lifecycle['python']['failureDetectedMs'],lifecycle['python']['browserClose']['startedMs'])
 
     async def test_outer_start_launch_entry_export_close_and_stop_errors_keep_evidence(self):
@@ -908,19 +1027,32 @@ let timer=0;
 const engine=Object.assign(new EventEmitter(),{transport:{name:'websocket'}});
 const manager=Object.assign(new EventEmitter(),{engine});
 const socket=Object.assign(new EventEmitter(),{io:manager,connected:false});
-const context={window:{},document:{getElementById:()=>null},WebRTC:{socket},
+const context={window:{},document:{getElementById:()=>null},WebRTC:{socket,uiPhase:'disconnected',hasPaintedFrame:true},
+Input:{isActive:false,getEffectiveInputGate:()=>({allowed:false,blockedReasons:['inactive','private-canary']})},
+StartupTelemetry:{snapshot:()=>({marks:[{name:'first-frame',atMs:400,detail:'private-canary'},{name:'private-canary',atMs:42}],resources:['private-canary']})},
 performance:{now:()=>500,timeOrigin:1800000000000},setTimeout:()=>++timer,clearTimeout:()=>{}};
 vm.runInNewContext(fs.readFileSync('scripts/passive_session_sampler.js','utf8'),context);
 socket.emit('disconnect','transport close');
 engine.emit('close','transport close',{description:'websocket connection closed',context:{code:1006,wasClean:false,reason:'private-canary',url:'https://private.invalid'}});
 (async()=>{const sampler=context.window.__wrdPassiveSampler;
 const sample=await sampler.sample();const snapshot=sampler.finalize();
-process.stdout.write(JSON.stringify({snapshot,delta:sample.diagnostics}));})();'''
+process.stdout.write(JSON.stringify({snapshot,delta:sample.diagnostics,sample,capture:sampler.evidenceSnapshot()}));})();'''
         child = subprocess.run(['node','-e',script],cwd=Path(__file__).resolve().parents[1],
             capture_output=True,text=True,check=True,timeout=2)
         value = json.loads(child.stdout)
         soak.validate_diagnostic(value['snapshot'])
         soak.validate_delta(value['delta'])
+        soak.validate_gate_fields(value['capture'])
+        self.assertEqual(value['sample']['inputGate']['blockedReasons'],['inactive','unknown'])
+        self.assertEqual(value['sample']['inputAllowed'],False)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)/'sample.jsonl'
+            with target.open('w') as stream:
+                EvidenceWriter(stream).write({'sample':private_row(value['sample'],b'salt')})
+            saved = json.loads(target.read_text())
+            soak.validate_gate_fields(saved['sample'])
+            self.assertEqual(saved['sample']['startupMarks']['first-frame'],400)
+            self.assertNotIn('private-',target.read_text())
         self.assertEqual(value['snapshot']['state']['socketState'],'state-observed-disconnected')
         for output in (value['snapshot'],value['delta']):
             self.assertEqual(next(e for e in output['events'] if e['k'] == 'ec')['ws'],
@@ -931,6 +1063,158 @@ process.stdout.write(JSON.stringify({snapshot,delta:sample.diagnostics}));})();'
         self.assertNotIn('private-',child.stdout)
         self.assertLessEqual(len(soak.compact(value['delta'])),4096)
         self.assertLessEqual(len(soak.compact(value['snapshot'])),32768)
+
+class GateEvidenceBoundaryTest(unittest.TestCase):
+    def test_gate_states_reasons_nullable_values_and_all_persistence_boundaries(self):
+        import copy
+        good = gate_value()
+        for reason in soak.GATE_REASONS:
+            value = {**good,'blockedReasons':[reason]}
+            soak.validate_gate(value)
+        for key,values in soak.GATE_ENUMS.items():
+            for value in values: soak.validate_gate({**good,key:value})
+        for key in soak.GATE_BOOLEANS:
+            for value in (True,False,None): soak.validate_gate({**good,key:value})
+        for status in ('unavailable','scope-changed'): soak.validate_gate(gate_value(status))
+        mutations = [lambda g:g.update(secret='private-canary'),lambda g:g.pop('allowed'),
+            lambda g:g.update(status='private-canary'),lambda g:g.update(blockedReasons=['private-canary']),
+            lambda g:g.update(blockedReasons=['inactive','inactive']),lambda g:g.update(blockedReasons=['inactive']*33),
+            lambda g:g.update(blockedReasons=[{}]),lambda g:g.update(blockedReasons=None),
+            *[lambda g,k=k:g.update({k:1}) for k in soak.GATE_BOOLEANS],
+            *[lambda g,k=k:g.update({k:'private-canary'}) for k in soak.GATE_ENUMS],
+            lambda g:g.update(status='scope-changed',allowed=False)]
+        for mutate in mutations:
+            value = copy.deepcopy(good);mutate(value)
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError): private_row({'inputGate':value},b'salt')
+                stream=io.StringIO()
+                with self.assertRaises(ValueError): EvidenceWriter(stream).write({'sample':{'inputGate':value}})
+                self.assertEqual(stream.getvalue(),'')
+                with tempfile.TemporaryDirectory() as directory:
+                    target=Path(directory)/'summary.json'
+                    with self.assertRaises(ValueError): soak.atomic_evidence(target,{'inputGate':value},initial=True)
+                    self.assertFalse(target.exists())
+        # Legacy rows remain readable and verdicts retain their old meaning.
+        soak.validate_additive_evidence({'startupSummary':{'uiPhase':'connected'}})
+        self.assertEqual(private_row({'inputAllowed':False},b'salt')['inputAllowed'],False)
+
+    def test_marks_snapshots_clock_types_and_canaries_rejected_before_atomic_replace(self):
+        import copy
+        state={'uiPhase':'disconnected','browserNowMs':150.5,'inputGate':gate_value(),
+            'startupMarks':dict.fromkeys(soak.MARK_NAMES)}
+        capture=soak.empty_capture('startup-baseline')
+        capture.update(status='ok',state=state,browserNowMs=150.5,pythonRequestedMs=200,pythonCompletedMs=201)
+        soak.validate_capture(capture)
+        mutations=[lambda c:c.update(secret='private-canary'),lambda c:c.update(browserClock='wall'),
+            lambda c:c.update(pythonClock='browser'),lambda c:c.update(status='private-canary'),
+            lambda c:c.update(stage='private-canary'),lambda c:c.update(pythonCompletedMs=199),
+            lambda c:c.update(browserNowMs=151),lambda c:c['state'].update(secret='private-canary'),
+            lambda c:c['state']['startupMarks'].update(secret='private-canary'),
+            lambda c:c['state']['startupMarks'].pop('active'),
+            *[lambda c,v=v:c.update(pythonRequestedMs=v) for v in (True,-1,float('inf'),float('nan'),'private-canary',1e14)],
+            *[lambda c,v=v:c['state']['startupMarks'].update(active=v) for v in (True,-1,float('inf'),'private-canary',1e14)]]
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'summary.json'
+            original={'startupSnapshot':capture,'startupSummary':state}
+            soak.atomic_evidence(target,original,initial=True)
+            prior=target.read_bytes()
+            for mutate in mutations:
+                value=copy.deepcopy(capture);mutate(value)
+                with self.subTest(value=value),self.assertRaises(ValueError):
+                    soak.atomic_evidence(target,{'startupSnapshot':value})
+                self.assertEqual(target.read_bytes(),prior)
+                self.assertFalse(list(Path(directory).glob('.*.tmp')))
+            for status in ('not-reached','unavailable','timeout','schema-rejected','cancelled','error'):
+                value=soak.empty_capture('post-failure-preclose');value['status']=status
+                soak.atomic_evidence(target,{'failureSnapshot':value})
+                self.assertEqual(json.loads(target.read_text())['failureSnapshot']['status'],status)
+
+
+class TimeoutConsoleTest(unittest.TestCase):
+    class Page:
+        def __init__(self): self.listeners=[lambda message: None]
+        def on(self,name,handler): self.listeners.append(handler)
+        def remove_listener(self,name,handler): self.listeners.remove(handler)
+        def emit(self,message):
+            for listener in list(self.listeners): listener(message)
+
+    def test_exact_positive_lines_first_event_receipt_time_cap_and_owned_cleanup(self):
+        page=self.Page();product=page.listeners[0]
+        observer=soak.TimeoutConsoleObserver()
+        with patch.object(soak,'monotonic_ms',side_effect=range(100,200)):
+            observer.attach(page)
+            prefix='[PAINT-GATE] uiPhase=disconnected reason=first-frame-timeout painted='
+            for painted in (True,False): page.emit(SimpleNamespace(type='log',text=prefix+str(painted).lower()))
+            first=json.loads(json.dumps(observer.value['firstEvent']))
+            self.assertEqual(first,{'class':'first-frame-timeout-transition','painted':True,'pythonReceiptMs':101})
+            for text in ('prefix '+prefix+'true',prefix+'true private-secret',prefix+'true\n',prefix+'true\n'+prefix+'false',
+                prefix+'TRUE',prefix+'<html>',prefix+'false'+'x'*128,
+                prefix.replace('disconnected','connected')+'true',prefix.replace('first-frame-timeout','secret-reason')+'true'):
+                page.emit(SimpleNamespace(type='log',text=text))
+            page.emit(SimpleNamespace(type='warning',text=prefix+'true'))
+            self.assertEqual(observer.value['acceptedCount'],2)
+            for _ in range(100): page.emit(SimpleNamespace(type='log',text=prefix+'false'))
+            self.assertEqual(observer.value['acceptedCount'],64)
+            self.assertTrue(observer.value['capped'])
+            self.assertEqual(observer.value['firstEvent'],first)
+            observer.detach();observer.detach()
+            self.assertEqual(page.listeners,[product])
+            self.assertEqual(observer.value['status'],'detached')
+            self.assertTrue(observer.value['installedBeforeStart'])
+            observer.observe(SimpleNamespace(type='log',text=prefix+'false'))
+            self.assertEqual(observer.value['firstEvent'],first)
+            with tempfile.TemporaryDirectory() as directory:
+                target=Path(directory)/'summary.json'
+                soak.atomic_evidence(target,{'timeoutConsole':observer.value},initial=True)
+                saved=json.loads(target.read_text())['timeoutConsole']
+                self.assertEqual(saved['acceptedCount'],64)
+                self.assertEqual(saved['firstEvent'],first)
+                self.assertNotIn('private-',target.read_text())
+                self.assertNotIn('painted=',target.read_text())
+
+    def test_missing_failed_parser_and_detach_coverage_never_throw_or_remove_product(self):
+        observer=soak.TimeoutConsoleObserver();observer.attach(object())
+        self.assertEqual(observer.value['status'],'unavailable')
+        class Failed(self.Page):
+            def on(self,name,handler):
+                super().on(name,handler);raise RuntimeError('private-canary')
+        page=Failed();observer.attach(page)
+        self.assertEqual(observer.value['status'],'failed')
+        self.assertEqual(observer.value['error'],'attach-error')
+        self.assertEqual(len(page.listeners),1)
+        class Unreadable:
+            type='log'
+            @property
+            def text(self): raise ValueError('private-canary')
+            @property
+            def args(self): raise AssertionError('must not inspect args')
+        page=self.Page();observer=soak.TimeoutConsoleObserver();observer.attach(page)
+        page.emit(Unreadable())
+        self.assertEqual(observer.value['error'],'parser-error')
+        self.assertEqual(observer.value['acceptedCount'],0)
+        observer.detach()
+        soak.validate_console(observer.value)
+        self.assertNotIn('private-',json.dumps(observer.value))
+        class FailedDetach(self.Page):
+            def remove_listener(self,name,handler): raise RuntimeError('private-canary')
+        observer=soak.TimeoutConsoleObserver();observer.attach(FailedDetach());observer.detach()
+        self.assertEqual(observer.value['error'],'detach-error')
+        observer.observe(SimpleNamespace(type='log',text='[PAINT-GATE] uiPhase=disconnected reason=first-frame-timeout painted=true'))
+        self.assertEqual(observer.value['acceptedCount'],0)
+
+    def test_console_schema_is_revalidated_before_every_persistence(self):
+        import copy
+        good=soak.TimeoutConsoleObserver().value
+        for mutate in [lambda c:c.update(secret='private-canary'),lambda c:c.update(status='private-canary'),
+            lambda c:c.update(acceptedCount=65),lambda c:c.update(capped=1),lambda c:c.update(attachedMs=float('inf')),
+            lambda c:c.update(installedBeforeStart=1),lambda c:c.update(error='private-canary'),
+            lambda c:c.update(firstEvent={'class':'first-frame-timeout-transition','painted':False,'pythonReceiptMs':0}),
+            lambda c:c.update(acceptedCount=1,firstEvent={'class':'private-canary','painted':False,'pythonReceiptMs':0})]:
+            value=copy.deepcopy(good);mutate(value)
+            with self.subTest(value=value),tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(ValueError):
+                    soak.atomic_evidence(Path(directory)/'summary.json',{'timeoutConsole':value},initial=True)
+                self.assertEqual(list(Path(directory).iterdir()),[])
 
 
 if __name__ == '__main__': unittest.main()

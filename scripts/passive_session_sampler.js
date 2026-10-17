@@ -246,14 +246,112 @@
     } catch (_) { return { status: 'unavailable' }; }
     finally { clearTimeout(timer); }
   };
+  const bool = value => typeof value === 'boolean' ? value : null;
+  const boundedTime = value => finite(value) !== null && value <= 9999999999999 ? value : null;
+  const gateEnums = {
+    uiPhase:['idle','signaling','media-pending','connected','media-stalled','disconnected'],
+    desiredMediaState:['active','suspended'], mediaRuntimePhase:['active','suspending','suspended','resuming'],
+    keyboardControllerState:['INACTIVE','READY','BLOCKED','RESET_REQUIRED'],
+    keyboardTransportState:['ready','blocked','reacquire-required','revoked'],
+    surfaceState:['settled','pending','uncertain'],
+    desktopWriteRecoveryState:['none','reacquire-required','reconciled'],
+    recoveryState:['idle','waiting','recovered','failed'],
+  };
+  const gateBooleans = ['allowed','inputActive','hasInputLease','viewportSupported','hasPaintedFrame',
+    'currentAttemptReady','hasActiveControl','socketConnected','manualDisconnect','superseded',
+    'mouseResetPending','draftComposing','draftPending','draftUncertain','firstFrameTimerHandlePresent'];
+  const gateReasons = new Set(['no-active-control','inactive','viewport-unsupported','manual-disconnect',
+    'media-not-ready-for-attempt','media-gate',
+    ...['active','suspending','suspended','resuming','unknown'].map(v => `runtime-phase:${v}`),
+    ...['active','suspended','unknown'].map(v => `media-state:${v}`),
+    'keyboard-transport-blocked','keyboard-transport-reacquire-required','keyboard-transport-revoked',
+    'keyboard-reset-pending','keyboard-blocked','surface-pending','surface-uncertain','mouse-reset-pending',
+    'desktop-write-reacquire-required','draft-composing','draft-pending','draft-uncertain',
+    'recovery-waiting','recovery-failed','unknown']);
+  const emptyGate = status => ({status, ...Object.fromEntries(gateBooleans.map(k => [k,null])),
+    ...Object.fromEntries(Object.keys(gateEnums).map(k => [k,'unknown'])), blockedReasons:[]});
+  const owner = () => {
+    const client = typeof WebRTC === 'undefined' ? null : WebRTC;
+    return {client,pc:client?.pc,input:typeof Input === 'undefined' ? null : Input,
+      socket:client?.socket,buildId:window.__WRD_BUILD__?.id,scope:{...client?.latencyScope?.()}};
+  };
+  const stillOwner = captured => {
+    let next;
+    try { next = owner(); } catch (_) { return false; }
+    return ['client','pc','input','socket','buildId'].every(k => captured[k] === next[k])
+      && ['connectionAttemptId','generation','leaseEpoch'].every(k => captured.scope[k] === next.scope[k]);
+  };
+  const markNames = ['start-click','bootstrap-start','bootstrap-ready','bootstrap-degraded',
+    'signal-connected','first-frame','active'];
+  const startupMarks = () => {
+    const result = Object.fromEntries(markNames.map(k => [k,null]));
+    try {
+      const marks = typeof StartupTelemetry === 'undefined' ? null : StartupTelemetry.snapshot?.()?.marks;
+      if (Array.isArray(marks) && marks.length <= 1024) for (const mark of marks) {
+        if (mark && typeof mark.name === 'string' && Object.prototype.hasOwnProperty.call(result,mark.name) && result[mark.name] === null) {
+          result[mark.name] = boundedTime(mark.atMs);
+        }
+      }
+    } catch (_) { /* Missing marks stay null; no arbitrary details cross. */ }
+    return result;
+  };
+  const projectGate = captured => {
+    if (!stillOwner(captured)) return emptyGate('scope-changed');
+    const {client,input,socket} = captured;
+    if (!client || !input || typeof input.getEffectiveInputGate !== 'function') return emptyGate('unavailable');
+    try {
+      const controller = input.keyboardController?.getSnapshot?.();
+      const transport = input.keyboardTransport?.getSnapshot?.();
+      const draft = input.mobileTextInputAdapter?.getSnapshot?.();
+      const media = client.mediaActivityRuntime?.snapshot?.();
+      // Read the effective verdict once after the other reconciling getters.
+      // Both the compatibility boolean and the projection use this result.
+      const effective = input.getEffectiveInputGate();
+      const value = emptyGate('observed');
+      const nullablePresence = (object,key) => key in object ? Boolean(object[key]) : null;
+      Object.assign(value, {
+        allowed:bool(effective?.allowed), inputActive:bool(input.isActive),
+        hasInputLease:nullablePresence(input,'activeControlLease'), viewportSupported:bool(input._viewportInputSupported),
+        uiPhase:client.uiPhase, hasPaintedFrame:bool(client.hasPaintedFrame),
+        currentAttemptReady:'currentConnectionAttemptId' in client
+          ? !client.currentConnectionAttemptId || client._mediaReadyConnectionAttemptId === client.currentConnectionAttemptId : null,
+        hasActiveControl:bool(client.hasActiveControl?.()), socketConnected:bool(socket?.connected),
+        manualDisconnect:bool(client.manualDisconnect), superseded:bool(client._superseded),
+        desiredMediaState:media?.desiredState, mediaRuntimePhase:client.mediaActivityRuntime?.phase,
+        keyboardControllerState:controller?.state, keyboardTransportState:transport?.state,
+        surfaceState:input._mobileSurfaceState, mouseResetPending:nullablePresence(input,'_pendingMouseReset'),
+        desktopWriteRecoveryState:'_desktopWriteRecovery' in input
+          ? input._desktopWriteRecovery === null ? 'none' : input._desktopWriteRecovery?.state : 'unknown',
+        draftComposing:bool(draft?.composing), draftPending:bool(draft?.hasPending),
+        draftUncertain:bool(draft?.deliveryUncertain), recoveryState:input._recoveryCycle?.state,
+        firstFrameTimerHandlePresent:Object.prototype.hasOwnProperty.call(client,'_firstFrameTimer')
+          ? client._firstFrameTimer !== null : null,
+      });
+      for (const [key,values] of Object.entries(gateEnums)) value[key] = oneOf(value[key],values);
+      // Inspect at most 32 entries. Any malformed/over-limit list is unknown.
+      const reasons = effective?.blockedReasons;
+      if (!Array.isArray(reasons) || reasons.length > 32) value.blockedReasons = ['unknown'];
+      else for (const reason of reasons) {
+        const safe = typeof reason === 'string' && gateReasons.has(reason) ? reason : 'unknown';
+        if (!value.blockedReasons.includes(safe)) value.blockedReasons.push(safe);
+      }
+      if (!stillOwner(captured)) return emptyGate('scope-changed');
+      return JSON.stringify(value).length <= 4096 ? value : emptyGate('unavailable');
+    } catch (_) { return emptyGate(stillOwner(captured) ? 'unavailable' : 'scope-changed'); }
+  };
+  const evidenceSnapshot = (captured = owner()) => {
+    let inputGate = projectGate(captured);
+    const marks = startupMarks();
+    // Snapshot/getter reconciliation may have changed the owner during capture.
+    if (!stillOwner(captured)) inputGate = emptyGate('scope-changed');
+    return {browserNowMs:boundedTime(performance.now()),inputGate,startupMarks:marks};
+  };
   window.__wrdPassiveSampler = {
     async sample() {
       if (!stopped) { attach(); scan(); }
-      const client = typeof WebRTC === 'undefined' ? null : WebRTC;
-      const pc = client?.pc;
+      const captured = owner();
+      const {client,pc,scope,buildId} = captured;
       if (pc && !identities.has(pc)) identities.set(pc, ++identity);
-      const scope = { ...client?.latencyScope?.() };
-      const buildId = window.__WRD_BUILD__?.id;
       let snapshot = null;
       try { snapshot = typeof LatencyMonitor === 'undefined' ? null : LatencyMonitor.snapshot(); } catch (_) {}
       const metrics = {};
@@ -262,13 +360,11 @@
         metrics[name] = row ? { available: row.available === true, count: finite(row.count),
           last: finite(row.last), p95: finite(row.p95), lastSampleAgeMs: finite(row.lastSampleAgeMs) } : null;
       }
-      const sampledPc = pc;
       const transport = await statsFor(pc);
-      const currentScope = client?.latencyScope?.();
-      const scopeStable = client === (typeof WebRTC === 'undefined' ? null : WebRTC)
-        && client?.pc === sampledPc && window.__WRD_BUILD__?.id === buildId
-        && ['connectionAttemptId', 'generation', 'leaseEpoch'].every(key => scope[key] === currentScope?.[key]);
-      const now = performance.now();
+      const mediaPhase = oneOf(client?.getMediaAppliedPhase?.(), ['active','paused','resuming','suspending','suspended']);
+      const evidence = evidenceSnapshot(captured);
+      const scopeStable = stillOwner(captured);
+      const now = evidence.browserNowMs;
       return { schemaVersion: 1, browserNowMs: now, scopeStable,
         socketConnected: client?.socket?.connected === true,
         pcIdentity: pc ? identities.get(pc) : null,
@@ -276,8 +372,9 @@
         transport: scopeStable ? transport : { status: 'scope-changed' },
         attempt: typeof scope?.connectionAttemptId === 'string' ? scope.connectionAttemptId : null,
         generation: finite(scope?.generation), leaseEpoch: finite(scope?.leaseEpoch),
-        mediaPhase: oneOf(client?.getMediaAppliedPhase?.(), ['active', 'paused', 'resuming', 'suspending', 'suspended']),
-        inputAllowed: typeof Input !== 'undefined' && Input.getEffectiveInputGate?.().allowed === true,
+        mediaPhase,
+        inputAllowed: evidence.inputGate.allowed === true,
+        inputGate:evidence.inputGate, startupMarks:evidence.startupMarks,
         callbacks, lastFrameAtMs: lastFrameAt,
         frameAgeMs: lastFrameAt === null ? null : Math.max(0, now - lastFrameAt),
         maxFrameGapMs, width: finite(video?.videoWidth), height: finite(video?.videoHeight),
@@ -289,6 +386,7 @@
         buildId: typeof buildId === 'string' ? buildId : null,
         metrics, diagnostics:drain() };
     },
+    evidenceSnapshot,
     diagnosticSnapshot: snapshot,
     finalize() {
       if (!stopped) { scan(); record('preclose'); }
