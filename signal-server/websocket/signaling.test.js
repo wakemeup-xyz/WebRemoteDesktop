@@ -3701,3 +3701,66 @@ test('viewer-stats normalizes only nullable latency after current viewer identit
   viewer.trigger('viewer-stats', { ...identity, rttMs: null });
   assert.equal(reports().length, before);
 });
+
+test('heartbeat attaches only after admitted main viewer claim and before welcome', () => {
+  const context = createRuntimeContext(); const io = makeIo(context); const attached = [];
+  setupSignaling(io, { runtimeContext: context, observeViewerHeartbeat(socket, current) {
+    assert.equal(current(), true);
+    assert.equal(socket.sent.some(e => e.event === 'connected'), false);
+    attached.push(socket);
+  } });
+  const host = new FakeSocket('heartbeat-host', 'host'); io.connect(host);
+  const relay = new FakeSocket('heartbeat-relay', 'relay-viewer'); io.connect(relay);
+  const viewer = new FakeSocket('heartbeat-main', 'viewer'); io.connect(viewer);
+  const rejected = new FakeSocket('heartbeat-rejected', 'viewer');
+  rejected.handshake.auth.proofAdmission = { token: 'invalid' }; io.connect(rejected);
+  const invalid = new FakeSocket('heartbeat-invalid-token', 'viewer'); invalid.handshake.auth.token = 'invalid';
+  assert.throws(() => io.connect(invalid));
+  assert.deepEqual(attached, [viewer]);
+});
+
+test('heartbeat coverage follows real proof and ordinary admission, rejection, rebind and observer failure', async () => {
+  const { createViewerHeartbeatRegistry } = require('../lib/observability/viewer-heartbeat');
+  const { EventEmitter } = require('node:events');
+  const context = createRuntimeContext(); const io = makeIo(context); const lines = []; const attached = [];
+  const registry = createViewerHeartbeatRegistry({ logger: { log: line => lines.push(line) } });
+  setupSignaling(io, { runtimeContext: context, observeViewerHeartbeat(socket, current) {
+    attached.push(socket); registry.attach(socket, current);
+  } });
+  const proof = new FakeSocket('heartbeat-proof', 'viewer'); proof.conn = new EventEmitter();
+  const admission = context.issueProofAdmission(); proof.handshake.auth.proofAdmission = admission; io.connect(proof);
+  const replay = new FakeSocket('heartbeat-replay', 'viewer'); replay.handshake.auth.proofAdmission = admission; io.connect(replay);
+  assert.equal(replay.disconnected, true);
+  const human = new FakeSocket('heartbeat-human', 'viewer'); human.conn = new EventEmitter(); io.connectManual(human);
+  await Promise.resolve();
+  assert.deepEqual(attached, [proof, human]);
+  assert.equal(context.connections.viewers.get(human.id), human);
+  assert.equal(JSON.parse(lines[0].slice('WRD_SIGNAL_HEARTBEAT '.length)).current, false);
+  assert.equal(JSON.parse(lines[0].slice('WRD_SIGNAL_HEARTBEAT '.length)).proof, true);
+  const stale = new FakeSocket('heartbeat-stale', 'viewer');
+  stale.handshake.auth.viewerSessionId = human.handshake.auth.viewerSessionId;
+  stale.handshake.auth.viewerAdmission = { mode: 'resume', generation: -1 }; io.connect(stale);
+  assert.equal(stale.disconnected, true); assert.equal(attached.length, 2);
+  const resume = human.sent.find(e => e.event === 'connected').data.viewerAdmission;
+  human.trigger('disconnect', 'transport close');
+  const replacement = new FakeSocket('heartbeat-rebound', 'viewer'); replacement.conn = new EventEmitter();
+  replacement.handshake.auth.viewerSessionId = human.handshake.auth.viewerSessionId;
+  replacement.handshake.auth.viewerAdmission = resume; io.connect(replacement);
+  assert.equal(context.connections.viewers.get(replacement.id), replacement);
+  await Promise.resolve(); assert.equal(attached.length, 3);
+  assert.equal(JSON.parse(lines[1].slice('WRD_SIGNAL_HEARTBEAT '.length)).current, false);
+  registry.stop();
+  const strict = createRuntimeContext({ realm: 'lab-test', requireViewerProof: true }); const strictIo = makeIo(strict);
+  const observed = []; const unavailable = createViewerHeartbeatRegistry({ logger: { log() {} } });
+  setupSignaling(strictIo, { runtimeContext: strict, observeViewerHeartbeat(socket, current) {
+    observed.push(socket); unavailable.attach(socket, current); throw Error('observer failure');
+  } });
+  const refused = new FakeSocket('heartbeat-proofless', 'viewer'); strictIo.connect(refused);
+  const host = new FakeSocket('heartbeat-strict-host', 'host'); strictIo.connect(host);
+  const relay = new FakeSocket('heartbeat-strict-relay', 'relay-viewer'); strictIo.connect(relay);
+  const accepted = new FakeSocket('heartbeat-accepted', 'viewer'); accepted.handshake.auth.proofAdmission = strict.issueProofAdmission();
+  strictIo.connect(accepted);
+  assert.deepEqual(observed, [accepted]); assert.equal(refused.disconnected, true);
+  assert.equal(accepted.disconnected, false); assert.ok(accepted.sent.some(e => e.event === 'connected'));
+  assert.equal(strict.connections.viewers.get(accepted.id), accepted); unavailable.stop();
+});

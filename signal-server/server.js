@@ -44,6 +44,7 @@ const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-
 const { createRotatingFileSink, createStructuredLogger } = require('./lib/observability/logger');
 const { createRecentEventStore } = require('./lib/observability/store');
 const { createRuntimeObserver, bindRuntimeObserver } = require('./lib/observability/runtime');
+const { createViewerHeartbeatRegistry } = require('./lib/observability/viewer-heartbeat');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
 const rateLimit = require('express-rate-limit');
@@ -128,6 +129,9 @@ function createServerApp(options = {}) {
     // Node normalizes maxRSS to KiB on every supported platform.
     samplePeakRss: () => process.resourceUsage().maxRSS / 1024,
   });
+  const viewerHeartbeat = createViewerHeartbeatRegistry({ logger, runtimeSnapshot: () => runtimeObserver.snapshot() });
+  server.on('close', () => viewerHeartbeat.stop());
+  server.on('error', () => viewerHeartbeat.stop());
   bindRuntimeObserver(server, runtimeObserver);
 
   app.set('trust proxy', trustLoopbackProxy);
@@ -204,7 +208,7 @@ function createServerApp(options = {}) {
     httpCompression: false,
   });
 
-  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
+  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, observeViewerHeartbeat: viewerHeartbeat.attach, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
   const terminal = setupTerminal(io, {
     config,
     logger,
@@ -494,6 +498,7 @@ function createServerApp(options = {}) {
     runtimeObserver,
     signalingRuntime,
     async close(reason = 'system:shutdown') {
+      viewerHeartbeat.stop();
       runtimeObserver.stop();
       if (typeof terminal?.close === 'function') {
         return terminal.close(reason);

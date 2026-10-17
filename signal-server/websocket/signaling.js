@@ -1100,6 +1100,9 @@ function setupSignaling(io, options = {}) {
         supersedeOtherDesktopViewers(socket);
       }
       if (connections.viewers.size > 1) clearAllLegacyRelayCompanions({ stop: true });
+      try {
+        options.observeViewerHeartbeat?.(socket, () => connections.viewers.get(socket.id) === socket);
+      } catch { /* Diagnostics cannot affect Viewer admission or welcome. */ }
       socket.emit('connected', {
         role: 'viewer',
         status: 'ok',
