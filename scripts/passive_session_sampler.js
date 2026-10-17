@@ -109,7 +109,22 @@
       observe('reconnect_error','re',error => ({r:error?.type === 'TransportError' ? 'transport-error':'unknown'}));
       observe('reconnect_failed','rf');
     } else {
-      observe('close','ec',value => ({r:reason(value,prefix)}));
+      observe('close','ec',(value,details) => {
+        const fields = {r:reason(value,prefix)};
+        try {
+          if (value === 'transport close' && details !== null && typeof details === 'object'
+              && details.description === 'websocket connection closed') {
+            const context = details.context;
+            if (context !== null && typeof context === 'object') {
+              const code = context.code, wasClean = context.wasClean;
+              if (Number.isInteger(code) && code >= 1000 && code <= 4999 && typeof wasClean === 'boolean') {
+                fields.ws = {code,wasClean};
+              }
+            }
+          }
+        } catch (_) { /* Missing or unreadable native metadata remains absent. */ }
+        return fields;
+      });
       observe('packet','rx',packet => ({p:oneOf(packet?.type,['ping','pong'])}));
       observe('packetCreate','tx',packet => ({p:oneOf(packet?.type,['ping','pong'])}));
       for (const [name,k] of [['ping','ep'],['pong','eo'],['flush','ef'],['upgrade','eu']]) observe(name,k);

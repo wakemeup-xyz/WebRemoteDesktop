@@ -428,7 +428,13 @@ def validate_event(event):
     elif kind in ('rx','tx'): keys |= {'o','c','p'}
     elif kind in ('sc','mo','ra','rr','rf','ep','eo','ef','eu','bind'): keys |= {'o','c'}
     elif kind in ('vis','net','focus'): keys |= {'v'}
+    if kind == 'ec' and 'ws' in event: keys.add('ws')
     exact_keys(event, keys)
+    if 'ws' in keys:
+        ws = event['ws']
+        exact_keys(ws, {'code','wasClean'})
+        if type(ws['code']) is not int or not 1000 <= ws['code'] <= 4999 or type(ws['wasClean']) is not bool:
+            raise ValueError('diagnostic-schema')
     bounded_int(event['t'], EVENT_TIME_MAX)
     bounded_int(event['n'])
     if event['n'] < 1: raise ValueError('diagnostic-schema')

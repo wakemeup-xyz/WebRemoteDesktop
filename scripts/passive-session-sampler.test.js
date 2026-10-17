@@ -237,6 +237,41 @@ test('typed errors and exact close reasons are fixed and never inspect secrets',
   f.sampler.stop();
 });
 
+test('engine close copies only complete native websocket metadata', () => {
+  const f = observerFixture();
+  const envelope = context => ({description:'websocket connection closed',context});
+  const secret = () => { throw Error('private-canary read'); };
+  for (const [code,wasClean] of [[1000,true],[1006,false],[1005,false],[1015,false],[4999,true]]) {
+    const context = Object.create({get code() {return code;},get wasClean() {return wasClean;},get reason() {return secret();}});
+    f.engine.emit('close','transport close',envelope(context));
+    assert.deepEqual(plain(f.sampler.diagnosticSnapshot().events.at(-1).ws),{code,wasClean});
+  }
+  const invalid = [undefined,null,{}, {code:1006}, {wasClean:false},
+    ...[NaN,Infinity,1000.5,true,'1006',999,5000].map(code => ({code,wasClean:false})),
+    {code:1006,wasClean:'false'}, {get code() {return secret();},wasClean:false},
+    {code:1006,get wasClean() {return secret();}}];
+  for (const context of invalid) {
+    f.engine.emit('close','transport close',envelope(context));
+    assert.equal('ws' in f.sampler.diagnosticSnapshot().events.at(-1),false);
+  }
+  for (const details of [undefined,null,{}, {get description() {return secret();}},
+    {description:'websocket connection closed',get context() {return secret();}},
+    {description:'network connection lost',get context() {return secret();}}]) {
+    f.engine.emit('close','transport close',details);
+    assert.equal('ws' in f.sampler.diagnosticSnapshot().events.at(-1),false);
+  }
+  const details = {get description() {return secret();}};
+  f.engine.emit('close','ping timeout',details);
+  f.socket.emit('disconnect','transport close',envelope({code:1006,wasClean:false}));
+  f.manager.emit('close','transport close',envelope({code:1006,wasClean:false}));
+  const d = f.sampler.diagnosticSnapshot();
+  assert.ok(d.events.filter(e => e.k !== 'ec').every(e => !('ws' in e)));
+  assert.equal(d.attribution.cause,'unknown');
+  assert.deepEqual(plain(d.attribution.firstDisconnectEvent.ws),{code:1000,wasClean:true});
+  assert.doesNotMatch(JSON.stringify(d),/private-canary|description|context|reason/);
+  f.sampler.stop();
+});
+
 test('heartbeat records creation and flush semantics without payload, remote acknowledgement or RTT', () => {
   const f = observerFixture();
   const packet = type => ({type,get data() {throw Error('packet payload read');}});
@@ -261,11 +296,12 @@ test('product replacement during emitter dispatch retains enrolled old reason wi
     engine.on('close',() => {manager.engine = Object.assign(new EventEmitter(),{transport:{name:'polling'}});});
   }});
   f.socket.emit('disconnect','transport close');
-  f.engine.emit('close','ping timeout');
+  f.engine.emit('close','transport close',{description:'websocket connection closed',context:{code:1006,wasClean:false}});
   let d = f.sampler.diagnosticSnapshot();
   assert.deepEqual(plain(d.attribution.firstDisconnectEvent),{t:0,n:7,k:'sd',o:'s1',c:false,r:'transport-close'});
   assert.equal(d.events.find(e => e.k === 'ec').c,false);
-  assert.equal(d.events.find(e => e.k === 'ec').r,'ping');
+  assert.equal(d.events.find(e => e.k === 'ec').r,'transport-close');
+  assert.deepEqual(plain(d.events.find(e => e.k === 'ec').ws),{code:1006,wasClean:false});
   assert.equal(f.socket.listenerCount('disconnect'),1);
   assert.equal(f.engine.listenerCount('close'),1);
   f.context.WebRTC.socket.emit('disconnect','io client disconnect');
@@ -324,6 +360,21 @@ test('bounded flood, drain cursor gap and first terminal preservation through ri
   f.sampler.stop();
 });
 
+test('websocket metadata stays bounded through ring delta and final', async () => {
+  const f = observerFixture();
+  const details = {description:'websocket connection closed',context:{code:1006,wasClean:false}};
+  for (let i=0;i<1000;i++) f.engine.emit('close','transport close',details);
+  const delta = (await f.sampler.sample()).diagnostics;
+  const final = f.sampler.finalize();
+  assert.equal(delta.events.length,16);
+  assert.equal(final.events.length,128);
+  assert.ok(delta.events.every(e => e.ws.code === 1006));
+  assert.ok(bytes(delta) <=4096);
+  assert.ok(bytes(final) <=32768);
+  assert.deepEqual(plain(final.attribution.firstDisconnectEvent.ws),{code:1006,wasClean:false});
+  assert.equal(final.attribution.cause,'unknown');
+});
+
 test('single scheduler calculates missed intervals arithmetically and ignores wall jumps', () => {
   const f = observerFixture();
   assert.equal(f.timers.size,1);
@@ -368,6 +419,10 @@ test('all compact schema variants remain within exact event and aggregate alloca
     }
   }
   assert.equal(maximum,79);
+  const wsEvent = {t:43320000,n:999999999,k:'ec',o:'e64',c:false,r:'transport-close',ws:{code:4999,wasClean:false}};
+  assert.ok(bytes(wsEvent) <=192);
+  assert.ok(bytes(Array(16).fill(wsEvent)) <=3089);
+  assert.ok(bytes(Array(128).fill(wsEvent)) <=24705);
   assert.equal(bytes(Array.from({length:128},() => 'x'.repeat(190))),24705);
   assert.equal(bytes(Array.from({length:16},() => 'x'.repeat(190))),3089);
   const f = observerFixture();

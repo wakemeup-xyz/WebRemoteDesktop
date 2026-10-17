@@ -867,6 +867,26 @@ class LifecycleBoundaryTest(unittest.TestCase):
             with self.subTest(patch=patch),self.assertRaises(ValueError):
                 soak.validate_delta({**delta,**patch})
 
+    def test_ec_optional_ws_exact_types_and_legacy_compatibility(self):
+        base = {'t':0,'n':1,'k':'ec','o':'e1','c':True,'r':'transport-close'}
+        self.assertEqual(soak.validate_event(base),base)
+        for code, clean in [(1000,True),(1006,False),(1005,False),(1015,False),(4999,True)]:
+            event = {**base,'ws':{'code':code,'wasClean':clean}}
+            self.assertEqual(soak.validate_event(event),event)
+        invalid = [None,[],{}, {'code':1006}, {'wasClean':False},
+                   {'code':1006,'wasClean':False,'reason':'private-canary'},
+                   *[{'code':code,'wasClean':False} for code in
+                     [True,1000.0,1000.5,float('nan'),float('inf'),'1006',999,5000]],
+                   {'code':1006,'wasClean':'false'}]
+        for ws in invalid:
+            with self.subTest(ws=ws),self.assertRaises(ValueError):
+                soak.validate_event({**base,'ws':ws})
+        for kind, label in [('sd','s1'),('mc','m1'),('se','s1'),('re','m1'),('ep','e1')]:
+            event = {**base,'k':kind,'o':label,'r':'unknown'}
+            if kind == 'ep': del event['r']
+            with self.subTest(kind=kind),self.assertRaises(ValueError):
+                soak.validate_event({**event,'ws':{'code':1006,'wasClean':False}})
+
     def test_two_final_files_reserved_and_atomic_replacement_modes_and_caps(self):
         writer = EvidenceWriter(io.StringIO())
         self.assertEqual(writer.max_bytes,67108864-2*32768)
@@ -892,6 +912,7 @@ const context={window:{},document:{getElementById:()=>null},WebRTC:{socket},
 performance:{now:()=>500,timeOrigin:1800000000000},setTimeout:()=>++timer,clearTimeout:()=>{}};
 vm.runInNewContext(fs.readFileSync('scripts/passive_session_sampler.js','utf8'),context);
 socket.emit('disconnect','transport close');
+engine.emit('close','transport close',{description:'websocket connection closed',context:{code:1006,wasClean:false,reason:'private-canary',url:'https://private.invalid'}});
 (async()=>{const sampler=context.window.__wrdPassiveSampler;
 const sample=await sampler.sample();const snapshot=sampler.finalize();
 process.stdout.write(JSON.stringify({snapshot,delta:sample.diagnostics}));})();'''
@@ -901,6 +922,14 @@ process.stdout.write(JSON.stringify({snapshot,delta:sample.diagnostics}));})();'
         soak.validate_diagnostic(value['snapshot'])
         soak.validate_delta(value['delta'])
         self.assertEqual(value['snapshot']['state']['socketState'],'state-observed-disconnected')
+        for output in (value['snapshot'],value['delta']):
+            self.assertEqual(next(e for e in output['events'] if e['k'] == 'ec')['ws'],
+                             {'code':1006,'wasClean':False})
+            first = output.get('firstDisconnectEvent',output.get('attribution',{}).get('firstDisconnectEvent'))
+            self.assertEqual(first['k'],'sd')
+            self.assertNotIn('ws',first)
+        self.assertNotIn('private-',child.stdout)
+        self.assertLessEqual(len(soak.compact(value['delta'])),4096)
         self.assertLessEqual(len(soak.compact(value['snapshot'])),32768)
 
 
