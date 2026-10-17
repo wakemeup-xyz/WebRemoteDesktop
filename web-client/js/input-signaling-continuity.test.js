@@ -26,7 +26,7 @@ function fixture({ heartbeat = false } = {}) {
   const element = () => ({
     style: {}, dataset: {}, hidden: false, value: '', isConnected: true,
     classList: { add() {}, remove() {}, contains() { return false; }, toggle() {} },
-    addEventListener() {}, setAttribute() {}, removeAttribute() {},
+    listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; }, setAttribute() {}, removeAttribute() {},
     getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 600 }; },
   });
   const context = {
@@ -947,4 +947,80 @@ test('Input reset metadata preserves default and explicit no-reset policy', () =
   const before = h.sent.length;
   h.Input.setActive(false);
   assert.equal(h.sent.length, before, 'default with a control lease does not reset');
+});
+
+function readyControlResetFixture() {
+  const h = fixture();
+  h.lease.leaseId = 'offline-valid-control-lease';
+  h.grant(h.lease);
+  h.Input.setActive(true);
+  h.pointerReasons = [];
+  const releasePointer = h.Input.releasePointer.bind(h.Input);
+  h.Input.releasePointer = reason => { h.pointerReasons.push(reason); return releasePointer(reason); };
+  h.lifecycle = [];
+  const record = h.Input._recordInputTrace.bind(h.Input);
+  h.Input._recordInputTrace = (stage, meta) => {
+    if (stage === 'lifecycle') h.lifecycle.push(meta);
+    return record(stage, meta);
+  };
+  return h;
+}
+
+function assertControlReset(h, wireReason, localReason) {
+  const resets = h.sent.filter(write => write.type === 'keyboard' && write.action === 'reset');
+  assert.equal(resets.length, 1);
+  const { channel, ...wire } = resets[0];
+  const validation = validateRemoteInput(wire);
+  assert.equal(validation.ok, true, JSON.stringify(validation));
+  assert.equal(wire.payload.reason, wireReason);
+  assert.equal(wire.leaseId, h.lease.leaseId);
+  assert.equal(wire.leaseEpoch, h.lease.leaseEpoch);
+  assert.equal(wire.seq, 1);
+  assert.equal(wire.inputIds.length, 1);
+  const emitted = h.emitted.find(e => e.event === 'input' && e.payload.type === 'keyboard');
+  assert.deepEqual(emitted.payload.inputIds, wire.inputIds);
+  assert.equal(h.Input.lastKeyboardResetReason, wireReason);
+  assert.ok(h.lifecycle.some(e => e.action === 'inactive' && e.reason === localReason));
+  assert.ok(h.pointerReasons.includes(localReason));
+  assert.equal(h.Input.activeControlLease, null);
+  assert.equal(h.Input.keyboardTransport.getSnapshot().state, 'revoked');
+  assert.equal(h.acknowledge(wire).status, 'stale');
+  assert.equal(h.WebRTC.hasActiveControl(), false);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  return wire;
+}
+
+test('control reset protocol: actual recovery control button sends accepted reset before original release', () => {
+  const h = readyControlResetFixture();
+  h.Input.setupInputRecoveryUi();
+  h.context.document.getElementById('inputRecoveryControlBtn').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const wire = assertControlReset(h, 'deactivated', 'input-recovery-user');
+  const resetIndex = h.emitted.findIndex(e => e.event === 'input' && e.payload.type === 'keyboard');
+  const releaseIndex = h.emitted.findIndex(e => e.event === 'control-release');
+  assert.ok(resetIndex >= 0 && releaseIndex > resetIndex);
+  assert.equal(h.emitted[releaseIndex].payload.reason, 'input-recovery-user');
+  assert.deepEqual(h.emitted[resetIndex].payload.inputIds, wire.inputIds);
+});
+
+for (const reason of ['host-offline', 'control-heartbeat-rejected', undefined]) {
+  test(`control reset protocol: real freeze preserves diagnostic reason (${reason})`, () => {
+    const h = readyControlResetFixture();
+    h.WebRTC.freezeControl(reason);
+    assertControlReset(h, 'control-revoked', reason || 'control-lost');
+    assert.equal(h.emitted.some(e => e.event === 'control-release'), false);
+  });
+}
+
+test('control reset protocol: suspension and explicit skip policies emit no keyboard reset', () => {
+  for (const mode of ['suspend', 'reset-false', 'preserve-intent']) {
+    const h = readyControlResetFixture();
+    if (mode === 'suspend') h.disconnect();
+    else if (mode === 'reset-false') h.WebRTC.freezeControl('host-offline', false);
+    else h.WebRTC.releaseControl('input-recovery-timeout', { preserveAcquireIntent: true });
+    assert.equal(h.sent.some(e => e.type === 'keyboard' && e.action === 'reset'), false, mode);
+    assert.equal(h.Input.activeControlLease, null);
+    if (mode === 'suspend') assert.equal(h.Input._suspendedControlLease.leaseId, h.lease.leaseId);
+    assert.equal(h.WebRTC.hasActiveControl(), false);
+    assert.equal(h.Input.keyboardTransport.getSnapshot().state, mode === 'suspend' ? 'ready' : 'revoked');
+  }
 });

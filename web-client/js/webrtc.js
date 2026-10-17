@@ -3876,7 +3876,7 @@ const WebRTC = {
         && Input.suspendControlLease?.() === true;
       // Reset keyboard while lease is still present so the envelope can send.
       if (!suspended) {
-        if (reset) Input.resetKeyboard?.(reason || 'control-lost');
+        if (reset) Input.resetKeyboard?.('control-revoked');
         if (reason !== 'input-recovery-timeout') Input.releasePointer?.(reason || 'control-lost');
         Input.setControlLease(null);
       }
@@ -3949,7 +3949,7 @@ const WebRTC = {
       this._cancelControlAcquireIntent();
     }
     const wasActive = this.hasActiveControl();
-    if (!preserveAcquireIntent && typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
+    if (!preserveAcquireIntent && typeof Input !== 'undefined') Input.resetKeyboard?.('deactivated');
     this.freezeControl(reason, false);
     if (wasActive && this.socket?.connected) this.socket.emit('control-release', { reason });
   },
