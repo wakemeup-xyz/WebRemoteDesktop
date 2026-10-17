@@ -168,3 +168,5 @@ Ruling: supplement existing remediation with one coherent observer-module/wiring
 29. 单独同步两项遗留 M6 集成测试的认证 scope/ACK fixture：独立 review 已确认是旧测试报文，保留真实 ACK/图片加载及旧身份拒绝断言。风险是测试被弱化，因此不改生产校验并独立复审。
 
 30. 保留 M6 本页诊断原因，键盘复位只用既有协议值 deactivated；通过 Input.setActive 的可选本地 metadata 分离两种语义。真实浏览器与 Signal 日志已证明旧原因被拒绝，不扩大跨版本白名单。风险为 reset 顺序或 gate 回归，使用真实 VM transport/validator、两种 ACK/画面顺序和身份拒绝测试及独立复审约束。
+
+31. 在同次前端加载前修正 freezeControl/releaseControl 两个调用处的键盘复位协议值。真实 UI 已复现坏报文，但服务端释放屏障已有兜底，不扩大为已证实的永久失控根因。风险是撤销/暂停租约行为回归；保留原诊断、释放事件及三个跳过分支，用真实方法测试和独立复核控制。

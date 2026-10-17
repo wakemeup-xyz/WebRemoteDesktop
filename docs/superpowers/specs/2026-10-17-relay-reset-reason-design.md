@@ -1,6 +1,6 @@
 # JPEG 新鲜度失效的键盘复位协议修复
 
-状态：设计已确定；实现与运行验收待完成。补充现有 M6，不改变其媒体身份、新鲜度或准入规则。
+状态：M6复位修复d057853已实现并通过529项回归与独立复审，尚未加载；相邻控制撤销/释放补充待实现。补充现有 M6，不改变其媒体身份、新鲜度或准入规则。
 
 ## 问题与证据
 
@@ -27,3 +27,11 @@ Host 单调时钟修复后，公网 JPEG 暂停/恢复测试实际运行 69.7449
 使用加载真实 Input/WebRTC/KeyboardTransport 的既有 VM fixture，触发真实 freshness timer 和 relay-start 路径，验证实际发送 envelope 经 Signal 的 `validateRemoteInput` 通过；不能仅 stub resetKeyboard 或只检查字符串。覆盖 active与already-inactive分支、ACK与合格load的两种顺序、旧scope/ACK拒绝及缺省行为。先记录旧代码 RED，再实现并运行必要相邻回归，独立 spec/quality review。
 
 与已复审的 Viewer duration clocks 一起做临时构建和受控本地加载，记录真实构建身份。零 Viewer 时才部署，保留用户主 checkout/index和现有 tunnel。公网短测仍可能因资源/媒体停顿失败；该修复的通过不能冒充原生输入到可见效果或长时间连续性通过。
+
+## 相邻控制撤销/释放的同类协议缺口
+
+[相邻审查](../reports/2026-10-17-keyboard-reset-reason-adjacent-review.md)用真实 UI handler/传输复现：控制按钮主动释放会发送 reason=input-recovery-user 的键盘 reset，校验器拒绝，随后仍发送 control-release。后者有服务端 reset-only barrier 兜底，未证明持续卡键。freezeControl 的 host-offline、control-heartbeat-rejected、viewer-superseded 等本页原因也不在键盘白名单；实际主要来自已经失权/Host断开事件。不要把这些都计为新的连接故障。
+
+将 freezeControl 内 reset=true 且非 suspended 的键盘复位原因固定为已有 control-revoked；将 releaseControl 内非 preserveAcquireIntent 的主动键盘复位原因固定为已有 deactivated。原 reason 保留于 pointer、Input active lifecycle、UI判断及 control-release payload；不全局归一化 Input.resetKeyboard，不扩大协议，不改变失权后的 lease 清除或本地 pending 撤销。默认 signal-disconnect 的 parked lease、reset=false、preserveAcquireIntent 的跳过 reset 均保持原语义。
+
+测试须经真实控制按钮 handler和真实 freezeControl/KeyboardTransport 提取实际 envelope，送 unchanged validator；保留 lease/seq/inputIds，断言 reset先于control-release，事件原 reason 不变，清租约后旧 ACK 无法恢复控制。不得让撤销路径等待本来不会等待的 ACK，也不以“没有额外坏包”宣称已解决先前停帧。
