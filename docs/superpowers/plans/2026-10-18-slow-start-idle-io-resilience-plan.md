@@ -44,3 +44,7 @@ Owned python-host/observability.py, test_observability.py, a focused pure sink m
 ## Execution gate (2026-10-18, before rollout)
 
 Task1 c5b18b1: independent scoped review Approved after two findings. Task2 24a6ace: independent spec/quality review Approved. Task3 ba198af +8e9fc0f: scoped review PASS after completed-prefix flush race repair; behavioral two/three-prefix RED→GREEN and16 related pure checks passed. Final integration review at081c6d0 found one Important retained-initial-PC/socket ownership gap. Fix380b250 has228 affected offline passes; scoped final re-review PASS; authorized source rollout gate open. Exact freeze/reload, fresh300s,3h and true input→visible qualification remain required. Existing product runtime is still f4202b7/build07ad960b331ccc4b; offline success is not deployment.
+
+## Actual rollout and open qualification (02:52 CST)
+
+Task4 source rollout complete at93f3908/builded92d1313adb54f6: local-only reload26.648s, Signal51710/Host51808, health+Hostonline; credentials reread/reported, primary/tunnel/watcher/quick state preserved. Fresh300run301observations valid but finalINCOMPLETE duebrowser.close timeout, maxframegap2716.6ms. Owned7identitiesnaturalexit, fulltreeunknown; sample symbolication timedout/output0. Continue bounded evidence and cleanup/sampling preflight before next qualification;3h/nativeeffect notpassed.

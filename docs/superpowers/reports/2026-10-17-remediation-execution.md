@@ -1,5 +1,7 @@
 # 稳定性与延迟整改实施记录
 
+> **2026-10-18 02:52更新：** 候选93f3908/builded92d1313adb54f6已加载，Signal51710/Host51808在线，本地重载26.648秒，tunnel/watch/主HEAD/index保留。新正式短测301行全部有效门禁开启、无采样失败，但有2716.6ms画面停顿；browser.close超时导致总结果INCOMPLETE，七个登记测试身份自然退出。线程采样符号处理超时、文件0字节，继续排查，未宣称三小时或真实输入通过。[上线与本轮结果](2026-10-18-slow-start-idle-io-rollout.md)。
+
 > **2026-10-18 部署前复审更新：** 初始Start所有权及Host离线/reset日志两项整改已开发并通过独立review；Host有界文件writer初审拦截flush前缀并发问题，8e9fc0f修订定向复审已通过。产品仍运行f4202b7/build07ad960b331ccc4b，Signal42509/Host89291健康及在线；未以旧五分钟PASS替代新版验收。最终整体review又拦截初次出画前socket替换/保留PC的回调归属缺陷；380b250修订及228项相关离线检查通过，定向最终复审通过，可进入已授权上线。精确上线、新短测、三小时及真实输入仍待完成。详见[传输与输入延迟补充](2026-10-18-connectivity-latency-followup.md)和[实现复审记录](2026-10-18-slow-start-idle-io-review.md)。
 
 > **2026-10-18 01:18 更新：** 新版证据工具已同步，未重启产品服务。正式 TURN 300.290 秒/301 样本 PASS，全部有效输入门禁为开启状态，最大帧间隔1433.2ms；点击至首帧5533.3ms。此前133样本失败、11.766秒停帧和输入关闭证据仍保留，不能用短测抵消。退出后的控制 reset 完成结果 UNKNOWN，因成功ACK缺少正向日志。服务保持在线；真实输入→可见效果及三小时尚未通过。见[证据与复审](2026-10-18-passive-gate-evidence-review.md)和[后续整改设计](../specs/2026-10-18-slow-start-idle-io-resilience-design.md)。
