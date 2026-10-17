@@ -1,6 +1,6 @@
 # 登录分段与整机资源补充诊断
 
-时间：2026-10-17 13:42–13:45 北京时间。部署仍为 d0c1223 / Viewer build a6e8b15122bde656；worker stages 00d1a81 已离线审查通过但未加载，传输 gate 正实施。
+时间：2026-10-17 13:42–13:45 北京时间。部署仍为 d0c1223 / Viewer build a6e8b15122bde656；worker stages 00d1a81 已离线审查通过但未加载，传输 gate d5ecb23 已通过116项定向测试和独立审查但未加载。
 
 ## 实际登录失败
 
@@ -20,7 +20,7 @@
 
 1. 不通过反复重启或增加心跳/登录超时掩盖整机调度停顿；保留已有自动重连和有界错误提示。现有Host曾13:33:51断开、13:33:56自行恢复，同PID。
 2. 先让共享主机有可持续资源余量，再进行有代表性的真实连接测试。不能依据未释放资源时的 health 偶尔200宣称服务稳定。
-3. 继续最小源码修复：worker processor/delivery阶段观测（23+6离线PASS及独立PASS）；每次捕获前的transport queue.join gate（独立设计已完成，实施/测试中），不修改tunnel和质量。
+3. 继续最小源码修复：worker processor/delivery阶段观测（23+6离线PASS及独立PASS）；每次捕获前的transport queue.join gate（独立设计已完成，116项定向测试与独立审查通过、未加载），不修改tunnel和质量。
 4. 经独立review后仅Host受控重载，再执行fresh zeroViewer单次proof短JPEG/TURN、暂停恢复；成功后才启动长会话。仍缺原生隔离输入可见测试，保持NOT RUN。
 
 证据：[共享资源](2026-10-17-shared-resource-correlation.md)、[初次登录失败复核](2026-10-17-reset-login-failure-review.md)、[本地超时与自动恢复](2026-10-17-local-timeout-runtime-review.md)、[JPEG传输缺口](2026-10-17-jpeg-transport-backpressure-review.md)。本地私有原始探针位于 /tmp/wrd-c5-rollout-private-ilovzfv1/login-stage-probe-20261017a.json。

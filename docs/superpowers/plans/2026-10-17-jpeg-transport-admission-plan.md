@@ -22,7 +22,7 @@
 
 **Interfaces:** 在 TunnelRelayStreamer 中新增私有 `_capture_transport_token()`、`_transport_token_is_current(token)`、`async _wait_for_transport_admission(token)`。token 可用固定 tuple/dict，包含 task/generation/scope副本/sio/eio/queue/writer。wait 返回 bool；False 只能重回外层循环，不能 capture/feedback/emit。所有检查失败均拒绝；helper 不改变业务状态。
 
-- [ ] **Step 1: RED 实际 streamer 回归。** AST 加载实际 streamer 及所需纯常量/函数（避免 Host 原生导入），或沿已有严格 native stub 装载。真实 asyncio.Queue，fake worker 通过 Event 控制返回；writer 同样可控。核心堵塞测试：
+- [x] **Step 1: RED 实际 streamer 回归。** AST 加载实际 streamer 及所需纯常量/函数（避免 Host 原生导入），或沿已有严格 native stub 装载。真实 asyncio.Queue，fake worker 通过 Event 控制返回；writer 同样可控。核心堵塞测试：
 
 ```python
 queue.put_nowait(old_binary_packet)
@@ -41,9 +41,9 @@ assert len(captures) == 1
 
 增加：暂停/resume 和 stop/start replacement 首帧仍等待旧 queue；旧 queue完成与新 client/generation 不相干；join期间及 capture期间分别替换 client/queue/writer/task或撤销authority，不能发送旧帧；writer死亡（包括queue已空与 capture期间）拒绝；健康 writer 排空后进下一帧，ACK window仍独立生效；取消 producer 不积累 waiter、不触碰 accounting。所有 finally 清理自建 task/worker，禁止遗留。
 
-- [ ] **Step 2: RED 命令。** `cd python-host && python3 -m pytest -q test_relay_transport_admission.py`，记录预期行为失败，不能以导入错误充当证据。
+- [x] **Step 2: RED 命令。** `cd python-host && python3 -m pytest -q test_relay_transport_admission.py`，记录预期行为失败，不能以导入错误充当证据。
 
-- [ ] **Step 3: gate 实现及 _run 接线。** 把 feedback 移到成功 gate 后（含 ACK timeout 分支移除直接反馈）。捕获 token 时 generation/scope 均冻结。所有 wait 后和 frame emit 前完整检查，示意：
+- [x] **Step 3: gate 实现及 _run 接线。** 把 feedback 移到成功 gate 后（含 ACK timeout 分支移除直接反馈）。捕获 token 时 generation/scope 均冻结。所有 wait 后和 frame emit 前完整检查，示意：
 
 ```python
 token = self._capture_transport_token()
@@ -78,11 +78,11 @@ return True
 
 不要 catch CancelledError/不要 shield。立即失败和反复 post-await failure 均有 yield；保留原异常/引用清理/单 worker/stop 退休逻辑。普通 FakeSio 增加 connected、state、真实 asyncio.Queue、可稳定表示未完成的 writer stub；专项 race tests 用实际受控 task，不新增生产 bypass。
 
-- [ ] **Step 4: GREEN 与相邻验证。** `cd python-host && python3 -m pytest -q test_relay_transport_admission.py test_tunnel_relay.py test_relay_frame_worker.py test_runtime_observability.py`；若 AST loader 要额外全局名，确保从真实生产源导入/提供，不复制实现。
+- [x] **Step 4: GREEN 与相邻验证。** `cd python-host && python3 -m pytest -q test_relay_transport_admission.py test_tunnel_relay.py test_relay_frame_worker.py test_runtime_observability.py`；若 AST loader 要额外全局名，确保从真实生产源导入/提供，不复制实现。
 
 实际安装库的无网络 synthetic emit：实例化 AsyncClient、不 connect，设置合成 namespace/EIO connected，启动一个仅标记 scheduler turn 的 sibling；await emit 含一个 bytes 字段后，验证 queue 两包且 sibling未在 envelope/attachment之间运行。finally 清理仅测试 sibling，绝不启动 reader/writer/socket。版本记录进报告；不修改依赖。
 
-- [ ] **Step 5: 自审及提交。** `git diff --check`；仅 add 指定文件；commit `fix(relay): gate JPEG capture on transport accounting`。报告 RED/GREEN 和实际行为限制。root 随后用 BASE..HEAD package 独立 review；不用重跑已经通过的相同套件除非修复改变代码。
+- [x] **Step 5: 自审及提交。** `git diff --check`；仅 add 指定文件；commit `fix(relay): gate JPEG capture on transport accounting`。报告 RED/GREEN 和实际行为限制。root 随后用 BASE..HEAD package 独立 review；不用重跑已经通过的相同套件除非修复改变代码。
 
 ### Task 2: Root review、部署和验收
 
