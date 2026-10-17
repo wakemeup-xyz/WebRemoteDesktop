@@ -24,3 +24,7 @@
 4. 经独立review后仅Host受控重载，再执行fresh zeroViewer单次proof短JPEG/TURN、暂停恢复；成功后才启动长会话。仍缺原生隔离输入可见测试，保持NOT RUN。
 
 证据：[共享资源](2026-10-17-shared-resource-correlation.md)、[初次登录失败复核](2026-10-17-reset-login-failure-review.md)、[本地超时与自动恢复](2026-10-17-local-timeout-runtime-review.md)、[JPEG传输缺口](2026-10-17-jpeg-transport-backpressure-review.md)。本地私有原始探针位于 /tmp/wrd-c5-rollout-private-ilovzfv1/login-stage-probe-20261017a.json。
+
+## 13:58 部署前检查
+
+冻结候选5912f43（Host gate d5ecb23、worker stages00d1a81）的7项Python源码/测试增量与主工作区ed7ba25基线完全匹配，patch检查及HEAD/index保留检查通过。没有覆盖运行文件。同期直接/no-proxy loopback health与status分别5012ms/5002ms超时；load586.76/536.76/483.15，swapfree1604MiB。不能取得fresh Host在线/zeroViewer条件，暂不执行受控apply/reload。该5秒超时并不能证明进程退出；前一轮同PID曾自行恢复，当前持续资源压力仍在。
