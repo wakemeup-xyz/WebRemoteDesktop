@@ -181,4 +181,4 @@ JPEG `/tmp/wrd-public-jpeg-gate-jpeg-20261017a` PASS111.235860s、97采样，真
 
 0ffb941受控同步27路径/5源码测试增量（含new dc_diagnostic_admission.py），备份位于/private/tmp/wrd-c5-rollout-private-ilovzfv1/apply-0ffb941a-dkrhzfun。Host-only重载11.606s，PID10658，源码sha3d54892dc58e1a69ecee619054fc07b4aaa7bd9a4d9ad4e4bcf027ac377d2a80；Signal64505及cloudflared84671/watcher897原启动身份不变，quick URL仍不存在。新版模块/Host/静态资产哈希及原HEAD/index/未触及文件全部核对，Host在线、fresh Viewer0。密码只从本机配置回报，未写文档。
 
-私有long supervisor4d96c8b0通过16项离线测试与独立spec/quality复核，旧两项P3已补。/tmp/wrd-owned-turn-probe-private/turn-long-20261017a已启动10800s目标TURN窗口，原helper/proof未改；仅在原5秒失败门槛先被满足后才可能一次采样。当前没有最终时长/连续性结论，不用启动成功或supervisor状态计PASS。
+私有long supervisor4d96c8b0通过16项离线测试与独立spec/quality复核，旧两项P3已补。/tmp/wrd-owned-turn-probe-private/turn-long-20261017a已启动10800s目标TURN窗口，原helper/proof未改；仅在原5秒失败门槛先被满足后才可能一次采样。此段仅记录14:49启动时刻；该轮最终256.072秒结束INCOMPLETE，最大停帧8116.308ms、Host心跳超时、sample0字节，详见[失败窗口分析](2026-10-17-turn-long-failure-analysis.md)。不能用启动成功计PASS。
