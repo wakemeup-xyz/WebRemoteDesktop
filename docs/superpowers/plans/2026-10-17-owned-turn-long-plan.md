@@ -33,7 +33,7 @@
 
 ### Task 3: 最小关闭码诊断（Task2失败后所需）
 
-**Files:** Modify `scripts/passive_session_sampler.js`, `scripts/passive_session_soak.py`; tests `signal-server/test/passive-session-sampler.test.js`（按实际现有文件定位）与`scripts/test_passive_session_soak.py`。
+**Files:** Modify `scripts/passive_session_sampler.js`, `scripts/passive_session_soak.py`; tests `scripts/passive-session-sampler.test.js`与`scripts/test_passive_session_soak.py`。
 **Interfaces:** ec事件可选`ws:{code:1006,wasClean:false}`；其他数据/准入接口不变。
 
 - [ ] RED：mock engine `close('transport close',{description:'websocket connection closed',context:{code:1006,wasClean:false}})`，期望ec ws；原sampler遗漏。Python validator对合法ws原本拒绝，补跨语言fixture。
