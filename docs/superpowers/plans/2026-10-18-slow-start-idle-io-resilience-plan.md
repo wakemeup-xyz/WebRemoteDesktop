@@ -37,6 +37,10 @@ Owned python-host/observability.py, test_observability.py, a focused pure sink m
 ### Task 4: Integrate, deploy and qualify
 
 1. Root verifies requirement-only staged hunk, no preexisting doc dirt staged; updates design/plan/report for final behavior. Most-capable final range review, original-worker scoped corrections, no needless suite repeats.
-2. Fresh health/Hostonline/Viewer0/relay0, exact source freeze/backup/primary HEAD+index+untouched guards. Preserve four watcher scripts and cloudflared/watcher/quick identities. Build once and local-only service helper restart. Re-read/report passwords, verify loaded source/assets/Hostonline.
+2. Fresh health/Hostonline/Viewer0/relay0, exact source freeze/backup/primary HEAD+index+untouched guards. Preserve four watcher scripts and cloudflared/watcher/quick identities. Validate one temporary build from the frozen full Viewer source, then let normal Signal startup regenerate assets from those same verified inputs; no startup build bypass. Local-only service helper restart. Re-read/report passwords, verify loaded source/assets/Hostonline.
 3. Fresh reviewed passive300s, then safe actual-input/visible-effect preflight and3h continuity attempts within authorized guard; no fake isolation flags, reused proof or business desktop input. Keep gates/ACK/post-input frame/real visible effect distinct. No parallel heavy work during probes.
 4. Analyze all failures and logs, fix encountered correctness issues with scoped review, maintain services. If idle stalls remain, independently spec ResourceSampler whole-spawn isolation/attribution; don't claim the file sink removes every source or system wait.
+
+## Execution gate (2026-10-18, before rollout)
+
+Task1 c5b18b1: independent scoped review Approved after two findings. Task2 24a6ace: independent spec/quality review Approved. Task3 ba198af +8e9fc0f: scoped review PASS after completed-prefix flush race repair; behavioral two/three-prefix RED→GREEN and16 related pure checks passed. Final integration review, exact freeze/reload, fresh300s,3h and true input→visible qualification remain required. Existing product runtime is still f4202b7/build07ad960b331ccc4b; offline success is not deployment.
