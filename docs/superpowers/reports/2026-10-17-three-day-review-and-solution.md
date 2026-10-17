@@ -1,5 +1,7 @@
 # 最近三天稳定性、网页与端到端延迟复查及整改方案
 
+> **15:45 状态更新：** 认证与截图epoch修复已部署（Signal e996467、Host83c513e），服务在线。两次三小时尝试分别在256.072s和131.953s失败：前者Host长停顿/心跳超时；后者媒体连续但客户端信令transport-close，不能合并归因。后者maxgap783.3ms，5轮ping均有pong。当前无自动Viewer，等待人工直接连接及真实输入验证；不能宣布彻底稳定。完整当前结论见[诊断与验收总览](2026-10-17-diagnosis-and-acceptance-status.md)。下列早期状态为历史记录。
+
 > **14:49 部署更新：** 可丢DC诊断准入已加载（冻结候选0ffb941，Host源码e279060）；Host-only重载11.606s，新PID10658/14:47:29，Signal64505、tunnel/watcher及网页builda6e8b15122bde656不变。health/Host/Viewer0与源码/资源/HEAD/index保留核对通过。带归属旁证的10800s TURN验收进程已启动，尚无最终结果；此前FAIL及原生input→visible NOT RUN保留。
 
 

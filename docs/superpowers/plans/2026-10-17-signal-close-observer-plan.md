@@ -60,7 +60,8 @@ All events have exactly t (0..43320000 elapsed ms), n (1..999999999 ordered sequ
 
 | Event kinds k | Required additional keys | Optional keys | Compact ASCII JSON maximum at numeric bounds |
 | --- | --- | --- | --- |
-| sd Socket disconnect, mc Manager close, ec Engine close | o,c,r | none | 79 bytes (worst reason transport-error, c=false) |
+| sd Socket disconnect, mc Manager close | o,c,r | none | 79 bytes (worst reason transport-error, c=false) |
+| ec Engine close | o,c,r | ws only under the Task3 contract below | <=192 bytes, measured by the updated regression matrix |
 | se Socket connect_error, re Manager reconnect_error | o,c,r with r transport-error/unknown only | none | 79 bytes |
 | rx heartbeat packet received, tx heartbeat packet created | o,c,p with p ping/pong/unknown | none | 71 bytes |
 | sc Socket connect, mo Manager open, ra reconnect_attempt, rr reconnect, rf reconnect_failed, ep Engine ping, eo Engine pong, ef Engine flush, eu Engine upgrade | o,c | none | <=59 bytes (longest k rf is shorter than bind below) |
@@ -68,6 +69,8 @@ All events have exactly t (0..43320000 elapsed ms), n (1..999999999 ordered sequ
 | vis visibility state | v visible/hidden/prerender/unknown | none | 54 bytes |
 | net online state, focus focus state | v boolean/null | none | 50 bytes (k focus, v=false) |
 | hide/show/freeze/resume browser lifecycle; preclose cleanup marker; cap capacity marker | none | none | <=43 bytes (longest k preclose) |
+
+2026-10-17 Task3 amendment: only ec may add `ws:{code,wasClean}` from the verified native-WebSocket close envelope; this narrowly supersedes the original no-optional-key terminal contract. Strict integer code 1000..4999 and real boolean are required together; getter failure or missing/invalid values omit ws. The existing 192-byte event and all ring/delta/final budgets remain. New readers accept old schema1 records; old exact-key readers reject new ws records. No raw context/reason/error is retained. Earlier sd/mc firstDisconnectEvent is never rewritten. See [binding spec](../specs/2026-10-17-owned-turn-long-design.md). Historical measurements and hash pins remain unchanged.
 
 r mapping: io server disconnect=>server; io client disconnect=>client; ping timeout=>ping; transport close=>transport-close; transport error=>transport-error; parse error=>parse; forced close=>forced; every other/missing value=>unknown. Keep this mapping and per-object compatible reason subsets explicit in JS and Python. State-observed-disconnected without a delivered terminal event is snapshot state only, never a synthesized sd/ec. firstDisconnectEvent is either null or one exact terminal record above, plus separately fixed cause=unknown until attribution exists. An old-object close can be the first observed event with c=false; that is not enough to assign it as the current connection cause.
 
