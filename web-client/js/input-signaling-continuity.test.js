@@ -530,6 +530,31 @@ function mediaScopeFixture() {
   return { ...h, desired, ack, frame };
 }
 
+// Relay fixtures authenticate an exact M6 origin before exercising real image loads.
+function relayMediaScopeFixture() {
+  const h = mediaScopeFixture();
+  const w = h.WebRTC;
+  const fields = (generation, producerId) => ({
+    relayFrameSchemaVersion: 1,
+    relayScope: {
+      producerId, productionGeneration: generation + 1,
+      connectionAttemptId: w.currentConnectionAttemptId,
+      mediaGeneration: generation, leaseEpoch: w.controlState.lease.leaseEpoch,
+    },
+  });
+  const relayAck = (origin) => w.handleMediaActivityAck({
+    ...origin, state: 'active', applied: true,
+    generation: origin.relayScope.mediaGeneration,
+    connectionAttemptId: origin.relayScope.connectionAttemptId,
+  });
+  const relayFrame = (origin, frameId) => w.handleRelayFrame({
+    ...origin, frameId, data: 'AAAA',
+    connectionAttemptId: origin.relayScope.connectionAttemptId,
+  });
+  const image = h.context.document.getElementById('relayImage');
+  return { ...h, fields, relayAck, relayFrame, image };
+}
+
 test('new attempt cannot borrow previous active ACK or pending fresh frame', () => {
   const h = mediaScopeFixture();
   const w = h.WebRTC;
@@ -621,26 +646,36 @@ test('old rVFC callback cannot paint or release a replacement PC', () => {
 });
 
 test('relay image load retained across attempt or producer replacement has no authority', () => {
-  const h = mediaScopeFixture();
+  const h = relayMediaScopeFixture();
   const w = h.WebRTC;
   w.networkMode = 'tunnel'; w.tunnelRelayActive = true;
   h.desired(8);
-  w.handleRelayFrame({ frameId: 1, data: 'AAAA', connectionAttemptId: w.currentConnectionAttemptId });
-  const load = h.context.document.getElementById('relayImage').onload;
+  const original = h.fields(8, 'original-producer');
+  h.relayAck(original);
+  h.relayFrame(original, 1);
+  const load = h.image.onload;
+  assert.equal(typeof load, 'function');
   w.beginConnectionAttempt('test-relay-attempt');
-  h.desired(8); h.ack(8);
+  h.desired(8);
+  const replacementAttempt = h.fields(8, 'replacement-attempt-producer');
+  h.relayAck(replacementAttempt);
   load();
   assert.equal(w.getMediaAppliedPhase(), 'resuming');
   assert.equal(w._lastRenderedRelayFrame, null);
-  w.handleRelayFrame({ frameId: 2, data: 'BBBB', connectionAttemptId: w.currentConnectionAttemptId });
-  const oldProducerLoad = h.context.document.getElementById('relayImage').onload;
+  h.relayFrame(replacementAttempt, 2);
+  const oldProducerLoad = h.image.onload;
+  assert.equal(typeof oldProducerLoad, 'function');
   w._mediaRelayRevision = 1;
-  h.desired(9); h.ack(9);
+  h.desired(9);
+  const replacementProducer = h.fields(9, 'replacement-producer');
+  h.relayAck(replacementProducer);
   oldProducerLoad();
   assert.equal(w.getMediaAppliedPhase(), 'resuming');
   assert.equal(w._lastRenderedRelayFrame, null);
-  w.handleRelayFrame({ frameId: 3, data: 'CCCC', connectionAttemptId: w.currentConnectionAttemptId });
-  h.context.document.getElementById('relayImage').onload();
+  h.relayFrame(replacementProducer, 3);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming', 'arrival alone cannot prove a loaded image');
+  assert.equal(typeof h.image.onload, 'function');
+  h.image.onload();
   assert.equal(w.getMediaAppliedPhase(), 'active');
 });
 
@@ -661,7 +696,7 @@ test('user pause rejects late frames and ACK then needs new resume proof', () =>
 });
 
 test('real tunnel refresh establishes local relay and waits for current ACK plus loaded frame', () => {
-  const h = mediaScopeFixture();
+  const h = relayMediaScopeFixture();
   const w = h.WebRTC;
   w.replayMediaActivityIntent = h.originalMedia.replayMediaActivityIntent;
   w.networkMode = 'tunnel'; w.tunnelRelayActive = true; w.pc = null;
@@ -669,7 +704,12 @@ test('real tunnel refresh establishes local relay and waits for current ACK plus
   w.stopMediaTelemetry = () => {};
   w.captureLastFrameHold = () => false;
   w.updateNetworkUI = () => {};
-  h.desired(8); h.ack(8); h.frame(1, { source: 'relay-frame' });
+  h.desired(8);
+  const original = h.fields(8, 'before-refresh-producer');
+  h.relayAck(original);
+  h.relayFrame(original, 1);
+  assert.equal(typeof h.image.onload, 'function');
+  h.image.onload();
   assert.equal(w.getMediaAppliedPhase(), 'active');
   const oldAttempt = w.currentConnectionAttemptId;
   w.refresh({ reason: 'manual' });
@@ -679,14 +719,22 @@ test('real tunnel refresh establishes local relay and waits for current ACK plus
   const request = h.emitted.filter(e => e.event === 'relay-stream-control' && e.payload.mediaControlSchemaVersion === 1).at(-1).payload;
   assert.equal(request.enabled, true);
   assert.equal(request.connectionAttemptId, w.currentConnectionAttemptId);
-  w.handleRelayFrame({ frameId: 1, data: 'AAAA', connectionAttemptId: request.connectionAttemptId });
-  const loaded = h.context.document.getElementById('relayImage').onload;
+  h.relayAck(original);
+  h.relayFrame(original, 2);
+  assert.equal(h.image.onload, null, 'old-origin frame cannot install a load callback');
+  assert.equal(w._relayExpectedScope, null, 'old-origin ACK cannot authenticate the replacement');
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  const replacement = h.fields(request.generation, 'after-refresh-producer');
+  h.relayFrame(replacement, 1);
+  assert.equal(h.image.onload, null, 'current frame before authenticated ACK is rejected');
+  h.relayAck(replacement);
+  assert.equal(w.relayScopeMatches(replacement.relayScope), true);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming', 'ACK alone cannot prove a loaded image');
+  h.relayFrame(replacement, 1);
+  const loaded = h.image.onload;
   assert.equal(typeof loaded, 'function');
+  assert.equal(w.getMediaAppliedPhase(), 'resuming', 'arrival alone cannot prove a loaded image');
   loaded();
-  assert.equal(w.getMediaAppliedPhase(), 'resuming');
-  h.ack(8, oldAttempt);
-  assert.equal(w.getMediaAppliedPhase(), 'resuming');
-  h.ack(8);
   assert.equal(w.getMediaAppliedPhase(), 'active');
 });
 
