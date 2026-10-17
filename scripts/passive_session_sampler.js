@@ -387,6 +387,15 @@
         metrics, diagnostics:drain() };
     },
     evidenceSnapshot,
+    summarySnapshot(project) {
+      const captured = owner();
+      const summary = project(captured.client);
+      const evidence = evidenceSnapshot(captured);
+      // A timed summary is one state. Never retain legacy fields from a retired
+      // owner alongside a new gate, even if the gate alone is scope-changed.
+      if (!stillOwner(captured)) throw new Error('capture-scope-changed');
+      return {...summary,...evidence};
+    },
     diagnosticSnapshot: snapshot,
     finalize() {
       if (!stopped) { scan(); record('preclose'); }

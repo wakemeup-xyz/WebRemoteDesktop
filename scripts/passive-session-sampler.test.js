@@ -620,3 +620,19 @@ test('emitted startup marks retain first original valid time only with fixed key
   assert.equal(f.sampler.evidenceSnapshot().inputGate.status,'scope-changed');
   f.sampler.stop();
 });
+
+test('timed summary enrolls the owner before its projector and rejects the whole replaced capture', () => {
+  const f=gateFixture(), client=f.context.WebRTC;
+  const summary=f.sampler.summarySnapshot(captured => {
+    assert.equal(captured,client);
+    return {uiPhase:captured.uiPhase};
+  });
+  assert.equal(summary.uiPhase,summary.inputGate.uiPhase);
+  assert.equal(f.reads(),1);
+  assert.throws(() => f.sampler.summarySnapshot(captured => {
+    captured.socket={connected:false};
+    return {uiPhase:'connected'};
+  }),/^Error: capture-scope-changed$/);
+  assert.equal(f.reads(),1);
+  f.sampler.stop();
+});

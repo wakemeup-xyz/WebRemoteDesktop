@@ -414,6 +414,73 @@ process.stdin.on('end', async () => {
         self.assertNotIn('private-', json.dumps(result))
         self.assertLess(len(json.dumps(result)), 1024)
 
+    async def test_actual_timed_summary_rejects_whole_state_when_early_getter_replaces_owner_or_scope(self):
+        import subprocess
+        harness = r'''const fs=require('node:fs'),vm=require('node:vm');
+const expression=JSON.parse(fs.readFileSync(0,'utf8'));
+const source=fs.readFileSync('scripts/passive_session_sampler.js','utf8');
+const outcomes=[];
+for(const stage of ['media','auth','gate']) for(const field of ['unchanged','client','pc','socket','input','build','connectionAttemptId','generation','leaseEpoch']) {
+  const scope={connectionAttemptId:'private-attempt',generation:1,leaseEpoch:2};
+  let changed=false;
+  const context={window:{__WRD_BUILD__:{id:'release-a'}},document:{getElementById:()=>null},
+    performance:{now:()=>123},setTimeout:()=>1,clearTimeout:()=>{}};
+  const makeClient=phase=>({pc:{connectionState:'connected'},socket:{connected:true},uiPhase:phase,
+    latencyScope:()=>scope,mediaActivityRuntime:{phase:'active',snapshot:()=>({desiredState:'active'})}});
+  const client=makeClient('connected');context.WebRTC=client;
+  const replace=()=>{
+    if(changed || field === 'unchanged')return;changed=true;
+    if(field === 'client')context.WebRTC=makeClient('disconnected');
+    else if(field === 'pc')client.pc={connectionState:'disconnected'};
+    else if(field === 'socket')client.socket={connected:false};
+    else if(field === 'input')context.Input={getEffectiveInputGate:()=>({allowed:false,blockedReasons:['inactive']})};
+    else if(field === 'build')context.window.__WRD_BUILD__={id:'release-b'};
+    else scope[field]=field === 'connectionAttemptId' ? 'private-new-attempt':3;
+  };
+  context.Input={getEffectiveInputGate:()=>{if(stage === 'gate')replace();return {allowed:false,blockedReasons:['inactive']};}};
+  context.Auth={getCheck:()=>{if(stage === 'auth')replace();return {state:'verified'};}};
+  client.mediaActivityRuntime.snapshot=()=>{if(stage === 'media')replace();return {desiredState:'active'};};
+  vm.runInNewContext(source,context);
+  try{outcomes.push({stage,field,result:vm.runInNewContext('('+expression+')()',context)});}
+  catch(error){outcomes.push({stage,field,error:error.message});}
+  context.window.__wrdPassiveSampler.stop();
+}
+process.stdout.write(JSON.stringify(outcomes));'''
+        child=await asyncio.to_thread(subprocess.run,['node','-e',harness],input=json.dumps(soak.STARTUP_SUMMARY),
+            cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,check=True,timeout=3)
+        outcomes=json.loads(child.stdout)
+        for outcome in outcomes:
+            with self.subTest(stage=outcome['stage'],field=outcome['field']):
+                if outcome['field'] == 'unchanged':
+                    state=soak.validate_startup(outcome['result'])
+                    self.assertEqual(state['uiPhase'],state['inputGate']['uiPhase'])
+                    self.assertEqual(state['browserNowMs'],123)
+                    continue
+                self.assertNotIn('result',outcome,'the whole mixed state must be rejected')
+                self.assertEqual(outcome['error'],'capture-scope-changed')
+        self.assertNotIn('private-',child.stdout)
+        class RejectedPage:
+            async def evaluate(self,expression):
+                if expression != soak.STARTUP_SUMMARY: raise AssertionError('unexpected expression')
+                raise RuntimeError(outcomes[1]['error'])
+        # Browser rejection follows the original required-startup error policy;
+        # optional failure capture persists no mixed state or fabricated time.
+        for required in (True,False):
+            capture=soak.empty_capture('startup-baseline' if required else 'post-failure-preclose')
+            if required:
+                with self.assertRaisesRegex(RuntimeError,'^startup-summary-unavailable$'):
+                    await soak.startup_summary(RejectedPage(),required=True,capture=capture)
+            else:
+                await soak.startup_summary(RejectedPage(),capture=capture)
+            self.assertEqual(capture['status'],'error')
+            self.assertIsNone(capture['state'])
+            self.assertIsNone(capture['browserNowMs'])
+            with tempfile.TemporaryDirectory() as directory:
+                target=Path(directory)/'summary.json'
+                key='startupSnapshot' if required else 'failureSnapshot'
+                soak.atomic_evidence(target,{key:capture},initial=True)
+                self.assertIsNone(json.loads(target.read_text())[key]['state'])
+
     async def test_startup_projection_preserves_actual_product_phase_enums(self):
         for state in ('FREE', 'GRANTING', 'ACTIVE', 'REVOKING'):
             with self.subTest(state=state):

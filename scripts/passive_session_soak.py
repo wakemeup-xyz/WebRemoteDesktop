@@ -93,22 +93,26 @@ PROOF_ADMISSION = '''async timeoutMs => {
 
 
 STARTUP_SUMMARY = '''() => {
-  const client = typeof WebRTC === 'undefined' ? null : WebRTC;
-  const auth = typeof Auth === 'undefined' ? null : Auth;
-  const media = client?.mediaActivityRuntime?.snapshot?.();
-  const oneOf = (value, allowed) => allowed.includes(value) ? value : 'unknown';
-  return {observerAvailable: typeof window.__wrdPassiveSampler?.sample === 'function',
-    socketPresent: !!client?.socket, socketConnected: client?.socket?.connected === true,
-    pcState: oneOf(client?.pc?.connectionState, ['new','connecting','connected','disconnected','failed','closed']),
-    uiPhase: oneOf(client?.uiPhase, ['idle','signaling','media-pending','connected','media-stalled','disconnected']),
-    controlState: oneOf(client?.controlState?.state, ['FREE','GRANTING','ACTIVE','REVOKING']),
-    hostOnline: client?.controlState?.hostOnline === true,
-    desiredMediaState: oneOf(media?.desiredState, ['active','suspended']),
-    desiredGeneration: Number.isSafeInteger(media?.desiredGeneration) && media.desiredGeneration >= 0
-      ? media.desiredGeneration : null,
-    authState: oneOf(auth?.getCheck?.()?.state, ['verified','unavailable','unauthorized']),
-    superseded: client?._superseded === true, failureCause:'unknown',
-    ...(window.__wrdPassiveSampler?.evidenceSnapshot?.() || {browserNowMs:null})};
+  const project = client => {
+    const auth = typeof Auth === 'undefined' ? null : Auth;
+    const media = client?.mediaActivityRuntime?.snapshot?.();
+    const oneOf = (value, allowed) => allowed.includes(value) ? value : 'unknown';
+    return {observerAvailable: typeof window.__wrdPassiveSampler?.sample === 'function',
+      socketPresent: !!client?.socket, socketConnected: client?.socket?.connected === true,
+      pcState: oneOf(client?.pc?.connectionState, ['new','connecting','connected','disconnected','failed','closed']),
+      uiPhase: oneOf(client?.uiPhase, ['idle','signaling','media-pending','connected','media-stalled','disconnected']),
+      controlState: oneOf(client?.controlState?.state, ['FREE','GRANTING','ACTIVE','REVOKING']),
+      hostOnline: client?.controlState?.hostOnline === true,
+      desiredMediaState: oneOf(media?.desiredState, ['active','suspended']),
+      desiredGeneration: Number.isSafeInteger(media?.desiredGeneration) && media.desiredGeneration >= 0
+        ? media.desiredGeneration : null,
+      authState: oneOf(auth?.getCheck?.()?.state, ['verified','unavailable','unauthorized']),
+      superseded: client?._superseded === true, failureCause:'unknown'};
+  };
+  const sampler = window.__wrdPassiveSampler;
+  // The shared observer enrolls its owner before the first legacy getter.
+  if (typeof sampler?.summarySnapshot === 'function') return sampler.summarySnapshot(project);
+  return {...project(typeof WebRTC === 'undefined' ? null : WebRTC),browserNowMs:null};
 }'''
 
 
