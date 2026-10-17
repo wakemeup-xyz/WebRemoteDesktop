@@ -6,11 +6,63 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import av
+import pytest
 from aiortc.mediastreams import VIDEO_TIME_BASE
 
 from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
 from h264_videotoolbox_encoder import H264VideoToolboxEncoder
 from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wall_jump", [0.0, -4.24, 4.24])
+async def test_media_clock_capture_stats_and_trace_follow_five_second_windows(monkeypatch, wall_jump):
+    from test_frame_worker import bare_track, MediaClock
+    clock = MediaClock(monkeypatch)
+    track = bare_track()
+    track.last_time = clock.mono
+    registry = FrameTraceRegistry()
+    track._frame_trace_context = SenderFrameTraceContext(
+        registry, StageMetrics(registry=registry), "clock-test", 1)
+    sent, log = [], Mock()
+    track._host_ref = SimpleNamespace(get_input_datachannel=lambda: SimpleNamespace(
+        send=lambda value: sent.append(json.loads(value))))
+    monkeypatch.setattr("host.logger.info", log)
+    try:
+        for now, expected_reports in [(104.999, 0), (105.0, 1), (110.0, 2)]:
+            clock.mono = now
+            clock.wall += wall_jump  # Stationary, backward or forward wall clock.
+            await track.recv()
+            assert len([row for row in sent if row["type"] == "capture_stats"]) == expected_reports
+            assert len([call for call in log.call_args_list
+                        if call.args[0].startswith("WRD_FRAME_TRACE_SUMMARY")]) == expected_reports
+        reports = [row for row in sent if row["type"] == "capture_stats"]
+        assert [row["fps"] for row in reports] == [0.4, 0.2]
+        assert [row["frames"] for row in reports] == [2, 1]
+        capture_logs = [call.args for call in log.call_args_list if call.args[0].startswith("CAPTURE_STATS")]
+        assert [row[1] for row in capture_logs] == pytest.approx([0.4, 0.2])
+        assert track.last_time == 110.0
+        assert track.frame_count == track._timing_count == 0
+    finally:
+        await track.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_media_clock_capture_constructor_initializes_stats_without_native_capture(monkeypatch):
+    from host import ScreenCaptureTrack
+    from test_frame_worker import MediaClock
+    clock = MediaClock(monkeypatch)
+    capture = SimpleNamespace(monitors=[{"left": 0, "top": 0, "width": 2, "height": 2}], close=lambda: None)
+    monkeypatch.setattr("host.MSS", lambda: capture)
+    monkeypatch.setattr("host.get_screeninfo_monitors", lambda: [])
+    with patch("host.threading.Thread") as thread:
+        thread.return_value.is_alive.return_value = False
+        track = ScreenCaptureTrack()
+    try:
+        assert track.last_time == clock.mono
+        assert track._last_frame_time == 0
+    finally:
+        await track.shutdown()
 
 
 class TestStageBoundaries(unittest.TestCase):
@@ -111,7 +163,7 @@ class TestCaptureBoundaries(unittest.IsolatedAsyncioTestCase):
         self.track._host_ref = SimpleNamespace(
             get_input_datachannel=lambda: SimpleNamespace(send=lambda value: sent.append(json.loads(value))))
         self.publish(1, (0, 1))
-        with patch("host.time.time", lambda: now[0]), patch("host.logger.info") as log:
+        with patch("host.time.monotonic", lambda: now[0]), patch("host.logger.info") as log:
             await self.track.recv()
             now[0] = 1.0
             await self.track.recv()
@@ -152,7 +204,7 @@ class TestCaptureBoundaries(unittest.IsolatedAsyncioTestCase):
         self.track.last_time = 1e9
         with patch("host.asyncio.sleep", resume), \
                 patch("host.time.perf_counter", lambda: now[0] / 1e9), \
-                patch("host.time.time", lambda: now[0] / 1e9), \
+                patch("host.time.monotonic", lambda: now[0] / 1e9), \
                 patch("host.time.monotonic_ns", lambda: now[0]):
             await self.track.recv()
         self.assertAlmostEqual(self.track._timing_totals["total"], 0.002)
@@ -217,7 +269,7 @@ class TestCaptureBoundaries(unittest.IsolatedAsyncioTestCase):
 
         with patch("host.asyncio.sleep", sleep), \
                 patch("host.time.perf_counter", lambda: now[0] / 1e9), \
-                patch("host.time.time", lambda: now[0] / 1e9), \
+                patch("host.time.monotonic", lambda: now[0] / 1e9), \
                 patch("host.time.monotonic_ns", lambda: now[0]):
             await self.track.recv()
         self.assertAlmostEqual(self.track._timing_totals["total"], 0.05)

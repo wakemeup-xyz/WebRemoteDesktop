@@ -14,6 +14,99 @@ class FakeSio:
         self.emits.append((event, data))
 
 
+@pytest.fixture
+def media_clock_relay_run(monkeypatch):
+    """Execute the actual loop; only JPEG work, clocks and sleeps are replaced."""
+    import host as module
+    from test_frame_worker import MediaClock
+
+    async def run(*, work_seconds=0.02, wall_jump=0.0, stats_points=None):
+        clock = MediaClock(monkeypatch)
+        relay = scoped_relay()
+        workers = []
+        requests = []
+        points = iter(stats_points or ())
+
+        class Worker:
+            def __init__(self, _): workers.append(self)
+            def invalidate(self, generation):
+                assert generation == relay.production_generation
+            async def submit_latest(self, request):
+                requests.append(request)
+                if stats_points:
+                    clock.mono = next(points)
+                    clock.wall += wall_jump  # Zero means a stationary epoch clock.
+                else:
+                    clock.mono += work_seconds
+                    clock.wall += work_seconds + wall_jump
+                return {'data': b'fake-jpeg', 'width': 4, 'height': 4, 'encodeMs': 2}
+
+        async def sleep(delay):
+            clock.sleeps.append(delay)
+            # ACK each emitted frame through the real scope-checked API.
+            assert ack(relay, relay.frame_id)
+            if len(clock.sleeps) == len(stats_points or [0]):
+                relay.enabled = False
+
+        monkeypatch.setattr(module, 'RelayFrameWorker', Worker)
+        monkeypatch.setattr(module, 'RelayJpegProcessor', lambda: object())
+        monkeypatch.setattr(module.asyncio, 'sleep', sleep)
+        relay.enabled, relay.task = True, asyncio.current_task()
+        await relay._run()
+        frames = [data for event, data in relay.sio.emits if event == 'relay-frame']
+        assert len(workers) == 1
+        assert len(frames) == len(requests) == len(clock.sleeps)
+        assert all(request['relayScope'] == relay.relay_scope for request in requests)
+        assert all(frame['relayScope'] == relay.relay_scope for frame in frames)
+        assert not relay.inflight_frames
+        return relay, clock, frames
+
+    return run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('wall_jump', [0.0, -4.24, 4.24])
+@pytest.mark.parametrize('work_seconds', [0.02, 0.5])
+async def test_media_clock_relay_iteration_pacing_and_epoch_timestamp(media_clock_relay_run, wall_jump, work_seconds):
+    relay, clock, frames = await media_clock_relay_run(work_seconds=work_seconds, wall_jump=wall_jump)
+    assert clock.sleeps == pytest.approx([max(0.001, 1 / relay.fps - work_seconds)])
+    assert frames[0]['timestamp'] == int(clock.wall * 1000)
+    assert frames[0]['timestamp'] > 1_000_000_000_000
+    assert relay.last_ack_latency_ms == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('wall_jump', [0.0, -4.24, 4.24])
+async def test_media_clock_relay_five_second_window_and_reset(monkeypatch, media_clock_relay_run, wall_jump):
+    from unittest.mock import Mock
+    log = Mock()
+    monkeypatch.setattr('host.logger.info', log)
+    relay, _, _ = await media_clock_relay_run(
+        wall_jump=wall_jump, stats_points=[104.999, 105.0, 109.999, 110.0])
+    rows = [call.args for call in log.call_args_list if call.args[0].startswith('TUNNEL_RELAY_STATS')]
+    assert len(rows) == 2
+    assert [row[3] for row in rows] == pytest.approx([0.4, 0.4])
+    assert [row[4] for row in rows] == [2, 2]
+    assert relay.stats_started_at == 110.0
+    assert relay.stats_frames == relay.stats_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_media_clock_relay_start_resets_window_without_starting_capture(monkeypatch):
+    from test_frame_worker import MediaClock
+    clock = MediaClock(monkeypatch)
+    relay = TunnelRelayStreamer(FakeSio())
+    assert relay.stats_started_at == clock.mono
+    clock.mono += 10
+    clock.wall -= 4.24
+    await relay.start('viewer-1')
+    try:
+        assert relay.stats_started_at == clock.mono
+    finally:
+        # Cancel before yielding to the real JPEG/capture loop.
+        await relay.stop()
+
+
 @pytest.fixture(autouse=True)
 def forbid_native_capture(monkeypatch):
     calls = []

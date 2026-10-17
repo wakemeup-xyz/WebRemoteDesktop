@@ -690,7 +690,7 @@ class TunnelRelayStreamer:
         self.ack_event = asyncio.Event()
         self.last_acked_frame_id = 0
         self.inflight_frames = {}
-        self.stats_started_at = time.time()
+        self.stats_started_at = time.monotonic()
         self.stats_frames = 0
         self.stats_acked = 0
         self.stats_bytes = 0
@@ -893,7 +893,7 @@ class TunnelRelayStreamer:
         self.last_acked_frame_id = 0
         self.inflight_frames = {}
         self.ack_event.clear()
-        self.stats_started_at = time.time()
+        self.stats_started_at = time.monotonic()
         self.stats_frames = 0
         self.stats_acked = 0
         self.stats_bytes = 0
@@ -1058,7 +1058,7 @@ class TunnelRelayStreamer:
                     await self.emit_feedback_if_due(time.monotonic() * 1000.0)
                     continue
 
-            started = time.time()
+            started = time.monotonic()
             production_generation = self.production_generation
             relay_scope = self.relay_scope
             try:
@@ -1124,8 +1124,8 @@ class TunnelRelayStreamer:
             finally:
                 frame = jpeg_bytes = None
 
-            elapsed = time.time() - started
-            now = time.time()
+            elapsed = time.monotonic() - started
+            now = time.monotonic()
             if now - self.stats_started_at >= 5:
                 duration = max(0.001, now - self.stats_started_at)
                 avg_kb = (self.stats_bytes / max(1, self.stats_frames)) / 1024
@@ -1290,7 +1290,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self.sct = MSS()
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
-        self.last_time = time.time()
+        self.last_time = time.monotonic()
         self._frame_clock = RtpFrameClock()
         self._last_frame_time = 0
         self._target_fps = target_fps
@@ -1517,7 +1517,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             raise MediaStreamError
 
         # Frame-rate control
-        now = time.time()
+        now = time.monotonic()
         elapsed = now - self._last_frame_time
         if elapsed < self._frame_interval:
             sleep_time = self._frame_interval - elapsed
@@ -1527,7 +1527,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             pause_wait += await self._wait_while_suspended()
             if not self._capture_running:
                 raise MediaStreamError
-        self._last_frame_time = time.time()
+        self._last_frame_time = time.monotonic()
 
         # Zero-wait: grab latest capture from background thread
         with self._capture_lock:
@@ -1620,7 +1620,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         # aiortc encodes the prior recv result before asking this track for the
         # next one. Cut before registering this output, so every completed
         # encoder stage stays with its own registered output window.
-        if trace_context is not None and time.time() - self.last_time >= 5:
+        if trace_context is not None and time.monotonic() - self.last_time >= 5:
             logger.info("WRD_FRAME_TRACE_SUMMARY %s", json.dumps(
                 self._frame_trace_summary(trace_context),
                 separators=(",", ":"), sort_keys=True,
@@ -1658,7 +1658,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._timing_count += 1
 
         self.frame_count += 1
-        current_time = time.time()
+        current_time = time.monotonic()
         if current_time - self.last_time >= 5:
             interval_reuse = self._total_reuse
             interval_frames = self.frame_count
