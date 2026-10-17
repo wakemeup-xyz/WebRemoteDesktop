@@ -166,3 +166,5 @@ Ruling: supplement existing remediation with one coherent observer-module/wiring
 28. 将已复现的 Viewer 本页 ACK、移动端 ACK、信令恢复及相邻新鲜度/冷却时钟作为独立窄修复：只迁移私有 duration，不改票据、lease/seq 或 epoch 协议。风险为零时刻/sentinel 或测试混钟回归，以 null 未设置值、真实对象假时钟测试和独立 review 控制。
 
 29. 单独同步两项遗留 M6 集成测试的认证 scope/ACK fixture：独立 review 已确认是旧测试报文，保留真实 ACK/图片加载及旧身份拒绝断言。风险是测试被弱化，因此不改生产校验并独立复审。
+
+30. 保留 M6 本页诊断原因，键盘复位只用既有协议值 deactivated；通过 Input.setActive 的可选本地 metadata 分离两种语义。真实浏览器与 Signal 日志已证明旧原因被拒绝，不扩大跨版本白名单。风险为 reset 顺序或 gate 回归，使用真实 VM transport/validator、两种 ACK/画面顺序和身份拒绝测试及独立复审约束。
