@@ -509,6 +509,10 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
             self.diagnostic['attribution']['firstDisconnectEvent'] = {
                 't':20,'n':1,'k':'sd','o':'s1','c':True,'r':'transport-close'}
             self.diagnostic['events'] = [self.diagnostic['attribution']['firstDisconnectEvent']]
+            if not disconnected:
+                self.diagnostic['state']['socketState'] = 'connected'
+                self.diagnostic['attribution']['firstDisconnectEvent'] = None
+                self.diagnostic['events'] = []
 
         async def operation(self,name):
             self.events.append(name)
@@ -570,7 +574,7 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
                 await self.operation('export')
                 if self.malformed_export: return {'private-canary':'secret'}
                 value = json.loads(json.dumps(self.diagnostic))
-                value['events'].append({'t':21,'n':2,'k':'preclose'})
+                value['events'].append({'t':21,'n':len(value['events'])+1,'k':'preclose'})
                 self.events.append('preclose')
                 return value
             if expression == '() => window.__wrdPassiveSampler.sample()':
@@ -582,8 +586,8 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
                 sample['callbacks'] = 2+self.sample_count
                 if self.sample_count > 1:
                     sample['diagnostics'] = {'schemaVersion':1,'events':self.diagnostic['events'],
-                        'cursor':1,'gap':0,'truncated':False,'droppedEvents':0,
-                        'coverageStatus':'partial','firstDisconnectEvent':self.diagnostic['events'][0],
+                        'cursor':len(self.diagnostic['events']),'gap':0,'truncated':False,'droppedEvents':0,
+                        'coverageStatus':'partial','firstDisconnectEvent':self.diagnostic['attribution']['firstDisconnectEvent'],
                         'cause':'unknown'}
                     if self.malformed_delta: sample['diagnostics']['secret'] = 'private-canary'
                 return sample
@@ -603,11 +607,12 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
 
     async def execute(self, rig, **kwargs):
         modules = {'dotenv':SimpleNamespace(dotenv_values=lambda _: {})}
+        factory = kwargs.pop('manager_factory',lambda:rig)
         with patch.dict('sys.modules',modules), \
              patch.dict(os.environ,{'VIEWER_ACCESS_PASSWORD':'private-password-canary'}), \
              patch('builtins.print'):
             return await soak.run(SimpleNamespace(origin='https://fixture.invalid',output_dir=rig.output,
-                duration_seconds=1,mode='relay',runtime_config=None),manager_factory=lambda:rig,
+                duration_seconds=1,mode='relay',runtime_config=None),manager_factory=factory,
                 limits={key:.08 for key in ('managerStart','managerLaunch','export','browserClose','managerStop')},
                 **kwargs)
 
@@ -762,6 +767,64 @@ class LifecycleRunTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(lifecycle['diagnostics']['events'][-1]['k'],'preclose')
             self.assertEqual(lifecycle['python']['browserClose']['status'],'not-created')
             self.assertFalse(list(rig.output.glob('.*.tmp')))
+
+
+    async def test_healthy_session_startup_summary_error_and_timeout_cannot_pass(self):
+        for outcome in ('error','timeout'):
+            with self.subTest(outcome=outcome),tempfile.TemporaryDirectory() as directory:
+                baseline = set(asyncio.all_tasks())
+                rig = self.Rig(Path(directory)/'evidence',disconnected=False,
+                    fail_at='startup-summary' if outcome == 'error' else None,
+                    timeout_at='startup-summary' if outcome == 'timeout' else None)
+                self.assertEqual(await self.execute(rig),1)
+                lifecycle,summary = self.artifacts(rig)
+                self.assertEqual(summary['failure'],{'stage':'startup-summary','category':'runtime',
+                    'reason':'startup-summary-deadline' if outcome == 'timeout' else 'startup-summary-unavailable'})
+                self.assertEqual(summary['samples'],0)
+                self.assertEqual(rig.sample_count,1)
+                self.assertEqual((rig.proofs,rig.clicks),(1,1))
+                self.assertEqual(lifecycle['diagnostics']['state']['socketState'],'connected')
+                self.assertIsNone(lifecycle['diagnostics']['attribution']['firstDisconnectEvent'])
+                self.assertEqual(lifecycle['python']['browserClose']['status'],'closed')
+                self.assertEqual(lifecycle['python']['managerStop']['status'],'ok')
+                self.assertEqual(set(asyncio.all_tasks())-baseline,set())
+
+    async def test_initial_artifact_failure_aborts_before_manager_factory_and_keeps_other_artifact(self):
+        original = soak.atomic_evidence
+        for failed_name in ('lifecycle.json','summary.json'):
+            with self.subTest(failed_name=failed_name),tempfile.TemporaryDirectory() as directory:
+                rig = self.Rig(Path(directory)/'evidence',disconnected=False)
+                attempts,constructions = [],[]
+                def factory():
+                    constructions.append('constructed')
+                    return rig
+                def write(path,value,**kwargs):
+                    attempts.append((path.name,kwargs.get('initial',False),json.loads(json.dumps(value))))
+                    if path.name == failed_name: raise OSError('private-initial-write-canary')
+                    return original(path,value,**kwargs)
+                with patch.object(soak,'atomic_evidence',write):
+                    self.assertEqual(await self.execute(rig,manager_factory=factory),1)
+                self.assertEqual(constructions,[])
+                self.assertEqual(rig.events,[])
+                self.assertEqual((rig.proofs,rig.clicks,rig.sample_count),(0,0,0))
+                self.assertEqual([(name,initial) for name,initial,_ in attempts[:2]],
+                    [('lifecycle.json',True),('summary.json',True)])
+                self.assertEqual((rig.output/'samples.jsonl').read_text(),'')
+                successful_name = 'summary.json' if failed_name == 'lifecycle.json' else 'lifecycle.json'
+                retained = json.loads((rig.output/successful_name).read_text())
+                self.assertEqual((rig.output/successful_name).stat().st_mode & 0o777,0o600)
+                self.assertFalse((rig.output/failed_name).exists())
+                summary_attempts = [value for name,_,value in attempts if name == 'summary.json']
+                self.assertEqual(summary_attempts[-1]['status'],'INCOMPLETE')
+                self.assertEqual(summary_attempts[-1]['failure']['reason'],'evidence-write-failed')
+                self.assertEqual(summary_attempts[-1]['failure']['stage'],'not-started')
+                if successful_name == 'summary.json':
+                    self.assertEqual(retained['failure']['reason'],'evidence-write-failed')
+                else:
+                    self.assertEqual(retained['writeStatus'],'error')
+                    self.assertIsNotNone(retained['python']['failureDetectedMs'])
+                    self.assertEqual(retained['python']['managerStart']['status'],'not-started')
+                self.assertNotIn('private-',json.dumps(retained))
 
 
 class LifecycleBoundaryTest(unittest.TestCase):

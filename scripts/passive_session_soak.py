@@ -122,7 +122,7 @@ async def issue_start_proof(page, timeout_s):
         raise RuntimeError(result if result in ADMISSION_FAILURES else 'admission-unavailable')
 
 
-async def startup_summary(page):
+async def startup_summary(page, *, required=False):
     try:
         value = await asyncio.wait_for(page.evaluate(STARTUP_SUMMARY), timeout=2)
         allowed = {'observerAvailable':bool,'socketPresent':bool,'socketConnected':bool,'hostOnline':bool,
@@ -139,7 +139,11 @@ async def startup_summary(page):
             if key == 'desiredGeneration' and field is not None: bounded_int(field)
         byte_cap(value,1024)
         return value
+    except TimeoutError:
+        if required: raise RuntimeError('startup-summary-deadline') from None
+        return {'observerAvailable': False, 'failureCause': 'unknown'}
     except Exception:
+        if required: raise RuntimeError('startup-summary-unavailable') from None
         return {'observerAvailable': False, 'failureCause': 'unknown'}
 
 
@@ -649,12 +653,13 @@ async def run(args, *, manager_factory=None, limits=None):
     write_status = 'ok'
     cleanup_failed = False
     stages = frozenset(('not-started','manager-start','browser-start','browser-context','entry',
-        'ui-login','observer-install','start-ui','media-start','sampling','cancelled','cleanup'))
+        'ui-login','observer-install','start-ui','media-start','startup-summary','sampling','cancelled','cleanup'))
     reasons = ADMISSION_FAILURES | {'entry-unavailable','media-start-deadline',
         'sample-continuity-lost','session-changed-or-disconnected','evidence-budget-exceeded',
         'sampling-deadline-overrun','start-ui-unavailable','start-ui-deadline','start-ui-not-fresh',
         'start-ui-click-unproven','start-ui-state-changed','timeout','cancelled','unknown',
-        'cancellation-noncooperative','cleanup-failed','evidence-write-failed'}
+        'cancellation-noncooperative','cleanup-failed','evidence-write-failed',
+        'startup-summary-unavailable','startup-summary-deadline'}
 
     def now(): return min(9999999999999,round(time.monotonic()*1000))
 
@@ -716,12 +721,15 @@ async def run(args, *, manager_factory=None, limits=None):
             fallback['coverage'].update(status='capacity',failure='schema-capacity')
             diagnostic = validate_diagnostic(fallback)
             value = lifecycle()
+        committed = True
         for name in ('lifecycle.json','summary.json'):
             payload = value if name == 'lifecycle.json' else result()
             try: atomic_evidence(output/name,payload,initial=initial)
             except (OSError,ValueError):
+                committed = False
                 write_status = 'error'
                 fail(RuntimeError('evidence-write-failed'))
+        return committed
 
     async def tracked(key, operation, cap):
         record = python_state[key]
@@ -813,7 +821,8 @@ async def run(args, *, manager_factory=None, limits=None):
     # teardown. Even launch failure and repeated cancellation reach final writes.
     with os.fdopen(fd,'w') as stream:
         try:
-            persist(initial=True)
+            if not persist(initial=True):
+                raise RuntimeError('evidence-write-failed')
             stage = 'manager-start'
             manager = manager_factory()
             operation = manager.start() if hasattr(manager,'start') else manager.__aenter__()
@@ -843,7 +852,8 @@ async def run(args, *, manager_factory=None, limits=None):
                 if ready: break
                 await asyncio.sleep(1)
             else: raise RuntimeError('media-start-deadline')
-            startup = await startup_summary(page)
+            stage = 'startup-summary'
+            startup = await startup_summary(page,required=True)
             stage = 'sampling'
             start = time.monotonic()
             await collect_samples(sample_once,EvidenceWriter(stream),summary,salt,
