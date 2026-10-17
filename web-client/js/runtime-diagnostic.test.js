@@ -17,7 +17,7 @@ test('runtime builder preserves the M1 snapshot without recalculation and captur
 });
 test('missing collector is explicit and getter failures cannot break diagnostics', () => {
   const payload = fixture({ getLatency: undefined, getStartup() { throw Error('unavailable'); } })({});
-  assert.equal(payload.latency, null); assert.equal(payload.latencyStatus, 'collector-unavailable'); assert.deepEqual(payload.startup, {});
+  assert.equal(payload.latency, null); assert.equal(payload.latencyStatus, 'collector-unavailable'); assert.deepEqual(payload.startup.dataChannelWatchdog, require('./runtime-diagnostic').sanitizeDataChannelWatchdog(null));
 });
 
 test('closed scopes drain once into a bounded queue; failure replay retains IDs and cancelled outcomes', () => {
@@ -77,4 +77,24 @@ test('expired and unknown closed scopes still report genuine loss during replay'
   assert.equal(expired.scopeEnded.events.length, 0); assert.equal(expired.scopeEnded.dropped, 1);
   const unknown = fixture().prepareReplay(captured);
   assert.equal(unknown.scopeEnded.events.length, 0); assert.equal(unknown.scopeEnded.dropped, 1);
+});
+
+test('watchdog shared sanitizer, builder and storage retain only fourteen bounded fields', () => {
+  const { sanitizeDataChannelWatchdog, runtimeDiagnosticForStorage } = require('./runtime-diagnostic');
+  const hostile = { phase: 'negotiation', timedOut: true, elapsedMs: 30000, remainingMs: 0, extensions: 2,
+    pcState: 'new', iceState: 'checking', signalingState: 'have-local-offer', sctpState: 'connecting',
+    inputState: 'connecting', moveState: 'open', socketConnected: true, localDescriptionSet: true, remoteDescriptionSet: false,
+    secret: 'PASSWORD_CANARY', url: 'https://SECRET_CANARY', sdp: 'SDP_CANARY' };
+  const clean = sanitizeDataChannelWatchdog(hostile); assert.equal(Object.keys(clean).length, 14);
+  assert.ok(Buffer.byteLength(JSON.stringify(clean)) < 1024);
+  const payload = fixture({ getStartup: () => ({ marks: [{ name: 'core-interactive', atMs: 3 }], dataChannelWatchdog: hostile }) })({ reason: 'negotiation-timeout' });
+  assert.deepEqual(payload.startup.dataChannelWatchdog, clean); assert.equal(payload.startup.marks.length, 1);
+  const stored = runtimeDiagnosticForStorage(payload); assert.deepEqual(stored.startup.dataChannelWatchdog, clean);
+  assert.equal(JSON.stringify(stored).includes('CANARY'), false);
+  const bad = sanitizeDataChannelWatchdog({ ...hostile, phase: 'SECRET_CANARY', pcState: 'SECRET_CANARY',
+    elapsedMs: Infinity, remainingMs: 30001, extensions: 3, remoteDescriptionSet: 'PASSWORD_CANARY' });
+  assert.equal(bad.phase, 'inactive'); assert.equal(bad.pcState, null); assert.equal(bad.elapsedMs, null);
+  assert.equal(bad.remainingMs, null); assert.equal(bad.extensions, 0); assert.equal(bad.remoteDescriptionSet, null);
+  const throwing = new Proxy({}, { get() { throw Error('SECRET_CANARY'); } });
+  assert.deepEqual(sanitizeDataChannelWatchdog(throwing), sanitizeDataChannelWatchdog(null));
 });

@@ -983,6 +983,8 @@ test('core auto failure captures M1 without loading deferred scripts and manual 
   const sample = { schemaVersion: 3, scope: null, windowMs: 5000,
     metrics: { inputAckRttMs: { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 } },
     outcomes: { sent: 4, acked: 3, rejected: 0, timedOut: 1, late: 0, cancelled: 0, dropped: 0, unmatched: 0 } };
+  context.WebRTC.getDataChannelWatchdogSnapshot = () => ({ phase: 'negotiation', timedOut: true, elapsedMs: 30000, remainingMs: 0, extensions: 0, pcState: 'new', secret: 'WATCHDOG_SECRET_CANARY' });
+  context.__WRD_STARTUP_SNAPSHOT__ = () => ({ marks: [{ name: 'core-interactive', atMs: 3 }] });
   context.LatencyMonitor = { snapshot: () => sample }; context.window.LatencyMonitor = context.LatencyMonitor;
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
   const Diagnostic = context.window.Diagnostic; const sent = [];
@@ -994,6 +996,11 @@ test('core auto failure captures M1 without loading deferred scripts and manual 
   for (const payload of sent) {
     assert.equal(payload.schemaVersion, 3); assert.equal(payload.latency.metrics.inputAckRttMs.last, 42);
     assert.equal(payload.latency.outcomes.timedOut, 1); assert.ok(payload.diagnosticId); assert.ok(payload.captured.bootIdHash);
+    assert.equal(payload.startup.dataChannelWatchdog.phase, 'negotiation');
+    assert.equal(payload.startup.dataChannelWatchdog.timedOut, true);
+    assert.equal(Object.keys(payload.startup.dataChannelWatchdog).length, 14);
+    assert.equal(JSON.stringify(payload.startup).includes('WATCHDOG_SECRET_CANARY'), false);
+    assert.equal(payload.startup.marks.length, 1);
     assert.ok(payload.build); assert.ok(payload.scopeEnded); assert.ok(payload.startup);
   }
   assert.equal(sent.length, 2);

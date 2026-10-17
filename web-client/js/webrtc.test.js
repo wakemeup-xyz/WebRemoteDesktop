@@ -7752,3 +7752,37 @@ test('duration clock: signaling cancellation on success/manual/superseded clears
     assert.equal(WebRTC._signalRecoveryTimer, null, outcome);
   }
 });
+
+for (const lifecycle of ['refresh', 'disconnect', 'superseded', 'tunnel', 'control-lease']) {
+  test(`DataChannel watchdog retires on actual ${lifecycle} lifecycle and rejects queued callbacks`, async () => {
+    let now = 0, nextId = 0; const timers = new Map();
+    const { WebRTC, context } = loadWebRTC({ performance: { now: () => now },
+      setTimeout(fn, ms) { const id = nextId++; timers.set(id, { fn, ms }); return id; },
+      clearTimeout(id) { timers.delete(id); } });
+    WebRTC.socket = { connected: true, emit() {}, on() {}, disconnect() {}, io: { reconnection() {} } };
+    WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true,
+      lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+    WebRTC.networkMode = 'auto'; WebRTC.currentConnectionAttemptId = 'old'; WebRTC.connectionAttemptSequence = 1;
+    WebRTC.pc = { connectionState: 'new', iceConnectionState: 'new',
+      _wrdControlLease: { ...WebRTC.controlState.lease }, createDataChannel: () => ({ readyState: 'connecting' }),
+      close() { oldChannel.onclose(); } };
+    WebRTC.createInputChannel(); const oldChannel = WebRTC.inputChannel;
+    const timeout = timers.get(WebRTC._dcTimeout).fn; const faults = [];
+    WebRTC.noteDataChannelFault = reason => faults.push(reason); WebRTC.scheduleReconnect = reason => faults.push(reason);
+    WebRTC.createPeerConnection = () => {}; WebRTC.createOffer = () => {};
+    if (lifecycle === 'refresh') await WebRTC.refresh({ reason: 'manual' });
+    if (lifecycle === 'disconnect') WebRTC.disconnect();
+    if (lifecycle === 'superseded') WebRTC.handleViewerSuperseded();
+    if (lifecycle === 'tunnel') { WebRTC.networkMode = 'tunnel'; WebRTC.startTunnelRelay(); }
+    if (lifecycle === 'control-lease') {
+      context.Input = { init() {}, setControlLease() {}, setActive() {} };
+      WebRTC.startControlHeartbeat = () => {}; WebRTC.updateControlUI = () => {};
+      WebRTC.bindCurrentConnectionAttempt = () => false; WebRTC.replayMediaActivityIntent = () => false;
+      WebRTC.ensureMediaActiveIfVisible = () => false;
+      WebRTC.handleControlGrant({ controller: true, leaseId: 'lease-000000000002', leaseEpoch: 2 });
+    }
+    assert.equal(WebRTC._dataChannelWatchdog, null); assert.equal(WebRTC._dcTimeout, null);
+    now = 40000; timeout(); oldChannel.onclose(); oldChannel.onerror({});
+    assert.deepEqual(faults, []); assert.equal(WebRTC._dcReconnectTimer, null);
+  });
+}

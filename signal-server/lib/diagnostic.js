@@ -1,5 +1,6 @@
 const { createDiagnosticStore, getDiagDir } = require('./diagnostic-store');
 const { loadConfig } = require('./config');
+const { sanitizeDataChannelWatchdog } = require('../../web-client/js/runtime-diagnostic');
 
 const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
 const crypto = require('node:crypto');
@@ -31,7 +32,7 @@ const STARTUP_MARKS = new Set(['html-shell', 'core-failed', 'core-interactive', 
   'bootstrap-ready', 'bootstrap-degraded', 'signal-connected', 'first-frame', 'active']);
 function redactStartup(value) {
   const marks = Array.isArray(value?.marks) ? value.marks : [];
-  return { marks: marks.filter(mark => STARTUP_MARKS.has(mark?.name)).slice(0, 64)
+  return { dataChannelWatchdog: sanitizeDataChannelWatchdog(value?.dataChannelWatchdog), marks: marks.filter(mark => STARTUP_MARKS.has(mark?.name)).slice(0, 64)
     .map(mark => ({ name: mark.name, atMs: finiteNonnegative(mark.atMs ?? mark.at) })),
     resources: (Array.isArray(value?.resources) ? value.resources : []).filter(resource =>
       typeof resource?.path === 'string' && /^\/?assets\/[a-z0-9-]+\.[a-f0-9]{8,64}\.(js|css)$/.test(resource.path))
@@ -68,7 +69,7 @@ function redactRuntimeDiagnostic(payload) {
   const captured = payload.captured || {};
   const wallTime = typeof captured.wallTime === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(captured.wallTime) ? captured.wallTime : null;
   const clean = { type: 'connection-diagnostic', schemaVersion: 3, diagnosticId: digestValue(payload.diagnosticId),
-    reason: safeReason(payload.reason) || safeEnum(payload.reason, new Set(['pc-failed', 'pc-disconnected', 'ice-disconnected', 'dc-error', 'dc-stuck', 'manual'])),
+    reason: safeReason(payload.reason) || safeEnum(payload.reason, new Set(['pc-failed', 'pc-disconnected', 'ice-disconnected', 'dc-error', 'dc-stuck', 'negotiation-timeout', 'manual'])),
     trigger: safeEnum(payload.trigger, new Set(['manual', 'auto-failure'])) || 'manual',
     connectionAttemptId: hashIdentity(payload.connectionAttemptId), browserSessionId: hashIdentity(payload.browserSessionId),
     mode: safeEnum(payload.mode, new Set(['auto', 'direct', 'relay', 'tunnel', 'stun', 'turn'])),

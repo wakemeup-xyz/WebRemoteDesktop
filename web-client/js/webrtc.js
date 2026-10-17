@@ -1339,6 +1339,7 @@ const WebRTC = {
   },
 
   beginConnectionAttempt(trigger = 'viewer-open') {
+    this.cancelDataChannelWatchdog();
     this.clearRefreshDcWaitTimer();
     this.clearMediaResumeProof();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
@@ -1562,10 +1563,7 @@ const WebRTC = {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this._dcTimeout) {
-      clearTimeout(this._dcTimeout);
-      this._dcTimeout = null;
-    }
+    this.cancelDataChannelWatchdog();
     if (this._disconnectedTimer) {
       clearTimeout(this._disconnectedTimer);
       this._disconnectedTimer = null;
@@ -1591,6 +1589,7 @@ const WebRTC = {
       this.pc.onicegatheringstatechange = null;
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
@@ -3529,7 +3528,15 @@ const WebRTC = {
         return;
       }
       try {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        const peer = this.pc, socket = this.socket, attempt = this.currentConnectionAttemptId;
+        const sequence = this.connectionAttemptSequence, epoch = this._offerEpoch;
+        const watchdog = this._dataChannelWatchdog;
+        if (this.manualDisconnect || this._superseded) return;
+        await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+        if (this.pc !== peer || this.socket !== socket || this.currentConnectionAttemptId !== attempt
+            || this.connectionAttemptSequence !== sequence || this._offerEpoch !== epoch
+            || this.manualDisconnect || this._superseded) return;
+        this.finishDataChannelNegotiation(watchdog);
       } catch (err) {
         console.error('Failed to set remote description:', err);
       }
@@ -3807,6 +3814,7 @@ const WebRTC = {
     const peerLease = this.pc?._wrdControlLease;
     const differentPeerLease = peerLease && (peerLease.leaseId !== data.leaseId || peerLease.leaseEpoch !== data.leaseEpoch);
     if (differentPeerLease) {
+      this.cancelDataChannelWatchdog();
       const oldPeer = this.pc;
       for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',
         'onsignalingstatechange', 'onicegatheringstatechange', 'onicecandidate', 'ontrack']) {
@@ -4202,6 +4210,7 @@ const WebRTC = {
   },
 
   createPeerConnection() {
+    this.cancelDataChannelWatchdog();
     this.clearRefreshDcWaitTimer();
     if (this.networkMode === 'tunnel') {
       return;
@@ -4217,7 +4226,6 @@ const WebRTC = {
     this._noRelayReceiveCount = 0;
     this.lastCandidateType = '';
     this.selectedCandidatePair = null;
-    if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
     const previousPeer = this.pc;
     if (previousPeer) {
       // ACKs identify attempt/generation, not PC objects. Retiring a producer
@@ -4401,6 +4409,108 @@ const WebRTC = {
     };
   },
 
+  ownsDataChannelOwner(owner, channel = owner?.channel) {
+    return !!owner && !owner.retired && this.pc === owner.peer && this.inputChannel === channel
+      && this.socket === owner.socket && this.currentConnectionAttemptId === owner.attempt
+      && this.connectionAttemptSequence === owner.sequence && !this.manualDisconnect && !this._superseded;
+  },
+
+  cancelDataChannelWatchdog(retireChannel = true) {
+    // Teardown must also fence synchronous/queued channel-close callbacks.
+    // Open and unexpected connected-close only finish the phase timer.
+    if (retireChannel && this._inputChannelOwner) this._inputChannelOwner.retired = true;
+    const record = this._dataChannelWatchdog;
+    if (record?.timer != null) clearTimeout(record.timer);
+    this._dataChannelWatchdog = null;
+    this._dcTimeout = null;
+    if (this._dcReconnectTimer != null) clearTimeout(this._dcReconnectTimer);
+    this._dcReconnectTimer = null;
+  },
+
+  dataChannelWatchdogNow(record) {
+    let now;
+    try { now = performance.now(); } catch (_) { now = NaN; }
+    if (!Number.isFinite(now) || now < 0 || (record && now < record.lastNow)) {
+      if (record) record.clockValid = false;
+      return null;
+    }
+    if (record) { record.lastNow = now; if (!record.clockValid) return null; }
+    return now;
+  },
+
+  getDataChannelWatchdogSnapshot() {
+    if (this._dataChannelWatchdogFailure) return this._dataChannelWatchdogFailure;
+    const record = this._dataChannelWatchdog;
+    const current = record && this.ownsDataChannelOwner(record);
+    const now = current ? this.dataChannelWatchdogNow(record) : null;
+    const safe = (obj, key) => { try { return obj?.[key] ?? null; } catch (_) { return null; } };
+    const raw = { phase: current ? record.phase : 'inactive', timedOut: current ? record.timedOut : false,
+      elapsedMs: now === null ? null : now - record.startedAt,
+      remainingMs: now === null ? null : Math.max(0, record.deadline - now),
+      extensions: current ? record.extensions : 0,
+      pcState: safe(this.pc, 'connectionState'), iceState: safe(this.pc, 'iceConnectionState'),
+      signalingState: safe(this.pc, 'signalingState'), sctpState: safe(safe(this.pc, 'sctp'), 'state'),
+      inputState: safe(this.inputChannel, 'readyState'), moveState: safe(this.inputMoveChannel, 'readyState'),
+      socketConnected: safe(this.socket, 'connected'), localDescriptionSet: this.pc ? !!safe(this.pc, 'localDescription') : null,
+      remoteDescriptionSet: this.pc ? !!safe(this.pc, 'remoteDescription') : null };
+    return typeof sanitizeDataChannelWatchdog === 'function' ? sanitizeDataChannelWatchdog(raw) : null;
+  },
+
+  startDataChannelWatchdog(channel) {
+    this.cancelDataChannelWatchdog();
+    this._dataChannelWatchdogFailure = null;
+    if (!channel || channel.readyState === 'open') return;
+    const now = this.dataChannelWatchdogNow();
+    const phase = this.pc.connectionState === 'connected' || this.pc.remoteDescription ? 'channel-open' : 'negotiation';
+    const record = { peer: this.pc, channel, socket: this.socket, attempt: this.currentConnectionAttemptId,
+      sequence: this.connectionAttemptSequence, phase, timedOut: false, extensions: 0,
+      startedAt: now, lastNow: now, clockValid: now !== null, deadline: now === null ? null : now + (phase === 'negotiation' ? 30000 : 10000), timer: null };
+    this._dataChannelWatchdog = record;
+    this.armDataChannelWatchdog(record, phase === 'negotiation' ? 30000 : 10000);
+  },
+
+  armDataChannelWatchdog(record, delay) {
+    record.timer = setTimeout(() => this.checkDataChannelWatchdog(record), delay);
+    this._dcTimeout = record.timer;
+  },
+
+  checkDataChannelWatchdog(record) {
+    if (this._dataChannelWatchdog !== record || !this.ownsDataChannelOwner(record) || record.timedOut) return;
+    if (record.channel.readyState === 'open') { this.cancelDataChannelWatchdog(false); return; }
+    const now = this.dataChannelWatchdogNow(record);
+    if (now !== null && now < record.deadline) {
+      if (record.timer != null) clearTimeout(record.timer);
+      this.armDataChannelWatchdog(record, record.deadline - now); return;
+    }
+    if (record.phase === 'channel-open' && now !== null && record.extensions < 2
+        && (record.peer.connectionState === 'connecting' || record.peer.iceConnectionState === 'checking')) {
+      record.extensions++; record.startedAt = now; record.deadline = now + 10000;
+      if (record.timer != null) clearTimeout(record.timer);
+      this.armDataChannelWatchdog(record, 10000); return;
+    }
+    record.timedOut = true;
+    if (record.timer != null) clearTimeout(record.timer);
+    record.timer = null; this._dcTimeout = null;
+    try { this._dataChannelWatchdogFailure = this.getDataChannelWatchdogSnapshot(); } catch (_) {}
+    const reason = record.phase === 'negotiation' ? 'negotiation-timeout' : 'dc-stuck';
+    try { if (typeof Diagnostic !== 'undefined') Diagnostic.autoSendFailure?.(reason); } catch (_) {}
+    if (record.phase === 'negotiation') this.scheduleReconnect(reason);
+    else this.noteDataChannelFault(reason);
+  },
+
+  finishDataChannelNegotiation(record) {
+    if (!record || this._dataChannelWatchdog !== record || !this.ownsDataChannelOwner(record)
+        || record.phase !== 'negotiation' || record.timedOut) return;
+    if (record.channel.readyState === 'open') { this.cancelDataChannelWatchdog(false); return; }
+    const now = this.dataChannelWatchdogNow(record);
+    // Unknown monotonic time cannot purchase a fresh budget. Keep the finite timer.
+    if (now === null) return;
+    if (now >= record.deadline) { this.checkDataChannelWatchdog(record); return; }
+    if (record.timer != null) clearTimeout(record.timer);
+    record.phase = 'channel-open'; record.startedAt = now; record.deadline = now + 10000;
+    this.armDataChannelWatchdog(record, 10000);
+  },
+
   createInputChannel() {
     if (!this.pc || this.inputChannel) {
       return;
@@ -4418,30 +4528,14 @@ const WebRTC = {
     });
     this.inputMoveChannel.bufferedAmountLowThreshold = 4 * 1024;
 
-    // Timeout detection: check PC state before forcing reconnect.
-    // If ICE/DTLS is still in progress, extend timeout instead of cascading.
-    this._dcTimeoutExtensions = 0;
-    const checkDcTimeout = () => {
-      if (this.inputChannel && this.inputChannel.readyState !== 'open') {
-        const pcState = this.pc ? this.pc.connectionState : 'closed';
-        const iceState = this.pc ? this.pc.iceConnectionState : 'closed';
-        console.warn('[INPUT-DC] DataChannel stuck state=%s pc=%s ice=%s ext=%d',
-          this.inputChannel.readyState, pcState, iceState, this._dcTimeoutExtensions);
-        if ((pcState === 'connecting' || iceState === 'checking') && this._dcTimeoutExtensions < 2) {
-          this._dcTimeoutExtensions += 1;
-          this._dcTimeout = setTimeout(checkDcTimeout, 10000);
-          return;
-        }
-        this.noteDataChannelFault('dc-stuck');
-      }
-    };
-    this._dcTimeout = setTimeout(checkDcTimeout, 10000);
+    this.startDataChannelWatchdog(inputChannel);
 
+    const channelOwner = this._inputChannelOwner = { peer: this.pc, socket: this.socket, attempt: this.currentConnectionAttemptId, sequence: this.connectionAttemptSequence };
     inputChannel.onopen = () => {
-      if (this.inputChannel !== inputChannel) return;
+      if (!this.ownsDataChannelOwner(channelOwner, inputChannel)) return;
       if (this._refreshing) this.markRefreshSettled('dc-open');
       console.log('[INPUT-DC] DataChannel open');
-      if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      this.cancelDataChannelWatchdog(false);
       this._inputDcDegraded = false;
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(true);
       if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
@@ -4451,40 +4545,44 @@ const WebRTC = {
       this.startDcKeepalive();
     };
     inputChannel.onclose = () => {
-      if (this.inputChannel !== inputChannel) return;
+      if (!this.ownsDataChannelOwner(channelOwner, inputChannel)) return;
       const sctpState = this.pc && this.pc.sctp ? this.pc.sctp.state : 'no-sctp';
       console.log('[INPUT-DC] DataChannel closed, sctp=%s pc=%s ice=%s',
         sctpState,
         this.pc ? this.pc.connectionState : 'no-pc',
         this.pc ? this.pc.iceConnectionState : 'no-pc');
-      if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      if (this.pc?.connectionState === 'connected') this.cancelDataChannelWatchdog(false);
       this.stopDcKeepalive();
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Defer reconnect to avoid cascading on brief DC hiccups
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
-        if (this._dcReconnectTimer) return;
+        if (this._dcReconnectTimer != null) return;
         console.warn('[INPUT-DC] Unexpected close while PC connected, will reconnect in 3s if not recovered');
-        this._dcReconnectTimer = setTimeout(() => {
+        const recoveryTimer = setTimeout(() => {
+          if (this._dcReconnectTimer !== recoveryTimer) return;
           this._dcReconnectTimer = null;
-          if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
+          if (!this.ownsDataChannelOwner(channelOwner, inputChannel) || this._refreshing || this.pc.connectionState !== 'connected') return;
           this.noteDataChannelFault('dc-closed');
         }, 3000);
+        this._dcReconnectTimer = recoveryTimer;
       }
     };
     inputChannel.onerror = (event) => {
-      if (this.inputChannel !== inputChannel) return;
+      if (!this.ownsDataChannelOwner(channelOwner, inputChannel)) return;
       console.warn('[INPUT-DC] DataChannel error:', event);
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Error typically precedes close; defer reconnect to avoid cascading
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
-        if (this._dcReconnectTimer) return;
-        this._dcReconnectTimer = setTimeout(() => {
+        if (this._dcReconnectTimer != null) return;
+        const recoveryTimer = setTimeout(() => {
+          if (this._dcReconnectTimer !== recoveryTimer) return;
           this._dcReconnectTimer = null;
-          if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
+          if (!this.ownsDataChannelOwner(channelOwner, inputChannel) || this._refreshing || this.pc.connectionState !== 'connected') return;
           this.noteDataChannelFault('dc-error');
         }, 3000);
+        this._dcReconnectTimer = recoveryTimer;
       }
     };
     inputChannel.onmessage = (event) => {
@@ -4809,6 +4907,7 @@ const WebRTC = {
       this.pc.onicegatheringstatechange = null;
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
@@ -6410,10 +6509,7 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this._dcTimeout) {
-      clearTimeout(this._dcTimeout);
-      this._dcTimeout = null;
-    }
+    this.cancelDataChannelWatchdog();
     if (this._disconnectedTimer) {
       clearTimeout(this._disconnectedTimer);
       this._disconnectedTimer = null;
@@ -6452,6 +6548,7 @@ if (this.tunnelLastObjectUrl) {
       this.pc.onicegatheringstatechange = null;
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
@@ -6513,6 +6610,7 @@ if (this.tunnelLastObjectUrl) {
       // Un-negotiated DataChannels can be created on an existing PC without re-offer;
       // the host receives them via @pc.on("datachannel") and does NOT need to rebuild
       // ScreenCaptureTrack. Calling createOffer() here would cause host full teardown.
+      this.cancelDataChannelWatchdog();
       this.stopDcKeepalive();
       this.inputChannel = null;
       this.inputMoveChannel = null;
@@ -6686,6 +6784,7 @@ if (this.tunnelLastObjectUrl) {
     this.clearSignalingRecovery();
     this.stopPortSearch('disconnect');
     this.manualDisconnect = true;
+    this.cancelDataChannelWatchdog();
     this.offerInProgress = false;
     this._offerEpoch += 1;
     if (this.reconnectTimer) {
@@ -6712,6 +6811,7 @@ if (this.tunnelLastObjectUrl) {
     this.stopMediaTelemetry();
     this.stopTunnelRelay();
     if (this.pc) {
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
@@ -6738,6 +6838,7 @@ if (this.tunnelLastObjectUrl) {
     console.warn('[VIEWER] superseded', payload?.reason || 'unknown', payload?.bySocketId || '');
     this._superseded = true;
     this.manualDisconnect = true;
+    this.cancelDataChannelWatchdog();
     this.offerInProgress = false;
     this._offerEpoch += 1;
     this.clearSignalingRecovery();
@@ -6755,10 +6856,7 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this._dcTimeout) {
-      clearTimeout(this._dcTimeout);
-      this._dcTimeout = null;
-    }
+    this.cancelDataChannelWatchdog();
     if (this._disconnectedTimer) {
       clearTimeout(this._disconnectedTimer);
       this._disconnectedTimer = null;
@@ -6790,6 +6888,7 @@ if (this.tunnelLastObjectUrl) {
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
       try {
+        this.cancelDataChannelWatchdog();
         this.pc.close();
       } catch (_err) {}
       this.pc = null;

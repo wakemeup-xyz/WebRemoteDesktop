@@ -14,6 +14,27 @@
     try { return typeof getter === 'function' ? (getter(...args) ?? fallback) : fallback; }
     catch (_) { return fallback; }
   };
+  function sanitizeDataChannelWatchdog(value) {
+    const fields = ['phase', 'timedOut', 'elapsedMs', 'remainingMs', 'extensions', 'pcState', 'iceState',
+      'signalingState', 'sctpState', 'inputState', 'moveState', 'socketConnected', 'localDescriptionSet', 'remoteDescriptionSet'];
+    const values = {};
+    for (const key of fields) { try { values[key] = value?.[key]; } catch (_) { values[key] = null; } }
+    const get = key => values[key];
+    const enumeration = (key, values) => values.includes(get(key)) ? get(key) : null;
+    const duration = (key, max) => typeof get(key) === 'number' && Number.isFinite(get(key))
+      && get(key) >= 0 && get(key) <= max ? get(key) : null;
+    const boolean = key => typeof get(key) === 'boolean' ? get(key) : null;
+    return { phase: enumeration('phase', ['negotiation', 'channel-open', 'inactive']) || 'inactive',
+      timedOut: get('timedOut') === true, elapsedMs: duration('elapsedMs', 3600000), remainingMs: duration('remainingMs', 30000),
+      extensions: Number.isInteger(get('extensions')) && get('extensions') >= 0 && get('extensions') <= 2 ? get('extensions') : 0,
+      pcState: enumeration('pcState', ['new', 'connecting', 'connected', 'disconnected', 'failed', 'closed']),
+      iceState: enumeration('iceState', ['new', 'checking', 'connected', 'completed', 'failed', 'disconnected', 'closed']),
+      signalingState: enumeration('signalingState', ['stable', 'have-local-offer', 'have-remote-offer', 'have-local-pranswer', 'have-remote-pranswer', 'closed']),
+      sctpState: enumeration('sctpState', ['connecting', 'connected', 'closed']),
+      inputState: enumeration('inputState', ['connecting', 'open', 'closing', 'closed']),
+      moveState: enumeration('moveState', ['connecting', 'open', 'closing', 'closed']),
+      socketConnected: boolean('socketConnected'), localDescriptionSet: boolean('localDescriptionSet'), remoteDescriptionSet: boolean('remoteDescriptionSet') };
+  }
   function boundRuntimeDiagnostic(payload) {
     const result = clone(payload);
     result.truncation = { dropped: Number.isSafeInteger(result.truncation?.dropped) ? result.truncation.dropped : 0 };
@@ -37,7 +58,9 @@
     }
     for (const key of ['network', 'terminal', 'traceSummary', 'inputState', 'inputTrace', 'startup', 'resources', 'adaptiveMedia', 'recommendation']) {
       if (bytes(result) <= MAX_REPORT_BYTES) break;
-      result[key] = key === 'resources' ? null : {}; result.truncation.dropped++;
+      result[key] = key === 'resources' ? null : (key === 'startup'
+        ? { dataChannelWatchdog: sanitizeDataChannelWatchdog(result.startup?.dataChannelWatchdog) } : {});
+      result.truncation.dropped++;
     }
     // A malformed producer must not turn a bounded report into an unbounded write.
     if (bytes(result) > MAX_REPORT_BYTES) {
@@ -73,7 +96,7 @@
       inputTrace: { schemaVersion: 3, traceNowMs: safeNumber(trace.traceNowMs),
         counters: Object.fromEntries(Object.entries(trace.counters || {}).filter(([key, value]) => /^[a-zA-Z]{1,40}$/.test(key) && Number.isSafeInteger(value) && value >= 0)),
         events: (trace.events || []).slice(-256).map(event => ({ at: safeNumber(event.at), inputIdHash: digest(event.inputIdHash) })) },
-      startup: {}, resources: null, truncation: clone(payload.truncation || { dropped: 0 }),
+      startup: { dataChannelWatchdog: sanitizeDataChannelWatchdog(payload.startup?.dataChannelWatchdog) }, resources: null, truncation: clone(payload.truncation || { dropped: 0 }),
       scopeEnded: { events: (payload.scopeEnded?.events || []).map(event => ({ eventIdHash: digest(event.eventIdHash), endedAtMs: event.endedAtMs, snapshot: latency(event.snapshot) })),
         dropped: payload.scopeEnded?.dropped || 0 },
     };
@@ -110,12 +133,13 @@
       const scope = read(getScope, null);
       const latency = read(getLatency, null, { nowMs: monotonicMs, scope });
       const input = read(getInput, {});
+      const startup = read(getStartup, {});
       return boundRuntimeDiagnostic({ schemaVersion: 3, diagnosticId: randomHash(), reason,
         captured: { wallTime: read(wallNow, null), monotonicMs, bootIdHash },
         build: read(getBuild, { id: null, builtAt: null }),
         latencyStatus: latency ? 'available' : 'collector-unavailable', latency,
         inputState: input.inputState || {}, inputTrace: input.inputTrace || {},
-        startup: read(getStartup, {}), resources: read(getResources, null),
+        startup: { ...startup, dataChannelWatchdog: sanitizeDataChannelWatchdog(startup?.dataChannelWatchdog) }, resources: read(getResources, null),
         scopeEnded: { events: clone(events), dropped },
       });
     };
@@ -138,7 +162,7 @@
     };
     return build;
   }
-  const api = { createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
+  const api = { sanitizeDataChannelWatchdog, createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
   Object.assign(global, api);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this));
