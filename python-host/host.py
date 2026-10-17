@@ -852,6 +852,52 @@ class TunnelRelayStreamer:
                 and scope == self.relay_scope
                 and (self._authority_is_current is None or self._authority_is_current()))
 
+    def _capture_transport_token(self):
+        """Freeze producer identity and the exact transport accounting owner."""
+        try:
+            scope = self.relay_scope
+            sio = self.sio
+            eio = sio.eio
+            return (asyncio.current_task(), self.production_generation,
+                    dict(scope) if scope is not None else None,
+                    sio, eio, eio.queue, eio.write_loop_task)
+        except Exception:
+            return None
+
+    def _transport_token_is_current(self, token):
+        try:
+            task, generation, scope, sio, eio, queue, writer = token
+            return bool(
+                self.enabled and not self.suspended and self.viewer_id
+                and self.task is task and asyncio.current_task() is task
+                and self._production_is_current(generation, scope)
+                and self.sio is sio and sio.eio is eio
+                and eio.queue is queue and eio.write_loop_task is writer
+                and sio.connected and eio.state == 'connected'
+                and writer is not None and not writer.done()
+                and callable(queue.join)
+            )
+        except Exception:
+            return False
+
+    async def _wait_for_transport_admission(self, token):
+        # qsize misses packets already held by the writer. Only join includes
+        # those unfinished packets; its timeout never grants admission.
+        if not self._transport_token_is_current(token):
+            await asyncio.sleep(0.25)
+            return False
+        try:
+            await asyncio.wait_for(token[5].join(), timeout=0.25)
+        except asyncio.TimeoutError:
+            return False
+        except Exception:
+            await asyncio.sleep(0.25)
+            return False
+        if not self._transport_token_is_current(token):
+            await asyncio.sleep(0.25)
+            return False
+        return True
+
     def _record_ack_feedback(self, latency_ms):
         try:
             latency_ms = float(latency_ms)
@@ -1032,13 +1078,21 @@ class TunnelRelayStreamer:
                 await asyncio.sleep(max(0.05, frame_interval))
                 continue
             self.expire_inflight(time.monotonic() * 1000.0)
-            await self.emit_feedback_if_due(time.monotonic() * 1000.0)
-            if not self.enabled or self.suspended:
-                continue
-            if self._authority_is_current is not None and not self._authority_is_current():
+            try:
+                authority_current = self._authority_is_current is None or self._authority_is_current()
+            except Exception:
+                authority_current = False
+            if not authority_current:
                 self.inflight_frames.clear()
                 self.ack_event.set()
                 await asyncio.sleep(max(0.05, frame_interval))
+                continue
+            token = self._capture_transport_token()
+            if not await self._wait_for_transport_admission(token):
+                continue
+            await self.emit_feedback_if_due(time.monotonic() * 1000.0)
+            if not self._transport_token_is_current(token):
+                await asyncio.sleep(0.25)
                 continue
             if self.should_wait_before_capture():
                 try:
@@ -1055,20 +1109,20 @@ class TunnelRelayStreamer:
                     )
                     self.note_ack_timeout("pre-capture-backpressure")
                     self.expire_inflight(time.monotonic() * 1000.0)
-                    await self.emit_feedback_if_due(time.monotonic() * 1000.0)
                     continue
 
             started = time.monotonic()
-            production_generation = self.production_generation
-            relay_scope = self.relay_scope
+            production_generation, relay_scope = token[1:3]
             try:
-                if not self._production_is_current(production_generation, relay_scope):
+                if not self._transport_token_is_current(token):
+                    await asyncio.sleep(0.25)
                     continue
                 frame = await self._jpeg_worker.submit_latest({
                     'generation': production_generation, 'relayScope': relay_scope, 'width': self.width,
                     'height': self.height, 'quality': self.jpeg_quality,
                 })
-                if frame is None or not self._production_is_current(production_generation, relay_scope):
+                if frame is None or not self._transport_token_is_current(token):
+                    await asyncio.sleep(0.25)
                     continue
                 jpeg_bytes = frame['data']
                 encode_ms = frame['encodeMs']
@@ -1084,11 +1138,12 @@ class TunnelRelayStreamer:
                     "width": frame['width'],
                     "height": frame['height'],
                 }
-                if not self._production_is_current(production_generation, relay_scope):
+                if not self._transport_token_is_current(token):
                     self.inflight_frames.pop(frame_id, None)
+                    await asyncio.sleep(0.25)
                     continue
                 try:
-                    await self.sio.emit("relay-frame", {
+                    await token[3].emit("relay-frame", {
                         **({"relayFrameSchemaVersion": 1, "relayScope": relay_scope} if relay_scope else {}),
                         "viewerId": self.viewer_id,
                         "frameId": frame_id,

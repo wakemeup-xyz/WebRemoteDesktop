@@ -9,6 +9,9 @@ from host import TunnelRelayStreamer, select_capture_monitor
 class FakeSio:
     def __init__(self):
         self.emits = []
+        self.connected = True
+        self.eio = SimpleNamespace(state='connected', queue=asyncio.Queue(),
+                                   write_loop_task=SimpleNamespace(done=lambda: False))
 
     async def emit(self, event, data):
         self.emits.append((event, data))
@@ -322,6 +325,8 @@ async def test_actual_run_retires_no_ack_window_and_keeps_one_worker(monkeypatch
         clock[0] += seconds
         if clock[0] >= duration_seconds: relay.enabled = False
     async def timeout(waiter, timeout):
+        if waiter.cr_code.co_qualname == 'Queue.join':
+            return await waiter  # Empty synthetic transport; only ACK waits expire.
         waiter.close()
         clock[0] += timeout
         if clock[0] >= duration_seconds: relay.enabled = False
