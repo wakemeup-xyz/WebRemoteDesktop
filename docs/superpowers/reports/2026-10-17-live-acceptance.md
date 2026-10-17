@@ -1,12 +1,15 @@
 # 2026-10-17 公网运行验收
 
-> **14:04 部署更新：** 冻结候选5912f43已同步；Host-only重载12.438s，新PID87412（14:02:13），Signal64505和tunnel/watcher身份保持。JPEG gate d5ecb23与worker阶段00d1a81已加载；原前端a6e8b15122bde656不变。health/status已恢复、Host在线、Viewer0，源码/资源/HEAD/index/未触及文件检查通过。新的guarded JPEG短测正在进行，尚无结果；此前FAIL与原生可见效果NOT RUN全部保留。共享负载虽回落，不能据此宣布稳定性问题解决。
+> **14:13 状态更新：仍未完成稳定性验收。** 新 Host 的 JPEG 暂停/恢复及恢复后60秒短测 PASS（111.236s/97样本），但随后 TURN 计划300s的测试在31.003s结束，出现13.849s画面间隔并重建PC。首个异常是画面停滞，Socket.IO当时仍在线；Host同窗当前loop lag12.771s。18条失败观察不是18次独立故障。现时health正常、Host在线、Viewer0；历史失败全部保留。详见[JPEG短测](2026-10-17-jpeg-gate-short-performance-review.md)、[TURN失败复查](2026-10-17-jpeg-gate-turn-failure-review.md)。旧浏览器清理API超时，当前未发现同期残留进程，但缺少历史PID证据，退出状态仍unknown。
+
+
+> **14:04 历史部署记录：** 冻结候选5912f43已同步；Host-only重载12.438s，新PID87412（14:02:13），Signal64505和tunnel/watcher身份保持。JPEG gate d5ecb23与worker阶段00d1a81已加载；原前端a6e8b15122bde656不变。health/status已恢复、Host在线、Viewer0，源码/资源/HEAD/index/未触及文件检查通过。当时guarded JPEG短测已开始、尚无结果；此前FAIL与原生可见效果NOT RUN全部保留。共享负载虽回落，不能据此宣布稳定性问题解决。
 
 
 > **13:45 历史补充：仍未完成可用性验收。** 原普通Viewer已在13:32心跳超时离线；Host13:33:51断开后13:33:56自行恢复。同机出现load约642、持续大量换页、Host/Node约40–41秒调度延迟。新build的guarded短JPEG尝试在登录阶段FAIL，0媒体采样；独立登录分段探针确认认证请求超时且按钮恢复可重试，没有Start/proof/Viewer。此前“等待普通Viewer退出”为13:12历史状态，当前主要障碍是严重共享资源压力和未完成的JPEG稳定性修复。详见[登录与资源补充](2026-10-17-login-stage-resource-followup.md)。worker阶段观测00d1a81已离线/独立审查通过但未加载，传输gate d5ecb23已通过116项定向测试和独立审查但未加载；不得把它们写成已解决线上停顿。
 
 
-当前部署：`5912f43`，Host `d5ecb23` / PID87412、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。当前普通Viewer自动重连，自动验收等待其退出；不得把它当新build proof会话已通过。
+当前部署：`5912f43`，Host `d5ecb23` / PID87412、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。13:12后的普通Viewer曾自动重连；该连接13:32后已退出，后续新build proof会话结果见文末。
 
 最后已完成的媒体短测仍是上一build：Host时钟修复后的TURN300s PASS，随后JPEG69.744991s在恢复后发生5200.4ms加载停顿而FAIL。此前93.094s信令超时和约1922.5s长测5149.8ms间隔均保留。连续三小时、普通用户重连及真实原生输入/可见效果均未完成。
 
@@ -174,3 +177,11 @@ Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项�
 源码/资产哈希、schema2 manifest、保留构建、Host在线验证通过。当前普通Viewer加载的网页build未取证，不能因服务端已构建a6e8b15122bde656就认定旧页面已更新。13:19左右独立未登录页面观察正式入口200、builda6e8b15122bde656、登录表单存在、无Viewer socket，DCL9565.1ms；同源health/status200且Host在线/Viewer1。browser.close在5秒预算内未完成，manager.stop API完成，OS退出未知；不把清理限制抹掉。
 
 后续自动化继续严格fresh-zero-Viewer一次性准入，普通Viewer退出前仅进行只读诊断。真实输入到可见效果仍NOT RUN；当前在线不等于长时间连续性通过。
+
+## 14:04 后新 Host 的 JPEG/TURN 验收
+
+JPEG `/tmp/wrd-public-jpeg-gate-jpeg-20261017a` PASS111.235860s、97采样，真实Start/暂停/恢复/60秒followup全部10项断言通过，恢复6.006322s，browser.close API成功。恢复后61条有效帧年龄快照p95=1772.4ms、最大2884.7ms；60条ACK RTT末值快照p95=1885.2ms。它们不是独立逐帧总体分布，也不是输入可见耗时。Host15条worker快照的处理末值最大109.127ms，loop当前采样最大37.424ms；采样间活动仍未知。详见[JPEG短测指标](2026-10-17-jpeg-gate-short-performance-review.md)。
+
+随后TURN `/tmp/wrd-public-jpeg-gate-turn-20261017a` 计划300秒，31.003861秒后INCOMPLETE；29采样、0missing/late、18累计失败观测、1次identity-change observation，最大无新画面13849.43ms，结束reason=session-changed-or-disconnected。初步socket生命周期仍connected且firstDisconnectEvent=null，必须继续区分PC更新与socket断开，不能凭通用reason宣称网络断线。cleanup browser.close timeout、manager.stop ok，OS退出证据未采集。执行进程已exit1，不自动重签proof续测。
+
+14:13后清理复查：当前未发现14:07启动的相关浏览器/driver存活进程或临时profile；历史采集器未记录PID与创建时间，故不能补证确切退出时刻。详见[归属复查](2026-10-17-turn-browser-ownership-review.md)。不按进程名称清理用户应用；下次诊断须在启动时记录归属并单独核验退出。
