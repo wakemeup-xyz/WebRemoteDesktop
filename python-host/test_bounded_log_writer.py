@@ -411,3 +411,65 @@ def test_format_exception_has_no_raw_fallback_and_does_not_poison_admitted_prefi
     assert handler.snapshot()["accepted"] == 1
     assert sink.lines == ["good\n"]
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("prefix_count", [2, 3])
+def test_coalesced_pending_flushes_publish_each_completed_prefix_before_next_write(prefix_count):
+    """Later requests registered before write #1 returns cannot skip A or B."""
+    entered = [threading.Event() for _ in range(prefix_count)]
+    release = [threading.Event() for _ in range(prefix_count)]
+    finished = [threading.Event() for _ in range(prefix_count)]
+    outcomes = [None] * prefix_count
+    written = []
+    flushed = []
+    callers = []
+
+    class Sink:
+        def write(self, text):
+            index = int(text)
+            entered[index].set()
+            assert release[index].wait(5)
+            written.append(index)
+        def flush(self):
+            flushed.append(tuple(written))
+        def close(self):
+            pass
+
+    handler = BoundedLogHandler(Sink)
+    def request_flush(index):
+        outcomes[index] = handler.flush(2)
+        finished[index].set()
+
+    try:
+        for index in range(prefix_count):
+            handler.handle(record(str(index)))
+            if index == 0:
+                assert entered[0].wait(1)
+            caller = threading.Thread(target=request_flush, args=(index,))
+            callers.append(caller)
+            caller.start()
+            with handler._condition:
+                assert handler._condition.wait_for(lambda: handler._requested == index + 1, 1)
+        # Every caller has registered its own admitted prefix while the writer
+        # is still blocked on entry #1. No sink flush has started yet.
+        assert not written and not flushed
+        for index in range(prefix_count - 1):
+            release[index].set()
+            assert entered[index + 1].wait(1)
+            assert finished[index].wait(0.5), "older flush skipped behind a later blocked write"
+            assert outcomes[index] is True
+            assert tuple(range(index + 1)) in flushed
+            assert not finished[index + 1].is_set()
+        release[-1].set()
+        assert finished[-1].wait(1)
+        assert outcomes == [True] * prefix_count
+    finally:
+        for gate in release:
+            gate.set()
+        for caller in callers:
+            caller.join(3)
+            assert not caller.is_alive()
+        handler.shutdown(1)
+        handler._writer.join(1)
+        handler.close()
+        assert not handler._writer.is_alive()

@@ -195,11 +195,13 @@ class BoundedLogHandler(logging.Handler):
                         self._aborting = True
                     if self._aborting:
                         break
-                    # Freeze one prefix while later requests coalesce in one
-                    # scalar. Later producers cannot keep moving this goalpost.
-                    if flush_target is None and self._requested > self._flushed:
-                        flush_target = self._requested
-                    if flush_target is not None and self._completed >= flush_target:
+                    # The latest request only signals outstanding work. Publish
+                    # each available completed prefix before another dequeue,
+                    # so coalescing cannot skip earlier or intermediate callers.
+                    # completed=0/flushed=-1 also services an empty-prefix flush.
+                    if (self._requested > self._flushed
+                            and self._completed > self._flushed):
+                        flush_target = self._completed
                         action = "flush"
                     elif not self._queue.empty():
                         ticket, text = self._queue.get_nowait()
