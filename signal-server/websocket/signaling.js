@@ -208,7 +208,7 @@ function setupSignaling(io, options = {}) {
     const meta = {};
     for (const key of [
       'reason', 'leaseEpoch', 'attempt', 'graceMs', 'connectionAttemptSequence',
-      'rebound', 'schemaVersion', 'state', 'reasons', 'generation',
+      'rebound', 'schemaVersion', 'state', 'reasons', 'generation', 'status',
     ]) {
       if (Object.prototype.hasOwnProperty.call(fields, key)) meta[key] = fields[key];
     }
@@ -327,6 +327,8 @@ function setupSignaling(io, options = {}) {
         broadcastControlState('reset-blocked');
       },
     });
+    // Historical event name: this records entry into the fail-closed reset
+    // barrier (including normal release), not proof of failure or timeout.
     emitControlEvent('control_transition_failed_closed', {
       leaseEpoch,
       reason,
@@ -1245,16 +1247,34 @@ function setupSignaling(io, options = {}) {
     socket.on('control-transition-ack', (data = {}) => {
       if (role !== 'host' || connections.host !== socket) return;
       const status = data.status === 'applied' ? 'applied' : 'rejected';
-      const result = withLeaseExpiry(() => (status === 'applied'
-        ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
-        : desktopLease.failTransition({
-          leaseEpoch: data.leaseEpoch,
-          reason: data.reason || 'transition-failed',
-        })));
+      let completedResetEpoch = null;
+      const result = withLeaseExpiry(() => {
+        // Expiry may replace a candidate with a reset-only barrier. Inspect the
+        // actual pending transition after expiry, immediately before the ACK.
+        const pending = desktopLease.snapshot();
+        const effect = status === 'applied'
+          ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
+          : desktopLease.failTransition({
+            leaseEpoch: data.leaseEpoch,
+            reason: data.reason || 'transition-failed',
+          });
+        if (status === 'applied' && isResetOnlyPending(pending)
+          && pending.leaseEpoch === data.leaseEpoch && effect.state === 'FREE') {
+          completedResetEpoch = pending.leaseEpoch;
+        }
+        return effect;
+      });
       if (status === 'applied' && result.state === 'FREE') {
         cancelResetRetry();
       } else if (status === 'applied' && result.lease) {
         cancelResetRetry();
+      }
+      if (completedResetEpoch !== null) {
+        emitControlEvent('control_reset_completed', {
+          leaseEpoch: completedResetEpoch,
+          status: 'applied',
+          state: 'FREE',
+        });
       }
       if (result.lease) {
         if (legacyControllerViewerId) clearLegacyRelayCompanion(legacyControllerViewerId, { stop: true });
@@ -1299,8 +1319,12 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (data?.schemaVersion === 2
-        && (socket.inputProtocolVersion !== 2 || !hostSupportsV2Input())) {
+        && (socket.inputProtocolVersion !== 2 || (connections.host && !hostSupportsV2Input()))) {
         socket.emit('input-protocol-error', { reason: v2ProtocolError(socket) });
+        return;
+      }
+      if (data?.schemaVersion === 2 && !connections.host) {
+        console.warn(`[OFFER] No host connected, dropping offer from ${socket.id} epoch=${data.epoch}`);
         return;
       }
       if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
@@ -1373,9 +1397,13 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (data?.schemaVersion === 2
-        && (socket.inputProtocolVersion !== 2 || !hostSupportsV2Input())) {
+        && (socket.inputProtocolVersion !== 2 || (connections.host && !hostSupportsV2Input()))) {
         socket.emit('input-protocol-error', { reason: v2ProtocolError(socket) });
         emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'protocol-too-old' });
+        return;
+      }
+      if (data?.schemaVersion === 2 && !connections.host) {
+        emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'host-unavailable' });
         return;
       }
       if (data?.schemaVersion !== 2) {

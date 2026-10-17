@@ -41,6 +41,239 @@ function v2Key(overrides = {}) {
 
 const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('./signaling-test-fixture');
 
+// Offline-only fixture: no service, real Socket.IO connection, or native Host.
+function makeControlOutcomeFixture() {
+  resetConnections();
+  const io = makeIo();
+  const events = [];
+  const storedEvents = [];
+  const persisted = [];
+  const timers = new Map();
+  let timerId = 0;
+  let leaseId = 0;
+  let now = 0;
+  const structured = createStructuredLogger({ write: line => persisted.push(JSON.parse(line)) });
+  setupSignaling(io, {
+    now: () => now,
+    makeLeaseId: () => `lease-OUTCOME_CANARY-${++leaseId}`,
+    logger: { log() {}, warn() {}, info() {}, error() {} },
+    structuredLogger: { info(event) { events.push(event); structured.info(event); } },
+    recentEventStore: { append(event) { storedEvents.push(event); } },
+    scheduler: {
+      setInterval: () => ({ unref() {} }),
+      setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, due: now + ms }); return id; },
+      clearTimeout(id) { timers.delete(id); },
+    },
+  });
+  const connect = (id, role, version = 2) => {
+    const socket = new FakeSocket(id, role);
+    socket.handshake.auth.inputProtocolVersion = version;
+    io.connect(socket);
+    return socket;
+  };
+  const grant = (host, viewer) => {
+    viewer.trigger('control-acquire', { requestId: 'outcome-grant' });
+    const transition = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+    host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+    const { leaseId, leaseEpoch } = viewer.sent.filter(row => row.event === 'control-grant').at(-1).data;
+    return { leaseId, leaseEpoch };
+  };
+  const advance = ms => {
+    const target = now + ms;
+    while (timers.size) {
+      const due = Math.min(...[...timers.values()].map(timer => timer.due));
+      if (due > target) break;
+      now = due;
+      for (const [id, timer] of [...timers]) {
+        if (timer.due <= now && timers.delete(id)) timer.fn();
+      }
+    }
+    now = target;
+  };
+  return { io, events, storedEvents, persisted, timers, connect, grant, advance };
+}
+
+function v2Offer(lease = {}) {
+  return { schemaVersion: 2, offer: { type: 'offer', sdp: 'SDP_OUTCOME_CANARY' },
+    epoch: 1, connectionAttemptId: 'outcome-attempt', connectionAttemptSequence: 1, ...lease };
+}
+
+for (const viewerVersion of [1, 2]) {
+  for (const hostVersion of [null, 1, 2]) {
+    test(`v2 offline protocol matrix: viewer ${viewerVersion}, Host ${hostVersion ?? 'absent'}`, () => {
+      const h = makeControlOutcomeFixture();
+      const host = hostVersion === null ? null : h.connect('outcome-host', 'host', hostVersion);
+      const viewer = h.connect('outcome-viewer', 'viewer', viewerVersion);
+      const compatible = viewerVersion === 2 && hostVersion === 2;
+      const lease = compatible ? h.grant(host, viewer) : {};
+      const beforeViewer = viewer.sent.length;
+      const beforeHost = host?.sent.length ?? 0;
+      viewer.trigger('input', v2Key(lease));
+      viewer.trigger('offer', v2Offer(lease));
+      const replies = viewer.sent.slice(beforeViewer);
+      const errors = replies.filter(row => row.event === 'input-protocol-error');
+      const expectedError = viewerVersion !== 2 ? 'viewer-protocol-too-old'
+        : hostVersion === 1 ? 'host-protocol-too-old' : null;
+      assert.deepEqual(errors.map(row => row.data.reason), expectedError ? [expectedError, expectedError] : []);
+      assert.equal(replies.some(row => row.event === 'input-ack'), false);
+      const forwarded = (host?.sent.slice(beforeHost) ?? []).filter(row => ['input', 'offer'].includes(row.event));
+      assert.deepEqual(forwarded.map(row => row.event), compatible ? ['input', 'offer'] : []);
+      const inputEvent = h.events.filter(row => row.domain === 'input').at(-1);
+      assert.equal(inputEvent.meta.status, compatible ? 'accepted' : 'rejected');
+      if (viewerVersion === 2 && hostVersion === null) assert.equal(inputEvent.meta.reason, 'host-unavailable');
+      if (expectedError) assert.equal(inputEvent.meta.reason, 'protocol-too-old');
+    });
+  }
+}
+
+test('v2 offline rejection preserves role and inactive Viewer guards', () => {
+  const h = makeControlOutcomeFixture();
+  const relay = h.connect('outcome-relay', 'relay-viewer');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  viewer.disconnect();
+  for (const [socket, reason] of [[relay, 'role-rejected'], [viewer, 'inactive-viewer']]) {
+    const before = socket.sent.length;
+    socket.trigger('input', v2Key());
+    socket.trigger('offer', v2Offer());
+    assert.equal(socket.sent.slice(before).some(row => ['input-protocol-error', 'input-ack'].includes(row.event)), false);
+    assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, reason);
+  }
+});
+
+test('v2 present Host preserves malformed input and lease authorization rejection', () => {
+  const h = makeControlOutcomeFixture();
+  const host = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  const before = host.sent.length;
+  viewer.trigger('input', v2Key({ payload: { text: 'INPUT_OUTCOME_CANARY' } }));
+  const malformed = h.events.filter(row => row.domain === 'input').at(-1);
+  assert.equal(malformed.meta.status, 'rejected');
+  assert.equal(malformed.meta.reason, 'UNKNOWN_FIELD');
+  viewer.trigger('input', v2Key());
+  viewer.trigger('offer', v2Offer());
+  assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, 'unauthorized');
+  assert.equal(host.sent.slice(before).some(row => ['input', 'offer'].includes(row.event)), false);
+  assert.equal(viewer.sent.some(row => ['input-protocol-error', 'input-ack'].includes(row.event)), false);
+});
+
+test('reset completion records only exact applied reset once with persisted safe metadata', () => {
+  const h = makeControlOutcomeFixture();
+  const host = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  const lease = h.grant(host, viewer);
+  const completions = rows => rows.filter(row => row.event === 'control_reset_completed');
+  assert.equal(completions(h.events).length, 0, 'grant ACK is not reset completion');
+  viewer.trigger('control-release', { reason: 'released' });
+  const reset = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  assert.equal(reset.viewerId, undefined);
+  assert.equal(reset.leaseId, undefined);
+  assert.equal(h.events.some(row => row.event === 'control_transition_failed_closed'), true);
+  host.trigger('control-transition-ack', { leaseEpoch: lease.leaseEpoch, status: 'applied' });
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'rejected',
+    reason: 'reset-failed' });
+  assert.equal(completions(h.events).length, 0);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'REVOKING');
+  h.advance(1000);
+  assert.equal(host.sent.filter(row => row.event === 'control-transition').at(-1).data.leaseEpoch, reset.leaseEpoch);
+  const ack = { leaseEpoch: reset.leaseEpoch, status: 'applied', reason: 'ACK_OUTCOME_CANARY',
+    leaseId: lease.leaseId, payload: { text: 'INPUT_OUTCOME_CANARY' } };
+  host.trigger('control-transition-ack', ack);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'FREE');
+  assert.equal(h.timers.size, 0);
+  for (const rows of [h.events, h.storedEvents, h.persisted]) {
+    assert.equal(completions(rows).length, 1);
+    assert.deepEqual(completions(rows)[0].meta, { leaseEpoch: reset.leaseEpoch, status: 'applied', state: 'FREE' });
+  }
+  host.trigger('control-transition-ack', ack);
+  host.trigger('control-transition-ack', { leaseEpoch: lease.leaseEpoch, status: 'applied' });
+  h.advance(60_000);
+  assert.equal(completions(h.events).length, 1);
+  assert.equal(completions(h.storedEvents).length, 1);
+  assert.equal(completions(h.persisted).length, 1);
+  const persisted = JSON.stringify(h.persisted);
+  for (const canary of [lease.leaseId, 'ACK_OUTCOME_CANARY', 'INPUT_OUTCOME_CANARY']) {
+    assert.equal(persisted.includes(canary), false);
+  }
+});
+
+test('reset completion rejects old Host socket even when replacement has the same ID', () => {
+  const h = makeControlOutcomeFixture();
+  const oldHost = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  h.grant(oldHost, viewer);
+  const host = h.connect(oldHost.id, 'host');
+  viewer.trigger('control-release', {});
+  const reset = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  oldHost.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(h.events.some(row => row.event === 'control_reset_completed'), false);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'REVOKING');
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(h.events.filter(row => row.event === 'control_reset_completed').length, 1);
+});
+
+test('reset completion observes expiry before deciding whether an ACK settles the current barrier', () => {
+  const h = makeControlOutcomeFixture();
+  const host = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  viewer.trigger('control-acquire', { requestId: 'expiring-candidate' });
+  const candidate = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  h.advance(3000);
+  host.trigger('control-transition-ack', { leaseEpoch: candidate.leaseEpoch, status: 'applied' });
+  const reset = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  assert.ok(reset.leaseEpoch > candidate.leaseEpoch);
+  assert.equal(reset.viewerId, undefined);
+  assert.equal(viewer.sent.some(row => row.event === 'control-grant'), false);
+  assert.equal(h.events.some(row => row.event === 'control_reset_completed'), false);
+  // A reset-only deadline may enter fail-closed on the same epoch before its
+  // applied ACK settles FREE; both events describe their actual ordering.
+  h.advance(3000);
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'FREE');
+  const control = h.events.filter(row => row.domain === 'control');
+  assert.equal(control.filter(row => row.event === 'control_reset_completed').length, 1);
+  assert.equal(control.at(-2).event, 'control_transition_failed_closed');
+  assert.equal(control.at(-1).event, 'control_reset_completed');
+  assert.equal(h.timers.size, 0);
+});
+
+test('offline reset lifecycle requires fresh grant and never replays dropped input or offer', () => {
+  const h = makeControlOutcomeFixture();
+  const oldHost = h.connect('outcome-host-a', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  const oldLease = h.grant(oldHost, viewer);
+  const resetInput = lease => v2Key({ ...lease, action: 'reset', inputIds: ['INPUT_ID_OUTCOME_CANARY'],
+    payload: { reason: 'manual' } });
+  oldHost.disconnect();
+  assert.equal(connections.host, null);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'FREE');
+  const offlineViewer = viewer.sent.length;
+  const offlineHost = oldHost.sent.length;
+  viewer.trigger('input', resetInput(oldLease));
+  viewer.trigger('offer', v2Offer(oldLease));
+  assert.equal(viewer.sent.slice(offlineViewer).some(row => ['input-ack', 'input-protocol-error'].includes(row.event)), false);
+  assert.equal(oldHost.sent.slice(offlineHost).some(row => ['input', 'offer'].includes(row.event)), false);
+  assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, 'host-unavailable');
+  const host = h.connect('outcome-host-b', 'host');
+  assert.equal(host.sent.some(row => ['input', 'offer'].includes(row.event)), false);
+  const fresh = h.grant(host, viewer);
+  assert.notEqual(fresh.leaseId, oldLease.leaseId);
+  assert.ok(fresh.leaseEpoch > oldLease.leaseEpoch);
+  assert.equal(host.sent.some(row => ['input', 'offer'].includes(row.event)), false);
+  const grants = viewer.sent.filter(row => row.event === 'control-grant').length;
+  oldHost.trigger('control-transition-ack', { leaseEpoch: fresh.leaseEpoch, status: 'applied' });
+  assert.equal(viewer.sent.filter(row => row.event === 'control-grant').length, grants);
+  assert.equal(h.events.some(row => row.event === 'control_reset_completed'), false);
+  viewer.trigger('input', resetInput(oldLease));
+  assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, 'unauthorized');
+  assert.equal(host.sent.some(row => ['input', 'offer'].includes(row.event)), false);
+  viewer.trigger('input', resetInput(fresh));
+  assert.equal(host.sent.filter(row => row.event === 'input').length, 1);
+  assert.equal(host.sent.filter(row => row.event === 'input')[0].data.leaseId, fresh.leaseId);
+  assert.equal(host.sent.some(row => row.event === 'offer'), false);
+  assert.equal(JSON.stringify(h.persisted).includes('INPUT_ID_OUTCOME_CANARY'), false);
+  assert.equal(JSON.stringify(h.persisted).includes('SDP_OUTCOME_CANARY'), false);
+});
+
 test('proof admissions expire, enforce capacity, and cannot be replayed', () => {
   let now = 1000;
   const context = createRuntimeContext({
