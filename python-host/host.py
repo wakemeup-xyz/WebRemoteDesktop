@@ -74,7 +74,7 @@ from runtime_observability import (
 )
 
 if __name__ == "__main__":
-    configure_host_logging()
+    host_log_handler = configure_host_logging()
 else:
     logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -5666,11 +5666,15 @@ class WebRemoteHost:
 
 
 if __name__ == "__main__":
-    host = WebRemoteHost()
     try:
-        if os.environ.get("WRD_DISABLE_VT_WARMUP") != "1":
-            warmup_videotoolbox()
-        asyncio.run(host.run())
-    except Exception as e:
-        logger.error(f"Fatal: {e}", exc_info=True)
-        sys.exit(1)
+        host = WebRemoteHost()
+        try:
+            if os.environ.get("WRD_DISABLE_VT_WARMUP") != "1":
+                warmup_videotoolbox()
+            asyncio.run(host.run())
+        except Exception as e:
+            logger.error(f"Fatal: {e}", exc_info=True)
+            sys.exit(1)
+    finally:
+        # Run after async lifecycle and fatal messages; no executor join.
+        host_log_handler.shutdown()
