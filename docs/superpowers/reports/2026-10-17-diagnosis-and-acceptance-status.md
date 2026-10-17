@@ -8,7 +8,7 @@
 
 诊断“发送即成功”误报、入口留存盲区与抓屏在途盲区已修复并review，22:06加载。实际保存回执和新JSONL通过；新公网短测maxgap8.666s，日志明确记录抓屏在途等待。启动DC看门狗曾在Host answer前过早触发重连，阶段修复22:58加载；23:00正式300秒窗口通过、maxgap916.7ms，但启动有一次原因unknown的信令错误后恢复。后续实际Socket.IO超时回退修复23:58加载，00:01的新复测仍失败，maxgap11.766s，并出现Host心跳超时。上述短测通过不能覆盖后续失败。
 
-00:01失败样本全部inputAllowed=false，初始租约已到达，但旧工具未保存门禁因素，且清理会覆盖startupSummary。现先修复证据工具，保留独立启动/失败快照、固定门禁因素和正向首帧超时事实；产品8s超时策略尚未变更。独立review发现的整份快照owner混合问题正在修复，未同步或运行未批准工具。见[设计](../specs/2026-10-18-passive-gate-evidence-design.md)、[计划](../plans/2026-10-18-passive-gate-evidence-plan.md)、[review与并行审计](2026-10-18-passive-gate-evidence-review.md)。
+00:01失败样本全部inputAllowed=false，初始租约已到达，但旧工具未保存门禁因素，且清理会覆盖startupSummary。证据工具现已修复，保留独立启动/失败快照、固定门禁因素和正向首帧超时事实；产品8s超时策略尚未变更。独立review发现的整份快照owner混合问题已修复并通过定向复审；最终集成review无Critical/Important，工具同步与新复测尚未执行。见[设计](../specs/2026-10-18-passive-gate-evidence-design.md)、[计划](../plans/2026-10-18-passive-gate-evidence-plan.md)、[review与并行审计](2026-10-18-passive-gate-evidence-review.md)。
 
 ## 当前运行状态（10月18日00:44核对）
 
