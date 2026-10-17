@@ -1,9 +1,12 @@
 # 2026-10-17 公网运行验收
 
-> **13:45 最新补充：仍未完成可用性验收。** 原普通Viewer已在13:32心跳超时离线；Host13:33:51断开后13:33:56自行恢复。同机出现load约642、持续大量换页、Host/Node约40–41秒调度延迟。新build的guarded短JPEG尝试在登录阶段FAIL，0媒体采样；独立登录分段探针确认认证请求超时且按钮恢复可重试，没有Start/proof/Viewer。此前“等待普通Viewer退出”为13:12历史状态，当前主要障碍是严重共享资源压力和未完成的JPEG稳定性修复。详见[登录与资源补充](2026-10-17-login-stage-resource-followup.md)。worker阶段观测00d1a81已离线/独立审查通过但未加载，传输gate d5ecb23已通过116项定向测试和独立审查但未加载；不得把它们写成已解决线上停顿。
+> **14:04 部署更新：** 冻结候选5912f43已同步；Host-only重载12.438s，新PID87412（14:02:13），Signal64505和tunnel/watcher身份保持。JPEG gate d5ecb23与worker阶段00d1a81已加载；原前端a6e8b15122bde656不变。health/status已恢复、Host在线、Viewer0，源码/资源/HEAD/index/未触及文件检查通过。新的guarded JPEG短测正在进行，尚无结果；此前FAIL与原生可见效果NOT RUN全部保留。共享负载虽回落，不能据此宣布稳定性问题解决。
 
 
-当前部署：`d0c1223`，Host `f492357` / PID42127、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。当前普通Viewer自动重连，自动验收等待其退出；不得把它当新build proof会话已通过。
+> **13:45 历史补充：仍未完成可用性验收。** 原普通Viewer已在13:32心跳超时离线；Host13:33:51断开后13:33:56自行恢复。同机出现load约642、持续大量换页、Host/Node约40–41秒调度延迟。新build的guarded短JPEG尝试在登录阶段FAIL，0媒体采样；独立登录分段探针确认认证请求超时且按钮恢复可重试，没有Start/proof/Viewer。此前“等待普通Viewer退出”为13:12历史状态，当前主要障碍是严重共享资源压力和未完成的JPEG稳定性修复。详见[登录与资源补充](2026-10-17-login-stage-resource-followup.md)。worker阶段观测00d1a81已离线/独立审查通过但未加载，传输gate d5ecb23已通过116项定向测试和独立审查但未加载；不得把它们写成已解决线上停顿。
+
+
+当前部署：`5912f43`，Host `d5ecb23` / PID87412、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。当前普通Viewer自动重连，自动验收等待其退出；不得把它当新build proof会话已通过。
 
 最后已完成的媒体短测仍是上一build：Host时钟修复后的TURN300s PASS，随后JPEG69.744991s在恢复后发生5200.4ms加载停顿而FAIL。此前93.094s信令超时和约1922.5s长测5149.8ms间隔均保留。连续三小时、普通用户重连及真实原生输入/可见效果均未完成。
 

@@ -70,5 +70,5 @@ snapshot 根据 `_pending`、`_inflight`、`_delivery_pending` 及时间戳返�
 
 - [x] 用 Task 1 的 BASE..HEAD 生成独立 review package，fresh reviewer 给 spec/quality 两项结论；必要修复走原 implementer。
 - [ ] 与独立传输准入方案合并前审查边界，更新实施/验收文档；保留 JPEG 原 FAIL 和输入到可见效果 NOT RUN。
-- [ ] 仅在已授权本地维护下同步冻结源码，保留原 checkout HEAD/index/用户修改和 tunnel。Host 重载只用 service helper，确认健康/Host/构建身份与口令；在线 Viewer 状态决定是否允许自动 proof 验收。
+- [x] 仅在已授权本地维护下同步冻结源码，保留原 checkout HEAD/index/用户修改和 tunnel。Host 重载只用 service helper，确认健康/Host/构建身份与口令；在线 Viewer 状态决定是否允许自动 proof 验收。
 - [ ] 新实际观测与长会话分别记录，不把新字段存在当性能达标。

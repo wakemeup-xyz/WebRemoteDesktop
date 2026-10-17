@@ -87,6 +87,6 @@ return True
 ### Task 2: Root review、部署和验收
 
 - [x] 独立 task spec/quality review；与 worker stages 增量再做跨层 review，保留原全分支历史 review。
-- [ ] 冻结并仅同步允许文件，验证 primary HEAD/index/未触及文件与 tunnel身份；Host-only helper reload，验证源 hash/健康/Host在线并报告运行配置口令。
+- [x] 冻结并仅同步允许文件，验证 primary HEAD/index/未触及文件与 tunnel身份；Host-only helper reload，验证源 hash/健康/Host在线并报告运行配置口令。
 - [ ] fresh zeroViewer + server单次proof 条件下执行真实短 JPEG/TURN与暂停恢复；保留所有失败，不重新签 proof 绕过自动恢复约束。
 - [ ] 连续性与资源长测及输入可见效果分别报告；未测保持 NOT RUN，不以 gate join/ACK 代替呈现证据。
