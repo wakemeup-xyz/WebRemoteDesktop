@@ -838,3 +838,113 @@ test('stable same-value activation deduplicates keyboard DOM and still runs reco
   h.Input.updateKeyboardUI();
   assert.equal(replacement.dataset.state, 'BLOCKED');
 });
+
+const { validateRemoteInput } = require('../../signal-server/lib/remote-input-contract.js');
+
+function readyRelayResetFixture() {
+  const h = relayMediaScopeFixture();
+  h.lease.leaseId = 'offline-valid-lease-id';
+  h.grant(h.lease);
+  h.WebRTC.networkMode = 'tunnel';
+  h.WebRTC.tunnelRelayActive = true;
+  h.desired(8);
+  h.origin = h.fields(8, 'reset-producer');
+  h.relayAck(h.origin);
+  h.relayFrame(h.origin, 1);
+  h.image.onload();
+  h.Input.setActive(true);
+  assert.equal(h.Input.isActive, true);
+  h.lifecycle = [];
+  const record = h.Input._recordInputTrace.bind(h.Input);
+  h.Input._recordInputTrace = (stage, meta) => {
+    if (stage === 'lifecycle') h.lifecycle.push(meta);
+    return record(stage, meta);
+  };
+  return h;
+}
+
+function assertValidRelayReset(h, reason) {
+  const write = h.sent.filter(write => write.type === 'keyboard' && write.action === 'reset').at(-1);
+  assert.ok(write, 'actual KeyboardTransport emitted reset');
+  const { channel, ...wire } = write;
+  const validation = validateRemoteInput(wire);
+  assert.equal(validation.ok, true, JSON.stringify(validation));
+  assert.equal(write.payload.reason, 'deactivated');
+  assert.equal(write.leaseId, h.lease.leaseId);
+  assert.equal(write.leaseEpoch, 7);
+  assert.ok(Number.isInteger(write.seq) && write.seq > 0);
+  assert.ok(write.inputIds.length > 0);
+  assert.equal(h.Input.lastKeyboardResetReason, 'deactivated');
+  assert.ok(h.lifecycle.some(event => event.action === 'inactive' && event.reason === reason));
+  return write;
+}
+
+for (const frameFirst of [false, true]) {
+  test(`relay reset protocol: real stale timer keeps independent media/reset barriers (frame first=${frameFirst})`, () => {
+    const h = readyRelayResetFixture();
+    const phases = [];
+    h.WebRTC.setUiPhase = (phase, meta) => phases.push({ phase, ...meta });
+    h.WebRTC.updateNetworkUI = () => {};
+    h.advance(5000);
+    assert.equal(h.WebRTC._relayFrameStale, true);
+    assert.ok(phases.some(p => p.reason === 'relay-frame-stale'));
+    const reset = assertValidRelayReset(h, 'relay-frame-stale');
+    assert.equal(reset.seq, 1);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+    const oldAck = { ...reset, inputIds: ['old-reset'] };
+    assert.equal(h.acknowledge(oldAck).status, 'stale');
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+    assert.equal(h.acknowledge({ ...reset, leaseEpoch: 6 }).status, 'stale');
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+    const fresh = () => { h.relayFrame(h.origin, 2); h.image.onload(); };
+    if (frameFirst) fresh(); else h.acknowledge(reset);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+    if (frameFirst) h.acknowledge(reset); else fresh();
+    assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  });
+}
+
+test('relay reset protocol: actual relay-start invalidation emits accepted reset and preserves local reason', () => {
+  const h = readyRelayResetFixture();
+  h.WebRTC.pc = null;
+  h.WebRTC.stopMediaTelemetry = () => {};
+  h.WebRTC.updateNetworkUI = () => {};
+  h.WebRTC.startTunnelRelay({ sendRequest: false });
+  assertValidRelayReset(h, 'relay-start');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+});
+
+test('relay reset protocol: inactive pressed keyboard resets but clean inactive keyboard does not', () => {
+  const h = readyRelayResetFixture();
+  assert.equal(h.Input.keyboardController.handleDomEvent({ type: 'keydown', code: 'KeyA', key: 'a' }), true);
+  h.acknowledge(h.sent.at(-1));
+  h.Input.setActive(false, { resetKeyboard: false, reason: 'test-inactive' });
+  assert.equal(h.Input.keyboardController.getSnapshot().pressedKeyCount, 1);
+  h.WebRTC.invalidateRelayInputProof('relay-start');
+  const reset = assertValidRelayReset(h, 'relay-start');
+  assert.equal(reset.seq, 2);
+  assert.equal(h.Input.keyboardController.getSnapshot().state, 'RESET_REQUIRED');
+  h.WebRTC.invalidateRelayInputProof('relay-frame-stale');
+  const requiredReset = assertValidRelayReset(h, 'relay-frame-stale');
+  assert.equal(requiredReset.seq, reset.seq, 'pending reset barrier is coalesced');
+  assert.deepEqual(requiredReset.inputIds, reset.inputIds);
+  h.acknowledge(requiredReset);
+  const before = h.sent.length;
+  h.WebRTC.invalidateRelayInputProof('relay-start');
+  assert.equal(h.sent.length, before);
+});
+
+test('Input reset metadata preserves default and explicit no-reset policy', () => {
+  const h = fixture();
+  h.Input.setActive(true);
+  h.Input.setActive(false, { resetKeyboard: false, reason: 'window-blur', keyboardResetReason: 'deactivated' });
+  assert.equal(h.sent.length, 0);
+  h.Input.setActive(true);
+  h.Input.setActive(false, { resetKeyboard: true, reason: 'window-blur' });
+  assert.equal(h.sent.at(-1).payload.reason, 'window-blur');
+  h.acknowledge(h.sent.at(-1));
+  h.Input.setActive(true);
+  const before = h.sent.length;
+  h.Input.setActive(false);
+  assert.equal(h.sent.length, before, 'default with a control lease does not reset');
+});

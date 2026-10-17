@@ -2290,7 +2290,7 @@ const Input = {
       // undefined           → only when no control lease remains
       const shouldResetKeyboard = meta.resetKeyboard === true
         || (meta.resetKeyboard !== false && !this.activeControlLease);
-      if (shouldResetKeyboard) this.resetKeyboard(reason);
+      if (shouldResetKeyboard) this.resetKeyboard(meta.keyboardResetReason || reason);
     }
     this.isActive = next;
     const lifecycleReason = meta.reason || (next ? 'active' : 'inactive');

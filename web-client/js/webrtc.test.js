@@ -7306,7 +7306,7 @@ test('JPEG stale image load closes real gate, resets held keys/pointer, and only
   assert.equal(WebRTC.uiPhase, 'media-stalled');
   assert.equal(Input.getEffectiveInputGate().allowed, false);
   assert.equal(Input.isActive, false);
-  assert.equal(Input.lastKeyboardResetReason, 'relay-frame-stale');
+  assert.equal(Input.lastKeyboardResetReason, 'deactivated');
   assert.ok(h.writes().some(d => d.type === 'mouse' && d.action === 'reset'));
   const previous = h.currentResets();
   h.key(); h.pointer(); assert.equal(h.business().length, before);
@@ -7327,7 +7327,7 @@ for (const failure of ['inactive', 'rejected', 'timeout']) test(`JPEG freshness 
   h.key(); h.writes().forEach(d => h.ackWrite(d, { pressedKeyCount: 1 }));
   if (failure === 'inactive') Input.setActive(false, { resetKeyboard: false });
   h.advance(5000);
-  assert.equal(Input.lastKeyboardResetReason, 'relay-frame-stale');
+  assert.equal(Input.lastKeyboardResetReason, 'deactivated');
   const resets = h.currentResets();
   assert.ok(resets.some(d => d.type === 'keyboard'));
   h.frame(fields, 2);

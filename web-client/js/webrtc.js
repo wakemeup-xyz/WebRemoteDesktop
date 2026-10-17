@@ -4643,10 +4643,10 @@ const WebRTC = {
       state: 'stalled', fresh: false });
     if (typeof Input !== 'undefined') {
       const wasActive = Input.isActive;
-      Input.setActive(false, { resetKeyboard: true, reason });
+      Input.setActive(false, { resetKeyboard: true, reason, keyboardResetReason: 'deactivated' });
       const keyboard = Input.keyboardController?.getSnapshot?.() || {};
       if (!wasActive && (keyboard.pressedKeyCount > 0 || keyboard.state === 'RESET_REQUIRED')) {
-        Input.resetKeyboard?.(reason);
+        Input.resetKeyboard?.('deactivated');
       }
     }
     this.syncDesktopInputGate();
