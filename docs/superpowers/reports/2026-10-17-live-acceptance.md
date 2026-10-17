@@ -1,8 +1,11 @@
 # 2026-10-17 公网运行验收
 
-> **最新状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
+> **14:49 部署更新：** 可丢DC诊断准入已加载（冻结候选0ffb941，Host源码e279060）；Host-only重载11.606s，新PID10658/14:47:29，Signal64505、tunnel/watcher及网页builda6e8b15122bde656不变。health/Host/Viewer0与源码/资源/HEAD/index保留核对通过。带归属旁证的10800s TURN验收进程已启动，尚无最终结果；此前FAIL及原生input→visible NOT RUN保留。
 
-当前部署：`5912f43`，Host `d5ecb23` / PID87412、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。13:12后的普通Viewer曾自动重连；该连接13:32后已退出，后续新build proof会话结果见文末。
+
+> **前次状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
+
+当前部署：`0ffb941`，Host `e279060` / PID10658、Signal `d1166ab` / PID64505、Viewer时钟及reset修复 `c3abb21`，build **`a6e8b15122bde656`**；13:12本地Signal重启5.861s，Host自动恢复，tunnel保持。新build正式登录页200且build一致；本次只读页面未登录/Start。13:12后的普通Viewer曾自动重连；该连接13:32后已退出，后续新build proof会话结果见文末。
 
 最后已完成的媒体短测仍是上一build：Host时钟修复后的TURN300s PASS，随后JPEG69.744991s在恢复后发生5200.4ms加载停顿而FAIL。此前93.094s信令超时和约1922.5s长测5149.8ms间隔均保留。连续三小时、普通用户重连及真实原生输入/可见效果均未完成。
 
@@ -173,3 +176,9 @@ JPEG `/tmp/wrd-public-jpeg-gate-jpeg-20261017a` PASS111.235860s、97采样，真
 按[采样spec](../specs/2026-10-17-turn-stall-profile-design.md)启动一次300秒目标窗口；先核对health、Host在线、Viewer0和固定Host PID文件。私有supervisor通过10项离线测试及独立运行审查（两项P3测试完整性问题待补，不涉及生产运行缺陷），保持原helper/proof/媒体策略未变。首次观测frameAge>2s时仅取一次3s线程栈；这轮是可能受采样扰动的诊断，不计性能/三小时合格。结果见下文。
 
 该轮原helper PASS300.157576s/301样本，missing/late/failed/identityChange均0，最大rVFC gap433.316ms。没有frameAge>2000触发，未取得任何native stack；不得据此否定先前13.8s卡顿。旁车总329.086s、worker exit0、无超时/干预，7个已记录身份均自然退出；原helper自身OSexit仍not-observed，旁车补充已登记身份退出，不证明轮询遗漏的完整树退出。诊断路径未改原summary，也不合并短测作为三小时PASS。服务helper随后health/Host在线，同PID87412/64505。
+
+## DC准入部署与三小时TURN验收启动
+
+0ffb941受控同步27路径/5源码测试增量（含new dc_diagnostic_admission.py），备份位于/private/tmp/wrd-c5-rollout-private-ilovzfv1/apply-0ffb941a-dkrhzfun。Host-only重载11.606s，PID10658，源码sha3d54892dc58e1a69ecee619054fc07b4aaa7bd9a4d9ad4e4bcf027ac377d2a80；Signal64505及cloudflared84671/watcher897原启动身份不变，quick URL仍不存在。新版模块/Host/静态资产哈希及原HEAD/index/未触及文件全部核对，Host在线、fresh Viewer0。密码只从本机配置回报，未写文档。
+
+私有long supervisor4d96c8b0通过16项离线测试与独立spec/quality复核，旧两项P3已补。/tmp/wrd-owned-turn-probe-private/turn-long-20261017a已启动10800s目标TURN窗口，原helper/proof未改；仅在原5秒失败门槛先被满足后才可能一次采样。当前没有最终时长/连续性结论，不用启动成功或supervisor状态计PASS。

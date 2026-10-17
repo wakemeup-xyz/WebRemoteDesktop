@@ -1,8 +1,11 @@
 # 稳定性与延迟整改实施记录
 
-> **最新状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
+> **14:49 部署更新：** 可丢DC诊断准入已加载（冻结候选0ffb941，Host源码e279060）；Host-only重载11.606s，新PID10658/14:47:29，Signal64505、tunnel/watcher及网页builda6e8b15122bde656不变。health/Host/Viewer0与源码/资源/HEAD/index保留核对通过。带归属旁证的10800s TURN验收进程已启动，尚无最终结果；此前FAIL及原生input→visible NOT RUN保留。
 
-执行开始：2026-10-17。当前已同步 `5912f43`，网页 build **`a6e8b15122bde656`**（保留 `c30530f331a4def5` / `f5c2a9203e47f9e5`）。Host源码 `d5ecb23`（含f492357）/ PID87412，Signal心跳源码 `d1166ab` / 新PID64505；13:12仅重启Signal，耗时5.861s，Host自动恢复，tunnel/watcher保持。Viewer本页时钟 `3ca62fe`、M6复位 `d057853`、控制撤销/释放复位 `c3abb21` 均已加载；最终534项相关回归和跨层独立复审通过，不能据此宣布运行验收完成。
+
+> **前次状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
+
+执行开始：2026-10-17。当前已同步 `0ffb941`，网页 build **`a6e8b15122bde656`**（保留 `c30530f331a4def5` / `f5c2a9203e47f9e5`）。Host源码 `e279060`（含d5ecb23/f492357）/ PID10658，Signal心跳源码 `d1166ab` / 新PID64505；13:12仅重启Signal，耗时5.861s，Host自动恢复，tunnel/watcher保持。Viewer本页时钟 `3ca62fe`、M6复位 `d057853`、控制撤销/释放复位 `c3abb21` 均已加载；最终534项相关回归和跨层独立复审通过，不能据此宣布运行验收完成。
 
 加载后正式登录入口200、新build正确、登录表单可见，DOMContentLoaded约9.565s；同源health/status均200，Host在线。13:12时原普通Viewer自动重连、连接数1；该连接13:32已离线。后续自动化均重新核对零Viewer并取得一次性proof，不使用普通ticket接管。只读探测未登录/Start，browser.close API超时，manager.stop已完成，OS进程退出未取证，不能写为全部清理已确认。
 
@@ -205,6 +208,6 @@ Host时钟修复后新TURN300s PASS：301样本0missing/late/failed/identitychan
 
 Viewer时钟`3ca62fe`已独立review PASS、主要427测试PASS；相邻两项失败独立确认为缺M6认证scope的旧fixture，正在单独修复测试，生产校验不放宽。[实现](2026-10-17-viewer-clock-implementation.md)、[review](2026-10-17-viewer-clock-task-review.md)。临时候选buildb6d77cd86c6f9d02保留c305/f5，尚未上线。
 
-## 可丢诊断通道准入增量（尚未部署）
+## 可丢诊断通道准入增量（已于14:47部署）
 
-`e279060`仅对frame_timing、capture_stats和两类detail批次增加4096B同步字节准入，拥塞时丢弃并按固定字段统计；可靠input_ack、M2binding、时钟及labflush路径不变，不重试/补发旧诊断。65项Python及45项Node回归通过，独立task review通过；一个已有trace fixture失败经独立归类，在`616a79d`补当前receiver/SSRC及detail启用条件，保留全部原断言，6项安全Python/21项Node检查及独立复核通过。测试范围有重叠，不相加为唯一用例数。详见[实现](2026-10-17-dc-diagnostic-admission-implementation.md)、[准入复核](2026-10-17-dc-diagnostic-admission-review.md)、[fixture复核](2026-10-17-trace-integration-fixture-review.md)。跨层最终复核进行中；当前运行Host仍是先前版本，不能提前宣布已加载。4KiB不是完整SCTP/ACK内存界，也不是13.8s停帧根因修复的证明。
+`e279060`仅对frame_timing、capture_stats和两类detail批次增加4096B同步字节准入，拥塞时丢弃并按固定字段统计；可靠input_ack、M2binding、时钟及labflush路径不变，不重试/补发旧诊断。65项Python及45项Node回归通过，独立task review通过；一个已有trace fixture失败经独立归类，在`616a79d`补当前receiver/SSRC及detail启用条件，保留全部原断言，6项安全Python/21项Node检查及独立复核通过。测试范围有重叠，不相加为唯一用例数。详见[实现](2026-10-17-dc-diagnostic-admission-implementation.md)、[准入复核](2026-10-17-dc-diagnostic-admission-review.md)、[fixture复核](2026-10-17-trace-integration-fixture-review.md)。跨层最终复核通过，独立66项Python/45项Node通过；现已随冻结候选0ffb941加载。4KiB不是完整SCTP/ACK内存界，也不是13.8s停帧根因修复的证明。

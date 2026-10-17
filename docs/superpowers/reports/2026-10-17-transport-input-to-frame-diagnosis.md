@@ -1,6 +1,9 @@
 # 传输耗时与输入到画面延迟专项诊断
 
-> **最新状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
+> **14:49 部署更新：** 可丢DC诊断准入已加载（冻结候选0ffb941，Host源码e279060）；Host-only重载11.606s，新PID10658/14:47:29，Signal64505、tunnel/watcher及网页builda6e8b15122bde656不变。health/Host/Viewer0与源码/资源/HEAD/index保留核对通过。带归属旁证的10800s TURN验收进程已启动，尚无最终结果；此前FAIL及原生input→visible NOT RUN保留。
+
+
+> **前次状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
 
 > 后续实测见[当前实施记录](2026-10-17-remediation-execution.md)、[新TURN300s分段数据](2026-10-17-media-clock-short-performance.md)、[JPEG处理退化与5.2s停帧](2026-10-17-media-clock-jpeg-failure-media.md)及[复位协议失败](2026-10-17-media-clock-jpeg-failure-signal.md)。原始历史窗口不扩展，以下源码/标签描述属于初次诊断基线。ACK/RTT、同钟阶段与真实可见效果继续分开，缺测不填零；当前仍没有原生输入到真实可见效果的生产样本。
 
