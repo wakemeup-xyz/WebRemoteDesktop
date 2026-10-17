@@ -186,3 +186,9 @@ bytesDelta 是采样区间字节量，不是带宽容量。Viewer 有 elapsedMs�
 - 离线数值证明代码路径和计时错误，不是生产延迟分布。生产日志的采样、轮转和选择性告警也不能直接提供完整p95/p99。
 - 当前尚无可以诚实报告的“真实输入到可见效果整体P95”。网络单向时延、客户端入站调度、OS应用处理/合成和实际显示器呈现仍有缺口。
 - 用户已指定brainstorming + writing-plans作为默认流程。已补齐[三天复查](2026-10-17-three-day-review-and-solution.md)、[总spec](../specs/2026-10-17-reliability-latency-remediation-design.md)和[总plan](../plans/2026-10-17-reliability-latency-remediation-plan.md)及子文档；方案形成不代表已实施或通过运行验收。三天新增wheel队列60.8秒、up/reset约32秒，需按新报告提升输入背压优先级。
+
+## 14:07 TURN停顿的Host阶段证据补充
+
+同窗encoder统计54次调用，单次最大13,541.114ms；该函数单调wall time包含PyAV转换/编码/复制/packetize，排除executor排队、RTP发送和该条聚合日志输出。Host当前loop lag12,771.098ms、captureSeq150→151；15.773s标签窗口进程CPU只增加0.633s。主要PyAV codec/reformat原生调用释放GIL，因此不能称主循环同步硬编码占满CPU；换页、调度、复制期间GIL与外部编码服务等待仍待采样。此窗口不能算纯网络传输耗时。
+
+另已独立复现每帧frame_timing在输入DC欠排空时无界入队：200条诊断产生200条队列项/45,890B。它是独立性能风险，未取得该故障时队列证据，不能列为本次13.8s停帧根因。详见[调用边界复核](2026-10-17-turn-host-stall-code-review.md)。后续先按[受控采样设计](../specs/2026-10-17-turn-stall-profile-design.md)获取同窗线程栈，再决定主因修复；诊断不会计入性能合格。
