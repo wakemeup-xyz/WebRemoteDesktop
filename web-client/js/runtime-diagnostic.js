@@ -35,6 +35,24 @@
       moveState: enumeration('moveState', ['connecting', 'open', 'closing', 'closed']),
       socketConnected: boolean('socketConnected'), localDescriptionSet: boolean('localDescriptionSet'), remoteDescriptionSet: boolean('remoteDescriptionSet') };
   }
+  function sanitizeSignalingFailure(value) {
+    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return null;
+    const fields = ['scope', 'failureClass', 'transport', 'engineState', 'managerState',
+      'socketConnected', 'socketActive', 'fallbackSelected', 'connectBudgetMs', 'ageMs'];
+    const values = {};
+    for (const key of fields) { try { values[key] = value[key]; } catch (_) { values[key] = null; } }
+    const enumeration = (key, allowed, fallback) => allowed.includes(values[key]) ? values[key] : fallback;
+    const boolean = key => typeof values[key] === 'boolean' ? values[key] : null;
+    const duration = (key, max) => typeof values[key] === 'number' && Number.isFinite(values[key])
+      && values[key] >= 0 && values[key] <= max ? values[key] : null;
+    return { scope: 'last-connect-error',
+      failureClass: enumeration('failureClass', ['timeout', 'transport-error', 'auth-required', 'auth-invalid', 'unknown'], 'unknown'),
+      transport: enumeration('transport', ['websocket', 'polling', 'unknown'], 'unknown'),
+      engineState: enumeration('engineState', ['opening', 'open', 'closing', 'closed', 'unknown'], 'unknown'),
+      managerState: enumeration('managerState', ['opening', 'open', 'closed', 'unknown'], 'unknown'),
+      socketConnected: boolean('socketConnected'), socketActive: boolean('socketActive'), fallbackSelected: boolean('fallbackSelected'),
+      connectBudgetMs: duration('connectBudgetMs', 30000), ageMs: duration('ageMs', 3600000) };
+  }
   function boundRuntimeDiagnostic(payload) {
     const result = clone(payload);
     result.truncation = { dropped: Number.isSafeInteger(result.truncation?.dropped) ? result.truncation.dropped : 0 };
@@ -59,7 +77,7 @@
     for (const key of ['network', 'terminal', 'traceSummary', 'inputState', 'inputTrace', 'startup', 'resources', 'adaptiveMedia', 'recommendation']) {
       if (bytes(result) <= MAX_REPORT_BYTES) break;
       result[key] = key === 'resources' ? null : (key === 'startup'
-        ? { dataChannelWatchdog: sanitizeDataChannelWatchdog(result.startup?.dataChannelWatchdog) } : {});
+        ? { dataChannelWatchdog: sanitizeDataChannelWatchdog(result.startup?.dataChannelWatchdog), signalingFailure: sanitizeSignalingFailure(result.startup?.signalingFailure) } : {});
       result.truncation.dropped++;
     }
     // A malformed producer must not turn a bounded report into an unbounded write.
@@ -96,7 +114,7 @@
       inputTrace: { schemaVersion: 3, traceNowMs: safeNumber(trace.traceNowMs),
         counters: Object.fromEntries(Object.entries(trace.counters || {}).filter(([key, value]) => /^[a-zA-Z]{1,40}$/.test(key) && Number.isSafeInteger(value) && value >= 0)),
         events: (trace.events || []).slice(-256).map(event => ({ at: safeNumber(event.at), inputIdHash: digest(event.inputIdHash) })) },
-      startup: { dataChannelWatchdog: sanitizeDataChannelWatchdog(payload.startup?.dataChannelWatchdog) }, resources: null, truncation: clone(payload.truncation || { dropped: 0 }),
+      startup: { dataChannelWatchdog: sanitizeDataChannelWatchdog(payload.startup?.dataChannelWatchdog), signalingFailure: sanitizeSignalingFailure(payload.startup?.signalingFailure) }, resources: null, truncation: clone(payload.truncation || { dropped: 0 }),
       scopeEnded: { events: (payload.scopeEnded?.events || []).map(event => ({ eventIdHash: digest(event.eventIdHash), endedAtMs: event.endedAtMs, snapshot: latency(event.snapshot) })),
         dropped: payload.scopeEnded?.dropped || 0 },
     };
@@ -139,7 +157,7 @@
         build: read(getBuild, { id: null, builtAt: null }),
         latencyStatus: latency ? 'available' : 'collector-unavailable', latency,
         inputState: input.inputState || {}, inputTrace: input.inputTrace || {},
-        startup: { ...startup, dataChannelWatchdog: sanitizeDataChannelWatchdog(startup?.dataChannelWatchdog) }, resources: read(getResources, null),
+        startup: { ...startup, dataChannelWatchdog: sanitizeDataChannelWatchdog(startup?.dataChannelWatchdog), signalingFailure: sanitizeSignalingFailure(read(() => startup?.signalingFailure, null)) }, resources: read(getResources, null),
         scopeEnded: { events: clone(events), dropped },
       });
     };
@@ -162,7 +180,7 @@
     };
     return build;
   }
-  const api = { sanitizeDataChannelWatchdog, createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
+  const api = { sanitizeSignalingFailure, sanitizeDataChannelWatchdog, createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
   Object.assign(global, api);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this));

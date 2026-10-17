@@ -1,6 +1,6 @@
 const { createDiagnosticStore, getDiagDir } = require('./diagnostic-store');
 const { loadConfig } = require('./config');
-const { sanitizeDataChannelWatchdog } = require('../../web-client/js/runtime-diagnostic');
+const { sanitizeDataChannelWatchdog, sanitizeSignalingFailure } = require('../../web-client/js/runtime-diagnostic');
 
 const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
 const crypto = require('node:crypto');
@@ -32,7 +32,7 @@ const STARTUP_MARKS = new Set(['html-shell', 'core-failed', 'core-interactive', 
   'bootstrap-ready', 'bootstrap-degraded', 'signal-connected', 'first-frame', 'active']);
 function redactStartup(value) {
   const marks = Array.isArray(value?.marks) ? value.marks : [];
-  return { dataChannelWatchdog: sanitizeDataChannelWatchdog(value?.dataChannelWatchdog), marks: marks.filter(mark => STARTUP_MARKS.has(mark?.name)).slice(0, 64)
+  return { signalingFailure: sanitizeSignalingFailure(value?.signalingFailure), dataChannelWatchdog: sanitizeDataChannelWatchdog(value?.dataChannelWatchdog), marks: marks.filter(mark => STARTUP_MARKS.has(mark?.name)).slice(0, 64)
     .map(mark => ({ name: mark.name, atMs: finiteNonnegative(mark.atMs ?? mark.at) })),
     resources: (Array.isArray(value?.resources) ? value.resources : []).filter(resource =>
       typeof resource?.path === 'string' && /^\/?assets\/[a-z0-9-]+\.[a-f0-9]{8,64}\.(js|css)$/.test(resource.path))
@@ -139,7 +139,7 @@ const INPUT_DIAGNOSTIC_STATUSES = new Set([
   'accepted', 'failed', 'pending', 'ready', 'blocked', 'reacquire-required', 'revoked',
 ]);
 const INPUT_DIAGNOSTIC_REASONS = new Set([
-  'no-active-control', 'inactive', 'viewport-unsupported', 'media-gate', 'manual-disconnect',
+  'signal-connect-error', 'no-active-control', 'inactive', 'viewport-unsupported', 'media-gate', 'manual-disconnect',
   'media-not-ready-for-attempt', 'keyboard-transport-blocked', 'keyboard-transport-reacquire-required',
   'keyboard-transport-revoked', 'keyboard-reset-pending', 'keyboard-blocked', 'surface-pending',
   'surface-uncertain', 'mouse-reset-pending', 'desktop-write-reacquire-required', 'draft-composing',

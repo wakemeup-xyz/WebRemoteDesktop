@@ -98,3 +98,43 @@ test('watchdog shared sanitizer, builder and storage retain only fourteen bounde
   const throwing = new Proxy({}, { get() { throw Error('SECRET_CANARY'); } });
   assert.deepEqual(sanitizeDataChannelWatchdog(throwing), sanitizeDataChannelWatchdog(null));
 });
+
+const { sanitizeSignalingFailure, runtimeDiagnosticForStorage } = require('./runtime-diagnostic');
+const signalingFailure = { scope: 'last-connect-error', failureClass: 'timeout', transport: 'websocket',
+  engineState: 'opening', managerState: 'closed', socketConnected: false, socketActive: true,
+  fallbackSelected: true, connectBudgetMs: 5000, ageMs: 12 };
+test('shared signaling whitelist has exactly ten bounded safe fields and tolerates hostile getters', () => {
+  assert.equal(sanitizeSignalingFailure(null), null);
+  const clean = sanitizeSignalingFailure({ ...signalingFailure, message: 'CANARY', token: 'CANARY' });
+  assert.deepEqual(clean, signalingFailure); assert.equal(Object.keys(clean).length, 10);
+  assert.ok(Buffer.byteLength(JSON.stringify(clean)) < 1024);
+  const hostile = Object.fromEntries(Object.keys(signalingFailure).map(key => [key, 'CANARY']));
+  for (const key of Object.keys(hostile)) Object.defineProperty(hostile, key, { get() { throw Error('CANARY'); } });
+  const safe = sanitizeSignalingFailure(hostile);
+  assert.deepEqual(safe, { scope: 'last-connect-error', failureClass: 'unknown', transport: 'unknown',
+    engineState: 'unknown', managerState: 'unknown', socketConnected: null, socketActive: null,
+    fallbackSelected: null, connectBudgetMs: null, ageMs: null });
+  for (const ageMs of [-1, NaN, Infinity, '12', 3600001]) assert.equal(sanitizeSignalingFailure({ ...clean, ageMs }).ageMs, null);
+  for (const connectBudgetMs of [-1, NaN, Infinity, '5000', 30001]) assert.equal(sanitizeSignalingFailure({ ...clean, connectBudgetMs }).connectBudgetMs, null);
+  assert.equal(sanitizeSignalingFailure({ ...clean, ageMs: 3600000, connectBudgetMs: 30000 }).ageMs, 3600000);
+});
+
+test('runtime, cache and oversized clipping retain signaling evidence alongside watchdog under existing startup policy', () => {
+  const marks = [{ name: 'start-click', atMs: 1 }]; const resources = [{ path: 'assets/core.12345678.js', durationMs: 2 }];
+  const startup = { signalingFailure: { ...signalingFailure, message: 'CANARY' }, marks, resources,
+    dataChannelWatchdog: { phase: 'negotiation', timedOut: true } };
+  const build = fixture({ getStartup: () => startup });
+  const report = build({ reason: 'signal-connect-error' });
+  assert.equal(report.reason, 'signal-connect-error'); assert.deepEqual(report.startup.signalingFailure, signalingFailure);
+  assert.deepEqual(report.startup.marks, marks); assert.deepEqual(report.startup.resources, resources);
+  const cached = runtimeDiagnosticForStorage(report);
+  assert.deepEqual(cached.startup.signalingFailure, signalingFailure); assert.equal(cached.startup.dataChannelWatchdog.timedOut, true);
+  assert.equal(cached.startup.marks, undefined); assert.equal(cached.startup.resources, undefined);
+  startup.extra = 'x'.repeat(150 * 1024);
+  const clipped = build({ reason: 'signal-connect-error' });
+  assert.deepEqual(clipped.startup.signalingFailure, signalingFailure); assert.equal(clipped.startup.dataChannelWatchdog.timedOut, true);
+  assert.equal(clipped.startup.marks, undefined); assert.equal(clipped.startup.resources, undefined);
+  assert.ok(Buffer.byteLength(JSON.stringify(clipped)) <= 128 * 1024);
+  assert.equal(JSON.stringify([report, cached, clipped]).includes('CANARY'), false);
+  assert.equal(fixture()({}).startup.signalingFailure, null);
+});

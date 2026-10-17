@@ -196,6 +196,7 @@ function loadWebRTC(overrides = {}) {
       context.StunPortSearchController = context.window.StunPortSearchController;
     }
   }
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'runtime-diagnostic.js'), 'utf8'), context);
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC;`, context);
   if (overrides.realInput) {
@@ -6888,7 +6889,8 @@ function admissionViewerFixture({ proof = null, fetchAdmission = null, realPeer 
         on: (event, handler) => handlers.set(event, handler), emit() {},
         disconnect() { this.connected = false; }, connect() { this.attempts++; },
         trigger(event, data) { return handlers.get(event)?.(data); },
-        io: { reconnection(value) { socket.reconnectEnabled = value; } },
+        io: { opts: options, engine: { readyState: 'opening', transport: { name: 'websocket' } }, _readyState: 'closed',
+          reconnection(value) { socket.reconnectEnabled = value; } },
       };
       sockets.push(socket); return socket;
     },
@@ -7784,5 +7786,61 @@ for (const lifecycle of ['refresh', 'disconnect', 'superseded', 'tunnel', 'contr
     assert.equal(WebRTC._dataChannelWatchdog, null); assert.equal(WebRTC._dcTimeout, null);
     now = 40000; timeout(); oldChannel.onclose(); oldChannel.onerror({});
     assert.deepEqual(faults, []); assert.equal(WebRTC._dcReconnectTimer, null);
+  });
+}
+
+
+test('signaling session persists through bootstrap reuse, media attempts, refresh, mode switch and socket recreation', async () => {
+  const h = admissionViewerFixture();
+  let finishBootstrap;
+  const start = h.WebRTC.startViewer({ load: () => new Promise(resolve => { finishBootstrap = resolve; }) });
+  for (let i = 0; i < 20 && !finishBootstrap; i++) await Promise.resolve();
+  const first = h.sockets[0];
+  first.active = true;
+  first.trigger('connect_error', { message: 'timeout' });
+  const session = h.WebRTC._signalingSession;
+  assert.equal(session.preferPolling, true);
+  const captured = h.WebRTC.getSignalingFailureSnapshot();
+  finishBootstrap({ webrtc: { iceServers: [] } }); await start;
+  assert.equal(h.WebRTC._signalingSession, session, 'init reuse must preserve bootstrap timeout selection');
+  assert.equal(h.WebRTC.socket, first);
+  h.WebRTC.beginConnectionAttempt('manual-turn-switch');
+  assert.equal(h.WebRTC._signalingSession, session);
+  h.WebRTC.createSignalingSocket(true);
+  assert.equal(h.WebRTC._signalingSession, session);
+  assert.deepEqual(Array.from(h.sockets.at(-1).io.opts.transports), ['polling', 'websocket']);
+  await h.WebRTC.refresh({ reason: 'fresh-frame-timeout' });
+  assert.equal(h.WebRTC._signalingSession, session);
+  h.WebRTC.setNetworkMode('tunnel');
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  assert.equal(h.WebRTC._signalingSession, session);
+  assert.equal(h.WebRTC.getSignalingFailureSnapshot().failureClass, 'timeout');
+  assert.equal(captured.ageMs, 0); assert.equal(h.requests.length, 1);
+});
+
+test('explicit Start and successful reclaim reset signaling session before new socket; retired callbacks cannot select', async () => {
+  const h = admissionViewerFixture();
+  await h.WebRTC.startViewer(h.controller);
+  const old = h.sockets[0]; old.active = true; old.trigger('connect_error', { message: 'timeout' });
+  const previous = h.WebRTC._signalingSession;
+  await h.WebRTC.startViewer(h.controller);
+  assert.notEqual(h.WebRTC._signalingSession, previous); assert.equal(h.WebRTC.getSignalingFailureSnapshot(), null);
+  assert.deepEqual(Array.from(h.sockets.at(-1).io.opts.transports), ['websocket', 'polling']);
+  old.trigger('connect_error', { message: 'timeout' }); assert.equal(h.WebRTC._signalingSession.preferPolling, false);
+  const beforeReclaim = h.WebRTC._signalingSession; beforeReclaim.preferPolling = true;
+  await h.WebRTC.reclaimDesktopSession();
+  assert.notEqual(h.WebRTC._signalingSession, beforeReclaim);
+  assert.equal(h.WebRTC.getSignalingFailureSnapshot(), null);
+  assert.deepEqual(Array.from(h.sockets.at(-1).io.opts.transports), ['websocket', 'polling']);
+});
+
+for (const stop of ['disconnect', 'handleViewerSuperseded']) {
+  test(`signaling session and last error retire on ${stop}`, async () => {
+    const h = admissionViewerFixture(); await h.WebRTC.startViewer(h.controller);
+    const socket = h.sockets[0]; socket.active = true; socket.trigger('connect_error', { message: 'timeout' });
+    const failure = h.WebRTC.getSignalingFailureSnapshot();
+    h.WebRTC[stop](); assert.equal(h.WebRTC.getSignalingFailureSnapshot(), null);
+    socket.trigger('connect_error', { message: 'timeout' }); assert.equal(h.WebRTC._signalingSession, null);
+    assert.equal(failure.failureClass, 'timeout'); assert.equal(Object.isFrozen(failure), true);
   });
 }

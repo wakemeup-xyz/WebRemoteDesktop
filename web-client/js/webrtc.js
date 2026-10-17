@@ -2469,6 +2469,7 @@ const WebRTC = {
       this.syncChromeCapabilities();
       return false;
     }
+    this.resetSignalingSession();
     this._controlUserReleased = false;
     this._cancelControlAcquireIntent();
     const authToken = Auth.getToken();
@@ -2586,6 +2587,7 @@ const WebRTC = {
     const socketBase = (typeof RuntimeConfig !== 'undefined')
       ? RuntimeConfig.getSocketBase()
       : window.location.origin;
+    this.ensureSignalingSession();
     const socketOptions = this.buildSignalingSocketOptions({
       token,
       reconnection: !this._superseded,
@@ -2629,6 +2631,72 @@ const WebRTC = {
 
   signalingConnectBudgetMs: 5000,
 
+  // This identity follows explicit user connections, independently of media attempts.
+  resetSignalingSession() {
+    this._signalingSession = { preferPolling: false, failure: null, capturedAtMs: null };
+    return this._signalingSession;
+  },
+
+  ensureSignalingSession() {
+    return this._signalingSession || this.resetSignalingSession();
+  },
+
+  signalingMonotonicNow() {
+    try {
+      const now = performance.now();
+      return typeof now === 'number' && Number.isFinite(now) && now >= 0 ? now : null;
+    } catch (_) { return null; }
+  },
+
+  getSignalingFailureSnapshot() {
+    const session = this._signalingSession;
+    if (!session?.failure) return null;
+    const now = this.signalingMonotonicNow();
+    const elapsed = now !== null && session.capturedAtMs !== null ? now - session.capturedAtMs : null;
+    return Object.freeze({ ...session.failure,
+      ageMs: typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 3600000 ? elapsed : null });
+  },
+
+  recordSignalingFailure(error, socket, manager, session) {
+    if (this.socket !== socket || this._signalingSession !== session) return null;
+    const read = getter => { try { return getter(); } catch (_) { return undefined; } };
+    if (read(() => socket.io) !== manager) return null;
+    const message = read(() => error?.message);
+    const failureClass = message === 'timeout' ? 'timeout' : read(() => error?.type) === 'TransportError' ? 'transport-error'
+      : message === 'Authentication required' ? 'auth-required' : message === 'Invalid token' ? 'auth-invalid' : 'unknown';
+    const engine = read(() => manager.engine);
+    const transport = read(() => engine.transport.name);
+    const engineState = read(() => engine.readyState);
+    const socketConnected = read(() => socket.connected);
+    const socketActive = read(() => socket.active);
+    let fallbackSelected = false;
+    // Manager timeout emits after Manager closes, before its opening Engine closes.
+    // Read only known options; an exception/unknown eligibility must leave policy alone.
+    try {
+      const options = manager.opts;
+      const transports = options.transports;
+      const names = Array.isArray(transports) ? transports.map(item => typeof item === 'string' ? item : item.prototype.name) : [];
+      if (failureClass === 'timeout' && transport === 'websocket' && engineState === 'opening'
+        && socketConnected === false && socketActive === true && names.includes('polling')
+        && names.every(name => name === 'polling' || name === 'websocket')) {
+        const nextTransports = ['polling', 'websocket'];
+        options.transports = nextTransports;
+        if (options.transports === nextTransports) {
+          session.preferPolling = true;
+          fallbackSelected = true;
+        }
+      }
+    } catch (_) {}
+    const summary = { scope: 'last-connect-error', failureClass, transport, engineState,
+      managerState: read(() => manager._readyState), socketConnected, socketActive, fallbackSelected,
+      connectBudgetMs: read(() => manager.opts.timeout), ageMs: 0 };
+    // Shared whitelist is also used by runtime/core/full/storage/server boundaries.
+    if (typeof sanitizeSignalingFailure !== 'function') return null;
+    session.failure = Object.freeze(sanitizeSignalingFailure(summary));
+    session.capturedAtMs = this.signalingMonotonicNow();
+    return session.failure;
+  },
+
   resolveViewerSessionId() {
     const key = 'wrd_viewer_session_id';
     const safe = (value) => /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(String(value || ''))
@@ -2658,7 +2726,7 @@ const WebRTC = {
   resolveSignalingTransports({ allowPolling = true } = {}) {
     // Websocket-first keeps formal cold path fast; polling remains a fallback when WS is blocked.
     if (allowPolling === false) return ['websocket'];
-    return ['websocket', 'polling'];
+    return this._signalingSession?.preferPolling ? ['polling', 'websocket'] : ['websocket', 'polling'];
   },
 
   buildSignalingSocketOptions({ token, reconnection = true, allowPolling = true } = {}) {
@@ -2683,7 +2751,7 @@ const WebRTC = {
       transports,
       // When the first transport fails hard, continue through the list (WS → polling).
       tryAllTransports: true,
-      // Bound dual-transport failure so Start does not silently hang past 5s budgets.
+      // Each Engine-open attempt is bounded; namespace auth and all retries may take longer.
       timeout,
     };
   },
@@ -3415,6 +3483,8 @@ const WebRTC = {
     if (!socket || typeof socket.on !== 'function') return;
     if ((this._relayPendingStart && this._relayPendingStart.socket !== socket)
       || (this._relayScopeContext && this._relayScopeContext.socket !== socket)) this.clearRelayOrigin();
+    const signalingSession = this.ensureSignalingSession();
+    const signalingManager = socket.io;
     const onCurrentSocket = (event, handler) => {
       socket.on(event, (...args) => {
         if (this.socket !== socket) return undefined;
@@ -3459,7 +3529,15 @@ const WebRTC = {
 
     onCurrentSocket('connect_error', (error) => {
       if (this._superseded || this.manualDisconnect) return;
-      console.warn('[RECOVERY] Signaling connect error:', error?.message || error || 'unknown');
+      if (this._signalingSession !== signalingSession) return;
+      try { if (socket.io !== signalingManager) return; } catch (_) { return; }
+      const failure = this.recordSignalingFailure(error, socket, signalingManager, signalingSession);
+      console.warn('[RECOVERY] Signaling connect error:', failure?.failureClass || 'unknown');
+      try {
+        if (typeof Diagnostic !== 'undefined') {
+          Promise.resolve(Diagnostic.autoSendFailure?.('signal-connect-error')).catch(() => {});
+        }
+      } catch (_) {}
       this.scheduleSignalingRecovery('signal-connect-error');
     });
 
@@ -6781,6 +6859,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   disconnect() {
+    this._signalingSession = null;
     this.markRefreshSettled('disconnect');
     this.clearSignalingRecovery();
     this.stopPortSearch('disconnect');
@@ -6837,6 +6916,7 @@ if (this.tunnelLastObjectUrl) {
       return;
     }
     console.warn('[VIEWER] superseded', payload?.reason || 'unknown', payload?.bySocketId || '');
+    this._signalingSession = null;
     this._superseded = true;
     this.manualDisconnect = true;
     this.cancelDataChannelWatchdog();
@@ -6960,6 +7040,7 @@ if (this.tunnelLastObjectUrl) {
     }
     this._controlUserReleased = false;
     this._cancelControlAcquireIntent();
+    this.resetSignalingSession();
     this.hideSupersededUI();
     this._superseded = false;
     this.manualDisconnect = false;

@@ -1167,3 +1167,28 @@ test('connection diagnostic keeps nullable buffer separate from measured zero an
     assert.equal(report.latency.metrics.jitterBufferMs.count, 0);
   }
 });
+
+test('actual core and deferred full reports project the same signaling whitelist and cache it without marks/resources', () => {
+  const { context } = createDiagnosticContext();
+  const failure = { scope: 'last-connect-error', failureClass: 'timeout', transport: 'websocket', engineState: 'opening',
+    managerState: 'closed', socketConnected: false, socketActive: true, fallbackSelected: true, connectBudgetMs: 5000, ageMs: 7 };
+  context.WebRTC.getSignalingFailureSnapshot = () => ({ ...failure, message: 'CANARY', token: 'CANARY' });
+  context.WebRTC.getDataChannelWatchdogSnapshot = () => ({ phase: 'negotiation', timedOut: true });
+  context.window.__WRD_STARTUP_SNAPSHOT__ = () => ({ marks: [{ name: 'start-click', atMs: 1 }],
+    resources: [{ path: 'assets/core.12345678.js', durationMs: 2 }] });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const core = context.window.Diagnostic.buildConnectionDiagnostic({ reason: 'signal-connect-error' });
+  const fullApi = loadScript('diagnostic.js', context, 'Diagnostic');
+  const full = fullApi.buildConnectionDiagnostic({ reason: 'signal-connect-error' });
+  for (const report of [core, full]) {
+    assert.equal(report.schemaVersion, 3); assert.equal(report.reason, 'signal-connect-error');
+    assert.deepEqual(JSON.parse(JSON.stringify(report.startup.signalingFailure)), failure);
+    assert.equal(Object.keys(report.startup.signalingFailure).length, 10);
+    assert.equal(report.startup.marks[0].name, 'start-click'); assert.equal(report.startup.resources.length, 1);
+    assert.equal(report.startup.dataChannelWatchdog.timedOut, true);
+    const cached = context.runtimeDiagnosticForStorage(report);
+    assert.deepEqual(JSON.parse(JSON.stringify(cached.startup.signalingFailure)), failure);
+    assert.equal(cached.startup.marks, undefined); assert.equal(cached.startup.resources, undefined);
+    assert.equal(JSON.stringify(report.startup).includes('CANARY'), false);
+  }
+});
