@@ -63,7 +63,7 @@ function makeTarget(extra = {}) {
   return target;
 }
 
-function loadRecoveryFixture({ touchPoints = 0, channels = 'both', onIncident = () => {} } = {}) {
+function loadRecoveryFixture({ touchPoints = 0, channels = 'both', onIncident = () => {}, latency = false } = {}) {
   let now = 1000;
   let nextTimerId = 0;
   const timers = new Map();
@@ -148,6 +148,9 @@ function loadRecoveryFixture({ touchPoints = 0, channels = 'both', onIncident = 
     recordInputTrace(stage, meta) { return trace.record(stage, meta); },
     getInputTraceSnapshot() { return trace.snapshot(); },
   };
+  if (latency) {
+    vm.runInContext(`${fs.readFileSync(path.join(__dirname, 'latency-monitor.js'), 'utf8')}\nglobalThis.__LatencyMonitor = LatencyMonitor;`, context);
+  }
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-geometry.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'touch-input-adapter.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'keyboard-transport.js'), 'utf8'), context);
@@ -287,7 +290,8 @@ globalThis.__Input = Input;`, context);
   }
 
   return {
-    Input, WebRTC, context, document, window, video, elements, sent, timers, documentListeners, windowListeners,
+    Input, WebRTC, LatencyMonitor: context.__LatencyMonitor,
+    context, document, window, video, elements, sent, timers, documentListeners, windowListeners,
     advance, ack, writes, inputs: writes, pointer, keydown, keyup, blur, resume, trace,
     setDataChannelOpen, latestMediaRequest, freshFrame, suspendAndResume,
     setNow(value) { now = value; },
@@ -1520,6 +1524,31 @@ test('a closed DataChannel uses a connected Socket for the dual reset and fresh 
   )), ['mouse:down:', 'mouse:up:', 'keyboard:key:down', 'keyboard:key:up']);
 });
 
+function moveReliableLedger(h) {
+  const keyboard = h.Input.keyboardTransport.getSnapshot();
+  const budget = h.Input._getInputBudget().snapshot();
+  return {
+    sequence: h.Input._desktopWriteSequence,
+    pending: Array.from(h.Input._desktopWritePending.keys()),
+    keyboardLastSent: keyboard.lastSent,
+    keyboardPending: keyboard.pendingCount,
+    budgetCount: budget.pendingCount,
+    budgetBytes: budget.pendingBytes,
+    deadline: h.Input._desktopWriteTimer,
+  };
+}
+
+function quarantineAndRecoverForMove(h) {
+  const dc = h.WebRTC.inputChannel;
+  assert.equal(h.WebRTC.quarantineReliableInputChannel('test-selected-channel', dc), true);
+  assert.equal(h.WebRTC._quarantinedInputChannel, dc);
+  assert.equal(h.Input.requestInputRecovery({ source: 'user' }), true);
+  const resets = h.inputs().filter((payload) => payload.action === 'reset');
+  assert.equal(resets.length, 2);
+  resets.forEach((payload) => h.ack(payload));
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+}
+
 test('an open but silent reliable DataChannel recovers over Socket.IO without replaying clicks', () => {
   const h = loadRecoveryFixture();
   h.pointer('pointerdown');
@@ -1545,7 +1574,20 @@ test('an open but silent reliable DataChannel recovers over Socket.IO without re
   const keyboardReset = h.inputs().filter((payload) => payload.type === 'keyboard' && payload.action === 'reset').at(-1);
   h.ack(keyboardReset);
   assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  assert.equal(h.WebRTC._quarantinedInputChannel, originalDc);
   assert.equal(h.inputs().filter((payload) => ['down', 'up'].includes(payload.action)).length, 2);
+
+  h.WebRTC.inputMoveChannel = { readyState: 'closed', bufferedAmount: 0 };
+  const moveStart = h.sent.length;
+  const beforeMove = moveReliableLedger(h);
+  const moveId = h.Input.sendInput('mouse', 'move', { relX: .25, relY: .5, buttons: 0 });
+  assert.ok(moveId);
+  assert.equal(h.sent.slice(moveStart).filter((entry) => entry.event === 'dc').length, 0);
+  const moves = h.sent.slice(moveStart).filter((entry) => entry.event === 'input');
+  assert.equal(moves.length, 1);
+  assert.equal(moves[0].payload.action, 'move');
+  assert.equal(moves[0].payload.seq, undefined);
+  assert.deepEqual(moveReliableLedger(h), beforeMove);
 
   const start = h.sent.length;
   h.pointer('pointerdown');
@@ -1560,6 +1602,83 @@ test('an open but silent reliable DataChannel recovers over Socket.IO without re
   assert.equal(h.sent.slice(keyboardStart).filter((entry) => entry.event === 'dc').length, 0);
   assert.equal(h.sent.slice(keyboardStart).filter((entry) => entry.event === 'input').length, 2);
 });
+
+for (const dedicated of ['missing', 'closed', 'alias']) {
+  for (const bufferedAmount of [0, 4097]) {
+    for (const connected of [true, false]) {
+      test(`quarantined move fallback (${dedicated}, buffer=${bufferedAmount}, socket=${connected})`, () => {
+        const h = loadRecoveryFixture({ latency: true });
+        const dc = h.WebRTC.inputChannel;
+        dc.bufferedAmount = bufferedAmount;
+        h.WebRTC.inputMoveChannel = dedicated === 'alias' ? dc
+          : dedicated === 'closed' ? { readyState: 'closed', bufferedAmount: 0 } : null;
+        quarantineAndRecoverForMove(h);
+        assert.equal(h.WebRTC._quarantinedInputChannel, dc);
+        assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+        h.WebRTC.socket.connected = connected;
+        h.LatencyMonitor.setScope(h.Input.latencyScope());
+        const before = moveReliableLedger(h);
+        const latencyBefore = h.LatencyMonitor.snapshot();
+        const latencyPendingBefore = h.LatencyMonitor.hasPendingFrameInputs();
+        const start = h.sent.length;
+
+        const id = h.Input.sendInput('mouse', 'move', { relX: .25, relY: .5, buttons: 0 });
+
+        assert.equal(h.sent.slice(start).filter((entry) => entry.event === 'dc').length, 0);
+        const writes = h.sent.slice(start).filter((entry) => entry.event === 'input');
+        assert.equal(writes.length, connected ? 1 : 0);
+        if (connected) {
+          assert.ok(id);
+          assert.equal(writes[0].payload.action, 'move');
+          assert.equal(writes[0].payload.inputIds[0], id);
+          assert.equal(writes[0].payload.seq, undefined);
+        } else {
+          assert.equal(id, null);
+        }
+        assert.deepEqual(moveReliableLedger(h), before);
+        assert.equal(h.LatencyMonitor.snapshot().outcomes.sent, latencyBefore.outcomes.sent + (connected ? 1 : 0));
+        assert.equal(h.LatencyMonitor.hasPendingFrameInputs(), connected || latencyPendingBefore);
+        if (!connected) assert.deepEqual(h.LatencyMonitor.snapshot(), latencyBefore);
+      });
+    }
+  }
+}
+
+for (const selected of ['independent move', 'replacement reliable', 'healthy reliable']) {
+  for (const bufferedAmount of [0, 4097]) {
+    test(`move fallback preserves ${selected} channel and healthy drop (buffer=${bufferedAmount})`, () => {
+      const h = loadRecoveryFixture();
+      const original = h.WebRTC.inputChannel;
+      const healthy = { readyState: 'open', bufferedAmount,
+        send(json) { h.sent.push({ event: 'dc', channel: healthy, payload: JSON.parse(json) }); } };
+      h.WebRTC.inputMoveChannel = null;
+      if (selected === 'healthy reliable') {
+        h.WebRTC.inputChannel = healthy;
+      } else {
+        quarantineAndRecoverForMove(h);
+        assert.equal(h.WebRTC._quarantinedInputChannel, original);
+        if (selected === 'independent move') h.WebRTC.inputMoveChannel = healthy;
+        else h.WebRTC.inputChannel = healthy;
+      }
+      assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+      const before = moveReliableLedger(h);
+      const start = h.sent.length;
+
+      const id = h.Input.sendInput('mouse', 'move', { relX: .25, relY: .5, buttons: 0 });
+
+      assert.ok(id);
+      const writes = h.sent.slice(start);
+      assert.equal(writes.filter((entry) => entry.event === 'input').length, 0);
+      assert.equal(writes.filter((entry) => entry.event === 'dc').length, bufferedAmount > 4096 ? 0 : 1);
+      if (bufferedAmount === 0) {
+        assert.equal(writes[0].channel, healthy);
+        assert.equal(writes[0].payload.action, 'move');
+        assert.equal(writes[0].payload.seq, undefined);
+      }
+      assert.deepEqual(moveReliableLedger(h), before);
+    });
+  }
+}
 
 test('a Socket.IO ACK timeout does not quarantine a DataChannel that did not carry the write', () => {
   const h = loadRecoveryFixture({ channels: 'socket' });

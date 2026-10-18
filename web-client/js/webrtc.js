@@ -5065,13 +5065,12 @@ const WebRTC = {
     // Safety barriers must not queue behind an apparently open, stalled SCTP
     // stream. Keyboard resets already use Socket.IO for the same reason.
     if (data.type === 'mouse' && data.action === 'reset' && this.socket?.connected) return false;
-    if (!isMouseMove && this.inputChannel
-        && this._quarantinedInputChannel === this.inputChannel) return false;
     const channel = isMouseMove && this.inputMoveChannel?.readyState === 'open'
       ? this.inputMoveChannel
       : this.inputChannel;
 
-    if (!channel || channel.readyState !== 'open') {
+    if (!channel || channel.readyState !== 'open'
+        || channel === this._quarantinedInputChannel) {
       return false;
     }
 
