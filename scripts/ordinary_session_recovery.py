@@ -1216,6 +1216,11 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
             raw=result['sample']
             try:
                 _keys(raw,(*[k for k in _SAMPLE_KEYS if k!='attemptHash'],'attempt'))
+                # The native sampler preserves the fresh Viewer's empty
+                # no-attempt sentinel. Normalize absence without mutating it
+                # or hashing it into an apparent connection identity.
+                if type(raw['attempt']) is str and raw['attempt']=='':
+                    raw=dict(raw,attempt=None)
                 if raw['attempt'] is not None and not _id(raw['attempt']): raise ValueError()
                 sample=passive.private_row(raw,salt); _validate_private_sample(sample)
             except (ValueError,TypeError,KeyError,OverflowError):

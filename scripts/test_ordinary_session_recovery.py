@@ -1359,3 +1359,115 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
         for field in ('samples','missingSamples','failedObservations','identityChangeObservations'):
             changed=json.loads(json.dumps(value)); changed['continuity'][field]=1.5
             with self.subTest(field=field), self.assertRaises(ValueError): runner.validate_summary(changed)
+
+
+class NativeStartupPage(RuntimePage):
+    def __init__(self, *, attempt='', core_missing=False, later_absent=False, final_absent=False):
+        super().__init__()
+        self.initial_attempt=attempt; self.core_missing=core_missing
+        self.later_absent=later_absent; self.final_absent=final_absent
+        self.produced=[]
+
+    async def evaluate(self,script):
+        if 'window.__wrdPassiveSampler.sample()' not in script:
+            return await super().evaluate(script)
+        self.samples+=1
+        state=ui_state(); state['startClickMarks']=int(self.clicks>0)
+        if not self.clicks:
+            # Native WebRTC starts with attempt '', generation/lease 0; the
+            # unchanged sampler preserves that sentinel and absent media.
+            sample=private_sample(); sample.pop('attemptHash')
+            sample.update(attempt=self.initial_attempt, socketConnected=False,
+                pcState='unknown', generation=0, leaseEpoch=0, callbacks=0,
+                maxFrameGapMs=0, width=0, height=0, relayLoadCallbacks=0,
+                maxRelayLoadGapMs=0)
+            if self.core_missing:
+                sample.update(generation=None,leaseEpoch=None,mediaPhase='unknown')
+                state.update(clientAvailable=False,coreInstalled=False,coreInteractiveMarks=0)
+        else:
+            state.update(socketPresent=True,pcPresent=True,attemptPresent=True,
+                sessionId='session-canary',socketId='socket-canary',admissionId='admission-canary')
+            sample=ready_sample(10+self.samples); sample.pop('attemptHash')
+            sample['attempt']='attempt-canary'
+            # Keep several post-Start samples unready to distinguish startup
+            # elapsed time from the unchanged 300-second qualified duration.
+            if self.samples<5: sample.update(frameAgeMs=None,inputAllowed=False)
+            if (self.later_absent and self.samples>=10) or (self.final_absent and 'finalize' in script):
+                sample['attempt']=self.initial_attempt
+        self.produced.append((sample,dict(sample)))
+        result=dict(state=state,sample=sample)
+        if 'finalize' in script: result['diagnostic']=runner.empty_diagnostic()
+        return result
+
+
+class NativeStartupBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    setUp=RuntimeRunTests.setUp
+    status=RuntimeRunTests.status
+    summary=RuntimeRunTests.summary
+
+    async def run_page(self,page):
+        original_sleep=asyncio.sleep; original_time=runner.time; clock=[.125]
+        async def sleep(delay):
+            clock[0]+=delay
+            await original_sleep(0)
+        proxy=SimpleNamespace(**{name:getattr(asyncio,name) for name in dir(asyncio)})
+        proxy.sleep=sleep
+        manager=RuntimeManager(page)
+        with patch.object(runner,'time',SimpleNamespace(monotonic=lambda:clock[0],time=original_time.time)), patch.object(runner,'asyncio',proxy):
+            result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
+        rows=[json.loads(line) for line in (Path(self.args.output_dir)/'samples.jsonl').read_text().splitlines()]
+        for original,snapshot in page.produced: self.assertEqual(original,snapshot)
+        output=''.join(path.read_text() for path in Path(self.args.output_dir).iterdir())
+        for private in ('password-canary','session-canary','socket-canary','admission-canary','attempt-canary','host-canary',str(self.log)):
+            self.assertNotIn(private,output)
+        self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
+        return result,rows,self.summary()
+
+    async def assert_startup_qualifies(self,page):
+        result,rows,summary=await self.run_page(page)
+        self.assertIsNotNone(rows[0]['sample'], summary['failure'])
+        self.assertEqual(rows[0]['phase'],'startup')
+        self.assertIsNone(rows[0]['sample']['attemptHash'])
+        self.assertEqual(rows[0]['identity'],dict.fromkeys(('sessionHash','socketHash','admissionHash')))
+        self.assertEqual(rows[0]['sample']['callbacks'],0)
+        self.assertFalse(rows[0]['sample']['inputAllowed'])
+        self.assertEqual(rows[0]['hostObservation']['coverage'],'complete')
+        self.assertEqual(page.clicks,1)
+        self.assertEqual(result,0); self.assertIsNone(summary['failure'])
+        self.assertEqual(summary['startup'],runner.VERIFIED_STARTUP)
+        self.assertEqual(summary['continuity']['status'],'PASS')
+        self.assertEqual(summary['continuity']['elapsedSeconds'],300)
+        self.assertGreater(rows[-1]['elapsedSeconds'],summary['continuity']['elapsedSeconds'])
+        qualified=[row for row in rows[:-1] if row['phase']=='baseline']
+        self.assertEqual(summary['continuity']['samples'],len(qualified)+1)
+        self.assertGreater(len(rows)-summary['continuity']['samples'],2)
+
+    async def test_native_empty_attempt_before_start_retained_without_qualifying_time(self):
+        await self.assert_startup_qualifies(NativeStartupPage())
+
+    async def test_core_missing_null_attempt_before_start_remains_observable(self):
+        await self.assert_startup_qualifies(NativeStartupPage(attempt=None,core_missing=True))
+
+    async def test_malformed_attempt_still_stops_before_start(self):
+        for name,attempt in (('number',1),('bool',False),('list',[]),('mapping',{}),('long','x'*129),('encoding','\ud800')):
+            with self.subTest(name=name):
+                self.args.output_dir=str(self.root/name)
+                page=NativeStartupPage(attempt=attempt)
+                result,rows,summary=await self.run_page(page)
+                self.assertEqual(result,1); self.assertEqual(page.clicks,0)
+                self.assertEqual(summary['failure'],dict(phase='startup',reason='schema-rejected'))
+                self.assertIsNone(rows[0]['sample']); self.assertIsNone(summary['startup'])
+                self.assertEqual(summary['continuity']['samples'],0)
+
+    async def test_later_absent_attempt_cannot_preserve_qualified_pass(self):
+        for name,attempt in (('empty',''),('null',None)):
+            for final in (False,True):
+                with self.subTest(attempt=name,final=final):
+                    self.args.output_dir=str(self.root/(name+str(final)))
+                    page=NativeStartupPage(attempt=attempt,later_absent=not final,final_absent=final)
+                    result,rows,summary=await self.run_page(page)
+                    self.assertEqual(page.clicks,1); self.assertEqual(result,1)
+                    self.assertEqual(summary['failure'],dict(phase='baseline',reason='baseline-failed'))
+                    self.assertNotEqual(summary['continuity']['status'],'PASS')
+                    self.assertIsNotNone(rows[-1]['sample'])
+                    self.assertIsNone(rows[-1]['sample']['attemptHash'])
