@@ -1,5 +1,7 @@
 # 最近三天稳定性、网页与端到端延迟复查及整改方案
 
+> **2026-10-18 08:06最新状态：** 实际产品代码已部署为53ed5d7/build79bf9a5afea0458e，Signal45287/Host94398在线，tunnel/watcher未操作。新正式短测300.000051s/301样本PASS，独立三小时10800.000087s/10801样本PASS，缺样/迟到/失败/身份变化0，最大rVFC间隔766.58ms；不合并旧失败片段。源采集约8.171次/秒，输出19.458FPS包含59.062%复用，内容新鲜度和编码局部尖峰仍有限制；真实业务输入、可见/物理效果NOT RUN，普通恢复未验收。SUP观察缺失和完整进程树UNKNOWN保留。新增HTTP请求头相关403/200差异已记录，未动边缘配置。详见[最新诊断总览](2026-10-17-diagnosis-and-acceptance-status.md)和[本轮代码、上线与三小时证据](2026-10-18-verified-warmup-execution.md)。**以下是各自时间点的历史记录，不代表当前部署；旧FAIL/INCOMPLETE不改写。**
+
 > **15:45 状态更新：** 认证与截图epoch修复已部署（Signal e996467、Host83c513e），服务在线。两次三小时尝试分别在256.072s和131.953s失败：前者Host长停顿/心跳超时；后者媒体连续但客户端信令transport-close，不能合并归因。后者maxgap783.3ms，5轮ping均有pong。当前无自动Viewer，等待人工直接连接及真实输入验证；不能宣布彻底稳定。完整当前结论见[诊断与验收总览](2026-10-17-diagnosis-and-acceptance-status.md)。下列早期状态为历史记录。
 
 > **14:49 部署更新：** 可丢DC诊断准入已加载（冻结候选0ffb941，Host源码e279060）；Host-only重载11.606s，新PID10658/14:47:29，Signal64505、tunnel/watcher及网页builda6e8b15122bde656不变。health/Host/Viewer0与源码/资源/HEAD/index保留核对通过。带归属旁证的10800s TURN验收进程已启动，尚无最终结果；此前FAIL及原生input→visible NOT RUN保留。

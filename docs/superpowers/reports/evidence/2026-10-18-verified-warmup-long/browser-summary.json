@@ -1,0 +1,502 @@
+{
+  "kind": "independent-read-only-passive-browser-evidence-audit",
+  "sourceCommit": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+  "buildId": "79bf9a5afea0458e",
+  "sources": {
+    "samplesBytes": 37284140,
+    "samplesSha256": "aa3a021bbcd15608d18b47ea5733f31f67b11c35cbcdde7ac1bf38274ae7b2a9",
+    "filePaths": [
+      "/tmp/wrd-owned-turn-probe-private/verified-warmup-long-20261018a/supervisor.json",
+      "/tmp/wrd-owned-turn-probe-private/verified-warmup-long-20261018a/session/summary.json",
+      "/tmp/wrd-owned-turn-probe-private/verified-warmup-long-20261018a/session/samples.jsonl",
+      "/tmp/wrd-owned-turn-probe-private/verified-warmup-long-20261018a/session/lifecycle.json"
+    ]
+  },
+  "independentRecalculation": {
+    "totalJsonlRows": 10801,
+    "observedRows": 10801,
+    "missingSamples": 0,
+    "lateSamplesOver500Ms": 0,
+    "failedConditionOccurrences": 0,
+    "rowsWithFailedCondition": 0,
+    "identityChangeObservationsAgainstBaseline": 0,
+    "uniqueCompositeIdentities": 1,
+    "firstTick": 0,
+    "lastTick": 10800,
+    "duplicateTicks": 0,
+    "missingIntegerTicksInObservedTickRange": 0,
+    "firstObservedElapsedSeconds": 4.0593091398477554e-05,
+    "lastObservedElapsedSeconds": 10800.000127606094,
+    "observedSpanSeconds": 10800.000087013002,
+    "observedBrowserSpanMs": 10800000.700000048,
+    "progressAfterBaseline": true,
+    "callbackCountFirst": 12,
+    "callbackCountLast": 208025,
+    "counts": {
+      "expectedBuild": 10801,
+      "scopeStable": 10801,
+      "socketConnected": 10801,
+      "pcConnected": 10801,
+      "knownRelayPath": 10801,
+      "inputAllowed": 10801,
+      "inputGateObserved": 10801,
+      "fullEightGateTrue": 10801,
+      "blockedReasonsEmpty": 10801,
+      "nonemptyAttemptIdentity": 10801
+    },
+    "gateTrueCounts": {
+      "allowed": 10801,
+      "inputActive": 10801,
+      "hasInputLease": 10801,
+      "viewportSupported": 10801,
+      "hasPaintedFrame": 10801,
+      "currentAttemptReady": 10801,
+      "hasActiveControl": 10801,
+      "socketConnected": 10801
+    },
+    "frameAgeMsSnapshotDistribution": {
+      "samples": 10801,
+      "p50": 26.399999952293,
+      "p95": 51.90000009536743,
+      "max": 367.40000009536743
+    },
+    "maxCompletedRvfcGapMs": 766.5800000000017,
+    "maxObservedNoProgressMs": 766.5800000000017,
+    "sampleLatenessMsDistribution": {
+      "samples": 10801,
+      "p50": 0.4854709841310978,
+      "p95": 2.123476006090641,
+      "max": 61.997679993510246
+    },
+    "sampleElapsedSpacingSecondsDistribution": {
+      "samples": 10800,
+      "p50": 1.0000021709129214,
+      "p95": 1.001716097816825,
+      "max": 1.0610403409227729
+    },
+    "quantiles": "nearest-rank: sorted[ceil(p*n)-1]",
+    "frameStallThresholdMs": 5000
+  },
+  "matchesRecordedSummary": {
+    "samples": true,
+    "missingSamples": true,
+    "lateSamples": true,
+    "failedObservations": true,
+    "identityChangeObservations": true,
+    "maxObservedNoProgressMs": true,
+    "progressAfterBaseline": true
+  },
+  "recordedSummary": {
+    "status": "PASS",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 10800,
+    "elapsedSeconds": 10800.18389989715,
+    "threeHourContinuityMet": true,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "mode": "relay",
+    "failure": null
+  },
+  "startProof": {
+    "status": "verified",
+    "freshPage": true,
+    "coreInstalled": true,
+    "authVerified": true,
+    "startClickMarksBefore": 0,
+    "startClickMarksAfter": 1
+  },
+  "startupDeltas": {
+    "bootstrap-startFromClickMs": 0.5,
+    "bootstrap-readyFromClickMs": 4.399999999999636,
+    "signal-connectedFromClickMs": 3030.7,
+    "first-frameFromClickMs": 6434.1,
+    "activeFromClickMs": 6434.200000000001
+  },
+  "startupDeltasScope": "One normal UI Start on one page, browser performance.now marks only; not population P95 or causal before/after estimate.",
+  "metrics": {
+    "inputAckRttMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "inputToPostApplyFrameMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "inputToVisibleEffectMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "hostQueueMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "hostApplyMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "hostAdapterAwaitMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "paintIntervalMs": {
+      "availableObservations": 10801,
+      "usableObservations": 10801,
+      "numericLastObservations": 10801,
+      "maxCount": 100,
+      "lastRolling": {
+        "available": true,
+        "count": 96,
+        "last": 50,
+        "p95": 66.69999999925494,
+        "lastSampleAgeMs": 13.69999990426004
+      },
+      "snapshotLastDistribution": {
+        "samples": 10801,
+        "p50": 50,
+        "p95": 66.70000000018626,
+        "max": 350
+      }
+    },
+    "freshFrameAgeMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "candidateRttMs": {
+      "availableObservations": 10801,
+      "usableObservations": 10801,
+      "numericLastObservations": 10801,
+      "maxCount": 5,
+      "lastRolling": {
+        "available": true,
+        "count": 5,
+        "last": 36,
+        "p95": 42,
+        "lastSampleAgeMs": 886.0999999046326
+      },
+      "snapshotLastDistribution": {
+        "samples": 10801,
+        "p50": 37,
+        "p95": 52,
+        "max": 424
+      }
+    },
+    "jitterBufferMs": {
+      "availableObservations": 10799,
+      "usableObservations": 10799,
+      "numericLastObservations": 10799,
+      "maxCount": 5,
+      "lastRolling": {
+        "available": true,
+        "count": 5,
+        "last": 8.1,
+        "p95": 10.1,
+        "lastSampleAgeMs": 886.0999999046326
+      },
+      "snapshotLastDistribution": {
+        "samples": 10799,
+        "p50": 7,
+        "p95": 10.9,
+        "max": 121.4
+      }
+    },
+    "decodeMs": {
+      "availableObservations": 10799,
+      "usableObservations": 10799,
+      "numericLastObservations": 10799,
+      "maxCount": 5,
+      "lastRolling": {
+        "available": true,
+        "count": 5,
+        "last": 0.6757000000007451,
+        "p95": 0.6757000000007451,
+        "lastSampleAgeMs": 886.0999999046326
+      },
+      "snapshotLastDistribution": {
+        "samples": 10799,
+        "p50": 0.6366842105261652,
+        "p95": 0.8173157894737259,
+        "max": 0.9999473684207248
+      }
+    },
+    "encoderMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "relayFrameAckRttMs": {
+      "availableObservations": 0,
+      "usableObservations": 0,
+      "numericLastObservations": 0,
+      "maxCount": 0,
+      "lastRolling": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p95": null,
+        "lastSampleAgeMs": null
+      },
+      "snapshotLastDistribution": {
+        "samples": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    }
+  },
+  "metricScopes": {
+    "lastRolling": "Final sampled application metric window; p95 belongs to its five-second application window, not the 3-hour session.",
+    "snapshotLastDistribution": "Nearest-rank distribution of finite metric.last snapshots at nominal 1Hz, including repeated and potentially stale window.last values; not individual event distribution.",
+    "frameAgeMsSnapshotDistribution": "Age since last requestVideoFrameCallback at nominal 1Hz observations. Does not establish capture-content freshness or physical visible latency.",
+    "zeroInputUsability": "No business input was emitted. Six input-related metrics with zero usable samples stay NOT_RUN/null, not zero-latency evidence."
+  },
+  "lifecycle": {
+    "captureStatus": "ok",
+    "writeStatus": "ok",
+    "coverage": {
+      "status": "partial",
+      "failure": "none",
+      "observedFromMs": 0,
+      "boundAtMs": {
+        "s": 1800,
+        "m": 1800,
+        "e": 1800
+      },
+      "bindingChanges": 3,
+      "missingReferences": 2,
+      "transport": "websocket"
+    },
+    "droppedEvents": 30815,
+    "retainedEventCount": 128,
+    "counters": {
+      "sd": 0,
+      "mc": 0,
+      "ec": 0,
+      "se": 0,
+      "re": 0,
+      "rx": 432,
+      "tx": 14830,
+      "sc": 1,
+      "mo": 1,
+      "ra": 0,
+      "rr": 0,
+      "rf": 0,
+      "ep": 421,
+      "eo": 421,
+      "ef": 14830,
+      "eu": 0,
+      "bind": 3,
+      "vis": 1,
+      "net": 1,
+      "focus": 1,
+      "hide": 0,
+      "show": 0,
+      "freeze": 0,
+      "resume": 0,
+      "preclose": 1,
+      "cap": 0
+    },
+    "firstDisconnectEventPresent": false,
+    "disconnectCauseKnown": false,
+    "browserCloseMs": 120,
+    "browserCloseStatus": "closed",
+    "managerStopMs": 25,
+    "managerStopStatus": "ok",
+    "cleanupStatus": "api-finished-exit-unknown",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "supervisor": {
+    "workerExitCode": 0,
+    "deadline": false,
+    "failureType": null,
+    "intervention": false,
+    "elapsedSeconds": 10826.653034042101,
+    "sampleTriggered": false,
+    "sampleStatus": "not-triggered",
+    "recordedIdentityCount": 7,
+    "exitedIdentityCount": 7,
+    "signalsCount": 0,
+    "allRecordedIdentitiesExited": true,
+    "completeProcessTreeExitEstablished": false,
+    "coverage": [
+      "observation-unavailable",
+      "polling-may-miss-fast-orphan",
+      "macos-check-to-signal-race",
+      "no-CDP-no-manager-proxy"
+    ],
+    "topLevelCompleteProcessTreeExitEstablished": false
+  },
+  "boundaryMetadata": {
+    "start": {
+      "capturedUTC": "2026-10-17T20:58:16.951824+00:00",
+      "capturedEpoch": 1792270696.9518049,
+      "capturedMonotonic": 1423150.938245335,
+      "health": true,
+      "status": {
+        "hostOnline": true,
+        "viewerCount": 0,
+        "relayViewerCount": 0,
+        "viewerEpoch": 1
+      },
+      "buildId": "79bf9a5afea0458e",
+      "pids": {
+        "signal": "45287",
+        "host": "94398"
+      }
+    },
+    "end": {
+      "capturedUTC": "2026-10-17T23:58:59.981203+00:00",
+      "capturedEpoch": 1792281539.9811862,
+      "capturedMonotonic": 1433994.244397185,
+      "health": true,
+      "status": {
+        "hostOnline": true,
+        "viewerCount": 0,
+        "relayViewerCount": 0,
+        "viewerEpoch": 2
+      },
+      "buildId": "79bf9a5afea0458e",
+      "pids": {
+        "signal": "45287",
+        "host": "94398"
+      }
+    },
+    "sameBuild": true,
+    "sameServicePids": true,
+    "elapsedMonotonicSeconds": 10843.306151850149
+  },
+  "conclusion": {
+    "passiveContinuity": "PASS",
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "fullProcessTreeExit": "UNKNOWN"
+  },
+  "limitations": [
+    "Continuity is bounded to the recorded single-page relay path, build, service PIDs, and observer; no real-user device or arbitrary reconnect qualification.",
+    "Input gate true is readiness evidence, not proof that any business input reached the native application or produced a visible effect.",
+    "requestVideoFrameCallback progress does not prove that captured desktop content is fresh.",
+    "Lifecycle event ring is partial with 30,815 dropped events and 128 retained entries; zero disconnect counters are bounded observer evidence, not a complete event history.",
+    "Supervisor polling includes observation-unavailable and inherent blind spots. Seven recorded identities exited with no signals, but complete process tree exit is not established.",
+    "Boundary metadata confirms matching PIDs/build and healthy idle endpoints at start/end, not independently continuous service health at every instant."
+  ]
+}

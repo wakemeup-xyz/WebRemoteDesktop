@@ -1,8 +1,42 @@
 # 稳定性、网页与输入延迟：诊断和验收总览
 
-更新：2026-10-18 00:44服务只读核对后，Asia/Shanghai。**服务正在运行，最新复测仍失败，尚未完成稳定性与真实输入验收，不能宣称彻底可用。** 本文汇总当前结论；原始时间线、证据口径和失败记录保留在各专项报告。
+更新：**2026-10-18 08:06，Asia/Shanghai。代码修复已实际部署，正式中继路径三小时被动连续性通过，服务保持在线。真实业务输入和可见效果仍未验收，不能据此宣布所有远控性能目标达标。** 最新详细证据见[本轮实施与系统复核](2026-10-18-verified-warmup-execution.md)。
 
-## 晚间继续排查
+## 当前状态和本轮实际改动
+
+- 产品源码 `53ed5d7`，网页 build `79bf9a5afea0458e`，Signal PID45287、Host PID94398。04:40仅重载Signal，Host仍为03:29启动的同一进程；tunnel/watcher未操作，W2四个watcher文件仍未部署。08:04本地health/status正常、Host在线、Viewer/relay0。
+- 本轮改了实际代码：资源采集从默认executor隔离为单个私有有界collector，有限清理和陈旧完成隔离；抓屏wall/线程CPU成对观测；浏览器bootstrap结果仅在同mode/TURN/Auth代且完成后严格3秒内复用；修复生产defer/core先于Auth初始化造成预加载立即失效的顺序。当前bootstrap增量最终35/35定向检查通过，独立任务与最终整体源码review通过，构建和服务加载均已核对。旧失败保留，未通过降画质或放宽5秒阈值获得PASS。
+- 用户暂无时间测试；继续自动诊断，无需重复请求人工反馈。当前没有自动Viewer占用。
+
+## 当前验收和耗时
+
+| 项目 | 最新实际结果 | 口径与限制 |
+|---|---|---|
+| 正式路径短测 | 301样本 / 300.000051s PASS，最大rVFC间隔383.3ms | 一次新页面、正常UI登录和Start、一次性proof |
+| 正式路径三小时 | **10801样本 / 10800.000087s PASS**；缺样、迟到、失败、身份变化0；八项输入gate每项全真；最大rVFC间隔766.58ms | 单一当前build/relay页面的连续性，复用帧也会出画；不等于内容或真实输入验收 |
+| 单次启动 | 短测bootstrap5.6ms/首帧6622.9ms；长测bootstrap4.4ms/信令3030.7ms/首帧6434.1ms | 两次不同页面，不能当启动P95或因果收益；长测信令单点略超3秒目标 |
+| 网络/解码 | 长测末次滚动窗RTT36/42ms、jitter8.1/10.1ms、decode0.676/0.676ms（last/P95） | 不是全会话事件分布，不相加估算单向传输/输入到画面 |
+| Host调度 | 1948个重叠滚动窗，loop窗口P95范围1.792–24.835ms；最大lag135.785ms | 不拼成总体P95，不能证明所有系统负载下都正常 |
+| 内容更新与编码 | 采集计数窗口约8.171次/秒；输出均值19.458FPS，其中59.062%复用；抓屏最大310.232ms=CPU16.225+非CPU294.007；编码max152.690ms，9窗P95>25ms | **内容新鲜度仍有性能空间**；未发现固定重复sleep/截图队列bug；不凭复用率调FPS/质量/缓存策略 |
+| 真实输入与恢复 | 六项输入指标有效样本均0，输入ACK、应用后帧、真实可见/物理效果NOT RUN；普通用户恢复尚未实测 | gate开放不证明输入已应用；proof被动会话不能代替普通连接恢复 |
+
+长测生命周期ring丢弃30815事件、coverage partial；SUP7个登记身份均退出且0signals，但保留`observation-unavailable`，完整进程树退出UNKNOWN。退出后一次reset重试并applied/FREE，线程/任务回6/7，空false/null close摘要仍不能证明对象释放；RSS未回进入前值，也未建立泄漏。以上缺失均未改写成成功。
+
+## 网页可达性新增发现
+
+08:04–08:06只读HTTP复核中，Python默认User-Agent对正式health/HTML/JS收到403，响应Server为cloudflare；Accept-only仍403，而既有canonical健康检查User-Agent返回200。说明本窗口存在**请求头相关的访问差异**，尚未确定具体边缘规则，不能直接归因先前真实浏览器故障。canonical请求的登录/Viewer HTML均有当前build；相对dist各多一处367字节插入，含Cloudflare Insights引用，不声称HTML逐字一致；当前core JS逐字一致。没有修改tunnel、边缘规则或用户网络设置。[原样保留的403与200证据](evidence/2026-10-18-verified-warmup-long/availability-summary.json)。
+
+## 剩余方案和边界
+
+下一性能定位应补同线程单调时钟的capture开始间隔、实际sleep、发布/锁等待和grab wall/CPU摘要，先解释采集吞吐再决定调度策略；peer清理完成日志应按本次invocation记录，避免当前peer所有权变化抑制旧对象完成事实。真实输入验收需要可证明的隔离目标，不能向当前共享桌面注入业务输入。继续保留普通恢复、多设备/网络和启动分布未验收状态；这些是明确剩余项，不是本轮已经实现的能力。
+
+[本轮spec](../specs/2026-10-18-bootstrap-ready-reuse-design.md)、[plan与完成记录](../plans/2026-10-18-bootstrap-ready-reuse-plan.md)、[三小时独立浏览器审计](evidence/2026-10-18-verified-warmup-long/browser-review.md)、[日志审计](evidence/2026-10-18-verified-warmup-long/runtime-review.md)。原三天固定分析窗口仍是10月14日02:15至17日02:15；新证据作为后续运行窗口追加，不伪称已补齐原缺失日志。服务保持可连接状态，当前验收结论只覆盖上述实际边界。
+
+---
+
+以下保留截至2026-10-18 00:44的诊断时间线与失败状态，仅为历史证据；与文首最新状态不一致时，以文首明确限定的版本/窗口为准。
+
+## 历史：10月18日00:44及此前续查
 
 用户再次报告连接不上和控制中断。本轮同版本本地300秒短测通过，正式入口对照却出现10.566秒停帧；空闲45分钟同样出现最高15.647秒的事件循环迟到，证明活动抓屏/编码不是此空闲故障的必要条件。Host CPU占用很低而全机换页持续显著，系统资源争用是重要候选，未定位唯一应用或排除Host空闲路径阻塞。详见[晚间续查](2026-10-17-evening-connectivity-followup.md)。
 
@@ -10,7 +44,7 @@
 
 00:01失败样本全部inputAllowed=false，初始租约已到达，但旧工具未保存门禁因素，且清理会覆盖startupSummary。证据工具现已修复，保留独立启动/失败快照、固定门禁因素和正向首帧超时事实；产品8s超时策略尚未变更。独立review发现的整份快照owner混合问题已修复并通过定向复审；最终集成review无Critical/Important，工具同步与新复测尚未执行。见[设计](../specs/2026-10-18-passive-gate-evidence-design.md)、[计划](../plans/2026-10-18-passive-gate-evidence-plan.md)、[review与并行审计](2026-10-18-passive-gate-evidence-review.md)。
 
-## 当前运行状态（10月18日00:44核对）
+## 历史运行状态（10月18日00:44核对）
 
 - 正式入口为 https://link.stockhub.wiki；本轮只读health返回200（2.889s），本地health正常、Host在线，Viewer/relay均0。上次维护短测已失败结束；当前没有运行probe。
 - 运行源码f4202b7（产品修改d27dbb2），网页build `07ad960b331ccc4b`；Signal PID42509/Host PID89291。23:58仅本地restart-signal；helper在34.292秒后health检查超时，随后独立健康检查与Host在线核对通过，未重复重启。Host、tunnel/watcher与quick URL缺失状态保持。[最新review及失败复测](2026-10-17-signaling-timeout-fallback-review.md)。
@@ -49,7 +83,7 @@
 
 [详细耗时边界与修复](2026-10-17-transport-input-to-frame-diagnosis.md)。真实业务输入不由自动化向共享桌面注入；人工点击/短文本可先确认基本使用，精确可见效果时延仍需受控内容证据。
 
-## 最新验收结论
+## 历史验收结论（截至00:44）
 
 | 验收 | 结果 | 含义 |
 |---|---|---|
@@ -63,7 +97,7 @@
 
 两次长测均保留完整失败结果；各有7个已登记测试进程自然退出，完整进程树退出仍不作保证。最新故障中首客户端关闭早于browser.close，服务器close日志却位于清理期间，不能据此认定关闭发起方。[A分析](2026-10-17-turn-long-failure-analysis.md)、[B信令](2026-10-17-turn-long-b-signal-analysis.md)、[B媒体](2026-10-17-turn-long-b-media-analysis.md)。
 
-## 还要解决什么
+## 历史待办（截至00:44，最新状态见文首）
 
 当前优先项：静默WS超时回退和固定安全错误摘要已完成独立review、117项不同离线用例及加载；最新复测没有捕获Viewer connect_error，而再次出现Host长停顿和心跳超时。[回退修复及最新失败记录](2026-10-17-signaling-timeout-fallback-review.md)。另审计发现首帧8秒超时可能使仍在协商的连接进入终止UI、晚到帧无法开启输入；此源码路径与现场时间相容，实际阻断因素尚需固定安全门禁摘要确认。工具失败分支覆盖startupSummary的问题也需修复，不能拿最终离线状态倒推启动状态。以下长期验收和历史待办不可用短测替代。
 

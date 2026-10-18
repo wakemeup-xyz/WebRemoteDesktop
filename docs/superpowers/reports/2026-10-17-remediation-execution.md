@@ -1,5 +1,7 @@
 # 稳定性与延迟整改实施记录
 
+> **2026-10-18 08:06最新状态：** 实际产品代码已部署为53ed5d7/build79bf9a5afea0458e，Signal45287/Host94398在线，tunnel/watcher未操作。新正式短测300.000051s/301样本PASS，独立三小时10800.000087s/10801样本PASS，缺样/迟到/失败/身份变化0，最大rVFC间隔766.58ms；不合并旧失败片段。源采集约8.171次/秒，输出19.458FPS包含59.062%复用，内容新鲜度和编码局部尖峰仍有限制；真实业务输入、可见/物理效果NOT RUN，普通恢复未验收。SUP观察缺失和完整进程树UNKNOWN保留。新增HTTP请求头相关403/200差异已记录，未动边缘配置。详见[最新诊断总览](2026-10-17-diagnosis-and-acceptance-status.md)和[本轮代码、上线与三小时证据](2026-10-18-verified-warmup-execution.md)。**以下是各自时间点的历史记录，不代表当前部署；旧FAIL/INCOMPLETE不改写。**
+
 > **2026-10-18 02:52更新：** 候选93f3908/builded92d1313adb54f6已加载，Signal51710/Host51808在线，本地重载26.648秒，tunnel/watch/主HEAD/index保留。新正式短测301行全部有效门禁开启、无采样失败，但有2716.6ms画面停顿；browser.close超时导致总结果INCOMPLETE，七个登记测试身份自然退出。线程采样符号处理超时、文件0字节，继续排查，未宣称三小时或真实输入通过。[上线与本轮结果](2026-10-18-slow-start-idle-io-rollout.md)。
 
 > **2026-10-18 部署前复审更新：** 初始Start所有权及Host离线/reset日志两项整改已开发并通过独立review；Host有界文件writer初审拦截flush前缀并发问题，8e9fc0f修订定向复审已通过。产品仍运行f4202b7/build07ad960b331ccc4b，Signal42509/Host89291健康及在线；未以旧五分钟PASS替代新版验收。最终整体review又拦截初次出画前socket替换/保留PC的回调归属缺陷；380b250修订及228项相关离线检查通过，定向最终复审通过，可进入已授权上线。精确上线、新短测、三小时及真实输入仍待完成。详见[传输与输入延迟补充](2026-10-18-connectivity-latency-followup.md)和[实现复审记录](2026-10-18-slow-start-idle-io-review.md)。

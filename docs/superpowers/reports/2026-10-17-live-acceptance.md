@@ -1,5 +1,7 @@
 # 2026-10-17 公网运行验收
 
+> **2026-10-18 08:06最新状态：** 实际产品代码已部署为53ed5d7/build79bf9a5afea0458e，Signal45287/Host94398在线，tunnel/watcher未操作。新正式短测300.000051s/301样本PASS，独立三小时10800.000087s/10801样本PASS，缺样/迟到/失败/身份变化0，最大rVFC间隔766.58ms；不合并旧失败片段。源采集约8.171次/秒，输出19.458FPS包含59.062%复用，内容新鲜度和编码局部尖峰仍有限制；真实业务输入、可见/物理效果NOT RUN，普通恢复未验收。SUP观察缺失和完整进程树UNKNOWN保留。新增HTTP请求头相关403/200差异已记录，未动边缘配置。详见[最新诊断总览](2026-10-17-diagnosis-and-acceptance-status.md)和[本轮代码、上线与三小时证据](2026-10-18-verified-warmup-execution.md)。**以下是各自时间点的历史记录，不代表当前部署；旧FAIL/INCOMPLETE不改写。**
+
 > **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新TURN窗口turn-long-20261017b最终131.953秒/132样本INCOMPLETE：客户端transport-close时PC与画面仍推进，maxgap783.3ms；5次Signal ping均有pong，本次没有长停帧或ping-timeout签名。七个已登记测试身份自然退出；三小时及真实input→visible仍未通过。
 
 > **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
