@@ -55,17 +55,19 @@ validate_terminal_coverage(ownership, diagnostic_snapshot, proof_snapshot)
 1. 在同一 scan 中捕获原 `state(pid)` 实际执行的 resolve/create_time/status 读取，记录该登记 birth 被确认 alive 的新鲜 before 观测；不能使用 lastObservedEpoch 或缓存 alive。原调用各执行一次，不额外做 before 进程观测。token 必须是本轮、该 PID 的紧邻 state→children 路径，遇到嵌套、其他操作或归属不明即失效。未进入直接 children 异常候选时，before token 缺失/失效本身不新增 veto；原 state=unknown 的 skip 行为不变。
 2. 在实际直接 `children(recursive=False)` 入口，保存完整已登记 PID/birth、parent PID/birth（root 可 null）、登记 provenance，以及 entry 对象/身份不变的内部 token。此步骤不查新 PID、不增加所有权。PID 必须为正整数且非 bool，birth 为有限正数，parent 字段须有效。
 3. 仅捕获该调用本身抛出的注入 psutil.NoSuchProcess 类实例，且安全读取的 error.pid 与请求 PID 严格一致。原 module35 必须照常记录 children event。resolve、create_time、status、ppid、_add、未知/未登记 child、AccessDenied/OSError/其他异常不适用。缺少 error.pid 不推断。
-4. 立即对**同一个数字 PID**做一次有限的 identity observation：resolve；存在时读取 birth/status/birth。没有循环、sleep 或重试。支持 resolve 的同 PID NoSuchProcess 证明 absent；存在时两次 birth 相等且等于旧 birth、status=zombie 证明 same-birth terminal；两次有限正 birth 相等且不同于旧 birth 记录 reused。其他读取失败、同 birth alive、未知 status、birth 变化、登记 entry 变化、归属或时钟不明均 sticky fail closed。中间 create_time/status 的 NoSuchProcess 可保守拒绝，不必扩大 absent 分支。
+4. 立即对**同一个数字 PID**做一次有限的逻辑 identity observation。首次 raw factory resolve 的同 PID NoSuchProcess 仍可证明 absent，此分支只调用一次 factory。present 分支由第一个 fresh handle 读取 birth 和 status，然后必须再调用同 PID raw factory 创建**第二个独立 fresh handle**，从第二个 handle 读取 birthAgain。psutil.Process.create_time 会缓存，同一 handle 的第二次 create_time 不构成新鲜复核；禁止复用该 handle、调用私有 `_proc` 绕过或清缓存。只有两个 fresh handle 的有限正 birth 相等且等于旧 birth、status=zombie 才证明 same-birth terminal；两者 birth 相等且不同于旧 birth 才记录 stable reused。第二次 resolve 或读取中的任何 NoSuchProcess/AccessDenied/OSError、unknown、birth 不稳定或其他失败均不产有效证明，不能降级为 absent；第一 handle 的 birth/status 读取失败也拒绝。没有循环、sleep 或重试，不查询其他 PID、不额外 children。登记 entry 变化、归属或时钟不明继续 sticky fail closed。
 5. 以原异常对象立即重新抛出，让不变 Registry 和 module35 生成原 gap。额外 observation 不进入原 diagnostic 记录流，不改变其 pending event；新 producer 自行记录其成败。若 observation 自身异常，也必须保留原异常和原 gap，同时 sticky 标记 proof 失败。
 6. gap 完成后才形成可消费 proof，验证 event 和 gap 的精确对应。before、error、after、gap 的 monotonic/wall 均须有限且非负、依序不倒退；从 before 开始至 gap 完成的 monotonic 总跨度 **≤1.000 秒**。任何超时/调度越界只拒绝，不延长原 deadline。有限调用次数不是 OS 调用硬实时保证。
 
-正常路径不得新增 process resolve、create_time/status、children、ppid 或 signal 调用；异常路径只新增上述一次 exact-PID observation。原 state、signal、cleanup、result 逻辑仍生效。尤其原 `state()` 的 AccessDenied/OSError 可能仅返回 unknown 并跳过该次扫描；module35 记录支持的 state event，failed 未必为 true。不得把这类没有 gap 的既有行为改成全局 veto，也不宣称所有上下文观测错误都被原实现拒绝。新增 after observation 的 unknown/AccessDenied/OSError 则不能形成有效 proof，原 children gap 仍使 consumer 拒绝。entry token 不把 Python object id 当跨进程身份，序列化的是已登记身份与 provenance；consumer 以最终 ownership 对应记录复核。
+正常路径不得新增 process resolve、create_time/status、children、ppid 或 signal 调用；异常路径只新增上述一次 exact-PID **逻辑** observation，不能解释成 present 分支只准一次 factory。其显式调用上限为 present 最多 2 resolves + 2 birth reads + 1 status，initial absent 为 1 resolve；psutil 构造 fresh handle 时隐含的 OS 读取计入观测语义与原1秒总窗口，不能声称这些显式计数等于全部 kernel reads。第二 handle 不带来重试或其他 PID 权限。原 state、signal、cleanup、result 逻辑仍生效。尤其原 `state()` 的 AccessDenied/OSError 可能仅返回 unknown 并跳过该次扫描；module35 记录支持的 state event，failed 未必为 true。不得把这类没有 gap 的既有行为改成全局 veto，也不宣称所有上下文观测错误都被原实现拒绝。新增 after observation 的 unknown/AccessDenied/OSError 则不能形成有效 proof，原 children gap 仍使 consumer 拒绝。entry token 不把 Python object id 当跨进程身份，序列化的是已登记身份与 provenance；consumer 以最终 ownership 对应记录复核。
+
+两个 factory 调用本身不足以证明 handle 独立：第二次返回与第一 handle 相同的对象时，Task 1 proof 和 Task 2 known observation 均保守拒绝，不重试。实例独立检查只用于内部 fresh-handle 确认，不把 object id 序列化成 OS 身份；实际身份/终态仍由两次 birth 和第一 handle 的 status 条件决定。cache-faithful fixture 必须覆盖 factory 两次返回同一 cached 对象的拒绝反例，不增加观察或 API。
 
 ### 证据格式、限制与消费
 
 snapshot 为 version=1、scope=`known-process-terminal-scan-proof`、role=`worker`，含 proofs、failed、overflow、limits。limits 固定 `proofs=32`、`bytes=32768`、`maxIntervalSeconds=1.0`。字节限制覆盖**整个** UTF-8 compact JSON snapshot；超限不得裁剪成成功。32 条后再有候选，或 snapshot 不可序列化、时钟/schema/关联读取失败，均 sticky failed/overflow。失败状态也必须有界可输出；不存命令行、环境、原始错误消息、输入内容或发现列表。
 
-每条 proof 含唯一递增 proofId、role/stage/scanId/eventId、gapIndex、operation=`children`、recursive=false、PID/birth/parent/provenance、before 的实际 birth/status 和 clocks、error class/error.pid 与 clocks、after 的 operation/outcome/birth/status/birthAgain 与 clocks、gap clocks、entryUnchanged。gapIndex 是**不变 snapshot.gaps 的零起始索引**；它和 role/scanId/eventId/direct-scan-error/原 gap 内容一起标识 gap，不给 module35 追加 gapId。event.birth=null 可以保留：新 proof 自己承担已登记身份关联，不能修改旧 event 补 birth。
+每条 proof 含唯一递增 proofId、role/stage/scanId/eventId、gapIndex、operation=`children`、recursive=false、PID/birth/parent/provenance、before 的实际 birth/status 和 clocks、error class/error.pid 与 clocks、after 的 operation/outcome/birth/status/birthAgain 与 clocks、gap clocks、entryUnchanged。本次 fresh-handle 修订不改 schema：birth/status 来源为第一 fresh handle，birthAgain 来源为第二独立 fresh handle。gapIndex 是**不变 snapshot.gaps 的零起始索引**；它和 role/scanId/eventId/direct-scan-error/原 gap 内容一起标识 gap，不给 module35 追加 gapId。event.birth=null 可以保留：新 proof 自己承担已登记身份关联，不能修改旧 event 补 birth。
 
 consumer 独立校验全部结构与实际数值，不能信任 producer 的 disposition/resolved/entryUnchanged 单个标志。要求：
 
@@ -97,6 +99,8 @@ loader 必须在任何 R4 导入前验证 package manifest、所需 transitive i
 
 outer entry 先调用真实 R4 `attempt_context(args, admission=True)`，再校验 R5 history/admission。正常 run 在调用 main 前消费一个 exclusive one-use R5 marker，再执行 main；check-only 不进入 main 的运行/写入路径、不消费任何 marker。它不替换原 attempt_context 的结果或跳过 run 中的重复检查。新 proof/assessment 与原 main 产生的**新** legacy result 分开落盘，用 SHA 强绑定；原 result 的 raw 字段保留。outer R5 result 明示 prospective policy、生效代码/依赖 SHA、legacy result SHA、proof SHA、完整新 history、validation 与 classification；缺少 outer result、任一失败或 legacy 非成功时，R5 不成功。后续情景必须同时检查同序列的 legacy 和 R5 predecessor，不能只凭 legacy classification 前进。
 
+Task 2 最终 review 已确认 predecessor 场景交叉绑定 P2：仅保证 prior outer result 与 legacy result 场景一致、prior attempt 与 root decision 场景一致不够。必须要求 **prior outer result / legacy result / prior attempt / root decision / started marker 五者 scenario 严格相等，且等于当前场景的 expected previous scenario**。prior attempt、started marker 必须校验各自 exact schema、kind、schemaVersion；原全部 identity/ref/clock/proof 绑定继续执行，不得以新增场景校验替代或放松。baseline 结果指向 continuity prior attempt/root decision 的混合记录必须被实际新增 validator 拒绝，包括 next within-grace 的 check-only 路径；此已确认 P2 与缓存问题一并纳入 Task 2 fix round 1，不增加 hook、不修改 old main。
+
 `--check-only` 是独立真实只读集成入口：执行真实 R4 完整 gate（含 attempt_context/ready_context 路径），独立调用真实 current_gate 和真实 source_pins，**最后**追加 R5 exact known-list/root decision≤60 秒与时钟检查；不借用 main 的首次/final hook 状态。它对当前 FS、metadata、Git、known process、HTTP 做原有有界只读检查，不调用 main、不启动 worker/browser/sample、不修改服务、不写 operational marker/result、不生成 qualification 或消费 one-use；仅 stdout 输出 ≤32768 UTF-8 bytes 的脱敏诊断，root 可另存真实输出。失败返回非零；成功只表示当时只读集成通过。
 
 ### 四次失败、reload 与已知身份
@@ -122,6 +126,8 @@ root 新 decision/sequence/attempt/runNonce 必须排除所有历史标识，包
 
 准入要求对同一精确 union 的 fresh known-quiescence：gone、same-birth zombie、稳定不同 birth 仅证明旧身份已静默；alive-matching/unknown/不完整观测拒绝。每个观察均有 provenance、时钟与原 identity；TTL **≤60 秒**、wall/monotonic 无倒退，临运行立即再次核查相同 known-list。服务身份单独检查活性，不能纳入 quiescence 或获得信号权限。保留 strict idle 的 viewer=0/relay=0 和 lsof **5 秒**有界检查。任何未关闭历史、新旧 ID 混用、来源缺失、过期或 runtime drift 均在 Popen 前拒绝。
 
+Task 2 的 known-quiescence 也必须使用同 PID 的两个独立 fresh handle：第一 handle 取 birth/status，第二次 raw factory resolve 得到第二 handle 后取 birthAgain；同 handle 的 cached create_time 双读不证明 stable-nonmatching。initial resolve absent 仍仅1次 resolve；present 最多2 resolves + 2 birth reads + 1 status，构造器隐含 OS 读取计入观测语义。第二 handle 的任何读取错误（含 NoSuchProcess/AccessDenied/OSError）、unknown 或 birth 不稳定均为 unknown 并由 validator 拒绝，不能转为 gone/reused。禁止 `_proc` 绕过、清缓存、重试、其他 PID/children；schema、既有 freshness/超时门槛不变。
+
 ### 运行与变更边界
 
 文档/两个实现任务不 copy/build/reload、不启动浏览器/worker/sample、不网络或进程查询、不重启服务。root 在代码、纯测试与 fresh most-capable 全分支 review 完成后，必须先独立执行上述真实 `--check-only` 才可决定 run；该阶段允许正常 Git/known-process/HTTP 只读检查，禁止任何运行/服务 mutation。只读成功后 root 另建 fresh run decision，实际 run 重跑全部原 gate 和 R5 gate；check-only 不是 runtime qualification，也不豁免 60 秒 TTL 或启动 source_pins 返回后的 fresh 检查。每个 scenario 保留独立 root decision、一用一次、fresh strict idle；不自动 retry/next/clear。baseline/within-grace/after-grace/continuity 的预算分别 **300/390/390/10800 秒**，原 worker deadline=duration+128 及 cleanup 上限不变；within/after 的**整个恢复场景**禁止 Host sample。质量、FPS、codec、network、grace、deadline、阈值不变。
@@ -133,6 +139,8 @@ root 新 decision/sequence/attempt/runNonce 必须排除所有历史标识，包
 ## 验证、review 与交付
 
 两个任务分别 RED→GREEN、root systematic review、独立 commit；最终新鲜、最强可用 reviewer 审全分支。只运行新增、具有实际方法与 IO fake 的 fixture 测试，不重跑既有已过 561/166/19 套件。不以把 operational core 改成成功 stub 的测试声称全链路成功。
+
+本次修订由 root 顺序执行 **Task 1 fix round 2 → 独立复审 approved/commit → Task 2 fix round 1 → review/commit**，不得并行；仍分别只改各任务原定的实现/测试两文件，不增加 API/schema/框架。缓存忠实 fake 必须使同 handle create_time 永远返回自身缓存值，在 status 期间把底层 birth 从20改为30，第二个 fresh handle 才可见30。用实际 producer+consumer 及实际 observe_known+validator 在旧实现产生行为 RED，再验证新实现拒绝；同时保留 stable-zombie/stable-reused 局部正例（Task 1 persistent final reused 仍拒绝）、normal call parity、initial absent=1 resolve/present=2 resolves、原 pending/event/gap 和原 exception 不变。已确认的 predecessor 场景绑定 P2 在同一 Task 2 fix round 1 解决，补实际新增 validator 的下游拒绝反例。此次文档修订未运行这些测试，修复轮次状态由 root ledger 记录，不据此追补历史资格。
 
 Task 1 要覆盖 actual Registry AST + actual module35 + producer/consumer，包括正常调用 parity、原异常对象、raw gap 不变、absent/zombie 正例、persistent reused/unknown/alive/错误操作/metadata/时钟/overflow/孤立或缺失 proof 反例与下游拒绝。Task 2 用实际新增方法 + IO fakes 覆盖 history/known union/schema/loader/producer-consumer/main wiring，检验三接口次序和 check-only 无写入/无启动。允许明确的外部 legacy-gate 边界 fake；增加静态/函数 identity 断言，确保 attempt_context/ready_context/current_gate 完全原引用、source_pins hook 每次先调用原定义，及可独立验证的真实局部入口负例。必测 current_gate 时新鲜但 source_pins 完成后过期拒绝，以及 final source 验证保留而不再次要求启动 decision 年轻；未知调用次序/任意跳过标志均拒绝。
 

@@ -42,7 +42,7 @@ def validate_terminal_coverage(ownership, diagnostic_snapshot, proof_snapshot):
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s scripts -p 'test_terminal_scan_proof.py' -v
 ```
 
-- [ ] 实现 producer：沿 actual state 读取捕获 fresh same-scan before，绑定紧邻直接 children 调用；只在 exact injected NoSuchProcess/error.pid 匹配时追加一次同 PID resolve + birth/status/birth（或 resolve absent）。重新抛出相同 exception object。保留原 diagnostic pending token，gap 后完成关联。正常路径原 process-call parity；异常路径不再查其他 PID、不枚举子树、不发信号。
+- [ ] 实现 producer：沿 actual state 读取捕获 fresh same-scan before，绑定紧邻直接 children 调用；只在 exact injected NoSuchProcess/error.pid 匹配时追加一次同 PID 逻辑 observation。initial resolve absent 只需1次 raw factory；present 从第一 fresh handle 取 birth/status，再用同 PID raw factory 创建第二独立 fresh handle 取 birthAgain，最多2 resolves + 2 birth reads + 1 status。禁止同 handle cached create_time 双读、私有 `_proc` 绕过/清缓存；构造器隐含 OS reads 计入观测语义和原1秒窗口。第二 handle 任意 NoSuchProcess/AccessDenied/OSError/unknown/不稳定都无有效 proof，不能降级 absent；不重试、不查其他 PID/children。重新抛出相同 exception object，保留原 pending token/raw gap；正常扫描零额外 calls。
 - [ ] 固定限制：32 proofs、整个 compact UTF-8 snapshot ≤32768 bytes、before→gap monotonic ≤1.000s、全部 wall/monotonic 不倒退；已进入 proof 候选时缺测/异常/嵌套归属不明/entry 变化/容量满均 sticky failure，禁止裁剪后接受。gap 用原 snapshot 的 gapIndex + role/scanId/eventId/full metadata，不改 module35 schema。未进入候选的 before token 无效不新增 veto，保留原 state=unknown 的 skip。
 - [ ] 实现独立 consumer：exact schema、真实 clocks/identity/provenance、original diagnostics 完整性、coverage/gaps/proofs 一对一双向校验；原三 INHERENT 不变。保持原逐身份 exited、allRecordedIdentitiesExited=true、signals=[]、completeProcessTreeExitEstablished=false；输出单独 assessment，raw unexpected reason 仍保留。
 - [ ] 精确限制 event 处理：“未关联异常 event 拒绝”仅限新增 scan/children 证明域；原支持的无 gap state AccessDenied/OSError→unknown/skip event 原样保留、无 proof 资格，不新增全局 veto。所有原 observation-unavailable gap 仍逐一要求 children/NoSuchProcess proof，其他操作/错误 gap 拒绝；原 diagnostic.failed/dropped/overflow、coverage/signals/final status 规则照旧。
@@ -82,11 +82,20 @@ def test_reused_does_not_bypass_final_exited(self):
 | 操作边界 | scan resolve、child create_time/ppid/_add、未注册 child；children 或 after 的 AccessDenied/OSError/unsupported；error.pid 缺失/错 PID；候选无 fresh alive-before |
 | 关联与有界 | wrong role/stage/scan/event/gapIndex、duplicate/orphan/extra proof、第二未证明 gap、未关联 event、32/33、32768/32769 bytes、倒退/NaN/bool/缺钟、1s/超1s、diagnostic failed/dropped/overflow |
 | 保留行为 | 正常调用 parity；异常路径精确新增调用；same exception object rethrow；raw event/gap/coverage 字节内容不变；original cleanup/signal/result 决定与 deadlines 不变；单独 state AccessDenied/OSError→unknown/skip、无 gap、后来 exited 的行为与原版一致，不新增全局 veto |
+| 缓存语义 | 同 handle birth 永远缓存；status 期间底层 birth20→30，第二 fresh handle 读到30必须拒绝；stable zombie/reused 局部正例不变；initial absent=1 resolve、present=2 resolves；第二 handle 所有错误拒绝 |
 | 历史拒绝 | 第四次真实形状缺 proof 即拒绝；最终七 exited、worker0 不足以改判 |
 
 - [ ] GREEN：重跑本文件测试，检查失败都被修正且不是通过删反例。正常/异常路径日志仅有 fake 调用。测试报告标明 pure fixtures，真实运行仍 NOT_RUN。
 - [ ] root systematic review Task 1：查 bug、边界和 spec 一致；特别检查原 state 捕获 freshness、原 gap 不变、consumer 不信任 resolved flag、persistent reused 与原 catch 范围。修复实际发现后仅重跑受影响新测试。
 - [ ] root 只提交这两个实现/测试文件；建议 commit `feat(diagnostics): prove bounded known-process terminal scan races`。记录实际 commit SHA 与 review 结论后才进入 Task 2；不移动旧 source held41。
+
+**Task 1 fix round 2 — fresh-handle 依赖修正（root 顺序执行）**
+
+- [ ] 只修改本任务原定 `scripts/terminal_scan_proof.py`、`scripts/test_terminal_scan_proof.py`；保持接口/schema、32 proofs/32768 bytes/1s、所有原门禁不变。此修复必须先完成 review/commit，Task 2 fix round 1 才开始，不并行。
+- [ ] 以 cache-faithful fake 补行为 RED：同 handle create_time 始终返回缓存20，status 把底层 birth 改为30，fresh handle 才取到30。实际 producer+consumer 必须拒绝该不稳定观测；旧同 handle 双读错误接纳应令测试失败。可覆盖 same-birth zombie 与 reused 候选，不能仅以原 final reused veto 掩盖 producer 误接纳；最终身份已退出的 fixture 仍应因无有效 proof 拒绝。
+- [ ] 改为一次逻辑 observation 中 present 使用两个独立 fresh raw-factory handles；第二 resolve/read 任意错误均无证明，原 pending/event/gap/exception 保持。验证正常扫描零额外调用、initial absent 1 resolve、present 2 resolves、稳定 zombie/reused 正例及 final reused 原拒绝。
+- [ ] 补 factory 两次返回同一 cached 对象的 cache-faithful 反例：第二 handle 必须为独立实例，同对象保守拒绝、不重试。仅内部判断实例独立，不序列化 object id 为 OS 身份；仍依两次 birth/第一 status 判身份终态，无新增观察/API。
+- [ ] 运行本任务现有 unittest 命令记录真实 RED→GREEN；root review 后提交仅这两文件，ledger 记录实际修复 commit，作为 Task 2 fix round 1 依赖。此文档不宣称本轮已测试通过。
 
 ## Task 2 — 固定 R4 依赖的 R5 continuation 与双层准入
 
@@ -108,6 +117,7 @@ def test_reused_does_not_bypass_final_exited(self):
 - [ ] 从 pinned ownership records 推导 exact PID/birth union，核对预期 21+7+6=34，同时比较完整集合与 provenance、拒绝冲突，不能仅 count=34。加载完整旧 sequence/attempt/nonce deny-set；不得把 `0acf96f1...` 等前缀当完整 ID。
 - [ ] 实现 exact outer schema 与准入：root decision 强绑定新 legacy sequence/attempt/nonce、fourth immediatePriorFailure、baseline previousResult=null、已部署 pins、新 supervisorSourceTIP/源 SHA、dependency seal、fresh strict-idle 与 known-quiescence。原 attempt_context(args, admission=True) 的真实返回须再次对应 outer 所绑定值。
 - [ ] 保持 60s freshness、wall/monotonic 不倒退、lsof 5s 上限、viewer=relay=0、紧邻运行的同一 known-list 再核查。对 gone/zombie/stable-nonmatching birth 只证明旧身份静默；same-birth alive/unknown 拒绝。service identities 是独立保护活性，不是 quiescence 目标。
+- [ ] known-quiescence present 分支采用两个独立 fresh same-PID raw-factory handles：第一取 birth/status，第二取 birthAgain；initial absent 1 resolve，present 最多2 resolves + 2 birth reads + 1 status，构造器隐含 OS reads 计入语义。第二 handle 任意 NoSuchProcess/AccessDenied/OSError/unknown/不稳定均输出 unknown 并被 validator 拒绝；禁同 handle cached 双读、`_proc` 绕过/清缓存、重试或其他 PID/children。schema 与原 freshness/超时不变。
 - [ ] 实现 main 的三接口绑定：worker instrument_registry→Task 1，sample→original；validate_owned_coverage→worker strict new consumer + sample original strict consumer；source_pins→每次先无条件调用真实原 source_pins(args, m)，仅在 main 启动前首次调用成功后追加 exact known-list/root decision≤60s、无时钟倒退检查。前两项改变覆盖策略，第三项只追加启动准入；current_gate 完全原引用、保持原两次调用，不增加第四 hook。启动 source_pins 返回后 main 按原 tempdir→legacy marker→worker 次序，不插入额外等待。其余函数/validation stages/deadlines 不变；sample 委托用实际纯 consumer 检验，不伪造 ownership。
 - [ ] 仅使用新命名空间首次 source_pins 内部状态和该次原 legacy qualification-started marker/attempt 绑定区分 startup/final：首次处于 marker 尚未创建的启动位置；fresh 检查成功后记为已检查；final 必须匹配该次 main marker，仍执行原 source 验证，但不要求已消费启动 decision 在300/10800s后≤60s。未知次序/额外调用/marker 归属不明拒绝，不给 caller 布尔开关跳过 startup。预存在 legacy marker 仍由原 main consumed check 拒绝，outer marker/ID 独占不变。测试“current_gate 时新鲜、source_pins 后过期”拒绝、“final source 验证保留但不要求启动 decision 年轻”及原 source 失败传播。
 - [ ] 在通过全部 admission 后 exclusive 创建 outer one-use started marker，调用真实 legacy main；捕获 producer snapshots、consumer assessments 并写 bounded 新 outer result，SHA 绑定新 legacy result、proof、R5 history/code pins。legacy raw `owned.coverage`、`processDiagnostics`、`observedUnexpectedCoverage` 全保留。任何未完成/错误/结果缺失均失败，禁止自动 retry/next/clear。
@@ -160,7 +170,17 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s scripts -p 'test_te
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s scripts -p 'test_guarded_terminal_scan_continuation.py' -v
 ```
 
-- [ ] root systematic review Task 2：检查 loader/import closure、无旧目录修改、双层历史不混写、actual attempt_context/ready_context/current_gate 完全原引用、source_pins 每次原调用与 startup/final 区分、known union 精确性、启动 source_pins 返回后的 one-use/TTL/strict idle 前置边界、proof到最终record链、check-only 最后追加 fresh 检查且无写入/无启动，以及 fixture 范围/NOT_CLOSED 是否诚实。修复 review findings 后重跑受影响新增测试。
+**Task 2 fix round 1 — known-quiescence 缓存语义与 predecessor 场景绑定修正（依赖 Task 1 fix round 2）**
+
+- [ ] 等待 root 完成 Task 1 fix round 2 独立复审 approved/commit，再顺序执行本轮；只修改本任务原定 `scripts/guarded_terminal_scan_continuation.py`、`scripts/test_guarded_terminal_scan_continuation.py`。同轮解决已确认的 predecessor 场景绑定 P2；不增加 API/schema/框架/第四 hook，不改 old main 或其他时限。
+- [ ] 用实际 observe_known+validator 补 cache-faithful 行为 RED：旧登记 birth10，第一 fresh handle 缓存20，status 时底层 birth20→30，同 handle 再读仍20；旧实现误接纳 stable-nonmatching，新测试应失败。新实现第二 fresh same-PID handle 读30，必须形成 unknown 并使实际 validator 拒绝；不以 validator stub 替代。
+- [ ] 按上述独立 fresh handles 修正 known observation；补 stable zombie/stable-nonmatching 正例、initial absent 1 resolve/present 2 resolves，以及第二 resolve/read NoSuchProcess/AccessDenied/OSError/unknown/不稳定拒绝。Task 1 normal call parity 与 pending/rawgap/exception 保留回归依然通过。
+- [ ] known observation 同样拒绝两次 factory 返回同一 cached handle；cache-faithful 反例必须走实际 observe_known+validator。实例独立检查不序列化 object id、不替代两次 birth/status 条件、不新增读取/API。
+- [ ] 为已确认 predecessor P2 补真实新增 validator 下游 RED：prior outer result 与 legacy result 都为 baseline，却指向 scenario=continuity 的 prior attempt/root decision，现有 ID/ref 等绑定成立时 next within-grace check-only 仍必须拒绝。保留正常同场景前驱正例，并分别改变 started marker、prior attempt、root decision、legacy result、outer result 的 scenario，保证不能只校验两组内部一致。
+- [ ] 修正 `_validate_predecessors`：prior outer result / legacy result / prior attempt / root decision / started marker 五者 scenario 必须严格相等且等于 expected previous scenario。对 prior attempt、started marker 执行各自 exact schema/kind/schemaVersion 校验；缺字段、额外字段、错误 kind/version 均拒绝，原全部 identity/ref/clock/proof 绑定不放松。新增反例执行实际 validator/check-only 新增路径，不能用成功 stub 代替该消费逻辑；不修改 old main、不增加 hook。
+- [ ] 运行上述新增 unittest 命令，记录实际 RED→GREEN；root review/commit 仅本任务两文件。旧完整链 NOT_CLOSED、真实 check-only/运行准入与历史 FAIL 均不因该修复改判。
+
+- [ ] root systematic review Task 2：检查 loader/import closure、无旧目录修改、双层历史不混写、actual attempt_context/ready_context/current_gate 完全原引用、source_pins 每次原调用与 startup/final 区分、known union 精确性及 fresh-handle 复核、启动 source_pins 返回后的 one-use/TTL/strict idle 前置边界、proof到最终record链、check-only 最后追加 fresh 检查且无写入/无启动，以及 fixture 范围/NOT_CLOSED 是否诚实。修复 review findings 后重跑受影响新增测试。
 - [ ] root 只提交这两个集成/测试文件；建议 commit `feat(qualification): bind terminal scan proof to guarded R5 continuation`。新 supervisorSourceTIP 从此实现分支实际 Git 版本绑定，不伪装成 deployedToolTIP282。
 - [ ] root 安排新鲜、最强可用 agent 审全分支：bugs、architecture、docs sync、producer/consumer与运行准入组合；没有 reviewer 结论前不得实际运行。review 记录应按仓库 reports 约定版本化；本计划编写阶段不伪造该记录。
 
