@@ -5635,12 +5635,42 @@ class WebRemoteHost:
         try:
             logger.info(f"Viewer status: {data.get('onlineCount', 0)} online")
             if data.get("onlineCount", 0) == 0:
-                if self.relay_streamer:
-                    await self.relay_streamer.stop()
-                await self._close_peer_connection(
-                    reason="viewer-disconnected",
-                    reset_offer_state=True,
-                )
+                connection = getattr(self, "_signal_generation", 0)
+                authority = self._capture_authority()
+                operation = getattr(self, "_control_operation", None)
+                lock = getattr(self, "_control_transition_lock", None)
+                if lock is None:
+                    lock = self._control_transition_lock = asyncio.Lock()
+                async with lock:
+                    if (connection != getattr(self, "_signal_generation", 0)
+                            or not self._authority_matches(authority)):
+                        return
+                    # A trusted reset may already own detached resources. Only
+                    # its same-scope, completed barrier proves this status redundant.
+                    reset_completed = (
+                        type(operation) is tuple and len(operation) == 3
+                        and type(operation[0]) is int and operation[0] > 0
+                        and operation[1:] == ("reset", "pending")
+                        and getattr(self, "_control_operation", None)
+                            == (operation[0], "reset", "applied")
+                        and getattr(self, "_active_input_binding", None) is None
+                        and getattr(self, "current_viewer_id", None) is None
+                        and all(getattr(self, name, None) is None for name in (
+                            "relay_streamer", "pc", "screen_track", "video_sender",
+                            "_input_datachannel", "_input_move_datachannel",
+                            "media_sender", "capture_adapter"))
+                    )
+                    if not reset_completed:
+                        relay = getattr(self, "relay_streamer", None)
+                        if relay:
+                            await relay.stop()
+                        if (connection != getattr(self, "_signal_generation", 0)
+                                or not self._authority_matches(authority)):
+                            return
+                        await self._close_peer_connection(
+                            reason="viewer-disconnected",
+                            reset_offer_state=True,
+                        )
             self.overlay.send({
                 "type": "viewer-status",
                 "onlineCount": data.get("onlineCount", 0),
