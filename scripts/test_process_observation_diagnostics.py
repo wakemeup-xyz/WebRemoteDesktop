@@ -459,6 +459,124 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertTrue(snapshot["failed"])
         self.assertLess(len(json.dumps(snapshot, allow_nan=False).encode()), 32768)
 
+    def test_reentrant_clock_event_boundary_preserves_bound_and_invalidates_lost_token(self):
+        error = Denied(CANARY)
+        diagnostic, registry = self.make(self.failing_factory(error))
+        for _ in range(31):
+            self.observe_error(diagnostic, error, "signal")
+        entered = []
+        def clock():
+            if not entered:
+                entered.append(True)
+                with self.assertRaises(Denied) as caught:
+                    diagnostic.process(8)
+                self.assertIs(caught.exception, error)
+            return 10.25
+        diagnostic._monotonic = clock
+        def scan():
+            with self.assertRaises(Denied) as caught:
+                diagnostic.process(7)
+            self.assertIs(caught.exception, error)
+            registry.note("observation-unavailable")
+        registry.on_scan = scan
+        registry.scan()
+        snapshot = diagnostic.snapshot()
+        self.assertEqual(len(snapshot["events"]), 32)
+        self.assertEqual(snapshot["dropped"], 1)
+        self.assertTrue(snapshot["overflow"]["events"])
+        self.assertTrue(snapshot["failed"])
+        self.assertEqual(snapshot["events"][-1]["pid"], 7)
+        self.assertEqual(snapshot["events"][-1]["monotonic"], 10.25)
+        self.assertIsNone(snapshot["gaps"][-1]["eventId"])
+        self.assertEqual(snapshot["gaps"][-1]["association"], "unassociated")
+
+    def test_reentrant_clock_gap_boundary_preserves_bound_and_consumes_token_once(self):
+        error = Denied(CANARY)
+        diagnostic, registry = self.make(self.failing_factory(error))
+        for _ in range(31):
+            registry.note("observation-unavailable")
+        entered = []
+        def clock():
+            if not entered:
+                entered.append(True)
+                registry.note("observation-unavailable")
+            return 10.25
+        def scan():
+            with self.assertRaises(Denied) as caught:
+                diagnostic.process(7)
+            self.assertIs(caught.exception, error)
+            diagnostic._monotonic = clock
+            registry.note("observation-unavailable")
+            # A consumed token must remain consumed even when another gap drops.
+            registry.note("observation-unavailable")
+        registry.on_scan = scan
+        registry.scan()
+        snapshot = diagnostic.snapshot()
+        self.assertEqual(len(snapshot["gaps"]), 32)
+        self.assertEqual(snapshot["gapsDropped"], 2)
+        self.assertTrue(snapshot["overflow"]["gaps"])
+        self.assertTrue(snapshot["failed"])
+        self.assertEqual(snapshot["gaps"][-1]["eventId"], snapshot["events"][-1]["eventId"])
+        self.assertEqual(snapshot["gaps"][-1]["association"], "direct-scan-error")
+        self.assertEqual(snapshot["gaps"][-1]["monotonic"], 10.25)
+
+    def test_reentrant_clock_newer_direct_scan_error_keeps_pending_token(self):
+        error = Denied(CANARY)
+        diagnostic, registry = self.make(self.failing_factory(error))
+        caught_errors = []
+        entered = []
+        def clock():
+            if not entered:
+                entered.append(True)
+                try:
+                    diagnostic.process(8)
+                except Denied as caught:
+                    caught_errors.append(caught)
+            return 10.25
+        diagnostic._monotonic = clock
+        def scan():
+            try:
+                diagnostic.process(7)
+            except Denied as caught:
+                caught_errors.append(caught)
+            registry.note("observation-unavailable")
+        registry.on_scan = scan
+        registry.scan()
+        snapshot = diagnostic.snapshot()
+        self.assertEqual(len(caught_errors), 2)
+        self.assertTrue(all(caught is error for caught in caught_errors))
+        self.assertEqual([event["pid"] for event in snapshot["events"]], [7, 8])
+        self.assertEqual(snapshot["gaps"][0]["eventId"], snapshot["events"][1]["eventId"])
+        self.assertEqual(snapshot["gaps"][0]["association"], "direct-scan-error")
+        self.assertFalse(snapshot["failed"])
+
+    def test_reentrant_clock_snapshot_of_reserved_event_or_gap_fails_closed(self):
+        for pool in ("events", "gaps"):
+            with self.subTest(pool=pool):
+                diagnostic, registry = self.make(self.failing_factory(Denied(CANARY)))
+                captured = []
+                def clock():
+                    snapshot = diagnostic.snapshot()
+                    captured.append(snapshot)
+                    return 10.25
+                diagnostic._monotonic = clock
+                if pool == "events":
+                    with self.assertRaises(Denied):
+                        diagnostic.process(7)
+                else:
+                    registry.note("observation-unavailable")
+                final = diagnostic.snapshot()
+                self.assertEqual(len(captured), 1)
+                self.assertTrue(captured[0]["failed"])
+                self.assertEqual(len(captured[0][pool]), 1)
+                json.dumps(captured[0], allow_nan=False)
+                self.assertTrue(final["failed"])
+                self.assertTrue(diagnostic.failed)
+                self.assertEqual(final[pool][0]["monotonic"], 10.25)
+                self.assertEqual(final[pool][0]["wall"], 20.5)
+                self.assertIsNone(captured[0][pool][0]["monotonic"])
+                self.assertIsNone(captured[0][pool][0]["wall"])
+
     def test_lost_scan_event_never_links_previous_retained_event(self):
         diagnostic, registry = self.make(self.failing_factory(Denied(CANARY)), limit=1)
         def scan():

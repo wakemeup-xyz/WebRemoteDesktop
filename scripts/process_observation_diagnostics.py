@@ -59,6 +59,7 @@ class Diagnostics:
         self._expected = dict.fromkeys(_STAGES, 0)
         self._events = []
         self._gaps = []
+        self._recording = False
         self._dropped = 0
         self._gaps_dropped = 0
         self._event_seq = 0
@@ -208,22 +209,30 @@ class Diagnostics:
             self._failed = True
             return
         event_id = self._sequence("_event_seq")
-        try:
-            errno = self._number(getattr(error, "errno", None), integer=True)
-        except BaseException:
-            errno = None
-            self._failed = True
         event = {"eventId": event_id, "scanId": frame["scanId"] if frame else None,
                  "role": self._role, "stage": self._stage,
                  "context": frame["name"] if frame else "outside",
                  "operation": operation, "pid": self._number(pid, pid=True),
                  "birth": self._number(birth), "exception": classification,
-                 "errno": errno, "monotonic": self._clock(self._monotonic),
-                 "wall": self._clock(self._wall)}
+                 "errno": None, "monotonic": None, "wall": None}
+        # Reserve capacity and the pending token before any external callback.
+        # Nested errors may invalidate/replace that token; never reset it after
+        # the callbacks return, even when this outer event completes last.
         self._events.append(event)
         if (frame is not None and frame["name"] == "scan"
                 and frame["scanId"] is not None and event_id is not None):
             frame["pending"] = event_id
+        was_recording = self._recording
+        self._recording = True
+        try:
+            try:
+                event["errno"] = self._number(getattr(error, "errno", None), integer=True)
+            except BaseException:
+                self._failed = True
+            event["monotonic"] = self._clock(self._monotonic)
+            event["wall"] = self._clock(self._wall)
+        finally:
+            self._recording = was_recording
 
     def process(self, pid):
         try:
@@ -252,16 +261,27 @@ class Diagnostics:
                 self._overflow["gaps"] = True
                 self._failed = True
                 return
-            self._gaps.append({"scanId": scan_id, "eventId": event_id,
-                               "association": "direct-scan-error" if event_id is not None else "unassociated",
-                               "reason": "observation-unavailable", "role": self._role,
-                               "stage": self._stage, "monotonic": self._clock(self._monotonic),
-                               "wall": self._clock(self._wall)})
+            gap = {"scanId": scan_id, "eventId": event_id,
+                   "association": "direct-scan-error" if event_id is not None else "unassociated",
+                   "reason": "observation-unavailable", "role": self._role,
+                   "stage": self._stage, "monotonic": None, "wall": None}
+            self._gaps.append(gap)
+            was_recording = self._recording
+            self._recording = True
+            try:
+                gap["monotonic"] = self._clock(self._monotonic)
+                gap["wall"] = self._clock(self._wall)
+            finally:
+                self._recording = was_recording
         except BaseException:
             self._failed = True
 
     def snapshot(self):
         """Return detached JSON-safe evidence; this is never an acceptance gate."""
+        if self._recording:
+            # A callback may request a snapshot before the reserved record's
+            # clocks finish. Its nullable shape is safe, but not complete.
+            self._failed = True
         return deepcopy({"schemaVersion": 2, "scope": "diagnostic-only", "role": self._role,
                          "events": self._events, "dropped": self._dropped, "failed": self._failed,
                          "expectedStateExitCounts": self._expected, "gaps": self._gaps,
