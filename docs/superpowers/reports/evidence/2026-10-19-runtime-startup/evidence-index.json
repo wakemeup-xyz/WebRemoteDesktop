@@ -672,7 +672,37 @@
       "sha256": "d97b85062d48bb96a8ddbfa936d7fdc5753a3b74156be3722d92ceedcff852fa",
       "bytes": 12069,
       "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md"
+    },
+    "terminal-proof-sdd/final-review.md": {
+      "sha256": "7845901ad57606b026453c0684eb41d05c8a9d4dbfe4918ca5b6d5cd64f2b605",
+      "bytes": 7329,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/final-review.md"
+    },
+    "terminal-proof-sdd/progress-code-review-complete.md": {
+      "sha256": "1754fa4e36cb4e2de66d814c186036dad7c6e49366b0d1472e11a68cc51d27ac",
+      "bytes": 13395,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md"
+    },
+    "terminal-proof-sdd/operations-recipe-before-fix.md": {
+      "sha256": "d8b065b79145d5832b20e7b2712aabc3009e005918e6bef04d42f151b630b48d",
+      "bytes": 24947,
+      "originalPath": "/tmp/wrd-r5-root-operation-recipe-20261019.md"
+    },
+    "terminal-proof-sdd/operations-recipe-review.md": {
+      "sha256": "d6e68e3ec1ee491af26335059d88061dc005b5b7e555ba0bbf75614b6ec50fcf",
+      "bytes": 5910,
+      "originalPath": "/tmp/wrd-r5-root-operation-recipe-review-20261019.md"
+    },
+    "terminal-proof-sdd/operations-recipe-fix-review.md": {
+      "sha256": "7b2f9b8808476e8b397db8e6353cd04c026199e2b9fad0a93ed54babe71bd44b",
+      "bytes": 2089,
+      "originalPath": "/tmp/wrd-r5-root-operation-recipe-fix-review-20261019.md"
+    },
+    "terminal-proof-sdd/progress-code-phase-complete.md": {
+      "sha256": "5c17133052b66bdfdc7cc6da2c2c3a3e23fa1f597c5f819e0d8ae3f797b5efb5",
+      "bytes": 13981,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md"
     }
   },
-  "totalBytes": 1438565
+  "totalBytes": 1506216
 }

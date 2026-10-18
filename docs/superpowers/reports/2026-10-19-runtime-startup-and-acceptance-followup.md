@@ -92,3 +92,7 @@ Task1fixround2已提交1498469：present采用独立第二same-PID handle，第�
 Task2fixround1已提交0a7e6c7，两项实际新增行为RED后完整受影响文件45项GREEN（30.186秒），原38项全部保留。已有schema不变；legacy started的显式scenario与另四份记录严格相等，外层r5-started通过input/decision哈希间接绑定且严格schema/kind/version。独立窄复审尚未完成。03:59:30.005–31.106 CST 的另一次独立只读检查取得本地health/status200、5.087/4.123ms，公网health200、1096.687ms（显式direct浏览器UA），Host在线0/0、四服务独立双handle birth均匹配，safe URL不存在；不构成新资格。
 
 Task2fixround1独立窄复审确认两P2全部解决、无新Critical/Important，无deferred minor；共享legacy marker helper仍保留final source校验。至此两项实现任务完成代码、fixture和逐任务review，当前转入新鲜most-capable全分支review；真实check-only与新资格仍NOT_RUN，不能把逐任务通过视为上线/连接验收。上述全部补充证据已核对归档regular文件、长度与SHA，运行服务未因此重启。
+
+全分支独立most-capable review已完成（ee0fcde→55ceb32），代码/文档范围Ready，Critical/Important/Minor均无；50/45项测试证据和不可变原定义逐项核对，未重复执行套件或运行操作。现在只结束代码review阶段，不宣布运行通过。后续实际操作配方已同步到仓库plans/2026-10-19-r5-real-qualification-operations.md，实际材料与时间仍待root按次创建，先真实check-only，再独立fresh run decision；源执行HEAD与两production文件须在整个新sequence固定，运行证据先保存在私有root，序列关闭后归档。
+
+实际操作配方也完成独立review：唯一P2为把所有prepare-attempt失败都当reservation已消费，现按原sequence/decision前置校验→reserve→后续准备的真实阶段及实际marker判断；已窄复核Ready。现有off-line复用边界、CLI/schema/history/freshness顺序核对无其他finding。配方明确整个新sequence冻结executionHEAD（包括暂停docscommit），运行证据私有保存到序列关闭；这只是执行准备，不提供真实准入/资格证据。两production文件字节已与最终review55ceb32对应Git blob逐一相同，新增均为文档和审查归档。
