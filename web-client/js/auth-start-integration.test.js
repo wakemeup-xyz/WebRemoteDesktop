@@ -10,13 +10,15 @@ const proxy403 = () => ({ status: 403, ok: false, json: async () => { throw new 
 async function flush() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
 
 function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proof = false,
-  readyState = 'loading', dispatchReady = true } = {}) {
+  readyState = 'loading', dispatchReady = true, search = '',
+  admission = () => json(201, { admission: { ticket: 'fixture-ticket' } }), actualSignaling = false } = {}) {
   const nodes = new Map();
   const domReady = [];
   const tokens = new Map([['wrd_token', 'fixture-token']]);
   if (proof) tokens.set('wrdProofAdmission', JSON.stringify({ proof: 'fixture-proof' }));
   const requests = [], failures = [], controllers = [];
-  let signals = 0, inits = 0, admissions = 0, time = 0;
+  let signals = 0, inits = 0, admissions = 0, time = 0, nextTimer = 0;
+  const timers = new Map(), admissionRequests = [], sockets = [];
   function element() {
     const classes = new Set();
     return {
@@ -24,15 +26,17 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proo
       classList: { add(...names) { names.forEach((name) => classes.add(name)); }, remove(...names) { names.forEach((name) => classes.delete(name)); }, contains(name) { return classes.has(name); } },
       setAttribute() {},
       appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
+      append(...children) { children.forEach((child) => this.appendChild(child)); },
       remove() { nodes.delete(this.id); },
       addEventListener(name, listener) { this.listeners[name] = listener; },
     };
   }
   for (const id of ['startBtn', 'loading', 'loadingText']) nodes.set(id, element());
   const context = {
-    AbortController, queueMicrotask,
+    AbortController, queueMicrotask, URLSearchParams,
     console: { log() {}, warn() {}, error() {} },
-    setTimeout() { return 1; }, clearTimeout() {}, setInterval() { throw new Error('unexpected live interval'); }, clearInterval() {},
+    setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
+    clearTimeout(id) { timers.delete(id); }, setInterval() { throw new Error('unexpected live interval'); }, clearInterval() {},
     performance: { now: () => time }, navigator: {},
     addEventListener() {},
     document: {
@@ -41,19 +45,28 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proo
       querySelector() { return null; }, querySelectorAll() { return []; },
       addEventListener(name, listener) { if (name === 'DOMContentLoaded') domReady.push(listener); },
     },
-    location: { href: 'viewer.html', origin: 'http://fixture' },
-    RuntimeConfig: { getApiBase: () => 'http://fixture' },
+    location: { href: 'viewer.html', origin: 'http://fixture', search },
+    RuntimeConfig: { getApiBase: () => 'http://fixture', getSocketBase: () => 'http://fixture' },
     sessionStorage: { getItem(key) { return tokens.get(key) || null; }, setItem(key, value) { tokens.set(key, value); }, removeItem(key) { tokens.delete(key); } },
     localStorage: { getItem() { return null; }, removeItem() {}, setItem() {} },
     fetch: async (url, options) => {
       if (url.endsWith('/api/auth/viewer-admission')) {
         admissions++;
-        return json(201, { admission: { ticket: 'fixture-ticket' } });
+        admissionRequests.push({ url, options });
+        return admission({ url, options });
       }
       requests.push(url.endsWith('/api/auth/verify') ? 'verify' : 'bootstrap');
       return url.endsWith('/api/auth/verify') ? verify() : bootstrap({ url, options });
     },
-    io() { throw new Error('integration fixture must not open a real Viewer'); },
+    io(_url, options) {
+      signals++;
+      const listeners = new Map();
+      const socket = { auth: options.auth, connected: true, io: {},
+        on(event, handler) { listeners.set(event, handler); }, emit() {}, disconnect() {},
+        dispatch(event, data) { return listeners.get(event)?.(data); } };
+      sockets.push(socket);
+      return socket;
+    },
   };
   context.window = context;
   context.globalThis = context;
@@ -77,9 +90,13 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proo
   WebRTC.configureNetworkControls = () => {};
   WebRTC.updateNetworkUI = () => {};
   WebRTC.renderPortSearchStatus = () => {};
-  WebRTC.createSignalingSocket = () => { signals++; };
+  if (!actualSignaling) WebRTC.createSignalingSocket = () => { signals++; };
   WebRTC.init = async () => { inits++; };
-  WebRTC.enterBootstrapFailure = (error) => { failures.push(error.code); };
+  const enterBootstrapFailure = WebRTC.enterBootstrapFailure;
+  WebRTC.enterBootstrapFailure = (error) => {
+    failures.push(error.code);
+    if (actualSignaling) return enterBootstrapFailure.call(WebRTC, error);
+  };
   context.ChromeLayout.applyCapabilities = (snapshot) => {
     const capabilities = context.ChromeLayout.getCapabilities(snapshot);
     nodes.get('startBtn').disabled = !capabilities.canConnect;
@@ -95,7 +112,12 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proo
   }
   if (dispatchReady) dispatchDOMContentLoaded();
   return { Auth, WebRTC, context, nodes, tokens, requests, failures, controllers,
-    signals: () => signals, inits: () => inits, admissions: () => admissions,
+    signals: () => signals, inits: () => inits, admissions: () => admissions, admissionRequests, sockets,
+    expireRequest() {
+      const entry = [...timers].find(([, timer]) => timer.delay === 5000);
+      assert.ok(entry, 'real bounded admission request has a deadline');
+      timers.delete(entry[0]); entry[1].callback();
+    },
     dispatchDOMContentLoaded,
     setTime(value) { time = value; } };
 }
@@ -318,4 +340,216 @@ test('a successful bootstrap response from an old auth generation is fenced befo
   assert.notEqual(r.controllers[0].getSnapshot().state, 'ready');
   assert.equal((await r.controllers[0].load({ mode: 'relay' })).webrtc.selectedTurnServerId, undefined);
   assert.equal(calls, 2);
+});
+
+
+function guardedRuntime(options = {}) {
+  return runtime({ search: '?wrdAdmission=vacant-only-v1', actualSignaling: true,
+    verify: () => json(200, { valid: true }),
+    bootstrap: () => json(200, { schemaVersion: 1, webrtc: {} }), ...options });
+}
+
+for (const search of ['?wrdAdmission=', '?wrdAdmission=unknown',
+  '?wrdAdmission=vacant-only-v1&wrdAdmission=vacant-only-v1',
+  '?wrdAdmission=vacant-only-v1&wrdAdmission=unknown']) {
+  test(`invalid initial selector rejects real Start before admission or io: ${search}`, async () => {
+    const r = guardedRuntime({ search });
+    await flush();
+    await r.context.__WRD_SHELL__.acknowledgeStartClick();
+    assert.deepEqual(r.failures, ['invalid-initial-policy']);
+    assert.equal(r.admissions(), 0);
+    assert.equal(r.signals(), 0);
+    assert.equal(r.inits(), 0);
+  });
+}
+
+test('unreadable selector location reports the fixed parser error', async () => {
+  const r = guardedRuntime();
+  await flush();
+  Object.defineProperty(r.context.location, 'search', { get() { throw new Error('private-location'); } });
+  assert.throws(() => r.WebRTC.readInitialAdmissionPolicy(),
+    { code: 'invalid-initial-policy', message: '桌面连接授权暂不可用，请手动重试' });
+  assert.equal(r.admissions(), 0);
+  assert.equal(r.signals(), 0);
+});
+
+for (const proof of ['{malformed', 'null', '{}']) {
+  test(`proof marker plus guarded selector rejects before API or io (${proof})`, async () => {
+    const r = guardedRuntime();
+    r.tokens.set('wrdProofAdmission', proof);
+    await flush();
+    await r.context.__WRD_SHELL__.acknowledgeStartClick();
+    assert.deepEqual(r.failures, ['invalid-initial-policy']);
+    assert.equal(r.admissions(), 0);
+    assert.equal(r.signals(), 0);
+    assert.equal(r.inits(), 0);
+  });
+}
+
+for (const [search, guarded] of [['', false], ['?unrelated=1', false], ['?wrdAdmission=vacant-only-v1', true]]) {
+  test(`real Start sends exactly the ${guarded ? 'guarded' : 'existing human'} admission body: ${search}`, async () => {
+    const r = guardedRuntime({ search });
+    await flush();
+    await r.context.__WRD_SHELL__.acknowledgeStartClick();
+    const expected = { viewerSessionId: r.WebRTC.resolveViewerSessionId() };
+    if (guarded) expected.initialPolicy = 'vacant-only-v1';
+    assert.equal(r.admissions(), 1);
+    assert.deepEqual(JSON.parse(r.admissionRequests[0].options.body), expected);
+    assert.equal(r.signals(), 1);
+    assert.equal(r.inits(), 1);
+    assert.equal(r.WebRTC._viewerAdmission.ticket, 'fixture-ticket');
+  });
+}
+
+test('malformed proof-only marker preserves existing proof socket branch', async () => {
+  const r = guardedRuntime({ search: '' });
+  r.tokens.set('wrdProofAdmission', '{malformed');
+  await flush();
+  await r.context.__WRD_SHELL__.acknowledgeStartClick();
+  assert.equal(r.admissions(), 0);
+  assert.equal(r.signals(), 1);
+  assert.equal(r.sockets[0].auth.proofAdmission.invalid, true);
+  assert.equal(Object.hasOwn(r.sockets[0].auth, 'viewerAdmission'), false);
+});
+
+for (const [name, mutate] of [
+  ['selector removed', (r) => { r.context.location.search = ''; }],
+  ['selector changed', (r) => { r.context.location.search = '?wrdAdmission=unknown'; }],
+  ['selector duplicated', (r) => { r.context.location.search += '&wrdAdmission=vacant-only-v1'; }],
+  ['proof appeared', (r) => { r.tokens.set('wrdProofAdmission', '{malformed'); }],
+  ['episode cancelled', (r) => { r.WebRTC.retireStartupEpisode('cancelled'); }],
+  ['new auth generation with same token', async (r) => { r.Auth.setToken('fixture-token'); await r.Auth.init(); }],
+  ['logout and login', async (r) => { r.Auth.logout(); r.Auth.setToken('fixture-token'); await r.Auth.init(); }],
+]) {
+  test(`late guarded admission cannot publish or connect after ${name}`, async () => {
+    let complete;
+    const r = guardedRuntime({ admission: () => new Promise((resolve) => { complete = resolve; }) });
+    await flush();
+    const retained = r.WebRTC._viewerAdmission = { mode: 'resume', generation: 'retained-owner' };
+    const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
+    await flush();
+    assert.equal(r.admissions(), 1);
+    await mutate(r);
+    complete(json(201, { admission: { ticket: 'late-ticket' } }));
+    await start;
+    await flush();
+    assert.equal(r.WebRTC._viewerAdmission, retained);
+    assert.equal(r.signals(), 0);
+    assert.equal(r.inits(), 0);
+    assert.equal(r.admissions(), 1, 'no fallback or remint after response rejection');
+  });
+}
+
+test('older request sequence cannot overwrite a newer admission', async () => {
+  let complete;
+  let calls = 0;
+  const r = guardedRuntime({ admission: () => ++calls === 1
+    ? new Promise((resolve) => { complete = resolve; })
+    : json(201, { admission: { ticket: 'newer-ticket' } }) });
+  await flush();
+  const episode = r.WebRTC.beginStartupEpisode();
+  const older = r.WebRTC.requestExplicitViewerAdmission(episode);
+  await flush();
+  await r.WebRTC.requestExplicitViewerAdmission(episode);
+  const newer = r.WebRTC._viewerAdmission;
+  complete(json(201, { admission: { ticket: 'older-ticket' } }));
+  await assert.rejects(older, { code: 'superseded' });
+  assert.equal(r.WebRTC._viewerAdmission, newer);
+  assert.equal(newer.ticket, 'newer-ticket');
+  assert.equal(r.signals(), 0);
+});
+
+for (const failure of ['HTTP denial', 'timeout']) {
+  test(`guarded ${failure} stops without automatic reclaim or unrestricted fallback`, async () => {
+    let complete;
+    const r = guardedRuntime({ admission: () => failure === 'timeout'
+      ? new Promise((resolve) => { complete = resolve; }) : json(409, { error: 'human-owner-retained' }) });
+    await flush();
+    const retained = r.WebRTC._viewerAdmission = { mode: 'resume', generation: 'retained-owner' };
+    const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
+    await flush();
+    if (failure === 'timeout') r.expireRequest();
+    await start;
+    if (complete) complete(json(201, { admission: { ticket: 'after-timeout-ticket' } }));
+    r.Auth._publishCheck({ state: 'verified', reason: 'ok', httpStatus: 200 });
+    await flush();
+    assert.equal(r.failures.length, 1);
+    if (failure === 'timeout') assert.equal(r.failures[0], 'timeout');
+    assert.equal(r.WebRTC._viewerAdmission, retained);
+    assert.equal(r.admissions(), 1);
+    assert.equal(r.signals(), 0);
+    assert.equal(r.inits(), 0);
+    assert.equal(JSON.parse(r.admissionRequests[0].options.body).initialPolicy, 'vacant-only-v1');
+  });
+}
+
+test('duplicate UI Start shares one guarded admission and one socket', async () => {
+  let complete;
+  const r = guardedRuntime({ admission: () => new Promise((resolve) => { complete = resolve; }) });
+  await flush();
+  const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
+  const duplicate = r.context.__WRD_SHELL__.acknowledgeStartClick();
+  await flush();
+  assert.equal(r.admissions(), 1);
+  complete(json(201, { admission: { ticket: 'one-ticket' } }));
+  await Promise.all([start, duplicate]);
+  assert.equal(r.admissions(), 1);
+  assert.equal(r.signals(), 1);
+  assert.equal(r.inits(), 1);
+});
+
+test('actual ordinary welcome updates Socket.IO resume auth and reconnect requests no ticket', async () => {
+  let completeBootstrap;
+  const r = guardedRuntime({ bootstrap: () => new Promise((resolve) => { completeBootstrap = resolve; }) });
+  await flush();
+  const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
+  await flush();
+  const socket = r.sockets[0];
+  assert.ok(socket);
+  assert.equal(socket.auth.viewerAdmission.ticket, 'fixture-ticket');
+  socket.dispatch('connected', { hostOnline: false, viewerAdmission: { mode: 'resume', generation: 'ordinary-generation' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(socket.auth.viewerAdmission)), { mode: 'resume', generation: 'ordinary-generation' });
+  assert.equal(socket.auth.viewerAdmission, r.WebRTC._viewerAdmission);
+  await socket.dispatch('connect');
+  await socket.dispatch('connect');
+  assert.equal(r.admissions(), 1);
+  assert.equal(r.signals(), 1);
+  completeBootstrap(json(200, { schemaVersion: 1, webrtc: {} }));
+  await start;
+  assert.equal(r.admissions(), 1);
+});
+
+
+for (const [search, guarded] of [['', false], ['?wrdAdmission=vacant-only-v1', true]]) {
+  test(`explicit manual reconnect selects the ${guarded ? 'guarded' : 'human'} policy`, async () => {
+    const r = guardedRuntime({ search });
+    await flush();
+    // Tunnel avoids native PeerConnection effects; admission and reclaim stay real.
+    r.WebRTC.networkMode = 'tunnel';
+    r.nodes.set('remoteVideo', r.context.document.createElement('video'));
+    await r.WebRTC.reclaimDesktopSession();
+    const expected = { viewerSessionId: r.WebRTC.resolveViewerSessionId() };
+    if (guarded) expected.initialPolicy = 'vacant-only-v1';
+    assert.deepEqual(JSON.parse(r.admissionRequests[0].options.body), expected);
+    assert.equal(r.admissions(), 1);
+    assert.equal(r.signals(), 1);
+    assert.equal(r.WebRTC._viewerAdmission.ticket, 'fixture-ticket');
+  });
+}
+
+test('Socket.IO admission denial disables the current owner without automatic remint', async () => {
+  const r = guardedRuntime();
+  await flush();
+  await r.context.__WRD_SHELL__.acknowledgeStartClick();
+  const socket = r.sockets[0];
+  socket.dispatch('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
+  await flush();
+  assert.equal(r.WebRTC._viewerAdmission, null);
+  assert.equal(r.WebRTC._superseded, true);
+  assert.equal(r.WebRTC.socket, null);
+  assert.equal(r.admissions(), 1);
+  assert.equal(r.signals(), 1);
+  assert.equal(r.WebRTC.createSignalingSocket(true), null);
+  assert.equal(r.admissions(), 1);
+  assert.equal(r.signals(), 1);
 });

@@ -287,7 +287,7 @@ globalThis.__Input = Input;`, context);
   }
 
   return {
-    Input, WebRTC, document, window, video, elements, sent, timers, documentListeners, windowListeners,
+    Input, WebRTC, context, document, window, video, elements, sent, timers, documentListeners, windowListeners,
     advance, ack, writes, inputs: writes, pointer, keydown, keyup, blur, resume, trace,
     setDataChannelOpen, latestMediaRequest, freshFrame, suspendAndResume,
     setNow(value) { now = value; },
@@ -1798,3 +1798,43 @@ test('unordered hints are payload free, bounded, pruned by scope/TTL and never r
   Input.peekInputAckMetadata(ack('scope-hint'));
   assert.equal(Input._unorderedTraceSends.size, 0);
 });
+
+
+for (const outcome of ['denied', 'selector-removed']) {
+  test(`guarded admission ${outcome} retains a blocked local draft and cannot release input gates`, async () => {
+    const h = loadRecoveryFixture({ touchPoints: 5 });
+    const mobile = h.elements.get('mobileTextInput');
+    h.WebRTC.freezeControl('signal-disconnect');
+    mobile.value = 'guarded-retained-local-draft';
+    mobile.dispatch('input');
+    const retained = h.WebRTC._viewerAdmission = { mode: 'resume', generation: 'retained-generation' };
+    h.window.location.search = '?wrdAdmission=vacant-only-v1';
+    h.context.URLSearchParams = URLSearchParams;
+    h.context.AbortController = AbortController;
+    h.context.Auth = { getToken: () => 'fixture-token', getGeneration: () => 1, isVerified: () => true };
+    h.context.sessionStorage = { getItem: () => null };
+    let complete;
+    const requests = [];
+    h.context.fetch = (_url, options) => {
+      requests.push(options);
+      return new Promise((resolve) => { complete = resolve; });
+    };
+    vm.runInContext(fs.readFileSync(path.join(__dirname, 'bounded-request.js'), 'utf8'), h.context);
+    const writes = h.inputs().length;
+    const pending = h.WebRTC.requestExplicitViewerAdmission();
+    await Promise.resolve();
+    assert.equal(requests.length, 1);
+    assert.equal(JSON.parse(requests[0].body).initialPolicy, 'vacant-only-v1');
+    if (outcome === 'selector-removed') h.window.location.search = '';
+    complete({ ok: outcome !== 'denied', status: outcome === 'denied' ? 409 : 201,
+      json: async () => ({ admission: { ticket: 'late-guarded-ticket' } }) });
+    await assert.rejects(pending);
+    assert.equal(requests.length, 1);
+    assert.equal(h.WebRTC._viewerAdmission, retained);
+    assert.equal(mobile.value, 'guarded-retained-local-draft');
+    assert.equal(h.WebRTC.hasActiveControl(), false);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+    assert.equal(h.inputs().length, writes, 'no reset, business-input replay or reacquire from an admission response');
+    assert.equal(h.sent.filter(({ event }) => event === 'control-acquire').length, 0);
+  });
+}

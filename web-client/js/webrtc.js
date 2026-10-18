@@ -2861,9 +2861,25 @@ const WebRTC = {
     } catch (_error) { return null; }
   },
 
+  readInitialAdmissionPolicy() {
+    try {
+      const values = new URLSearchParams(window.location.search).getAll('wrdAdmission');
+      if (values.length === 0) return null;
+      if (values.length === 1 && values[0] === 'vacant-only-v1') return values[0];
+    } catch (_error) { /* Unreadable location is not ordinary admission. */ }
+    throw Object.assign(new Error('桌面连接授权暂不可用，请手动重试'), { code: 'invalid-initial-policy' });
+  },
+
   async requestExplicitViewerAdmission(episode = this._startupEpisode || null) {
+    const initialPolicy = this.readInitialAdmissionPolicy();
     // A proof-bearing page must never upgrade itself to ordinary human takeover.
-    if (this.readProofAdmission()) { this._viewerAdmission = null; return; }
+    if (this.readProofAdmission()) {
+      if (initialPolicy) {
+        throw Object.assign(new Error('桌面连接授权暂不可用，请手动重试'), { code: 'invalid-initial-policy' });
+      }
+      this._viewerAdmission = null;
+      return;
+    }
     const token = Auth.getToken();
     const authGeneration = Auth.getGeneration?.();
     if (!token || Auth.isVerified?.() !== true) throw new Error('请重新验证登录');
@@ -2871,10 +2887,11 @@ const WebRTC = {
     const base = typeof RuntimeConfig !== 'undefined' ? RuntimeConfig.getApiBase() : window.location.origin;
     const result = await fetchJsonWithin(`${base}/api/auth/viewer-admission`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ viewerSessionId: this.resolveViewerSessionId() }),
+      body: JSON.stringify({ viewerSessionId: this.resolveViewerSessionId(), ...(initialPolicy ? { initialPolicy } : {}) }),
     }, { timeoutMs: 5000 });
     if (!this.startupAllowed(episode) || sequence !== this._explicitAdmissionSequence || Auth.getToken() !== token
-        || Auth.getGeneration?.() !== authGeneration || Auth.isVerified?.() !== true) {
+        || Auth.getGeneration?.() !== authGeneration || Auth.isVerified?.() !== true
+        || this.readInitialAdmissionPolicy() !== initialPolicy || this.readProofAdmission()) {
       throw Object.assign(new Error('superseded'), { code: 'superseded' });
     }
     if (!result.ok || typeof result.data?.admission?.ticket !== 'string') {
