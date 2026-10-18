@@ -1,0 +1,17 @@
+{
+  "actualExitCode": 0,
+  "errorClass": null,
+  "elapsedSeconds": 5.236094110878184,
+  "result": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3B-MIXED-INTEGRATION-RESULT.json",
+    "sha256": "cf484d747f310c4699535a035c68c0dd7b20bf6cf0a0c254cf1a262a8f86155b"
+  },
+  "stderr": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3B-MIXED-INTEGRATION-STDERR.txt",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "classification": "passed-offline-only",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "viewerBuildId": "a3671ba674ad7516"
+}

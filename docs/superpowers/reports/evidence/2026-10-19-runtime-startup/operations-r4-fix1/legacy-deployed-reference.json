@@ -1,0 +1,4140 @@
+{
+  "schemaVersion": 1,
+  "productTIP": "dfb15434e79da90b803b763c533836e16c080c71",
+  "docBaseTIP": "eebf9bdb0bd5ed96ebf2fe719afe85012420aec5",
+  "historical": {
+    "r6manifest": {
+      "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/SHA256SUMS.json",
+      "sha256": "4b0ea13281c859ef38ac6ddb62a3bf3f642b3fba14abc61ef6993c0fda0d30b8"
+    },
+    "baseline": {
+      "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/preparation-baseline.json",
+      "sha256": "6c9958c52d3a64856243b669478b56fb6b4d20bb4832b6872562c3720caea8c4"
+    },
+    "frozen": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/frozen.json",
+      "sha256": "36cff0811b3ba4834307184468ff65c77c5d96bdaa5aa93b9f1c9028fff4217d"
+    },
+    "apply": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/apply-result.json",
+      "sha256": "7ca81810d7b518b8de3a01c946f4337987210f9fcfef60472da1f1c34680a28c"
+    },
+    "reload": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/reload-result.json",
+      "sha256": "d15cda9c0bb9e74f8a7cd3b2ac9372a6a282e27a11532918ca23e256c41c7928"
+    },
+    "readiness": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/readiness-result.json",
+      "sha256": "e5ba45ca15d2be10f45bff6bdf1cd848a3a9adc1e9567cab79b9ab3296d9ae51"
+    },
+    "template": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/two-time-template-_onksw2i/template.json",
+      "sha256": "70e9dc416bedde884208c8c6b88a9525a3c8486444b3c94f06781a049225150c"
+    },
+    "assetReview": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/ASSET-REVIEW.json",
+      "sha256": "440b7605154026953793259201006fb367791c76140b1201de905a2d1d0a9f2a"
+    },
+    "oldMarker": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/qualification-baseline-started.json",
+      "sha256": "c82942f1a79c3be27b3c464e20abf593e267833ec111faf8c8efc73c46cdce9e"
+    },
+    "oldFailure": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/qualification-baseline-result.json",
+      "sha256": "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242"
+    },
+    "oldSummary": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/ordinary-baseline-xphza3q7/session/summary.json",
+      "sha256": "ced7dc08dff0be3408ae94bb23c667f923c4d891391bc0fe0b2824a60a6bba15"
+    },
+    "oldLifecycle": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/ordinary-baseline-xphza3q7/session/lifecycle.json",
+      "sha256": "a6c0dc5ac51d9a5fb4d361a651a0dc37d3f8cb8a82be5fbbb37d743bb7ca1880"
+    },
+    "oldRows": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/ordinary-baseline-xphza3q7/session/samples.jsonl",
+      "sha256": "ffe7fbba1b8b92047705c156013d4fcf992962f0e665b4efbaf225ddf7b08650"
+    },
+    "oldRuntimeManifest": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0/candidate-dfb15434e79d-yjips2x6/baseline-runtime-manifest.json",
+      "sha256": "721f8e732898d069fca030a041bd42940e1cad37dcba660e4f77016495628c0f"
+    }
+  },
+  "expectedServices": {
+    "signal": {
+      "pid": 36845,
+      "birthEpoch": 1792322598.169719
+    },
+    "host": {
+      "pid": 36877,
+      "birthEpoch": 1792322600.528357
+    }
+  },
+  "regularFiles": {
+    ".agents/skills/webremote-service/SKILL.md": {
+      "sha256": "91f237be4422fd7c89329b123a758c9dfabbf825155831443d5bb73e89d271e3",
+      "filesystemMode": 420
+    },
+    ".agents/skills/webremote-service/agents/openai.yaml": {
+      "sha256": "d9064eae45446c4b7053f22a903a7a4cced7132da00a772835236927cac14ae7",
+      "filesystemMode": 420
+    },
+    ".agents/skills/webremote-service/references/service-rules.md": {
+      "sha256": "69f09b55278cc003a58c72663f89c16c0dbf38d75aa44c045418f4797d99fc62",
+      "filesystemMode": 420
+    },
+    ".agents/skills/webremote-service/scripts/wrd_service.py": {
+      "sha256": "68c3e4039b8d6391d8d7564b98a4d6918ddda69b8c4257c944ed962b1eac7393",
+      "filesystemMode": 493
+    },
+    ".claude/settings.json": {
+      "sha256": "0a8dc046b34241dc3c5e7ddace975fcec5d3c0679623a3aab3808a315d15730d",
+      "filesystemMode": 420
+    },
+    ".gitignore": {
+      "sha256": "536ed226317d6c15ad6e2e8f15a3e40af03bf635816e856fb607cb0050362082",
+      "filesystemMode": 420
+    },
+    ".gitmodules": {
+      "sha256": "e25a9fcd74711a987605a7a256ba1c1076b28572ad552d6cd4074237bf5ef623",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-08-30-mobile-remote-control-plan/final-fix-report.md": {
+      "sha256": "c85a363507e8c62c99ed1ba429cfbe8946414a7c4c857b1499eccc43e03dd3ed",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-08-30-mobile-remote-control-plan/task-1-report.md": {
+      "sha256": "df2c7fddd99a2f7818e3169343d685026e0fa7cdb4e95c5ecfdddab69ad4d322",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-08-30-mobile-remote-control-plan/task-6-report.md": {
+      "sha256": "03237d23d3ca3f17f00d81002000e9e57b465fdac1439a56c7dde5c82211a6fc",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-03-remote-desktop-control-continuity-remediation-plan/final-fix-report.md": {
+      "sha256": "b2622e20fb467ff1e4d26368248a5a5cd7c40e301abfd7054b96eadd34656035",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-03-remote-desktop-control-continuity-remediation-plan/task-4-report.md": {
+      "sha256": "e3942e850ebb9f312a8e450f5bee081636346f7e0eff40f06af05715de520967",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-03-remote-desktop-control-continuity-remediation-plan/task-4b-report.md": {
+      "sha256": "8554b04d76df4c158cf764f1e3c8ddd094515d9b7bd29bac0fbc392a719334a9",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-03-remote-desktop-control-continuity-remediation-plan/task-5-report.md": {
+      "sha256": "11010cc0c298775c0c92d8250f97cb655b5c1022f20e1eb3d7b1ffa0618a2c20",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-05-turn-quality-latency-optimization-plan/task-10-report.md": {
+      "sha256": "cd0e85df02093c8b13d27a7d20c046d22b21c4650658f3abe51887750772dbe4",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-05-turn-quality-latency-optimization-plan/task-5-report.md": {
+      "sha256": "5e656003e174fe8692beb4e396bda485878f52fd7c29e3f8bbf3c9e1d62ff841",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-05-turn-quality-latency-optimization-plan/task-6-report.md": {
+      "sha256": "8ab0c8e1dddfeb2b80c31893a799106ded151b27dfbdd0ccf8d42a2c80f64bce",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-05-turn-quality-latency-optimization-plan/task-7-report.md": {
+      "sha256": "38205bb4777232dfb3b46f77c570befb673ac0babfb593adbbe0368e3ca4244b",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-05-turn-quality-latency-optimization-plan/task-8-report.md": {
+      "sha256": "6ac7ecac98e9c891f0fbb93affabdb7efc6a6e588cf9b006f14fe3fe4b1e9a8e",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-05-turn-quality-latency-optimization-plan/task-9-report.md": {
+      "sha256": "8704b2e5c0f803c0d55fd1765ba4efdb1442560fd3132846ce78785cf8d01088",
+      "filesystemMode": 420
+    },
+    ".superpowers/sdd/2026-09-06-mobile-input-interaction-remediation-plan/task-4-report.md": {
+      "sha256": "7876345e6a3fc6620bc8f53f0225b0ae45e87d00f64800891bc10e9998318b4b",
+      "filesystemMode": 420
+    },
+    "AGENTS.md": {
+      "sha256": "a77b331d12fa92db24a2a89ea58f3c0cf714dba807bd19fe90b63ddd7cea6014",
+      "filesystemMode": 420
+    },
+    "CLAUDE.md": {
+      "sha256": "e53d957e120b5bb5055c530897fe9d4f8019e6013041bd4ca2e64ee7705b9441",
+      "filesystemMode": 420
+    },
+    "README.md": {
+      "sha256": "d86ce4cf5d4d762826e60311632d2e83f6f224a25b5da88c9c2854044c8a2a78",
+      "filesystemMode": 420
+    },
+    "SECURITY.md": {
+      "sha256": "acd3deed9eac5614761ff9aa32999ba03e112446d7a91e1ee9e89862f4665be0",
+      "filesystemMode": 420
+    },
+    "docs/archive/worklogs/review-anchors.md": {
+      "sha256": "1d97bef4734d9e8874cc90d069ce5bb1ee4bfb4f19e2ec47eceb81a19d4376eb",
+      "filesystemMode": 420
+    },
+    "docs/claude-memory-index.md": {
+      "sha256": "10366dbe42d5b74d98555d4c073f2129ecfbab4a0c991eeee2045e480346afa1",
+      "filesystemMode": 420
+    },
+    "docs/claude-to-codex-migration.md": {
+      "sha256": "841f1d12b36a24faa598f5c20cc59aae3333ab6b89fcdcaebb48bc5355997b2e",
+      "filesystemMode": 420
+    },
+    "docs/hapi-\u5bf9\u6bd4\u4e0e\u501f\u9274\u8bc4\u4f30.md": {
+      "sha256": "115b16db0e4f7996142ab24fd8899c9695bffe63f360514b9f41561cf1c0af90",
+      "filesystemMode": 420
+    },
+    "docs/open-source-release-checklist.md": {
+      "sha256": "a2c412268a97f5f3ea5a396e5c5e1006c91b124d81af6879e934d6ad3404fdc1",
+      "filesystemMode": 420
+    },
+    "docs/project-memory.md": {
+      "sha256": "8e9b3d9d6e2dd6d71f51d94656792a02b3ececaa8102f993eaf8526c9c6de462",
+      "filesystemMode": 420
+    },
+    "docs/runbook-safe-startup.md": {
+      "sha256": "3ed7f2bf5d4fdc962e361eab4c0c56da063d089f9622abc06fe5c00dc962721f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/deploy/README.md": {
+      "sha256": "edf2b6770950a40d3a6475ae5441d7543d5c334cd3bfe11cf628561eecfa0e83",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/deploy/nginx.conf": {
+      "sha256": "25171278610bfe50f006e1b565630b58e29f14f2292d926c46380b50cbde2837",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-05-09-internet-deployment-plan.md": {
+      "sha256": "0183e436e0cf773d2a7e529e0d7feb3898cf01a20a30309053b93ad1d6f7f7df",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-05-09-macos-web-remote-desktop-plan.md": {
+      "sha256": "3abd25930a122ea7934bde0722cf758336f7c93248e0a0ce6ffd0f228403ccff",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-05-11-latency-measurement.md": {
+      "sha256": "b317852d4c72a2c8e0caeb646543c555703f81d0ee8b7fde8a07af16ff4da89b",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-06-13-host-launchagent-plan.md": {
+      "sha256": "2a0d665b4e8b02b516d82e37c7a0e222003cbc8482ff81c83ace394fea4b85ad",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-06-27-strict-stun-connection-diagnostics-plan.md": {
+      "sha256": "1e2891ada8b1b95c459a805224e55d78c4187aebbf43b893457e2eea73d898f4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-06-28-web-terminal-plan.md": {
+      "sha256": "91c33f674b93cf52dae94ba3a96de063abbc775b2a5cfb4a1dc01a9ef1446051",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-06-29-strict-stun-resilience-optimization-plan.md": {
+      "sha256": "78bc75c13ce172d8d9e49421b7fbbb750ff7c3ed9a8887e5a3a2bcf5b6e2bc84",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-07-shared-web-terminal-plan.md": {
+      "sha256": "c57658f7746bc1f9d3d25cb672f7a6964c22ac36898d2bec5743dd0cf771a4bd",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-08-dev-subdomain-cloudflare-access-plan.md": {
+      "sha256": "a77b26686ced4677e0df3a8e48621ed59bc483de3684d26b104bee10abe0c659",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-08-single-public-entry-manual-media-fallback-plan.md": {
+      "sha256": "760b1584a20f2858e2c173a623f731e669f7c76613ec24aa0c5f812242d205f9",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-11-terminal-cloudflare-tunnel-latency-plan.md": {
+      "sha256": "1e480319d72a1305060517e3aa681c3dd3bbbf89dfda5094ac3115d8589e6af2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-11-terminal-direct-wss-plan.md": {
+      "sha256": "defae7a4dac7aa357a3ee2a1ad5451a52acd23670297f21e05000926727ff48f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-12-structured-logging-diagnostics-plan.md": {
+      "sha256": "a3b937b81f78075b02d1b57fa06037e20e0cf9e3b0bee8ccf0adbb174466ef7d",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-18-entry-health-operations-remediation-plan.md": {
+      "sha256": "050ff9664761e06e515f56650c57466d47a2d116bf10f079a037ef63359414b1",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-18-media-telemetry-performance-plan.md": {
+      "sha256": "d68596d4312d387b3e11932dbfff9de38754d682f22832307225d42215995f52",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-18-remote-desktop-connection-interaction-performance-diagnostic-plan.md": {
+      "sha256": "93ddd2fff4f1f90f0350816280854776459e48ee5755828a2738708cf8147555",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-18-remote-input-correctness-plan.md": {
+      "sha256": "51fc5630edfdfd72a31420a729af51cbfb3553bdf06ab95c29d83ff9bdbf901e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-18-terminal-observability-security-plan.md": {
+      "sha256": "f402ce1a26b7a50ead673a599e273f99f47d18b0bdb1e132a6cc65d3c9db4573",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-19-remote-desktop-media-suspension-plan.md": {
+      "sha256": "c0a8f091eb678086071431a94db4996d13de7f1b6a600bbdd8153c24d78b43f1",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-19-remote-keyboard-state-reliability-plan.md": {
+      "sha256": "d40a756bf9b62aa5ace7c58e66f475c1f1430b1a2c9c9736ae0a2b27304d6566",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-19-review-blockers-closure-plan.md": {
+      "sha256": "89ada7a621f5c6e4cf9659ad57a676547f1fbdda9ed015e01544392e09ad1495",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-19-terminal-hardening-plan.md": {
+      "sha256": "34c5438d9d0461e5a12034192506a53653a564ed4796d4446b4b53a84351a80d",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-19-terminal-multiline-composer-plan.md": {
+      "sha256": "a7b09003ac906987adfe1dc9cf4e7bcec4b4302d7eca090a32eefaf943ccda1d",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-20-manual-stun-port-search-plan.md": {
+      "sha256": "c274a00edca44266103a464e150ae8d4f89bf8db5541e1e5801504ba1e1d7744",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-20-remote-desktop-reliability-closure-plan.md": {
+      "sha256": "582e488ab3c0c272b5395ef03a2eb26b85f1489a296c43be3539b4276021d21a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-07-20-turn-integration-plan.md": {
+      "sha256": "e26eebcb7dbe37ffdd96bbcb7a28c124d08b5fffb06a3ba654f72ad8e978ce7e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-01-page-terminal-tunnel-browser-evaluation-plan.md": {
+      "sha256": "057010379be88451a673712997512857463ae33d634c89adf6ff487ce87c656c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-01-turn-relay-reconnect-stability-plan.md": {
+      "sha256": "d19cc8dab0c33bf2304f50bbd825ea780cb291addcf42a5ebde31d871ba26d60",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-02-multi-turn-server-selection-plan.md": {
+      "sha256": "546bb7fe3a82124226110ab84b32aa15b8c9ce3fc64ec11a9f73d648c23955a4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-02-quality-lock-low-latency-plan.md": {
+      "sha256": "c56a78ac06c6eb504725e6a3704f2065fb76a11ae17f420c3abb3aea2b7ca248",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-02-single-desktop-viewer-plan.md": {
+      "sha256": "c3382022b7bdf1c6d3a19a23951da9e4db38441275e7108325b3f09af2fd9059",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-06-viewer-fast-bootstrap-plan.md": {
+      "sha256": "a508fc58503427ab617d3ecbc122ccab8548e8725cae31f0032051838b96ddff",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-08-terminal-modular-remediation-plan.md": {
+      "sha256": "0ed85c336fb7169d4b9e990194fffadcffd87677c7ea0ca39a1df5c0c52aa3c6",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-11-formal-tunnel-hardening-plan.md": {
+      "sha256": "be85d5922fbe9e825e5c92b066c629faa5a468645bb9c7fddd9af2d3d67a0249",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-11-host-no-idle-lock-allow-display-sleep-plan.md": {
+      "sha256": "d56348aa887adecd40ca2b2f7f0af5f997a35b5ae5465b020be0636b4a57dea2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-11-relay-input-stability-plan.md": {
+      "sha256": "00aefa3f3d2080a92beb5436391c98a3f195a550e7d24104dc6024888f8f33c5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-12-network-advisor-ux-fixes.md": {
+      "sha256": "7b4f8dac573d1a7b87330642a89f8ff1c434ea425665e27faf62dfd80b4da42e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-14-tab-resume-reconnect-loop.md": {
+      "sha256": "795216630425bbb903a6a04000c320bf36028022de3fcad3d58c8afb591c4d90",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-15-viewer-chrome-layout-plan.md": {
+      "sha256": "b219998d893d8756fdfcb2afb5c4b5a98e1158f19ca7e81a0379aac1b70d08ea",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-29-relay-paint-continuity.md": {
+      "sha256": "27b02d1ac9e62cd6b8333b0f6a1441023b4a86f1d6d368f885605fa39600264c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-30-deep-module-evolution-plan.md": {
+      "sha256": "5fef187b4f541eb0684dc4da0b0535910b051e4a3dbcb736ab10c39ba32a39ed",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-30-desktop-session-state-acceptance-plan.md": {
+      "sha256": "58b18e6ca388be0b5d28b9ec9273d3aec94aa2a320df6dbcbc0b8cf34d329536",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-30-desktop-session-state-owner-convergence-plan.md": {
+      "sha256": "05c76ebed3d413d15ebb504c4cf5aa54c3e01296fb30763cb3f60a2dcb222cc8",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-30-mobile-remote-control-plan.md": {
+      "sha256": "e5eae91494c0d516d9bf93f2d26248904e5bd94eb2df9dc3d97d8fda35df20c2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-30-terminal-shared-session-ux-protocol-plan.md": {
+      "sha256": "a5e052aa834e03da727148e2d1a6686ac65f7c50097ae1ee87848471e4ed0ac0",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-08-30-viewer-chrome-capability-gate-plan.md": {
+      "sha256": "92c997fd9a74a18e88fcc46b5f4f127a762f4af33b60793eb4150671bb7ed902",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-03-remote-desktop-control-continuity-remediation-plan.md": {
+      "sha256": "e950d97425d4b8da11556cec4afadc046d3f96496b6daa0b2d747f5507393b48",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-03-remote-desktop-input-diagnostics-stability-plan.md": {
+      "sha256": "17bce63ddd9cc8bb8d33f72f8a3beea5fc7e814c7ed2281476f222f0be9dda6f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-03-terminal-formal-watch-remediation-plan.md": {
+      "sha256": "350fda457c1b8900eb1c00164dff2b73ba80bc2f19961485ffc8913087d446b5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-05-turn-quality-latency-optimization-plan.md": {
+      "sha256": "927d1ae29974a0b478182bbf9e68b319d91eb95e682d4a74d9baae52747fc515",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-06-immersive-fullscreen-chrome-plan.md": {
+      "sha256": "a92f9236071f5f8920e7e6c21055faa80f5252f4f61de7aa62b4a11333496e19",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-06-mobile-input-interaction-remediation-plan.md": {
+      "sha256": "ccb0e6c69ebf15afd906e01fe4600e1fa326309e1965e53ce3bc6b49387b3941",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-06-turn-pulse-throughput-next-plan.md": {
+      "sha256": "86b85cb94fd46cb5da4d6a060c80416696dcc1d8e203eac70c122cab3b6f4cd8",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-07-input-recovery-observability-plan.md": {
+      "sha256": "177eb7fec84d57c6a8fd0288983fb135210086a26c262b0625e88d56ad21090f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-09-relay-on-demand-production-fix-plan.md": {
+      "sha256": "a2202769e584cf81ed180e08511c44f865d639e28e333a7208f5b6197eb88398",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-09-relay-peak-sliced-production-rollout-plan.md": {
+      "sha256": "e463f9c94a5fd1c0732c9b409e96f39849d39395d1c1cbf3e45f448ce4e537a6",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-15-input-context-recovery-ux-plan.md": {
+      "sha256": "2a6b194cd812a51c89aeef48fbd8757e9e8d767cd37656fda962fc5cb2fb3d3b",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-19-terminal-review-optimization-plan.md": {
+      "sha256": "c9025c9672e1d1e82d501e4432188e1179505310ad58cbe3e104befa7d42da0f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-28-remote-desktop-stability-system-plan.md": {
+      "sha256": "c358f716fe822f7f2075b967f898ab0c122326476017b2541e04d99b5533a45f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-09-30-viewer-interaction-optimization-plan.md": {
+      "sha256": "f29ed09db9b8ca79d487f8afb942e2a0ad74cc5819ed1cd5183ebdc8bb5317f6",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-10-17-capture-image-epoch-plan.md": {
+      "sha256": "f9edc2d2c587d35fc3db39079bb6edb58710e125f66c34067b8dbab43aaaf27c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-control-recovery-plan.md": {
+      "sha256": "2f07ce51c921eb29bde904be92b94974c3c8537f53ed6ff762a2019545d86b40",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-dc-diagnostic-admission-plan.md": {
+      "sha256": "5c3ffd13b979c41d20bcebf4906cd68a52981f8e117f6e11b339bee09a20a181",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-evening-connectivity-evidence-plan.md": {
+      "sha256": "10e8434674b1a7f854a38df03ceaddce6ed95ad35405c519a98d6649b34d5b99",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-jpeg-relay-recovery-plan.md": {
+      "sha256": "e5b6cd08cfcda11a735c53b439a15becb56f0fdd8c72436019a3276b83b72163",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-10-17-jpeg-transport-admission-plan.md": {
+      "sha256": "6b1a36f49524911ffbff0c7fc9e988f044b78ce6d08f01e5d14e222332f9b384",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-jpeg-worker-stages-plan.md": {
+      "sha256": "9001d0a50cb2be467f67235a7d74c0d0c03b4552a1f4293be6e560759a581386",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-media-latency-plan.md": {
+      "sha256": "169b2b0c558c90616c1fe93952a1ec35555746ec5cdd9936cc1f768f86fe7ea6",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-media-monotonic-clock-plan.md": {
+      "sha256": "7d78f7c22c940f290d6fb029b0b129482f9af4974de63ae37b55e45e5e941334",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-media-null-observation-plan.md": {
+      "sha256": "ec7547f0005768f25d00ea2966f69202d5c65d09b64abf9cee18d2fbb9a9f174",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-owned-turn-long-plan.md": {
+      "sha256": "a5b1dffe8c853910151132237518b1f767da70530a52131f0c95bef020e19c54",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-relay-reset-reason-plan.md": {
+      "sha256": "5b9cb06d4e037f3fafb58dc86edc62f0eec2025f17e48032e1d2a2177dd9ed1c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-reliability-latency-remediation-plan.md": {
+      "sha256": "1298cf0acc07657c8fb1494106eaba9f8e08f6e3f8751b2c6d7904b7e83b8fda",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-sample-observation-plan.md": {
+      "sha256": "157362eb6ca5d4827058c076e3adc095ada770670a3aab70550b7b14b5e464fd",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-signal-close-observer-plan.md": {
+      "sha256": "4849f0a99859e3aacfdd04a730b2599fb35d8a5ed81636017e74a218b9547336",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-signal-heartbeat-observation-plan.md": {
+      "sha256": "5dd16bc9c76c3cf5ce91b06c35b86d8fb9addada286064d5ca0f5188dc7ebb6e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-signaling-timeout-fallback-plan.md": {
+      "sha256": "ca1f1006b3c39f765fadcd821e2fd21b06492d4e8dac7bb973848464245e17ad",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-startup-datachannel-watchdog-plan.md": {
+      "sha256": "9397dc4c6b83ce5385c7899b1eebac99b68c81471c2ce90009bb61802e6f3df9",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-turn-stall-profile-plan.md": {
+      "sha256": "35260927778828af9f28bae379a64f2996669bfcbc0b7fe84b6aa565673fac9f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-viewer-admission-recovery-plan.md": {
+      "sha256": "74c8f2d7d699206991ab8c69f8d2bbec68ed1176b711e2cf406c5143c25b596c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-viewer-auth-blocking-plan.md": {
+      "sha256": "7726d8c28e486672d555e23604fab67b6b62623dc6cd581009f3e20d3dec24b3",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-viewer-control-clock-plan.md": {
+      "sha256": "ef830c915ea8d95b0c5fb39f8d88612b828b55a365954043929d7d1873094ac8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-17-web-entry-observability-plan.md": {
+      "sha256": "430d86d73f17c40f752f6d79ecb87097512b609c7068b56ef66646d44ad30ed3",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-18-bootstrap-ready-reuse-plan.md": {
+      "sha256": "306e5f78a0a88a087ee460f0817010e4731fc71b241e06f77c5360b275a866e9",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-18-host-cadence-cleanup-plan.md": {
+      "sha256": "cb8c034cca8cd855ed39060745109c32e50006433184ed07ad3a6b7fb0425bfb",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-18-passive-gate-evidence-plan.md": {
+      "sha256": "7a26ac7b46d276b69cc31fec559daf126f24912fc04d7c4d72ab643feaac38bf",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-18-resource-collector-isolation-plan.md": {
+      "sha256": "e20bf603b5d9627effc6cc8d7b04acbae52524a970fdfd96c6a7745571bf615f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-18-slow-start-idle-io-resilience-plan.md": {
+      "sha256": "7d8652c2a7eb10aa52e39b933faa936470e35c467b71a9c743abcad08a045a65",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-07-11-terminal-performance-analysis.md": {
+      "sha256": "ea715f120cfd5ddb8bfc100272344432be8bc7abdceda045c762be75efcd1793",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-07-18-remote-desktop-connection-interaction-performance-diagnostic.md": {
+      "sha256": "76e4b83a1fe8a74884ba5b3b5493423b55db6c9b59d6a7ea0fd08870a307031f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-07-19-remote-keyboard-mapping-stuck-key-systemic-analysis.md": {
+      "sha256": "5d4c5b702d9e21fe9dc0a59df1aa343234ce62df7205306b8a07a7573bf7f794",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-07-19-remote-keyboard-runtime-acceptance.md": {
+      "sha256": "3fb6682bde223a8fd44a44969b262c13f2308f1a9009a5fb82a153d85c745714",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-07-19-terminal-hardening-review.md": {
+      "sha256": "b659fd1fe9b8be48e7e6acbc14daad375f2e58b6b0f7934467ad8a463a0f3249",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-07-20-remote-desktop-reliability-closure-evidence.md": {
+      "sha256": "40441383f7fd390cc7e72cd842e520154cd746ec56de068e7f7d5558fe9d265d",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-02-terminal-tunnel-high-rtt-path-analysis.md": {
+      "sha256": "f976381389ae0da70eabbc335bb6177e66a8c638a7bb37c708d1e1eda7be2532",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-06-viewer-fast-bootstrap-acceptance.md": {
+      "sha256": "bb131e5e0ab91ba7b97d9ead07a51c55eb69172d8110ee88e4b563709595eee3",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-08-terminal-systemic-review.md": {
+      "sha256": "14ac298c2dff274ce68d19afaa7f49fea25ce1701c4f7c65c243240729eb7288",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-11-formal-tunnel-hardening-rollout.md": {
+      "sha256": "b94a16e2a3296ac481d75c1a2600b5a0821d7ce3ce730dba10a57c22bb07bd14",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-13-reconnect-storm-keyboard-reset-postmortem.md": {
+      "sha256": "dff6376532a0243a3e3ad54926a1f8c01a893f70d6a52b20ab5d8b4f4af84667",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-30-desktop-session-acceptance.md": {
+      "sha256": "3ac5f04db745bae8bd889999ca25571eee17d5b72cb054c702e3595357ef3ccb",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-30-mobile-remote-control-acceptance.md": {
+      "sha256": "174539318c5441d2d2fa432dc1f5b90f629ffc5774fe6a7a4262cac181dc1b9e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-30-module-state-owners.md": {
+      "sha256": "4368bc851a3d62475bf97a9ce0b6a043b9eca92b4f425741b0ba98f1cff05da5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-30-terminal-shared-session-acceptance.md": {
+      "sha256": "c9c621db060daf7fd41c52ba92f1b271541e235999a3ca9c0b8256f11b1bcf19",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-08-30-viewer-chrome-acceptance.md": {
+      "sha256": "cb1f24879122668e1be3ca6d5c359c451a6ee97a2db12cca5e938e6277aa6379",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-03-remote-desktop-control-continuity-acceptance.md": {
+      "sha256": "8f3f59c6b8e3d770c12400b410b57343d02ac7bd138ec50947449e6a1d97c915",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-03-remote-desktop-input-diagnostics-stability-acceptance.md": {
+      "sha256": "b064593385accb1ca0df0c1b1190bb8a4fc75a3357b816b71e3ab08e609d7230",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-05-mobile-touch-keyboard-logic-review.md": {
+      "sha256": "672ac4ba031236bcdef6b9925b768e9615e335e5b74102ed59447f72343f75ea",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-05-terminal-formal-watch-task4-report.md": {
+      "sha256": "c1b5664bd85865e1cc1f3f3cf7e5dd9c3273b2c96c7fe84d9a1922781f4c73fb",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-05-terminal-formal-watch-task5-acceptance.md": {
+      "sha256": "66acf6da1471f4bed4baf08245a087203862463fd580e8202661ec02010c0653",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-05-terminal-formal-watch-task5-report.md": {
+      "sha256": "57ba3555c177477776e519c0a3d90c806a7767c6b61e809abe67d966d99162db",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-05-turn-quality-latency-acceptance.md": {
+      "sha256": "ee9c2ab66479efe2cb06b60064e892d7a216adc64287a2373ab05b01e8b89358",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-05-turn-quality-latency-review.md": {
+      "sha256": "f2cf42ce7efff0518176747e066618f0641c519c0f1f443606db5e4e1468f1d6",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-05-turn-quality-latency-spec-plan-review.md": {
+      "sha256": "3b37ee97aa9bf3969baf99748299a50d2b815be3180619e0c9eef34a2f7d620c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-06-mobile-input-interaction-remediation-acceptance.md": {
+      "sha256": "920bed4e33e3f1f42f87709f04a37cfc6bcb7affef1f00321560b07a80d83555",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-06-mobile-input-interaction-remediation-plan-review.md": {
+      "sha256": "58bf7982b7872ad05e1bcad0b0315b0e79cc0a95c90245e3d41b8989ebc657a5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-06-turn-performance-regression-review.md": {
+      "sha256": "a25a9b2905bb335090481575c88523cc6310595c5d8b9994465a2d2e4e5daa61",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-06-turn-pulse-followup-implementation.md": {
+      "sha256": "13957fb448606aca2fbe6be4c8631ace54b67759b9bc9306415a613d8e119738",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-06-turn-pulse-throughput-plan-review.md": {
+      "sha256": "dd81027ab5fe4f8c23947c3dbf7aec804e08f168d23bb261f396fa1bf7578502",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-06-turn-pulse-throughput-self-review.md": {
+      "sha256": "4f9b5462de7a85c0db9ad2bfe480c3f501756f888328df164e105f09de1269e8",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-06-turn-quality-latency-final-review.md": {
+      "sha256": "d55c28ac3f70d02ad1bcb4f73b01dafa54d258881998f924a405f753db261a10",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-07-input-recovery-observability-acceptance.md": {
+      "sha256": "35a8b34d71b407bfb832e20f17710ad629542a5938459096fd4d70e1983ad87b",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-07-overall-completion-and-resume-input-diagnosis.md": {
+      "sha256": "7502eb11e331b3e08600b33df6aa59d1c8c66bd7de53131747704deb35c62acb",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-07-turn-peak-headroom-v1-execution.md": {
+      "sha256": "9c58e8aab3b1b485aba6976432c06d28788494cf747403438a75405a7e954351",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-07-turn-preset-refinement-execution.md": {
+      "sha256": "be56061af59861db921a2fde486ff0d2d58438c865ec387d1a8f9ba939734352",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-07-turn-preset-refinement-full-execution.md": {
+      "sha256": "e7bf4af72ef706685822672ecda6c69f068d10d497bd5199353c9821b30d4da1",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-07-turn-veryfast-refinement-full-execution.md": {
+      "sha256": "d2e57aa6041b27ee5ca3ae3562406211939c7b0b5ee062efec44e1df39eeef86",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-09-turn-cpu-telemetry-cadence.md": {
+      "sha256": "90e0b10a58e35a69e9e155248b0abe03ef72716993c50b4aef7a23b3cfc3a03a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-09-turn-main-project-cpu-deployment.md": {
+      "sha256": "7c6316893a8c6de0ff72220a9b1ea4a139df3ccd289751aef64920e9ad8bee27",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-09-turn-production-pulse-remediation.md": {
+      "sha256": "0bd0cae36e26e6cb5f530358ff801a54d66d3c3c63eb8b069f8a4b867bde908c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-19-terminal-code-page-review.md": {
+      "sha256": "ed3a05f42e7b10ed8ccc8dad367d8568c481b10a9afde4351213a329ad065b96",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-19-terminal-review-optimization-acceptance.md": {
+      "sha256": "cef4c8418fd01f2024f0f0c757fcc6c34d5e7665507fda6ae4bf548c976cc1c9",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-28-remote-desktop-stability-acceptance.md": {
+      "sha256": "e724b4ccb6d028081b2ce400f2641abc40f8a6a02a985ab7b8854f6dd430374b",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-28-remote-desktop-stability-implementation-review.md": {
+      "sha256": "673cd5a494f2b899fc80d6f5ee91d6d1ba6fe77505d467f11e4fb56559a6e57f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-09-28-remote-desktop-stability-plan-review.md": {
+      "sha256": "52d38fe53627b7e40b18abfe487c418042b88dc2a89dbbd2e00d4ccdc86566cf",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-04-context-continuity-performance-review.md": {
+      "sha256": "646877536d3990320ae67852bf08033139ab93388f2b0dedc569b5f644006a23",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-C5-independent-review.md": {
+      "sha256": "597f5d10854c1122443e18863c52449aa6f2b9a28213015d28df4217edec6593",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-I2-proof-timing-review.md": {
+      "sha256": "e7bca89fc03e1eba4381f1df1870b3b9115d23ea9be41dd29bc8fcdb4cae17e5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-I2-signal-observer-implementation.md": {
+      "sha256": "8526d1137fb10e81a4aac8d3d695afe882adef69e899bc72669bc2d1849d9488",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-I2-signal-observer-review.md": {
+      "sha256": "1cb7b4d94ce8882d4448eb88ee4b381fadde88df2b1e9485d2fdf7f40481378c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-I2-start-proof-review.md": {
+      "sha256": "eb9c2add6024ef4610bbb7c4c7f475642b10c4caf773f2619719ba777bff1cc1",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-M6-acceptance-observer-review.md": {
+      "sha256": "ae3a1d34f5ece9b45a609ec3fb4f1886b67bcfb323e3b04667e7eaa090a335dd",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-M6-design-review.md": {
+      "sha256": "cafb2e47f2234e4e64cdcbcccbda6a085f5467bc0930fe1b11673d6cd511ef99",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-M6-independent-review.md": {
+      "sha256": "5bc22067de70bebbf83a332002021c8c3983a4936fd8b29b70c2b888d521b68c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-agent-decisions.md": {
+      "sha256": "9bf9418c447a470dd53e8a66d2d145559dfdf195c92b7bce68ccb04fceed57ff",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-auth-epoch-increment.md": {
+      "sha256": "4fd11c8a8c950a0891b0cd7a7cf8683276a8e4467fb004cb8b6ae66ce6d12c53",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-capture-image-epoch-task-review.md": {
+      "sha256": "a012a291dcca1aa4ac29fb2725f0c670adf4d1e1db82fc6e68554970da3a0716",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-clock-reset-final-integration-review.md": {
+      "sha256": "5311c09018bdedc697b9c65e2b4334b64618c3ba962911b8d4fdb0778754608b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-control-reset-implementation.md": {
+      "sha256": "48366abef1bd819c4577c13702baf4b00b6e64ee519aae97e5cde31eccbd675c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-control-reset-task-review.md": {
+      "sha256": "d3e79f2a747b93c02225f4d798f591acd4d86e01b95d0057767e05b5fe176c38",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-current-resource-ownership-review.md": {
+      "sha256": "2e8c83fdcb01691245b190d96305e69c27f15dd36d8ac93adf1e39087f833a56",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-dc-diagnostic-admission-implementation.md": {
+      "sha256": "5b632b6bec6acab1727bdf85c4196575af19d92dc879bf4dfd571f6ee59ffd61",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-dc-diagnostic-admission-review.md": {
+      "sha256": "7166e667d3b443fe0d8cea2ae3709ce6ba2fccaddba10a070993ac274e8ec8a0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-dc-telemetry-bound-design-review.md": {
+      "sha256": "c30ac2d486c6fc9366c1a3179693d23688a0cb71b688dbccd6aaecdb40313d3b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-diagnosis-and-acceptance-status.md": {
+      "sha256": "cfdfa84c32eb40556a52162a6de28425c3e3ae50ed8413475d37765d6db5c943",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-diagnostic-delivery-docs-review.md": {
+      "sha256": "0a04efcb2d7a352423f6da2ca785a278e6455f92566b5bd10656802d3154ae5f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-entry-blocking-auth-review.md": {
+      "sha256": "ea64b4f1e996fa784ef1e13a1b2080daccf2d9f7a0141c4e8f1a992136f94bfe",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-entry-loading-diagnosis.md": {
+      "sha256": "5713bfee19cbeff2542556a29c0abefa8dd8e60ce96e8c396ec154b15879d3d5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-evening-connectivity-followup.md": {
+      "sha256": "88ec01ee8e02b6994a6635405b82e17fa09ea1c2e991b60320d7d69898a223b3",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-evening-evidence-review.md": {
+      "sha256": "ec7b0a51346394ef65bac8c3c89349ad96c51b4d59217570e78fc70e86d760bd",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-existing-frame-trace-operational-review.md": {
+      "sha256": "0d475635488a5d57a48c94c43da367481a1414c8af8589c002d0d79657b9bb18",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-existing-trace-fixture-classification.md": {
+      "sha256": "cc08e667db5d5a44c33c368b4e9a78aeae483fe9353bc5ea9948d6bf0749dd65",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-final-auth-epoch-review.md": {
+      "sha256": "bce1dee25b4d1a031e00bf91a049ca6c33b9b331a2d4e1daca9c4218c79a5cca",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-final-branch-review.md": {
+      "sha256": "40ad14dd79b3ed9173621eb5316d3ed923cd83e32f406362677ea2bc14e2884f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-final-close-increment-review.md": {
+      "sha256": "07ab4789de245e458471e88ab7e4174757df13cd2aa7974dd2cde1c019a5a40d",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-final-dc-increment-review.md": {
+      "sha256": "6900d99b7566677166128cb29a6c2104e9f2908053b649ec04059d9364ba7086",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-final-integration-fixes.md": {
+      "sha256": "b09bbd5208e924ed80968d810976ba5ce6b4b6fa69eadc39ced9e657f9cfa1ac",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-host-stage-clock-inventory.md": {
+      "sha256": "b77bcd3614ed9ddf5266f4159dda6b3b8a6d7afc6db72c6c43042b08fb92b19f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-final-integration-review.md": {
+      "sha256": "4fbcfb93cac9f84b10a663641911603bb042d7206f807d5e38b35dc5a94d0ca4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-gate-short-performance-review.md": {
+      "sha256": "ed59b4c456d167957b9c6af612eea22d012a3dd4410702a44f4d01e10127fb15",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-gate-turn-failure-review.md": {
+      "sha256": "9c9e14a6cc2cd4cf32c6d67a1c5271380fc0183620fa396fb5b2ce9ee51089f4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-stall-diagnosis.md": {
+      "sha256": "e46d3be0be129dc7c2bd2c2d2f44b4ddbd4449a7933432453aed47ec753cc334",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-transport-admission-report.md": {
+      "sha256": "462667cbcc0c4c74c87e28ebee1cf211743d70e9b89bd6155c9d5477c8c383c4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-transport-admission-review.md": {
+      "sha256": "d7c5e39581db37a1e52a7d6301bbc9c80c05cf212945b24b35a150242e28ec75",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-transport-backpressure-review.md": {
+      "sha256": "3be01f0c80508911a599976bb188130e7190afadc0dacce0ad0457fe8797cd41",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-transport-gate-design-review.md": {
+      "sha256": "bfe9006d57d44d4b98cb923565b97ad151d668af24401e95e3cc738bdb35bdd7",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-worker-stages-report.md": {
+      "sha256": "37e0e0afa21cbcd45df3b18a26286e9e02320db75b683b3608f84808f6630bee",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-jpeg-worker-stages-review.md": {
+      "sha256": "7b737a30d653f4c1d43300f1bd727d2a4e9eb30c6a4c040a387ae7d16c939236",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-keyboard-reset-reason-adjacent-review.md": {
+      "sha256": "b5a493f47fe247c170d7b98bc700de5b1a8f0402c4d878ebb0aa02bfc3caca74",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-latest-media-performance-review.md": {
+      "sha256": "78c35f2177c9dc76e3a0e1a7342eb4ed2e2a71fb51499ee9c15987fabb7a0527",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-live-acceptance.md": {
+      "sha256": "9a91d438c21ef0f6d3156be131b10d2875a72e185393187e80070703cf8f628e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-local-timeout-runtime-review.md": {
+      "sha256": "2a19c4edc51543bc9fcb1836e2d8944e4ecf3086be3171a463e120f0df95262f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-login-stage-resource-followup.md": {
+      "sha256": "f3e899877ca99f3fe3f07c4121c8d74a4c34a0487926f70bb8aeab2f103930f8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-longrun-gap-diagnosis.md": {
+      "sha256": "bbdb5f4f171ab2d5a8de47fe5d2300d5a44267ec5d5a735c522306b0273931cf",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-manual-visible-acceptance-design-review.md": {
+      "sha256": "edc916362d0210bdab01e9dbe9e283062022aae5e8ca443aa2e433c186433240",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-causality-implementation.md": {
+      "sha256": "fa0e73260dedf7754d02618fabef2783d9f9bc4298a72aa21544f36edb0688ee",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-media-clock-implementation.md": {
+      "sha256": "f59b9732ee393dc9d9d30815af3825a32d5f6f9d0800368b2ba5b311e99d7310",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-clock-jpeg-failure-media.md": {
+      "sha256": "54aaf2f9ee927926ab4781aa11e7233ae278419b045c94e37ec8430ecf05c4ef",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-clock-jpeg-failure-signal.md": {
+      "sha256": "7ec45f4c2335f4208295122052f5ebe2a75b2680227a58c5b1ac3073141dc1f8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-clock-review.md": {
+      "sha256": "8ebaeb5e46207aba65c7f92ace7f2a7388d249b1069f8ad230254ab67461d351",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-clock-short-performance.md": {
+      "sha256": "81065f9a70a9618dc2c2458cb9a54cd5adef2be300556e69a61f275d95ca637c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-clock-short-signal.md": {
+      "sha256": "f46d5924dda5887eec9db03bd2c63433e21c7158a50d7cd6487e36deaa431baa",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-clock-task-review.md": {
+      "sha256": "5cee2dde57eb0a71eb8d6e9a042241464e1c359cf3b099f7d95792262e03bf62",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-null-implementation.md": {
+      "sha256": "904df8f9163ca699de96dc8acfc07fd17f4abd6025e8631cda3c7f51160e2445",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-media-null-review.md": {
+      "sha256": "5d84c32d615c7472b9ed000e2b6e6b6bda4f0093e7dcb00ebad1dceb6e9c59c4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-normal-transport-recovery-audit.md": {
+      "sha256": "8bb03e08e9c53e83becab2be4a7efca383c661bd2f29081253ddf0fe27a332e0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-observed-ping-timeout-diagnosis.md": {
+      "sha256": "7837b4e2ee66850556a7bfacb1abbe1db520af5aa6ba380e039bc62700a82dc3",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-origin-comparison-design-review.md": {
+      "sha256": "7e4734d4ba28f46a37fb67f5df506aae49ed6f8fb19aab6cbd91a6ed65c9dfc5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-origin-comparison-task-review.md": {
+      "sha256": "df6c48a8bc6644637affeb9556afba8fb1c1c5e7eb65d3b364efe6e2cbed08f7",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-owned-turn-long-implementation.md": {
+      "sha256": "444e46cfa46b3d66eb0fac66f892888a4b8709d74458e3fc1d35fdd3fb5c8fea",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-owned-turn-long-review.md": {
+      "sha256": "ad0ed6f57223618768281e7f0d92c386f851a33bf03f21faa5d7505efaa5446b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-owned-turn-probe-design-review.md": {
+      "sha256": "b1258b82734e77198092640fa774ad3de73e028f3071329e160cd697aa3ed65b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-owned-turn-probe-implementation.md": {
+      "sha256": "422b73409bb1f4bfbccb59fad83f54ebd0c1489ccd33d5f175316f0e393fde5d",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-owned-turn-probe-review.md": {
+      "sha256": "5aed5ddd28a15d204c68d7cec47cad8149d9b2e92f99ca196432bfc85851c268",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-profile-epoch-churn-review.md": {
+      "sha256": "aa2f8f1a9f3b6551e051ea25d8b46b463e5d935db98d563dd7d0fa02dd9651db",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-relay-fixture-implementation.md": {
+      "sha256": "8fee19eee1c50d3250b4e1ba35e575a3bf87a1035cc4b96d49898eaa6c9d996c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-relay-fixture-task-review.md": {
+      "sha256": "ea740b66b5096e972d03bad20175cdd63951d2b04868e0a8a660899ba8689a2c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-relay-reset-implementation.md": {
+      "sha256": "9281aa227c16c4fd6fa0341050ded204cbe52a893bd4ec17688ce9480d431e20",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-relay-reset-task-review.md": {
+      "sha256": "26bd9bbb2bee24904840f5c1f90b149fabe30540dd3ebce09b26f2c949a6e7ed",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-remediation-document-review.md": {
+      "sha256": "2535ee9d0d312c4fc50e2445c1bf669b48f8686327db25e6f953f131d9b0e009",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-remediation-execution.md": {
+      "sha256": "4ef6d8c2cbccfc86854e7cc5a404651514d94514b27ffab0145f66349c67dd1f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-reset-login-failure-review.md": {
+      "sha256": "429b0d2cd6662fb48c218c13e165c15c90007241dc3b6255c20c9caf08ec3281",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-runtime-followups-final-review.md": {
+      "sha256": "885b5a3f55471749a3e49faacffe1a1904e4cc853f06bcfc5abb635508e188c3",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-runtime-media-start-fix.md": {
+      "sha256": "9edb39fbb4b5b22e646fe449832a6746bd45962f00dee9fafe41de023fa00ebe",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-sample-observation-implementation.md": {
+      "sha256": "d212c92653fc90003285fbcec72905ce37d1214c58569bfea5e18d03d849f142",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-sample-observation-task-review.md": {
+      "sha256": "740e2f1ebaa5a395121567bd3c7446a89e0a10bfaa7eb26173418c73c33079de",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-sampler-failure-review.md": {
+      "sha256": "ac09e497e62f62d6ddd3007abc8052ff2ffa4f2bde3f7837aa583e8a5c0ad6bf",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-server-heartbeat-design-review.md": {
+      "sha256": "0e78fd8a0ddbac59bde16c417681c01b74b7c4362ba7bf90024476ea6e38ea41",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-server-heartbeat-implementation.md": {
+      "sha256": "08c8335c427c4e5f0b737589f1a4de738b8e325fb594c3d2eea460df790c50d0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-server-heartbeat-review.md": {
+      "sha256": "b99c5963cd533e40c1acfdf853e523b227db714b2aa7373ec883e1fa6374e516",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-server-heartbeat-runtime-diagnosis.md": {
+      "sha256": "1b7831f33e7c6e12dd9b612bba1d4f7dfb3f2259b964024fff1b5da5f703c5a0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-shared-resource-correlation.md": {
+      "sha256": "7101e55854112d89f99036178614141633cd81b79d5452f389673581af8616bc",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-signal-observer-design-review.md": {
+      "sha256": "e2ccf1196e5faa81ad71343530d42592b89b54ab01237ff32be7921994f2f91a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-signaling-timeout-fallback-review.md": {
+      "sha256": "9f2dd91c831a618b6730d110dade33096b15f274ca075d98cd1677dffeeee88f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-startup-watchdog-review-and-rollout.md": {
+      "sha256": "c65333291eb24975d22ec7b2dbdf6413433999323b376d70ac330401269da3c0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-task-C5-admission-recovery.md": {
+      "sha256": "c1d7bc5e6ed80e677331cec74a0cf587bfaeb0b4aa023e7397bc3c41f5a54039",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-task-M4-report.md": {
+      "sha256": "1dab00f8c978899759181fd7e4a0a0c7cfa3372da76c1e331d0653120bbe69c5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-task-M4-review.md": {
+      "sha256": "aba6d9f4543a008dd06ad46cf6e4f39eb694487628d751a1ec21a4253cdba40c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-task-M5-implementation.md": {
+      "sha256": "3d1fd778439469e09dd785945f7471be8bfe49b32f34ec36191a54e5516c7e01",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-task-M6-report.md": {
+      "sha256": "25113399c552c9fe31dc602dae55471abfefbe0c4d39074fef965575e1bb409f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-task-W4a-report.md": {
+      "sha256": "97f110c53b05191c682a9db606ab7749f8369de549dc32dc89097f89a90d58cb",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-task-W4b-report.md": {
+      "sha256": "f72f184ea6f6296ca0700f02a8e842776090d9614f235b3f9dad4d85bf11b30a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-three-day-review-and-solution.md": {
+      "sha256": "45a92c6a3720d9f5ea06de9965746066485f8273657e01c55a0811e35e12f3d4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-trace-integration-fixture-implementation.md": {
+      "sha256": "eeb1558471460ee7f1bc9e1ce03ebb59e41d10b7a4a9477d2c3b1ddef4bb9b1c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-trace-integration-fixture-review.md": {
+      "sha256": "2f7dacfccb0a5ec1943975c00c5ad564c35624a2b25b21d6be137d3807665585",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-transport-input-to-frame-diagnosis.md": {
+      "sha256": "762a10ed961cf11a6cd2405b6ee477a18e8f21fda310219a0dfba26f8ad8ffad",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-browser-ownership-review.md": {
+      "sha256": "2e1d19a257efe5abdc00a87432971d8da475cb2e4891dfdffabf3ea449c6734f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-host-stall-code-review.md": {
+      "sha256": "6c7274d22449913ea3d57fa42ba192408b78d38a1c4d8e300865cbe5af7049f4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-long-b-media-analysis.md": {
+      "sha256": "b0cd59f48773bcde0c41c287f297ade46812bd5127f0e08bb7d30976d90154ec",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-long-b-signal-analysis.md": {
+      "sha256": "2f8d89517882bd83fd39a59c4399bb2b9725a4ebca4d9df481b36c22b9579dc7",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-long-failure-analysis.md": {
+      "sha256": "0a47f8675887b6345602436bff7c5de529926b3136e596819179e754ec1f5909",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-media-performance-diagnosis.md": {
+      "sha256": "5e77e0d7adbe611f8e5a4c025bc8064d53e31390d79aff8e056ea7d3b8157e3b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-profile-run-review.md": {
+      "sha256": "c2d22e3a75dad56ac71721d8f64551cfafa866b83d0208e1441d9243db08b54b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-turn-signal-drop-diagnosis.md": {
+      "sha256": "cd18fc3725638e26a3b081cf102dd98e50688e434479a2179f77f44d3d189155",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-viewer-auth-task-review.md": {
+      "sha256": "4d486df9bc5b4775e767ac667edc32392e51162652bbb1554ba7df2b4b0886c5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-viewer-clock-implementation.md": {
+      "sha256": "41d032d53d97f8d2c7f109d6df0490e6c2d98094f7cff5f3a434d539334f4169",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-viewer-clock-review.md": {
+      "sha256": "b805e66b160c306afa1b7bfcac3f9348b9e5d224a066e4afb227a5e1f50c0e5f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-viewer-clock-task-review.md": {
+      "sha256": "7fcf3d991610527174e280ecd3912d25ba84f16ac180aa86892fe3e920902e8f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-visible-effect-acceptance-boundary.md": {
+      "sha256": "49ec3009a4077352b8f85a8b4b8aaa48916c383453c0c59bae7d1498c90b5465",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-web-entry-screen-control-diagnosis.md": {
+      "sha256": "8f3ae2585324ca609a1d00113a24055c89a645b7e4152188a63e9fcaaa640eb5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/2026-10-17-websocket-close-metadata-design-review.md": {
+      "sha256": "644c4214a23a11b07c913b24c3bd74c666e9436a6fe3d707b9b49496a76b5336",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-ws-close-metadata-task-review.md": {
+      "sha256": "fb26813839c7460cdf17c34328b7c7db08727c6231e755a28ba6461a20cc5f20",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-17-ws-transport-boundaries-review.md": {
+      "sha256": "9e410d4d22f6c5654417a8df76d4328389d7092905db688573b42f0cc383a039",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-bootstrap-ready-execution.md": {
+      "sha256": "1b9b74edb999dae479d9988645b97e22c63b24c34d609bdf2cd62b87b1fb2844",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-connectivity-latency-followup.md": {
+      "sha256": "8bd5d02b05910fd74acbcd29fef7ba39b86d4d2c2419ce5e8ef257df2f1666b1",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-entry-route-review.md": {
+      "sha256": "f2c3c7422b4fadd0e7e1e712d07b70685057152c667f03e72f0fe17a4aca23c0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-host-cadence-cleanup-execution.md": {
+      "sha256": "66e77213b7287da89154cc24900fa93dc21b0ddaaf296e89ba7e0e391f217234",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-passive-gate-evidence-review.md": {
+      "sha256": "c1cd058fc147f532c7df1c13aecc2793ea497f77517343936095f505ccda97cc",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-resource-isolation-execution.md": {
+      "sha256": "b76705242abcdb8e204ac6ad35231e74075f015096c8d5171f7668e647300577",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-slow-start-idle-io-review.md": {
+      "sha256": "8d6347225f526eb81b36a04ed23b11c487f92118daf65478f96e7199795fa257",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-slow-start-idle-io-rollout.md": {
+      "sha256": "a0b32032399b9840741dbc4a3c4e3d42fe195cc34ac7352fc2d0a2c7a96ccb33",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-verified-warmup-execution.md": {
+      "sha256": "f14f1714702a26e6aee4a8eb6911ba4532b99bd214040851caf238cc52fe8991",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/encoder_probe.py": {
+      "sha256": "33548e9f4b70f67fd161bc9ae87513ea6a587b9962a5d343c73dcd9035b1b765",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-05-turn-quality/relay-balanced-v2-matrix.json": {
+      "sha256": "099c58c678f6bcabe94406da49ac3090addddc68fdc52a15a0c37bd9727af2be",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/endurance-encoder-windows.json": {
+      "sha256": "1ed9cc2bfecfb70bc5d43cad1dd207736f4389da32c953ecfe641bb32b7f9c3e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/experiment-manifest.json": {
+      "sha256": "da504b5072635678ba8b7ce0b35cfec83b309ab96419322a02afa3558e0444f7",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/runtime-manifest.json": {
+      "sha256": "1b46148342a3fde1cca9f7bc080bfa9770945481e1a7f22cf28a5184dfee08c9",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/vbv-refinement.json": {
+      "sha256": "04a17824ea01799ab768e3b8a9630e27b7e2654fef30526d0bd2656b4a04c565",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/wrd-turn-followup-endurance-20260906.json.gz": {
+      "sha256": "a8f8ca7851cf32ac2efad21598a822a347ebec59268a6c0f9d877a208a050c10",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/wrd-turn-worker-after-20260906.json.gz": {
+      "sha256": "38cde27b1248a3cebc4d41ad18595af36a8dc66a1296611e99b940c5f840f168",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-followup/wrd-turn-worker-before-20260906.json.gz": {
+      "sha256": "7d5e2d82663ebf8b38ef2ea0b8f11b45589d72d97523beab406051d03ecc9f22",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-corrected.json": {
+      "sha256": "0b6cbd31fa2f856262609f2863def073d54f49a7aefa3b2145f279531732dc62",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-corrected.sidecar.json": {
+      "sha256": "e10810c2f024d03c9b5f3cc5ac5b64884e278c39c9429703e1313bb11c58c49e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-full.json": {
+      "sha256": "806630a8233e3f7536a84b6d444677e170d5648dec1660e8cf7e28fb174e340f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement-full.sidecar.json": {
+      "sha256": "d50fbf280cf8be90f5f106b14266af5ecdef1168a9040b82bd6ed39e7c661571",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-next/relay-preset-refinement.json": {
+      "sha256": "91713be6ee85ccf8ec5522441153e88119fdffad57033e5970627e304a1c05b4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-plan-self-review/counterexample.json": {
+      "sha256": "4c635391e76da9cfdb1920d0a1061f2131955e2f593ce0f9689d20a68f20a3ae",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-06-turn-plan-self-review/reproduce.py": {
+      "sha256": "019bd92efb084bd2220527381dc93c83811c3e3461b252690f240abc06e26a8f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-input-recovery-observability/browser-ingestion-summary.md": {
+      "sha256": "85dfe49638ff9113bae5a923b08c30837182692dd59300dcb9d1424594bbc651",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-input-recovery-observability/offline-chromium-summary.md": {
+      "sha256": "d130fa8f9f33dcea49312ebe523ab5f7155af4b5453c8dc550790bd06b4344c9",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-input-recovery-observability/r4-closure-summary.md": {
+      "sha256": "9cb0358a7d1587eec358312c9f66d827375e84313952ee29490662b5cf3b8693",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-input-recovery-observability/reproduce-modal-composition.py": {
+      "sha256": "d88ffcf6a5cf2b129d9220d9db157c8797ba0c37f73fff02de611ddf1ff785a7",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-resume-input-diagnosis/reproduce.cjs": {
+      "sha256": "e914897c52a3a1e93e903cb1a3661afe70bda8107794535b3313bdf027ca664a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-resume-input-diagnosis/results.json": {
+      "sha256": "c899deea94fe800a38b69f8804be3177e85d89e5006499bba03f2e4b38cdcbf8",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-resume-input-diagnosis/runtime-log-summary.json": {
+      "sha256": "49082f8aa3582497eb234729843ba72f316091852ab36bf2ba9aa2946f1a8998",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-turn-peak-headroom/relay-peak-headroom-v1.raw.json": {
+      "sha256": "75c0c22d905826bacc46303a547c7f78b971d1c164368937a508750bc58a2315",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-turn-peak-headroom/relay-peak-headroom-v1.sidecar.json": {
+      "sha256": "d4b0e3e32d5c315b1f8b2639c9b4d9867a1c08cf80b113a165dd6e5b47a55114",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-turn-veryfast/relay-veryfast-refinement-full.json": {
+      "sha256": "20d8ddd3cbdc7fbaebb5e68b3eaed8b1fde054a120dea8bf33b7a454570ddd8c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-07-turn-veryfast/relay-veryfast-refinement-full.sidecar.json": {
+      "sha256": "0b6535c981a1755e7f49da2964da41828b95e0dafc0e6ed28ca54823c837f3f0",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/encoder-evidence-manifest.json": {
+      "sha256": "cceaabc319711072e1071aa7d8795b130d433ea70f0979b1073cc761836faa03",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/initial-production-encoder.json": {
+      "sha256": "1918ea104a0a42e1eaea9334dd3822635d7559d14033ade59ebb449430c40b87",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/initial-production-runtime.json": {
+      "sha256": "57009b401151660c1b301508b0638ada9811a54a6d2dc62bb625398288673db2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/initial-production-summary.json": {
+      "sha256": "a87db7e81df1b899814761a4dae336e5362f046faa9aaae7c56a8dbf678f0322",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/input-format-diagnosis.json": {
+      "sha256": "2663eaba7df5a826359fac7519c9858075622addcfef447fdc4dc7cca5d3939f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-headroom-bgra-sliced2-cadence-v2.raw.json": {
+      "sha256": "ccfb07aec93e1b45a78ee0120edb167e7542fe39d264993bdcdd1d92579607c2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-headroom-bgra-threads1-cadence-v2.raw.json": {
+      "sha256": "8448a57462bd26d3459e1dbaa9f32f4652234af58761fbe848c37df9f48c9781",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-headroom-bgra-threads1.raw.json": {
+      "sha256": "f4a80e91e803d3f7e07a559e6ea6fb509020e130411e9b0d3060b21595a8348e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-production-encoder.json": {
+      "sha256": "3fa3f79689033f5d3c8eeed5e4998645dfbeedb2ec0c654298498d34ebb3cda2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-production-manifest.json": {
+      "sha256": "72ffc8852a9445671bc8f2a86560bbbd243e6ef982f9c050ceec7e7f9f4b4aaf",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-production-runtime.json": {
+      "sha256": "14856f4570ea88034724616e516333941c7c92fa3e5cbc52bdc4e6665e83942d",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-production-summary.json": {
+      "sha256": "faac0f0eda8d6d0ec4413710d7274a7fdd6951d8d07fa443db05ae0cb9f1e4d0",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-recovery-first-probe-error.json": {
+      "sha256": "7b9a4de5695e9090f5cd51c184154f2480b5ec116c19a6ba3b09c1bb558e860e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak-recovery-runtime.json": {
+      "sha256": "370d683ac4c7be5ba6b33ee7383d0e72c0ddf3a32682ac7f4473a7bc27e5f75e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak_recovery_probe.py": {
+      "sha256": "0981942bf43babb1eafdca12555f3b20b1fff9b69a1717a256eea66015aa6a82",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak_runtime_probe.py": {
+      "sha256": "5b6765b35a389b1f72993d3b60ae269a783bc403144497c14bdec3dbe78cfb22",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/peak_runtime_summary.py": {
+      "sha256": "1e455b2d1e53f8e64628a34d9b5e3b603abdc7ad8782f9adab05eb1d34146607",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/runtime_probe.py": {
+      "sha256": "65eb9dc1f0d0ad6637eae3ec42e6e3cbc1de61a42cc95ec2318b88ce3737ae9a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-on-demand/short-sliced-cost-diagnosis.json": {
+      "sha256": "7cbdbc74dd5ac134359f224c03ee4d1e54a7e951da38b324200a5c13b2c0866f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-project-cpu/live-project-cpu.json": {
+      "sha256": "e1b5ac9053dc839a62c8d09c21a1c1e80f0a93fb76532bfc6608bb351ef5c6c4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-project-cpu/peak-headroom-main.json": {
+      "sha256": "77520cd4339f6ee6e19051ef766f60441f32bed0a6ce5dd058141ab60a7b9024",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-project-cpu/peak-headroom-viewer-exited-summary.json": {
+      "sha256": "59c180bde961eaa6e95a5c3e1874b5f2d9c615fbca5e0399f75e1de231109b3d",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-09-project-cpu/peak-headroom-viewer-exited.json": {
+      "sha256": "41d7041896f65b4539f7e9181dc67f69a066fdcf8c9635c4f3865b67f1bc4936",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/local-relay-20s.json": {
+      "sha256": "24aa2c5671fb43ce3790964f64bb442a617440ed1a693db011ab274212d8036e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/local-relay-offline-flap.json": {
+      "sha256": "c921e10269854982dfb694ffdbf7536938911115228a678342123e9daebbea86",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/public-relay-20s.json": {
+      "sha256": "fd0d49ebd6b7b8314882c80f6965128f2b24bd571586bb374c6f2f0c6b12c812",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/public-relay-60s.json": {
+      "sha256": "5d5d3c9349c0a4c1e0f984c305cf6ad513796ef5a36553dc4f7f1af885518fd4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/relay-ultrafast-60s.json": {
+      "sha256": "a046ff00ec3ac77c60c0b0995a28b030c7458cf090b5994066dec4d25f9e90c3",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/relay-vt-flap.json": {
+      "sha256": "22e4f9ab2869481e4b794f0f78b4907c9748815e0f397f0f34deb210336da683",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/relay-vt-warmup-60s.json": {
+      "sha256": "f4d2eb8ffc6c8ccb7e52952913a4fcabc707801641cd01033825bf52e7c694da",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-09-28-stability/relay-vt-warmup3-60s.json": {
+      "sha256": "7b7e91e54476c123d7508bafc231c0f8c1dec2e02bf9ea9354f13f7b37b190d8",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-16-control-recovery/summary.json": {
+      "sha256": "559b1a6443127e76e04815688c607fcee0405c87a2db39dba3948345c9f6b794",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-evening-observer/summary.json": {
+      "sha256": "2703368f2a1ed5bb8c188729d977b884114692aa160dd8cffdf9687ab3ab3ae5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-latency-review/frontend.json": {
+      "sha256": "e64d992bc23539da419b9eda1d6b1cc4fbfe008c716200aabe274494060e5c51",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-latency-review/host.json": {
+      "sha256": "0ec23e0a448af694c0e8cb3b9c683306e1dccfb26d330e3689319924526ac045",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-latency-review/summary.json": {
+      "sha256": "e3ac26f62ee7588cd765264dc23cf0fcf92eda5840b414f9a8c19b324b3cf75c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-latency-review/transport.json": {
+      "sha256": "fd3b9a1e10ce825761a1433073eb797bf6006ed0448a3b525fcff9ba8082aa0c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-startup-watchdog/summary.json": {
+      "sha256": "15f2c44d814dcb2cb3cb578f6fc0742538f38afae94e30e86f968e6cdb04d47e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-three-day-review/host.json": {
+      "sha256": "322a9df9233235b8d47d158a92890b7d4ddcbc77b9276d3bc2a505f1730be2ae",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-three-day-review/signal-entry.json": {
+      "sha256": "e812cad970b9aa0e026ae83e0ec071f469df2927b39929e75efd94314ba29c61",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-three-day-review/summary.json": {
+      "sha256": "ba734b30e7ded10d49a56872bce9096e48b3ab7c9534712e45333bc1dfc09315",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-three-day-review/viewer.json": {
+      "sha256": "4583f9689360317e846d08d86081a93f4688d25fc2dbfff4ed8e27b32b3a4943",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-17-web-entry-screen-control/summary.json": {
+      "sha256": "e13dc9c1b6937673e040108b2a5c1be3bb5a2d212f1ce64eca3953ee69a4a2c3",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-bootstrap-ready-short/browser-summary.json": {
+      "sha256": "d83fe993c32e6ab795e5569a761c5431e9a6b26c1b5071957c8e492dba1e047c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-bootstrap-ready-short/review-record.json": {
+      "sha256": "00423719f8aa9cb5297a0755b0e2363a02ce501a04f72f488ad9282d337b4e8f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-bootstrap-ready-short/runtime-summary.json": {
+      "sha256": "fa9d736c9a6fb8ccb7e766b63753593cc420f5ddd2f67c79a4459a9969477a42",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-entry-route/summary.json": {
+      "sha256": "0c5553f345410b6d57f7a46cfa93fcd2cb6787d27882508a3afe832aa37202bf",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/final-source-review.md": {
+      "sha256": "77862e587ded483d69c03f8a6076fd642a9ee18f3ba63736300a5618ae0be94c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/long-a-browser-audit.md": {
+      "sha256": "fec688e798976c252093114c281c95700c4db60fe7d6278c888f858ec844a492",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/long-a-signaling-audit.md": {
+      "sha256": "36b75ed890a331f848b281f3a08734a9685e7c24d7231446420a03a92c8674b4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/long-a-transport-hop-audit.md": {
+      "sha256": "dc5fe40a17e3d4c50140b031c4909bec61162f841eab8c5d8494271c9a928586",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/readiness-docs-review.md": {
+      "sha256": "e3af13f215191a9224fd8328e11558633b1004abb298e098240985208e0862fb",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/runtime-audit-provenance.json": {
+      "sha256": "e567feb74d7fdca9ff85d2e9a9a23e787f61b19b3cee54fd6b037d43628b741c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/runtime-docs-r1-review.md": {
+      "sha256": "0cd355fc0e8d6eb063d43892d8f4fa8178b8ea7384e228ade0f03c0755d7f97a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/runtime-docs-review.md": {
+      "sha256": "de8fcf76c9b14864d25327645448308e25ca38c4521c7ce50b851d5e4adf376c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/short-a-runtime-audit.md": {
+      "sha256": "844535021942715753c6ea508e84b220f41c1a58b62f77610a83dccab8b1203f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/source-review.md": {
+      "sha256": "53088ca3d82557d01a2112d722584b46ee07a59f60d10c20bee1572e1ee48d7c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/source-tests.json": {
+      "sha256": "01b56a4b6adf4bc7648da8f5bb83f5d522942930d655d69142e59863bb94ee04",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/task-1-r1-review.md": {
+      "sha256": "c4bf103b92998f5d7a608834e754d467a3cb0f291a0568797d127ee25e2f7f4e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/task-1-review.md": {
+      "sha256": "622cdddf6693788aad802c43373d30448f4d3439c30beb5c82279937c73b48fd",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/task-2-review.md": {
+      "sha256": "9b07e4e8f59bbc2d1c1b521a0cacc71784fe1d2e598bc3c9477a238087553358",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-host-cadence-cleanup/task-3-review.md": {
+      "sha256": "e00b9ff5170d0be049ae2a0de9a7ab26fb409f2b4e82dd44469399849b0dac38",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-idle-pre-rollout/summary.json": {
+      "sha256": "8672a75bfe2b4c847877f62f1578d885d5a4c154716452d23556edd0dfcae64a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-passive-gate/summary.json": {
+      "sha256": "94597ffc23df2393bfe4fbf7dc741768df0c36bc0d551f120215d71d8f94aa00",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-post-writer-idle/summary.json": {
+      "sha256": "04f83818abb1f0329327dd0630f114b19d1aa859168e4d314963d7623b06506b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-resource-cpu-long-cancelled/summary.json": {
+      "sha256": "6c64baff5606bd648e72bc0c9fa094812c245018a241b3326830676102b85961",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-resource-cpu-short/browser-summary.json": {
+      "sha256": "9e64b80a11b9d417c5141a908883cb44678c62a46d1b2d5f01238b16b9b1f3b4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-resource-cpu-short/runtime-summary.json": {
+      "sha256": "650fcaa1caac3264d487233c472918c49789b31ece41ce9f4a892073a00ddd2f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-signaling-fallback/summary.json": {
+      "sha256": "a5ddaa166f5893b374a3a0435641ac6e8440236fd0e5b0480df7d4dd0f051a1f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-slow-start-idle-short/summary.json": {
+      "sha256": "dd5ae1ec21a817998d1e50715b7113f6a91872937c39174be3d97132df1cd62e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-long/availability-summary.json": {
+      "sha256": "ab03490cbf6a8e473f4829c56496873412152f562c1649d0578d748829ee03e6",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-long/browser-review.md": {
+      "sha256": "e2ca10aa7263deb36fc277bb190fa6f6032758784efb1f9400e8066911dc6f37",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-long/browser-summary.json": {
+      "sha256": "35dc06dc9c4fb8ebfe6b0d8cf6a32575313529f079dc701e18409434846b1ea6",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-long/capture-freshness-review.md": {
+      "sha256": "db00dc170e639f6b3da9838554c63457b739efcbaf87bddaeab1f1716a746cf7",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-long/final-review.md": {
+      "sha256": "711c1079cce3192e7196d002a7a00684af244c86aa70fb7aed740599a3bf6e5e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-long/runtime-review.md": {
+      "sha256": "686a2331eed6d22f3a65d6ceab4aea9c7a9448d6950d673a2de8dde85d929b3a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-long/runtime-summary.json": {
+      "sha256": "dda38b8a1369dd5c37e05c44981e7c0fa198b051de8ac8b0d6b214f1f4d8717b",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-short/browser-summary.json": {
+      "sha256": "bf04c50640897210ff01f0fbdd94ce45db6052748e3179cc42fb07a5b80e0547",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-short/idle-contention-summary.json": {
+      "sha256": "7eef300220a203c3840d219d469ec978c4a96544c1c5ae578ae12b848ec518a8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-short/review-record.json": {
+      "sha256": "18d629d47cd887186553d9a6a155ef8f31d7ca0942019896a03e556766b73256",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-short/rollout-summary.json": {
+      "sha256": "1ff70cc996281bffbdc681d4872270de7dba364d31e9dc615a0e4be2949fd67e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-verified-warmup-short/runtime-summary.json": {
+      "sha256": "087c06ba4d82aae23eb451b5265576308175e13cca65ea1d9b06caf0117ad487",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/mobile-input-review-20260905/layout.py": {
+      "sha256": "8b63a5639fbc5b4e425223621c37d350d52bfaa17a066477cb25e082ce0bd315",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/mobile-input-review-20260905/reproduce.cjs": {
+      "sha256": "a95432f99339eeb6bbdab653501710c8a3eea9fdcea2d60d6b8809ffb6850b75",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/reports/evidence/mobile-input-review-20260905/results.json": {
+      "sha256": "969870248ae1f6b5232a97901a4a1161724ba30c42f30a7aa4b5f7ecdbb00b53",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-05-09-internet-deployment-design.md": {
+      "sha256": "69743da00c48e1ba744a6b703045987cf54977f2b478712d7b77ec6c0c7ea2af",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-05-09-macos-web-remote-desktop-design.md": {
+      "sha256": "dab2776deeeaedeb925099016f34c16472081dd80de5ce9e5c662a0ad635b2f7",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-05-10-fps-optimization-design.md": {
+      "sha256": "2458588d50445db7e4c4d7a8a92f3153234c26c83b78ab71509c3507b9101e47",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-05-11-latency-measurement-design.md": {
+      "sha256": "c1889ef7a8ca76eb9da15b722ec2d63aa07432d076064df91db27dfba86337e2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-06-24-strict-stun-media-design.md": {
+      "sha256": "e3a0c27e8a6512b125d182505fac6f84a2d092f361ddf44b8e3791d0d0ed1b8c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-06-27-web-terminal-design.md": {
+      "sha256": "91f435b0165a6073a4736748a806fe8ce529303366357473a0968c7acf05e7d5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-06-29-strict-stun-resilience-optimization.md": {
+      "sha256": "43f47a29a10432f6947e23738a28795f2d13529ef711fb7f42926af35bb6ea28",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-07-shared-web-terminal-design.md": {
+      "sha256": "56897df5b1404ce68b03b857071fa5435e66ba439d4815489db9d7764445eea4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-08-dev-subdomain-cloudflare-access-design.md": {
+      "sha256": "52907d18aa650138986fff18ea7792f4ff68b89b67dec98aaa957ab72d06a2b2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-08-single-public-entry-manual-media-fallback-design.md": {
+      "sha256": "9a78a2b51ebaf62279eeeba69407aa3f581fd5e5d32d54b2646b80cfe4c7b033",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-11-terminal-cloudflare-tunnel-latency-design.md": {
+      "sha256": "f25e8689328dd2b6f3a26daf6f403ea89f30b7b726e4cb94f79214b52b591f06",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-11-terminal-direct-wss-design.md": {
+      "sha256": "d1d1b8d0ecf84c64e9898ef69359a6870529971a5e03ab51c7e8b57d984b8c15",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-12-structured-logging-diagnostics-design.md": {
+      "sha256": "f720cb844ec0b0222ddedbbc721439d9baa1db0a2be2ded0304926b4f2fb4df2",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-18-remote-desktop-connection-interaction-performance-diagnostic-design.md": {
+      "sha256": "899227403a29aaecbd81d77094fa893483741ac2768bf8097f9426a36fee37ab",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-18-remote-desktop-reliability-latency-remediation-design.md": {
+      "sha256": "5507c31bfcda041abeaba00abde399866ee5e3f0f9788b26a5bf337d8d3e5701",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-19-remote-desktop-media-suspension-design.md": {
+      "sha256": "f7c638403b615123daa79d671f929968a4510a403024b8bc52d306ac52cefd8c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-19-remote-keyboard-state-reliability-design.md": {
+      "sha256": "84be9f87e6873f1139c24314bd1dc52c12ce66f0cfb5e1abeadea2d73a90d1e7",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-19-review-blockers-closure-design.md": {
+      "sha256": "e20b52c2547d50c296830303bf847d788f978cb3b10489a5c6b96b3ee08b2557",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-19-terminal-hardening-design.md": {
+      "sha256": "a5079ee04e3c372c3f1d33e62ca948f29745256ecc94937238df7602b08d6e47",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-19-terminal-multiline-composer-design.md": {
+      "sha256": "4c9987bc95b58ed02823de3986fdb597f36f773186ee73b7afbc946c3468c9dc",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-20-manual-stun-port-search-design.md": {
+      "sha256": "595c6d6f099a261b471a177508f8f77770db5bb10c70547a2d153ec59d4cb573",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-20-remote-desktop-reliability-closure-design.md": {
+      "sha256": "acb0f66b4b761c2b803bccc39993e23562c919b609177c885945ee5911131334",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-07-20-turn-integration-design.md": {
+      "sha256": "9ecc18d9ec180ea7ded6910718f8e34a15ec14477dd21b3316ccf0ff6741925f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-01-turn-relay-reconnect-stability-design.md": {
+      "sha256": "a9f230e0c6335dc3b3f8da226cdfb98341b3c4938754fa3bf8228ab2ce5bdd62",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-02-multi-turn-server-selection-design.md": {
+      "sha256": "9c758cea4c9d7a5c1c134d29fab67b87c74bb5ac5ca0710b263398e5e8038af9",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-02-quality-lock-low-latency-design.md": {
+      "sha256": "1f58d7c3486f102278e17332f311bb00471b935d6ba3aae47b35614efdb7cb2f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-02-single-desktop-viewer-design.md": {
+      "sha256": "6cce7f131e9d396f6e5268d2e4dd63e29556e791045dcc238076d3c91e92016a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-06-viewer-fast-bootstrap-design.md": {
+      "sha256": "47ee4f80b6084910f454892db957748e3a64220acb395a26c35c2e68933abab8",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-08-terminal-modular-remediation-design.md": {
+      "sha256": "5a5c8b7b3166d7ade5249efa0c34e60a9f65501273fec4b47b56020426bf089b",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-11-formal-tunnel-hardening-design.md": {
+      "sha256": "0d06300bd88dcd90e3dbf3f7601ba9242c87b62481089371ea0ebd37ace6dfb5",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-11-host-no-idle-lock-allow-display-sleep-design.md": {
+      "sha256": "10f07ae246b87c862806628d6e5103077c995eed56399839cbcbb3194c26ed47",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-11-relay-input-stability-design.md": {
+      "sha256": "3fa5266ccea6f081c938f80c03971ea9190ba99b54209bd5dbcd973d11437c45",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-14-tab-resume-reconnect-loop-design.md": {
+      "sha256": "89004b89b45fb6ae2f1c7150c3cbd92cd7044599893b7f9b8b3f001f6a0e1dec",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-15-viewer-chrome-layout-design.md": {
+      "sha256": "d40fc6abb22506dbb2596aa101a3ec96dcf09b3b63f9a943d4c0fac6d88a2577",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-29-relay-paint-continuity-design.md": {
+      "sha256": "01ecc2d43838a5677bd8d4ff3814317762b99940016606551dffe1dc6baf1dcf",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-30-deep-module-evolution-design.md": {
+      "sha256": "9734033e172492956d2790517f3d523f0b5b0392b90032b1137a2346cdf05d96",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-30-desktop-session-state-acceptance-design.md": {
+      "sha256": "f4c0e7e173f38bc08268f6d94f6269925353f2bd3e009bbf1e6b37e587dff69e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-30-desktop-session-state-owner-convergence-design.md": {
+      "sha256": "0a84010071f3e7bde48eb75469dae650bc52ba5f6140bf5424ded01f654e7eda",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-30-mobile-remote-control-design.md": {
+      "sha256": "3322d989e06af8270ed06554eb33f5592d64666fb5428e0e9fe1ac315c0829a6",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-30-terminal-shared-session-ux-protocol-design.md": {
+      "sha256": "39b319cf80487308ab95885a5f7273f2815be6c84e3dcddf462324399e59a04a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-08-30-viewer-chrome-capability-gate-design.md": {
+      "sha256": "cdc65dbb6e80f243f37cac1e18b32c19e3be7607f73f438e731c625aff4f652b",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-03-remote-desktop-control-continuity-remediation-design.md": {
+      "sha256": "2fba9be3c9739b07e3e1b91a674d8755e5f8e3dd3f4d2c103c75f0c685582b3f",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-03-remote-desktop-input-diagnostics-stability-design.md": {
+      "sha256": "e1f8f9eff5917f273f360444c0bb365b57ad54b72e062014121ac4c29cd2364a",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-03-terminal-formal-watch-remediation-design.md": {
+      "sha256": "84b6d67118d477d6ee12b43699f3ae7e38e9455f104cca67c37789e7dba4d553",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-05-turn-quality-latency-optimization-design.md": {
+      "sha256": "433fd460cddc8aae1a0d978f3eb399938ad7fff38848d33590d02014c221f62d",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-06-immersive-fullscreen-chrome-design.md": {
+      "sha256": "76955c8abc50e230931f0feff8c9ac2322b94d3a173a6b7dbf046f0d7b271a02",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-06-mobile-input-interaction-remediation-design.md": {
+      "sha256": "834fd406899491f83673e765f050030de551f8913a6c079d8d9444611a8eb62e",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-06-turn-pulse-throughput-next-design.md": {
+      "sha256": "c973c717469587c1e5267ac631523a7dfaf2b89fcbcef4e50fb1d0ce185dd103",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-07-input-recovery-observability-design.md": {
+      "sha256": "fa625a1c2c5867e6cfe9b3a7fad5966b26c3d7b5dde400da66db31ed9f7b4eb4",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-09-relay-on-demand-production-fix-design.md": {
+      "sha256": "1d431ffd530fcb27a07ae75c486173481682ce2526fea1029bf5ca4388068a5c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-09-relay-peak-sliced-production-rollout-design.md": {
+      "sha256": "028ad2775628da53c1ce664ef243dfa7ae41b3c72ca22e4ffb124e0ec5da036c",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-19-terminal-review-optimization-design.md": {
+      "sha256": "683dbc6d00b0ad17e53a6fa2a1532cb23ea8b5bad0e67611b550219fa84e37ad",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-09-30-viewer-interaction-optimization-design.md": {
+      "sha256": "5e34cd3b1ffdadb33793cd2076cb18358a5d43aaf23c13d5b016596a04179125",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/specs/2026-10-17-capture-image-epoch-design.md": {
+      "sha256": "a656f971f84b68720100f1da10bed01b492c77ba9e5c9aa89aa72b5897631781",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-control-recovery-design.md": {
+      "sha256": "17e05fcc84ef28899eba94e1b6bcc354544a2a74a13c39b493135944289c07d5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-dc-diagnostic-admission-design.md": {
+      "sha256": "c6b92701af83ec98bd69a59f804c2873043b063afceffa06d1bfeb31a557cdf7",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-evening-connectivity-evidence-design.md": {
+      "sha256": "68a66c3939e4fafbf03638839670cfe2cdba8621274c0662a3e5dd60a4dad625",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-jpeg-relay-recovery-addendum.md": {
+      "sha256": "fd279e2f86709bf67ca70f34dc987040fa517f13b0002f6b5d987ca981ecfc7e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-jpeg-transport-admission-design.md": {
+      "sha256": "34881299b7549b605866bffb93a2be43c3e5dc098309bfeb4029261a18178326",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-jpeg-worker-stages-design.md": {
+      "sha256": "7a355c73d8ce1b9998a6d38bdf245eb1197e3ec6819dfc40f6f792b25655d3e6",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-media-latency-design.md": {
+      "sha256": "743bd12ed2ee17b4f7359436643b1eb638bc47f79942a5f8920f6d19dbad616f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-media-monotonic-clock-design.md": {
+      "sha256": "80b83d10bacd3e1c48e0b105d22c4a3ae9b8f3f345816d2ba3496df632ab682f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-owned-turn-long-design.md": {
+      "sha256": "c00ae64208e370949798487615331956bb61df5a6e72aaccac010b1b4db48c0a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-relay-reset-reason-design.md": {
+      "sha256": "9f2f583130970f40b556e1adbc3469cd00b33db373c684c10a67b8c49cdd00ad",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-reliability-latency-remediation-design.md": {
+      "sha256": "c12f34d271632797250c07764e95e01f9dfe0faa2b23620fe22410c100ae4666",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-sample-observation-design.md": {
+      "sha256": "8e986428f2a6466366684bf25e4698380041d11b57655dd9901bd9612f31292f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-signal-heartbeat-observation-design.md": {
+      "sha256": "cdd1e2f30953a0b22c3638aa76c17e3a240bf069d2594d3bdd433c9d271047ef",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-signaling-timeout-fallback-design.md": {
+      "sha256": "60abb4acaab537a54e6df72fc6f09522bd6ce416eef6c3b5ce18170b2a60ee6f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-startup-datachannel-watchdog-design.md": {
+      "sha256": "7323f1949c6e8758b1b560fe9bf786711ed63844eb17dd261aafaf4e36a3d2b8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-turn-stall-profile-design.md": {
+      "sha256": "a4cecb3e939e1a7d231309ac0427d93b84cba97c8bf23ab6d0506b3f6840c9ed",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-viewer-admission-recovery-addendum.md": {
+      "sha256": "14b88020f34b7d91ed56b76d6b730018f8191831879ba2ec92aacc93f0d15314",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-viewer-auth-blocking-design.md": {
+      "sha256": "022c7cc29d843dac0d64f63061c4be66991830d0925dae2db9860cd92a7c1398",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-viewer-control-clock-design.md": {
+      "sha256": "c195ca9d6065439958f7b381fd6be77dac55015c9955c905909ae62b5d032426",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-17-web-entry-observability-design.md": {
+      "sha256": "81a988d2dded06ec4cfd72bf2f67e5716d11bae376783600db9cd46d998727a5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-bootstrap-ready-reuse-design.md": {
+      "sha256": "041f3c3453daeae16bed3b59d8b10b3bbd27631e6550f45a7e52073da5f6b0d2",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-capture-cpu-observation-design.md": {
+      "sha256": "8a21f2b9f7c3410fb5dfe4d48339ac0c13c8bc95c90a40f75c1d580efc3312d4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-host-cadence-cleanup-design.md": {
+      "sha256": "9b8b636378cdf710a614b1a36d3a012eee5a7bec2e827f83888185076b0ff42e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-passive-cleanup-allocation-design.md": {
+      "sha256": "c759d32266531a2dc4c38a57e60c559b8ac73c5004c7c29953b27b0f92c7a2f9",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-passive-gate-evidence-design.md": {
+      "sha256": "e5aa3274dc6ba72f7dcd2347d1a75aa53a9e31863fead39bc1300d4d1c848888",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-resource-collector-isolation-design.md": {
+      "sha256": "e61d5390dcbd109abbd4bfc0182b58bd7633c8efcd91a159505cbf360621a738",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-slow-start-idle-io-resilience-design.md": {
+      "sha256": "d4ad2c0651edc10be3c5f2b6501c37fa3788ff7520ce77988f6b95e99db5672d",
+      "filesystemMode": 384
+    },
+    "docs/\u9700\u6c42\u6587\u6863/WebRemoteDesktop-\u9700\u6c42\u6587\u6863.md": {
+      "sha256": "b98a660582f0560bf29ce62d28708a8ff4606193adbbbdccbda6ccb8d1cd6137",
+      "filesystemMode": 420
+    },
+    "fixtures/turn/catalog-priority.json": {
+      "sha256": "6daf5f066c30c3b6eece54441035db2f40ce77632a2cb085a2084cca963c8c11",
+      "filesystemMode": 420
+    },
+    "launchd/com.webremotedesktop.awake.plist": {
+      "sha256": "1e7869dcef57dc160865049c353f0e13c1eb6e562325bf54e1267aac9ab8c20d",
+      "filesystemMode": 420
+    },
+    "launchd/com.webremotedesktop.fixed-watch.plist": {
+      "sha256": "1b7512c168159dde33ace4a1b3fc4cfc75b24d305cbc299fe5af5666ca9abb86",
+      "filesystemMode": 420
+    },
+    "launchd/com.webremotedesktop.host.plist": {
+      "sha256": "56dfdb887b5672c186f73e47b14e73fd338882a19c6f12a0e3856f3cdbd9cabc",
+      "filesystemMode": 420
+    },
+    "launchd/com.webremotedesktop.tunnel.plist": {
+      "sha256": "9429a687e429f3d31957dcf2b3a3809f612bd045d3b9f7f45578c1c1316b3de8",
+      "filesystemMode": 420
+    },
+    "macos-host/Package.swift": {
+      "sha256": "44b321b1c73dde194fc25e88bd2e06067f0823026cc1a58342ee275b1a129e60",
+      "filesystemMode": 420
+    },
+    "macos-host/WebRemoteDesktop/App.swift": {
+      "sha256": "a7074fd5eb90d47d0fe5a2fca11b8243df7bdc9dace6f9ec1a39ce557daf2d0a",
+      "filesystemMode": 420
+    },
+    "macos-host/WebRemoteDesktop/InputController.swift": {
+      "sha256": "c0a13a91cfbc5bae516922332c203d809e95997c4cc1e6e91ded415bac4c3857",
+      "filesystemMode": 420
+    },
+    "macos-host/WebRemoteDesktop/ResolutionPicker.swift": {
+      "sha256": "b065f8695e18dc75a79f6dd3025ce07d9e6e2601d4b88eeaf13f6f9b0d744f5f",
+      "filesystemMode": 420
+    },
+    "macos-host/WebRemoteDesktop/ScreenCaptureManager.swift": {
+      "sha256": "8961259ecbf54ac5705cdf9f500bf6b931e1ec57eebb9b9de27b979aa33d8fa6",
+      "filesystemMode": 420
+    },
+    "macos-host/WebRemoteDesktop/SignalClient.swift": {
+      "sha256": "daef28c653036c9596ad3cf00d2990cffdd77e5f9f33d1d0a7afa32b87406e8b",
+      "filesystemMode": 420
+    },
+    "macos-host/WebRemoteDesktop/WebRTCManager.swift": {
+      "sha256": "9f7a6cdeaf583a30bf4a2b5629b421de40d06264f4a0413e771a2be276e4096e",
+      "filesystemMode": 420
+    },
+    "python-host/adapters/__init__.py": {
+      "sha256": "27e2cdf1044366221d019b67c96d8296bb7349d23d44fe38a3aacca615bce658",
+      "filesystemMode": 420
+    },
+    "python-host/adapters/capture.py": {
+      "sha256": "3b14d4ad1057ce0c910fbd7ca817bcc5fc692a5e86f82996088c2aa32a4d8ffe",
+      "filesystemMode": 420
+    },
+    "python-host/adapters/input.py": {
+      "sha256": "547c0bc9fba282b2e7571991a5c8067c4942c6a1023ddc26311de37e4cef60c6",
+      "filesystemMode": 420
+    },
+    "python-host/adapters/lifecycle.py": {
+      "sha256": "d38a5daefbfe46845054d16e5eb8443bfd6aadc769554cf4b97f2983b2100a25",
+      "filesystemMode": 420
+    },
+    "python-host/adapters/media_sender.py": {
+      "sha256": "b9f72c42537e581825ec6cf2c233028a6509aaa4cee6fcf6246028025853ef76",
+      "filesystemMode": 420
+    },
+    "python-host/aiortc_media_sender.py": {
+      "sha256": "2b1e0ef6aabcf4aff5ac44fe2b6a8e0afe34f014bc9251ba00554d2cf8d42603",
+      "filesystemMode": 420
+    },
+    "python-host/bounded_log_writer.py": {
+      "sha256": "fc59ac20851e2748e48eea80c9828926364ae779d6748144ffc8872cfd1a7931",
+      "filesystemMode": 384
+    },
+    "python-host/capture_cadence.py": {
+      "sha256": "a6684242f3974958cf640a29d712252e0fa9c61c34c145bb1ddca7dc9ca22573",
+      "filesystemMode": 384
+    },
+    "python-host/capture_experiment.py": {
+      "sha256": "512b4e766ce29b56e2fcaaa2fc1a7eb2e37ab08526e5c49d65d65c20fbfb5eb9",
+      "filesystemMode": 420
+    },
+    "python-host/capture_resource_owner.py": {
+      "sha256": "bdacdabc53b02f9641c5e084faa1f931b7a2358c5071201c36ee15814ce9b4fc",
+      "filesystemMode": 384
+    },
+    "python-host/dc_diagnostic_admission.py": {
+      "sha256": "2d9972b09e21f6249bb2ef1cbaab2a600de76994bd270f151a2ff3af16980ef5",
+      "filesystemMode": 384
+    },
+    "python-host/h264_encoder_policy.py": {
+      "sha256": "8e93cd4ba986892608f4b0daeb2efd2071de926fb6ff77827bfb3bfbf64b8484",
+      "filesystemMode": 420
+    },
+    "python-host/h264_videotoolbox_encoder.py": {
+      "sha256": "cba44f578788de7dbe480064a59b68eb14a893470597d0a56e4983fd2ad545af",
+      "filesystemMode": 420
+    },
+    "python-host/host.py": {
+      "sha256": "3a54db3f9f6f06fe951cdbf60361c839eda316c8e6f4d678851bfeb94d349346",
+      "filesystemMode": 448
+    },
+    "python-host/input_admission_queue.py": {
+      "sha256": "f4f94a1c87e69abf5b12d9a353c27fb4f8bd1a3aac6a5913300abd18ca776354",
+      "filesystemMode": 420
+    },
+    "python-host/input_frame_causality.py": {
+      "sha256": "da9dff56f9a7431a858140379a2656ed7365807e7b67f9ddcc1309e90407d971",
+      "filesystemMode": 420
+    },
+    "python-host/input_handler.py": {
+      "sha256": "63d734a1d07799e5a209246fdd6ef84d563d8ca7cfd9af978fc259238fd44d99",
+      "filesystemMode": 493
+    },
+    "python-host/input_timing.py": {
+      "sha256": "21b15c950d6172b1e6b0b4a25ee609f2e2ac596c53d1d9c0a491de8420b88e4e",
+      "filesystemMode": 420
+    },
+    "python-host/media_apply_coordinator.py": {
+      "sha256": "d6809ca7da35f779b47e50554784dc4efbf6b3109cb82179b0f7ac2c9d9e5c8c",
+      "filesystemMode": 420
+    },
+    "python-host/media_stage_metrics.py": {
+      "sha256": "42bf3013dface819c9526970ceae3a25305ab17bcf7b2ba6319e40512d4d78c6",
+      "filesystemMode": 420
+    },
+    "python-host/media_timing.py": {
+      "sha256": "80b77a7c497d6e0dcbb34cedced50a27982e21f5d3f1aec869eb8258d12aab11",
+      "filesystemMode": 420
+    },
+    "python-host/observability.py": {
+      "sha256": "79156962e21a3bb4988c608d8e75bff3e18ef191dd047be01001611e4080f916",
+      "filesystemMode": 384
+    },
+    "python-host/overlay_window.py": {
+      "sha256": "63ef38a862cf09904214c1260870dc99842e1f1adc78b8551227cbc1e85578ba",
+      "filesystemMode": 420
+    },
+    "python-host/peer_cleanup_observation.py": {
+      "sha256": "876cb2b990d5787ec54dc2e81ed58abef53e6c2aa323b86b6364231acc9df21e",
+      "filesystemMode": 384
+    },
+    "python-host/quartz_keyboard_adapter.py": {
+      "sha256": "3bbfea9339ae26de23333f8bb6698585c5a30a6a9294d8ee5d7c7f3a6c3689ee",
+      "filesystemMode": 420
+    },
+    "python-host/relay_frame_worker.py": {
+      "sha256": "cea5dcc5979cb943424ec3a094483434e2c44131372f7db01f6f19d36c608777",
+      "filesystemMode": 384
+    },
+    "python-host/remote_desktop_write_state.py": {
+      "sha256": "7e7f5e81594a7e6987283233d6bd57d7088659bf94a9e01bea2a8eae9b0d38ff",
+      "filesystemMode": 420
+    },
+    "python-host/remote_keyboard_state.py": {
+      "sha256": "1d61d888afe7eb02c7005f45c724a6dc8d2c5261254dd946ff73cea4fa3f0c0f",
+      "filesystemMode": 420
+    },
+    "python-host/requirements.txt": {
+      "sha256": "c2721e13fd352af0ad4cecbaa3411839de3e618c002cc521d6846b77635ea1d5",
+      "filesystemMode": 420
+    },
+    "python-host/rtp_frame_observer.py": {
+      "sha256": "f745fa537ce41ffb8fbb79ae6a444397016189c37245b3e295f116c1404aef7f",
+      "filesystemMode": 420
+    },
+    "python-host/runtime_observability.py": {
+      "sha256": "63f60336cad1b34d9fc32db0c3d84ac1f68cb3def57995f9533e63b71353da10",
+      "filesystemMode": 384
+    },
+    "python-host/test_adapter_contracts.py": {
+      "sha256": "09b7a2c498f9a8cd46c98a197ea72b3589c02ae0efe0d1e83682ec484cfa617d",
+      "filesystemMode": 420
+    },
+    "python-host/test_aiortc_media_sender.py": {
+      "sha256": "c5030fd7e2cb99a7933fa58a87ffdc296e08b6670c4bc723ee22adb9b5c201f9",
+      "filesystemMode": 420
+    },
+    "python-host/test_bounded_log_writer.py": {
+      "sha256": "ce72394cca6036173654947e5584c08ebf02f2367541407e36b99ab345f9cab4",
+      "filesystemMode": 384
+    },
+    "python-host/test_capture_benchmark.py": {
+      "sha256": "5e81382c418407f7334fbbddd7291f9c32b1fa97d078b77ebc78e6f247ba5502",
+      "filesystemMode": 420
+    },
+    "python-host/test_capture_cadence.py": {
+      "sha256": "f6ef8ccaccea4641f2b5a94b419c1ffe9ac12a82caacd4c8084e6dad0d6d54f8",
+      "filesystemMode": 384
+    },
+    "python-host/test_capture_observation.py": {
+      "sha256": "398d997fdea30bfa7443cf38fb0f6e1896f961af0237367e64f0ea49d2ace15a",
+      "filesystemMode": 384
+    },
+    "python-host/test_capture_resource_owner.py": {
+      "sha256": "179d6d1c52056a5662617d0c72b2277d5a5849f8eca57f4a01ae7050086e36e6",
+      "filesystemMode": 384
+    },
+    "python-host/test_capture_shutdown_contract.py": {
+      "sha256": "f2ec3df25c88fd47bc3e9ef4e63e8b9c7423977e559c4a0db35d7595fca149ac",
+      "filesystemMode": 384
+    },
+    "python-host/test_connection_diagnostics.py": {
+      "sha256": "3f6638484cdc7a4412c29b400004e91523045fe83cb0f0df36b4a3e62d3be8dd",
+      "filesystemMode": 384
+    },
+    "python-host/test_dc_diagnostic_admission.py": {
+      "sha256": "d6de693543749f17a0c2a170aecf2768d154bcddb0ac40ebc9817d37dea3255e",
+      "filesystemMode": 384
+    },
+    "python-host/test_frame_worker.py": {
+      "sha256": "7550e2a54791fc5afe79bfad9ab69abff7f77c7ffd478d4f35f79cbb03a30d1e",
+      "filesystemMode": 384
+    },
+    "python-host/test_h264_encoder_policy.py": {
+      "sha256": "c790905623aa00c8a32bdfb303d1fcf3888e6211ced35a97e979ce68cadb889f",
+      "filesystemMode": 420
+    },
+    "python-host/test_h264_idr.py": {
+      "sha256": "a0359b123c7f8a8a1b7821a7193fd244461116f175bd97483b23b7511b20eef6",
+      "filesystemMode": 420
+    },
+    "python-host/test_host_input_admission.py": {
+      "sha256": "c187d5ef43f77efe2b64206b180d7ea748449eca811cbc993881a2514676f972",
+      "filesystemMode": 420
+    },
+    "python-host/test_ice_relay_filter.py": {
+      "sha256": "67fca9c46b6d5e30d2a2ca358a062551c5ad8ae600c7c810e82625ebf4d85b96",
+      "filesystemMode": 420
+    },
+    "python-host/test_input_admission_queue.py": {
+      "sha256": "ff794028c24c06910143758983a5af1675fb736704d401510ebad40f188c97ef",
+      "filesystemMode": 420
+    },
+    "python-host/test_input_frame_causality.py": {
+      "sha256": "66fff63946c3971bedf84cbb5e567a7bdc490d7aa4b9f1982eb0c2fdf8940492",
+      "filesystemMode": 420
+    },
+    "python-host/test_input_handler.py": {
+      "sha256": "9fc9cd6e81fb531bf91049c01d51843a69b24a3d97d43542746fea0916f37a22",
+      "filesystemMode": 420
+    },
+    "python-host/test_input_timing_contract.py": {
+      "sha256": "4ad0bb859215122b8789bfaf088b7ea401bd1f29ae5e8f20eb84844f14a25b99",
+      "filesystemMode": 420
+    },
+    "python-host/test_latency_timing.py": {
+      "sha256": "c63447c03b03e0e5e48f1db1763f3f95084ec3dc9cbe7d3bd93358bbdc945272",
+      "filesystemMode": 384
+    },
+    "python-host/test_loss_lab_taps.py": {
+      "sha256": "314c0c247d0c546c6beca9a1161c13568fb7b49d1ef830ab982d9054c95f1d3d",
+      "filesystemMode": 420
+    },
+    "python-host/test_media_apply_coordinator.py": {
+      "sha256": "a238c52480837af43b99e713bba183633923e458b052e259aecac4b53bc2168d",
+      "filesystemMode": 420
+    },
+    "python-host/test_media_apply_stability.py": {
+      "sha256": "1d87227a5081a6a3282b11b4be654cff17a86c9cd7e430bb765cfc2c5146c1be",
+      "filesystemMode": 420
+    },
+    "python-host/test_media_policy_selection.py": {
+      "sha256": "ed3443bcda8d28ed843096fcdbd0d12510ea941f5a7eb345b43c8e44682f32c5",
+      "filesystemMode": 420
+    },
+    "python-host/test_media_profile.py": {
+      "sha256": "f696071d34bca4fd6e6bf496ec543f875cc52bdfde418295bb7f2ba48d16c667",
+      "filesystemMode": 420
+    },
+    "python-host/test_media_stage_boundaries.py": {
+      "sha256": "22f8dfb51c9c85532bdaf74c0bfb6c862eaa578a6635081e066ad2d0c8f20f92",
+      "filesystemMode": 384
+    },
+    "python-host/test_media_stage_metrics.py": {
+      "sha256": "bd43130fbc36609c62207ef46e455e88d1e6e7466a8c115beff937781bcd4dfb",
+      "filesystemMode": 420
+    },
+    "python-host/test_media_suspension.py": {
+      "sha256": "f34aaf392ba10c997bcbfc5353ce64a455a4eb1edd62feeb909a1e51c52b28f8",
+      "filesystemMode": 420
+    },
+    "python-host/test_media_timing.py": {
+      "sha256": "a7a73af0beb90f677f001c51e78bde093348e94049b32feeab60a66cf2e08d0c",
+      "filesystemMode": 420
+    },
+    "python-host/test_observability.py": {
+      "sha256": "b3dd7f5750ffc04cd6efbc011ae23ea283a6e62ea610e79515e0ed17db79eae1",
+      "filesystemMode": 384
+    },
+    "python-host/test_offer_epoch.py": {
+      "sha256": "e982eda9d27885cd5b109b6e393fc522092d012c75dc9b9769e0afca8437f44e",
+      "filesystemMode": 420
+    },
+    "python-host/test_peer_cleanup_observation.py": {
+      "sha256": "065500bc499e89f45d835df8ba340d852b5621e26fad78eeda97cef30b41f222",
+      "filesystemMode": 384
+    },
+    "python-host/test_quality_lock.py": {
+      "sha256": "7acd9eb2bd700f6f87f7d7b6ce8eab342b3b15e787c488808331bc40a823f493",
+      "filesystemMode": 384
+    },
+    "python-host/test_quartz_keyboard_adapter.py": {
+      "sha256": "21290d5096506fbce068dc3ede0fa0cefb3ca075ca19d0fb4268932c7b03f570",
+      "filesystemMode": 420
+    },
+    "python-host/test_relay_frame_worker.py": {
+      "sha256": "2a708d0df7d30c59f1cd8415683897ec87cd704815caf57db04c0a2c172fcc14",
+      "filesystemMode": 384
+    },
+    "python-host/test_relay_transport_admission.py": {
+      "sha256": "e73970bb6bf408df5e329e6d2cb55cba43ccb772101f599c4e9f207925fb935b",
+      "filesystemMode": 384
+    },
+    "python-host/test_remote_desktop_write_state.py": {
+      "sha256": "47c4e47350d14706b1a45de7a32958fdc944cfce6942111d2fec42122a726809",
+      "filesystemMode": 420
+    },
+    "python-host/test_remote_keyboard_state.py": {
+      "sha256": "56855cffbd3cf795ece66fb02a5fbca4efab70e46c436d37fc318d8cb1ae8ee2",
+      "filesystemMode": 420
+    },
+    "python-host/test_resource_collector_owner.py": {
+      "sha256": "9589cdde4f907f27d68beef23be8be7f8a729ab46e283eafb5da941deff7b591",
+      "filesystemMode": 384
+    },
+    "python-host/test_rtp_frame_observer.py": {
+      "sha256": "f7923d445ec71d26b5ca71fee4a7b7e12d5ffaac466e16be1b5a5fc76fc2a783",
+      "filesystemMode": 420
+    },
+    "python-host/test_rtp_send_boundary.py": {
+      "sha256": "bb9d54ea06c7d46d354f654f3ea135831f5a496a7ae72a33770b7bfd9790d3c2",
+      "filesystemMode": 420
+    },
+    "python-host/test_runtime_observability.py": {
+      "sha256": "29a7170443b30b6abfdc968bc8db0c926d2f9fe7f0e274913deab78dd8137233",
+      "filesystemMode": 384
+    },
+    "python-host/test_stall_decoder_refresh.py": {
+      "sha256": "809818215e4e751a9b4b667371cc3961c65999b4db77d4e342235009e3014a40",
+      "filesystemMode": 384
+    },
+    "python-host/test_tunnel_relay.py": {
+      "sha256": "5d42234db44f7d968ce4a9c3e83c95f9f91b7e916ef932d2d5faf49fb0979737",
+      "filesystemMode": 384
+    },
+    "python-host/test_turn_catalog.py": {
+      "sha256": "dafb3ec01b7deaa0f9eaf5bea1cd29c116fe845d287dc7f0c2d0e07dff699530",
+      "filesystemMode": 420
+    },
+    "python-host/test_turn_priority_parity.py": {
+      "sha256": "45ba7a366da116edf2f89de8806327ecfea91c7ea5d659aae7c6454c932802f8",
+      "filesystemMode": 420
+    },
+    "python-host/test_viewer_session_rebind.py": {
+      "sha256": "783407343673dbad735a875c1cb057d90832bd414f99cea055f94e9ed94bf799",
+      "filesystemMode": 420
+    },
+    "python-host/turn_catalog.py": {
+      "sha256": "b097658a87e83efdefc4685d67b973d1497e2c3a2e5afa50addf086cb37da0e4",
+      "filesystemMode": 420
+    },
+    "scripts/benchmark-turn-capture.py": {
+      "sha256": "1d701179071f8b43f52bee1aa75fd7183640e49e6188cb7ea49bd92887d7d84b",
+      "filesystemMode": 420
+    },
+    "scripts/check-host-lock-policy.sh": {
+      "sha256": "228ab15fc589b05b8435ac05a4248ffc5f14f70059093a39240c34580622477f",
+      "filesystemMode": 493
+    },
+    "scripts/check-module-state-owners.js": {
+      "sha256": "32258126d9ed2c94c4d991cc3ac3ae965f72924906a8e1690b6b379f1ccf860f",
+      "filesystemMode": 420
+    },
+    "scripts/check-module-state-owners.test.js": {
+      "sha256": "5b04272ee80440a4de3d9814cf7e5d1a80cf1deb5cd6e511b98964a8e5d5ee38",
+      "filesystemMode": 420
+    },
+    "scripts/com.local.mysql.mysqld-safe.plist": {
+      "sha256": "082625f2626c953d92568081ef0b17f07561ecc165f2622f558c853d014725dd",
+      "filesystemMode": 420
+    },
+    "scripts/desktop-session-acceptance.sh": {
+      "sha256": "b769a422f4fa4f4e262da803f5113e962d87c7b1fee667e9725672f5e1262638",
+      "filesystemMode": 493
+    },
+    "scripts/desktop-session-acceptance.test.js": {
+      "sha256": "e9441b6a2a73d4cf26ab63236e7c24bfcf0aa2d9c5c217ab1e23152b340b6e67",
+      "filesystemMode": 420
+    },
+    "scripts/disable-oracle-mysqld-daemon.sh": {
+      "sha256": "8ef84b48b22afa79357c04f33131f4b8490538462b69e9069a248296305d5ee6",
+      "filesystemMode": 493
+    },
+    "scripts/eval-turn-encoder-quality.py": {
+      "sha256": "65f446354da3a13b69dbe0230dc30186597317a980699aacf3949b4787171515",
+      "filesystemMode": 420
+    },
+    "scripts/fixed-tunnel-preflight.sh": {
+      "sha256": "aac13c107725b1011d490685ee9a4624b7152bf78633816c40ea409c5bb5f808",
+      "filesystemMode": 493
+    },
+    "scripts/fixed-tunnel-preflight.test.js": {
+      "sha256": "4af3772e3a2f7c1e265bd80e97272a90d58f4ba5eb5b9ef11d7c6ce468761448",
+      "filesystemMode": 420
+    },
+    "scripts/host-launchctl.test.js": {
+      "sha256": "9285314114f8bca9b01708b53e271cad4be1e9e84e02b024bc4137c2c0df290f",
+      "filesystemMode": 420
+    },
+    "scripts/host-lock-policy.test.js": {
+      "sha256": "5061b4c563e09b490c9e0daf1515861d57b8a50862825529a2ac1659df88c18e",
+      "filesystemMode": 420
+    },
+    "scripts/install-awake-keeper.sh": {
+      "sha256": "cb187558957afa1321b097c9856179ec31892ecb529eb083b03fb01b613478d8",
+      "filesystemMode": 493
+    },
+    "scripts/install-fixed-watch.sh": {
+      "sha256": "4f5fc1916665653648e60a030599a213372923e3cab72755de7133a6b29e65cc",
+      "filesystemMode": 493
+    },
+    "scripts/install-fixed-watch.test.js": {
+      "sha256": "95e25d135ffaf40c81ea52846a78efb1f2fbcb2ed4d13d2f4b2f117d186dd166",
+      "filesystemMode": 420
+    },
+    "scripts/install-mysql-safe-launchd.sh": {
+      "sha256": "038d4b02e77f5463df811f73edd536d0166602bfac5d617a91c94251151588fb",
+      "filesystemMode": 493
+    },
+    "scripts/lib-fixed-domain.sh": {
+      "sha256": "26a2daf7c6e9db7e898c12883a8aaa3fdbe22065fab4b162f73cbc52e7f0880d",
+      "filesystemMode": 493
+    },
+    "scripts/lib-host-launchctl.sh": {
+      "sha256": "ad70350206bd28a25aa84cabaef1ba021ee5b292d2568f850f67adabcfa96d4c",
+      "filesystemMode": 420
+    },
+    "scripts/lib-safe-startup.sh": {
+      "sha256": "fee7285e7bd78ac9ed9b61d3bdbf50ee788b40ffc87c03269324590c73a84daa",
+      "filesystemMode": 420
+    },
+    "scripts/lib-safe-wrd.sh": {
+      "sha256": "837152037199b3ab8ca8356f5378f2c7efb412c4f3c0940bdf9c936a3fb01b6d",
+      "filesystemMode": 420
+    },
+    "scripts/lib-safe-wrd.test.js": {
+      "sha256": "81938d70ae44376f482efc02b14c99d6e6ee92359138cbddd6b8d0ef9ca3285a",
+      "filesystemMode": 420
+    },
+    "scripts/lib-tunnel-launchctl.sh": {
+      "sha256": "538f74d5cc6e7eb34b58b8cd104c55e77ff57da3f7973d14a123c4077569473a",
+      "filesystemMode": 420
+    },
+    "scripts/lib-turn-env.sh": {
+      "sha256": "5efd95189a3afbba5432852d8eb90b5957dcee8e3e674dc3e575a62964c9bf4b",
+      "filesystemMode": 420
+    },
+    "scripts/media_latency_qualification.py": {
+      "sha256": "0e8b9ed3da33037405ee430d92ca302cfe419321b77d04b54f5626551f60eb15",
+      "filesystemMode": 420
+    },
+    "scripts/mobile-input-interaction-acceptance.test.js": {
+      "sha256": "9eecb59e3b6b1ffce5b8d44d4d1058b5ea11ef987dc0c89a04fb3b40d3ee5cfc",
+      "filesystemMode": 420
+    },
+    "scripts/mobile_input_interaction_acceptance.py": {
+      "sha256": "fff3c6f30adf0337c4c889413dae52ce206e6384307c1eacb72636e7291b2429",
+      "filesystemMode": 420
+    },
+    "scripts/mobile_viewer_acceptance.py": {
+      "sha256": "79da15fcaae81494e613bd2e863aedb010a66364888db7cd538250a748187667",
+      "filesystemMode": 420
+    },
+    "scripts/mysqld-safe-launchd.sh": {
+      "sha256": "ce068557b9627c390c940c8e72f93f0dfe95ff5c57d368da5250e42b8b60f921",
+      "filesystemMode": 493
+    },
+    "scripts/passive-session-sampler.test.js": {
+      "sha256": "8b9458103d1912c475732ed99e0f2c30ef8d0ead6efb3d8d407d3213f9136139",
+      "filesystemMode": 384
+    },
+    "scripts/passive_session_sampler.js": {
+      "sha256": "f862b739cbe7eb543ccab304203c71c62a43014530fa2da9a7655cba293665d3",
+      "filesystemMode": 384
+    },
+    "scripts/passive_session_soak.py": {
+      "sha256": "b0a15095651c9147eb451b27eb815ec4ea4cc984f2d293d3617c4cee89a15426",
+      "filesystemMode": 384
+    },
+    "scripts/phase4_browser_acceptance.py": {
+      "sha256": "e191bfd2e6c1fd397872361640c0375620b84afc2f80694eabfa8963c996946a",
+      "filesystemMode": 420
+    },
+    "scripts/probe-fixed-edge.sh": {
+      "sha256": "6dbe2a775e9d8ff242aaf5a594761d14435c94c4cec3296d639a408aca1ef78c",
+      "filesystemMode": 493
+    },
+    "scripts/probe-fixed-edge.test.js": {
+      "sha256": "cee831d35a8c565ac720ece1dc19dda72e8aad98c9eb492b858ba7cddd69e05a",
+      "filesystemMode": 420
+    },
+    "scripts/prove-turn-relay.mjs": {
+      "sha256": "c5918cff1cd8709163dbe7e2ff754bff0ed6f6cd0900bb52b204165ed34ba5e3",
+      "filesystemMode": 420
+    },
+    "scripts/prove-turn-relay.test.mjs": {
+      "sha256": "e191a1bb756abf1bb2ad0f32b6ac8b633c65a4a26993864422ddfdd3de3c3c69",
+      "filesystemMode": 420
+    },
+    "scripts/restart-fixed-domain-tunnel.sh": {
+      "sha256": "22008de33ec1a3c81ce19aae1d076ea88da9e4232d6e040cb185aa72c030e351",
+      "filesystemMode": 493
+    },
+    "scripts/restart-fixed-domain-tunnel.test.js": {
+      "sha256": "3619d860d9fe8745b3d8d2a92695668a3a7e3ece5d9087449fdeb4f073c1a3e5",
+      "filesystemMode": 420
+    },
+    "scripts/restart-host.sh": {
+      "sha256": "a8af0986c6cb8f5e724eeecf72d97f88d28e5c92add756d2d429cca80fe03c87",
+      "filesystemMode": 493
+    },
+    "scripts/restart-host.test.js": {
+      "sha256": "9bf4ffa90add253822add24d1634e1c4bfddcc8c61039e5d62d4ecbdd79da5fb",
+      "filesystemMode": 420
+    },
+    "scripts/restart-safe-tunnel.sh": {
+      "sha256": "e906ac91ab762d9b703744beeb511208a7f56bccba5a30d255908155db33469d",
+      "filesystemMode": 420
+    },
+    "scripts/run-awake-keeper.sh": {
+      "sha256": "ad4be5de40a7c1c4ba850eb86fe9ab3dc87fbaa530e3db2eef67c8e31c47c833",
+      "filesystemMode": 493
+    },
+    "scripts/run-host-launchctl.sh": {
+      "sha256": "635cab9ed1012409b30f6df54a0161e5440ce9134748b7829ff582b7399c59a1",
+      "filesystemMode": 493
+    },
+    "scripts/run-host.sh": {
+      "sha256": "22a99e63cff225edaa769cdc53cf396017057409c0de85dd7bcbb9a4040db048",
+      "filesystemMode": 493
+    },
+    "scripts/run-quicktunnel.sh": {
+      "sha256": "aced2a055dc94394f8742b1b46c978fd2a6fb9d090b58d2c6c473212bcd9813e",
+      "filesystemMode": 493
+    },
+    "scripts/run-safe-quicktunnel.sh": {
+      "sha256": "b8f3853eb4f936ff500d89a1aad221b06b833cc95115cab1290856e1bf120807",
+      "filesystemMode": 493
+    },
+    "scripts/run-safe-quicktunnel.test.js": {
+      "sha256": "acd8cb309d974d38c1f5a584fcf23edb964f49dded416eae0825ba16740b5fa8",
+      "filesystemMode": 420
+    },
+    "scripts/run-signal.sh": {
+      "sha256": "bd310134c0134b862ae31b3842fa6429cafa43c7f6c93f358ded4c36af113313",
+      "filesystemMode": 493
+    },
+    "scripts/runtime_reliability_acceptance.py": {
+      "sha256": "80aa57fbf6d31f0f3d89cd982ea05eb18c4a9b07f63c53afc9aa34faaf1b01c6",
+      "filesystemMode": 420
+    },
+    "scripts/runtime_reliability_acceptance_ext.py": {
+      "sha256": "00c3ed20ac322d5bdec404eac46e43379c4e4d2ec1675b3c88499bfed27a450f",
+      "filesystemMode": 420
+    },
+    "scripts/runtime_reliability_acceptance_final.py": {
+      "sha256": "c85a0a472359dd7b563c63b981057d4e21e9c6b64b40837327530b4f669ef14d",
+      "filesystemMode": 420
+    },
+    "scripts/runtime_reliability_acceptance_final.test.js": {
+      "sha256": "a9f56fb16fb414a5930b940551699290423e5fe7b1019cc24cb6f66486e70dbf",
+      "filesystemMode": 420
+    },
+    "scripts/setup-cloudflare.sh": {
+      "sha256": "2dff5cdabc8b93b225965f4a776a8679c19c422f5b7b32d53294704bec69b31e",
+      "filesystemMode": 420
+    },
+    "scripts/setup-cloudflare.test.js": {
+      "sha256": "e42d4aba857eca3d2df87c529338e4369e38bb4947157ac6321a7e49b4d8fd1d",
+      "filesystemMode": 420
+    },
+    "scripts/setup_basiclib.test.js": {
+      "sha256": "6a9a5447236b5475f12bde720f9d2b35f4fd7cb6f9eb145f3544d658d640d270",
+      "filesystemMode": 420
+    },
+    "scripts/start-fixed-domain.sh": {
+      "sha256": "4ecfcd8f4b89cf051a6a1ac10de432a8b857baec1d6ffaf4f874655ddcb67e4a",
+      "filesystemMode": 493
+    },
+    "scripts/start-fixed-domain.test.js": {
+      "sha256": "da2752dd2ef9958b047f6adbbf15e9c9a0df63239ff8d33f437dcae59f37e91d",
+      "filesystemMode": 420
+    },
+    "scripts/start-safe-wrd.sh": {
+      "sha256": "1bebd3441e4923fe745691942ad34a8bd48ff547833e51bc16c38ae0352c65c9",
+      "filesystemMode": 493
+    },
+    "scripts/start-safe-wrd.test.js": {
+      "sha256": "7954c4393f042464478fd127b23b59ddc26ca6c52c53f733ed030c3f6a85dfb6",
+      "filesystemMode": 420
+    },
+    "scripts/start-wrd.sh": {
+      "sha256": "1ef90824867be25c524e1f27764382ba33ea80eec1fec13a2696bf8981c9d543",
+      "filesystemMode": 493
+    },
+    "scripts/status-safe-wrd.sh": {
+      "sha256": "869b1d7d5f3a6ffda50115413ed26953ce9ca4ef6bd7ea8004db5093902f06ac",
+      "filesystemMode": 493
+    },
+    "scripts/status-safe-wrd.test.js": {
+      "sha256": "064d60141bb6cc21d9a3a1cbf3dc10d666252ec11c054384c294f57c53ea98e4",
+      "filesystemMode": 420
+    },
+    "scripts/stop-safe-wrd.sh": {
+      "sha256": "62741e710389051fa2272f1e85f66160272cfdc77ed893e669a96e3ac7492ea8",
+      "filesystemMode": 493
+    },
+    "scripts/stop-safe-wrd.test.js": {
+      "sha256": "8ffd5dfe0ef2dc3dd2fb4810c99106775ade549987b0c692f8a3253513d24e3d",
+      "filesystemMode": 420
+    },
+    "scripts/summarize-wrd-incident.py": {
+      "sha256": "018032059427016148c5f4379f5b93ab5da64f2f0f774ebd58e26911e9e61619",
+      "filesystemMode": 420
+    },
+    "scripts/terminal-runtime-check.sh": {
+      "sha256": "bb02aef07c1949a52dfb66a32bc088fbecc14a8b3d3b721b72564d4bed45c107",
+      "filesystemMode": 493
+    },
+    "scripts/terminal-runtime-check.test.js": {
+      "sha256": "3249a8461639bd57bf0ce46947f85c1dfc3175b785ccc50a3da4e49049ce9b82",
+      "filesystemMode": 420
+    },
+    "scripts/terminal-runtime-probe.js": {
+      "sha256": "cc8664ba03193fc31629bcd46c101df447e985762bb0b865b3e0a2217661fbe2",
+      "filesystemMode": 420
+    },
+    "scripts/terminal-runtime-probe.test.js": {
+      "sha256": "570f502467f8b4d3ee9274b0db012a508f7e12135f9af3cb45daf3cb093da018",
+      "filesystemMode": 420
+    },
+    "scripts/terminal-tunnel-latency-bench.js": {
+      "sha256": "b62cc1c29d8f2cf08bcd035e0667e09314927443b3852398043c421e9185b0f7",
+      "filesystemMode": 420
+    },
+    "scripts/test-turn-media-timeline.py": {
+      "sha256": "b7c7ff9423d50647fae3b1a5c903461c3f46537de27f6ef5782a89f972bbf422",
+      "filesystemMode": 420
+    },
+    "scripts/test_entry_probe_layers.py": {
+      "sha256": "46204ef92dc23480581ca5bdb4b20109ee1c96bc4d6fe714faad4d3ee6c59c12",
+      "filesystemMode": 420
+    },
+    "scripts/test_eval_turn_encoder_peak_headroom.py": {
+      "sha256": "98c994f5a2620eca37f5888a25404c79977c53792bc9e40c5bf6155e5d3ada79",
+      "filesystemMode": 420
+    },
+    "scripts/test_eval_turn_encoder_quality.py": {
+      "sha256": "85e46ac3e55f774e97d06e0c852950e7e1e0262b0c3c16f18d811c3b420a1685",
+      "filesystemMode": 420
+    },
+    "scripts/test_eval_turn_encoder_veryfast.py": {
+      "sha256": "a3395b8e5a91181ce7533160a3d8548fe1dade8ba64034c9c5c89d4d0436e0d9",
+      "filesystemMode": 420
+    },
+    "scripts/test_media_latency_qualification.py": {
+      "sha256": "b0d7796bd772c7c4b6b0585d53240ee1e74c2cf34f214625f5d450f75a2a26a0",
+      "filesystemMode": 420
+    },
+    "scripts/test_mobile_viewer_acceptance.py": {
+      "sha256": "fbd7d93dcb1f45f675758e595c8748896618b52dda8bd5c9b2b1a5209508b4e5",
+      "filesystemMode": 420
+    },
+    "scripts/test_passive_session_soak.py": {
+      "sha256": "83220873aed2dbee627066a2b97cb7be5b473fe90894d4f73c7ed9de354d4de7",
+      "filesystemMode": 384
+    },
+    "scripts/test_summarize_wrd_incident.py": {
+      "sha256": "bedccc1b7f6b7485c886d13fdf528d640e5c16cfdc1ae0157723d3c36c796bf3",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_capture_experiments.py": {
+      "sha256": "6fa1941d1d8912b19c4d780ddca1def0beb2d18d2a111e2aae19ca01776e1c08",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_controlled_scene.py": {
+      "sha256": "a3361a802d50e8c8728e43bea88db88690ece3a42b1982f79fb70e80e92c7744",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_controlled_scene_lab_runner.py": {
+      "sha256": "df3e2a74467182d91f7f743fd612d20c8cc77ae4f80b7ae31f10f16e5db02a4c",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_controlled_scene_runtime.py": {
+      "sha256": "2cd5c5b1967d6e182ebda59f6d3188d045359b4af33d63ce7fe976a326deb80a",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_encoder_experiments.py": {
+      "sha256": "d6d4bc1d660013f5299d8ff09fc37f05e5bdeb886789c83cac900d66c124bb3a",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_encoder_peak_headroom_experiments.py": {
+      "sha256": "8d84aa4ef9f58309cc9c65334f0693181f7f972c1b82609eebb9748d64d58d2c",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_encoder_probe_matrix.py": {
+      "sha256": "5df69c8682267505f46dcadaf31ed2651c0c2cf7823d2406aa8c2656fffa3e3a",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_encoder_veryfast_experiments.py": {
+      "sha256": "128eeac53686ef712c741c8161e89a3f609aeb3a5c228147a90d8844c7c771c6",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_lab.py": {
+      "sha256": "aff3ee4481fad453459143184c167cfadef0299b97ad9cd18996fbd6c8a0752b",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_lab_input_guard.py": {
+      "sha256": "f920f2855c87b7fcf1461a92df651da93f5ba76186419e629752b5369a041e0f",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_runtime_collector.py": {
+      "sha256": "29a61767d7041502c068359ba1b213c820f06071b20e745018de3204c82306fc",
+      "filesystemMode": 420
+    },
+    "scripts/test_turn_t3_lab_collector.py": {
+      "sha256": "0734ab963fd9238bfd9cab69c096da0502b7e3388d6509c5666c2cc27b6ee11f",
+      "filesystemMode": 420
+    },
+    "scripts/test_viewer_bootstrap_acceptance.py": {
+      "sha256": "44eab6729568411d1f7614dbd9bb2c4912f3906ace464aa2fd188ebd68760c88",
+      "filesystemMode": 420
+    },
+    "scripts/test_wrd_deadline.py": {
+      "sha256": "3c6879b03449de1c8db6e305366381774d96422ba25b9d2a4b354ffd95d6d545",
+      "filesystemMode": 420
+    },
+    "scripts/test_wrd_entry_health.py": {
+      "sha256": "343f3957fae723b9d9c34d7ae4d970b29f6feacce499a7134edb85f9bb1eceb4",
+      "filesystemMode": 420
+    },
+    "scripts/test_wrd_resource_snapshot.py": {
+      "sha256": "e5df5514dae4eb05957e0bd694a495954a6b5a490227931d5d0b13a568bbf961",
+      "filesystemMode": 420
+    },
+    "scripts/test_wrd_watch_coordinator.py": {
+      "sha256": "c1c9e1f80c50f3eb765fc0ea2650a142fad9fe8f22cffca5a9d54a7811c52c0c",
+      "filesystemMode": 420
+    },
+    "scripts/test_wrd_watch_runtime.py": {
+      "sha256": "153af54be11821e75144908412ff14f6c5c3a01995d2dd61477aa7af6d53aca0",
+      "filesystemMode": 420
+    },
+    "scripts/tunnel-launchctl.test.js": {
+      "sha256": "b381a9ee78a626d47f38df4ed9832422fbafac38803f1e8df93857d5e45046fa",
+      "filesystemMode": 420
+    },
+    "scripts/tunnel-safety-fixture.test.js": {
+      "sha256": "6303534a06b71f5b571cfc432f467787b83be2fcfdfa223b7222e94106af98b7",
+      "filesystemMode": 420
+    },
+    "scripts/turn-controlled-scene.test.mjs": {
+      "sha256": "f50ebedd6ad6953b8ef37ed9646e258cdd341157c0b8d24aa753793f74169855",
+      "filesystemMode": 420
+    },
+    "scripts/turn-lab-signal.js": {
+      "sha256": "0b2d6ba84f39f32ce2924c9d5efacac910a8cb15091330b39c00553e198933c8",
+      "filesystemMode": 420
+    },
+    "scripts/turn-lab-signal.test.js": {
+      "sha256": "7c47deb85cde7e71e774efded26ea0bc3bacd3e4fae1096f960feeba450b24f1",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/Dockerfile": {
+      "sha256": "dcd2d05adfa9042d3cf00bed822cab05c523f8063c8c753845d89846dd856ee9",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/README.md": {
+      "sha256": "09da22a49615fd71b8fa0427283c19686b294c2e3c9a39d36145e4fde8f0550d",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/compose.yaml": {
+      "sha256": "26e588091002265af69159646211f89300541b079bc131ce0ea4102f2fc1e6d6",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/controller.py": {
+      "sha256": "96d28d96fad0457be7b623f53e40ebcf1b032278a3f463427f7315cf8b2b72bc",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/gateway_evidence.py": {
+      "sha256": "065cf9e78ddfd2dda35fcb10436ddc2ed61c5d1c8205dd491858b97b3347238d",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/test_controller.py": {
+      "sha256": "ffadf15f32948b2deaf5a4691b6b357514144317c24705b608ba1f0fb5f7eafd",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/test_gateway_evidence.py": {
+      "sha256": "e3690ff0f1bc6904db0928f01e520e1a03f9843c5e28fa5cb231229e99c202ba",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/test_turn_gateway.py": {
+      "sha256": "168d42b9cf35419277f7bc92caf3f6f985535f801cfbf5b01ae730b693c62b2a",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/test_turn_loss_lab_runner.py": {
+      "sha256": "4e2e41a7ea67e7cbdd5c31603adea7c8534fb355c86fe3cf911cebf74a59f005",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/test_turn_udp_probe.py": {
+      "sha256": "2e570c56e36b386173bc1470a3f6ae698b8c49cd86141db5fdf853abdf8848a6",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/test_turn_wire.py": {
+      "sha256": "279ab8002c728c0c54728d759ba0954805f11411fcff6a341d6dba15ef8e0516",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/turn-entrypoint.sh": {
+      "sha256": "ad5c7dbb160a36a824be2b9a5204f06fa93b564f5e0edebb495557fb1168cc2e",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/turn_gateway.py": {
+      "sha256": "c58d5f2701d56073eec3d0abacd91ea20ac89f45eeda4a44eacf13767409f4e4",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/turn_loss_lab_runner.py": {
+      "sha256": "c275100ec75db2d03f41daacc09909e0914228e42d9ab53d288ad548750c3962",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/turn_udp_probe.py": {
+      "sha256": "8e9e1d68723e5d8698a7b7a2466bfe76bc6d11381350d549291b82a8fb92be20",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/turn_wire.py": {
+      "sha256": "484b83a546dbb4e83436b6265c5073929061b5854032a07f40cd5b68f294b879",
+      "filesystemMode": 420
+    },
+    "scripts/turn-loss-fixture/udp_echo_peer.py": {
+      "sha256": "35d7afa88fc079afd997358acd05921c81cac9ee5d269f343f0f4a3439f30a95",
+      "filesystemMode": 420
+    },
+    "scripts/turn-runtime-controlled-producer.html": {
+      "sha256": "a55b866a1c3f68f2567fb8b60ded5d297cb0a3017009eb220f36a38e01888e79",
+      "filesystemMode": 420
+    },
+    "scripts/turn_capture_experiments.py": {
+      "sha256": "a93a7176ea0cc8974c932c8dc6f29e99507d1dc55a331530a6979c575891224a",
+      "filesystemMode": 420
+    },
+    "scripts/turn_controlled_scene.py": {
+      "sha256": "5bde15796714b291af4dc32deeb31a36b34b11cc83a1b62628cfcbaa335e2759",
+      "filesystemMode": 420
+    },
+    "scripts/turn_controlled_scene_lab_runner.py": {
+      "sha256": "de086ff52ca2367a337375c84b74eee4b4442303a193f54c9b2d877cd8f44797",
+      "filesystemMode": 420
+    },
+    "scripts/turn_controlled_scene_runtime.py": {
+      "sha256": "186fb9dc1f6e9d2b6c24f5713b45b18deac176894d8410cab7d4840e4a1b5112",
+      "filesystemMode": 420
+    },
+    "scripts/turn_encoder_experiments.py": {
+      "sha256": "c54712eda2408f8ccdb96891c573e331231d6a2e857f0f94ad83cadcbec67b3e",
+      "filesystemMode": 420
+    },
+    "scripts/turn_encoder_peak_headroom_experiments.py": {
+      "sha256": "512d3cd0aed953f3dccf9e41827d6482c8ce45ff7a0fcb9eada68f2c048e80dc",
+      "filesystemMode": 420
+    },
+    "scripts/turn_encoder_veryfast_experiments.py": {
+      "sha256": "e25e526f032da74411b1e6387c4f6c4a4c07806c5da87fe832575ff32cf60b29",
+      "filesystemMode": 420
+    },
+    "scripts/turn_lab.py": {
+      "sha256": "397bc41d5f64baca20ba5db54dfd26c51fe7df8108a1490e53d46e856899d0d3",
+      "filesystemMode": 420
+    },
+    "scripts/turn_lab_host.py": {
+      "sha256": "3fd8331d4c32784aa5044489fb2ef9d99f00e62be346e4fbb8fa298848330db4",
+      "filesystemMode": 420
+    },
+    "scripts/turn_lab_input_guard.py": {
+      "sha256": "c529a44da80a9bfcdcf8ad7bc88aaa3f2ab3b69d70c51e341451f4af3f3811c0",
+      "filesystemMode": 420
+    },
+    "scripts/turn_runtime_collector.py": {
+      "sha256": "1dd19d9fc29b966c91cfa4acd6a3cd58e3218a94c85f7ffdbc8dd9f2c8ec8021",
+      "filesystemMode": 420
+    },
+    "scripts/turn_runtime_collector.sample.test.mjs": {
+      "sha256": "20ae6c116af812fc9342fb4e944df02183a5c4a08c3d39b9504f340e083bd767",
+      "filesystemMode": 420
+    },
+    "scripts/turn_t3_lab_collector.py": {
+      "sha256": "d786c68c4d740a82b1e115ac0f9c8688d53daecfe3c68bbb9087798c286358e6",
+      "filesystemMode": 420
+    },
+    "scripts/upgrade-cloudflared.sh": {
+      "sha256": "badb53bba274381251d3f2dda8f0aefb9b87379d4ade988549d2cd8b16331356",
+      "filesystemMode": 493
+    },
+    "scripts/upgrade-cloudflared.test.js": {
+      "sha256": "5fc8d050f0be6c5014adaaabaa538b0ee8f0f91b46121be59af00c2ab3f80377",
+      "filesystemMode": 420
+    },
+    "scripts/verify-dock-adaptive-ui.py": {
+      "sha256": "54ed51fcc19ef44aaa1b4a70c1871b3dde079a9d2ca41aaa064385905149496e",
+      "filesystemMode": 420
+    },
+    "scripts/verify-multi-turn-ui.py": {
+      "sha256": "7da5a1519aa63c8146b6fbd95de2a7be022fa80e0af3a6dd54889b3c6b8c7802",
+      "filesystemMode": 420
+    },
+    "scripts/verify-turn-collector-browser.py": {
+      "sha256": "5081075835a8e1fdf554be3d6d06d889af24d8c62cc96bb71beecacf41648f8a",
+      "filesystemMode": 420
+    },
+    "scripts/viewer_bootstrap_acceptance.py": {
+      "sha256": "cd2dd869f518ab83405e4873f30d807fab82930c082375361cc3e4dba34543f7",
+      "filesystemMode": 420
+    },
+    "scripts/watch-fixed-domain.sh": {
+      "sha256": "21e65eac7bc51467cf3922fe5335c62c0aa834e20ce1b2ecdf159385a01a16a5",
+      "filesystemMode": 493
+    },
+    "scripts/watch-fixed-domain.test.js": {
+      "sha256": "9a7e7eb6ae719783fe188499ae44386ab07fb87e3d85eda558d3c9e76f04dfe8",
+      "filesystemMode": 420
+    },
+    "scripts/wrd_deadline.py": {
+      "sha256": "1f79c61a364b98521d87277f74d7dd8ef3dbb6a7e6a4fef4429b1049173fe2f6",
+      "filesystemMode": 420
+    },
+    "scripts/wrd_entry_health.py": {
+      "sha256": "bc466b5bea73de08c876f99320d39a70f9db81b2c1244ba0d5293d0baf250ed7",
+      "filesystemMode": 420
+    },
+    "scripts/wrd_resource_snapshot.py": {
+      "sha256": "7d9dacbd7f415d39411ef265f8d574834f7fa024445784ea9ba4d85f3c5dd61c",
+      "filesystemMode": 420
+    },
+    "scripts/wrd_watch_coordinator.py": {
+      "sha256": "e7aef2251889c47f2eb5f01f9b0a0e802dac13ecaa57b897afa6f06abe90009c",
+      "filesystemMode": 420
+    },
+    "scripts/wrd_watch_runtime.py": {
+      "sha256": "ced01ec42e0cfc55488b76c1944ddf72087f6c73a90aeae5310dcd555fc43878",
+      "filesystemMode": 420
+    },
+    "setup_basiclib.sh": {
+      "sha256": "2a054d6e467de915103475976fedbfb36fbef54b41a82577f4ed63139065f9aa",
+      "filesystemMode": 493
+    },
+    "shared/remote-input-v2-fixtures.json": {
+      "sha256": "abd92a28872cad15549ea1fc1ea657b138d31fb4530e7a2eb33acc2b24bb7fbc",
+      "filesystemMode": 420
+    },
+    "signal-server/.env.example": {
+      "sha256": "15ea3dffbdb3aee83dd5340182383218bcdbfdd1eb48bc6c43815ebeb8dd9b4d",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/auth.js": {
+      "sha256": "0c18553097700455dc635ea9a4c3c7a378a17e6d76ad5be2d6e62efa3727c1af",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/config.js": {
+      "sha256": "0a8216e5a2368bc6f59f7de46a441159c5b4b062d1d07a5f4b6ebb2201ed611f",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/control-transition-retry.js": {
+      "sha256": "de991fa05735cdda34ff469ba7acdd399da06ba08323d377d612257db60baef2",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/control-transition-retry.test.js": {
+      "sha256": "b5bf886eac7b8b463bb8fa0fb86cb0b95c72db5b149ba54d877088ef0d1a73c5",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/desktop-control-lease.js": {
+      "sha256": "fc6954d604b3e94dc9817d96b179846b6a9027f3478a65ef14ef1a48df28aab3",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/desktop-control-lease.test.js": {
+      "sha256": "33d9fa64341fe6f2a6b323b757704c1b73fe174a9da2aa3741a56929687ade92",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/diagnostic-store.js": {
+      "sha256": "84c671a5f9f9eb51ab66fe14fe456c2aaf8bdf285ce70911f9045b8b66621e00",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/diagnostic.js": {
+      "sha256": "3d60c3db5d5412b9d52fb1cff9c280f7beebfa90893b217a66bf35e210ccab8c",
+      "filesystemMode": 384
+    },
+    "signal-server/lib/media-activity-contract.js": {
+      "sha256": "9eb36f7ea683b3260f7afb77e3426aa0ef5b53b3b4d0776366406f2ed01b6b8a",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/media-activity-contract.test.js": {
+      "sha256": "c6b7b7da3f749a24b40fc0c271e712c8e99065a0b2f5531446d789b98215e849",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/observability/entry.js": {
+      "sha256": "cdbe86327ad6c1946fc0e794b76821a2d6829df8405bdd0fcdb9a8631129d745",
+      "filesystemMode": 384
+    },
+    "signal-server/lib/observability/input.js": {
+      "sha256": "c26f62a66ad3d55d4e41bd0d3a8b2604fb06027c7dc6a388d549570e12d72d33",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/observability/logger.js": {
+      "sha256": "99c0f45b3305b4e0e80453a64b9483013e981e73cd38ed914d3c3431184ae76d",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/observability/redact.js": {
+      "sha256": "d44e5d0c593a48b2cfc7728c8d26d70cf7b86956c28970fcb6af114283646f1f",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/observability/runtime.js": {
+      "sha256": "e76fdaa178568ee4f12b790ec494849776eb58f8c47465286896e93d53e2a6db",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/observability/store.js": {
+      "sha256": "6761fc3cd9c49f4f54c2601156998dfa08c09c267d749609e7cfe6222991b615",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/observability/viewer-heartbeat.js": {
+      "sha256": "92d6ac977a8441dbf8f95503466e2b9eddf9ddd5c9711c37cc0c281c87dc1dc7",
+      "filesystemMode": 384
+    },
+    "signal-server/lib/remote-input-contract.js": {
+      "sha256": "c8bf3f00f1ddc77d964dfa0d7efd488b61249fc3e369ba1fc4a7823c2f7f7418",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/remote-input-contract.test.js": {
+      "sha256": "953c433ae0426387a7c8a02eca030231c3b59299257c0746b891e8f75945b8d5",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/audit.js": {
+      "sha256": "c7516846cb707c0eea173ff913cfbe16e8f80006f4dfc1d5470af653acc01c0f",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/config.js": {
+      "sha256": "a731b7f3a11b441fb51bf083fed3b095d7b335cb3cff05855a2a17b4500f6645",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/environment.js": {
+      "sha256": "31e7f34100bd6235594754979ff0c8b1791c606504f018498fd6ce4fc279bae9",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/flow-control.js": {
+      "sha256": "765b0b82d59fa346fb71e7c81c9d007e9ab9b610a0fe533ca5f3321de1b4bd46",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/geometry.js": {
+      "sha256": "067220c776a77f34250698a488a4b4edea0ff91b898aaa9777f8a60654b992db",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/lifecycle.js": {
+      "sha256": "c7c39e7b6495d5bcfb55740fafcc80af461088e712954ac38f1b1398272f1115",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/metrics.js": {
+      "sha256": "166a417e684b6bb16b1ff3110102a688617062ee3c48be7fd1eb2b5def9399b9",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/node-pty-setup.js": {
+      "sha256": "bcaab98e2015b4922f049ff5932138b214cdd56c620f37eedef8890da4f42bae",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/node-pty-setup.test.js": {
+      "sha256": "fceb8c934a6e09d2b5870f10da0a0e05f0c5b6e3768f660a1b8c5d4f98cde582",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/presence.js": {
+      "sha256": "cb750b2918ddc913a6904b23e588b4a6043498abb0028a12f2df473fa3bab915",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/session-manager.js": {
+      "sha256": "3149d4428a50d74e55d4f7a7c090529d2b9f2bdfa1ac7f10954521ec1d8a4f66",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/webrtc-gateway.js": {
+      "sha256": "3a16cd01c7ee1290723c0307882e9ff277442f6528481e93ff5ec7fa53951086",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/terminal/webrtc-gateway.test.js": {
+      "sha256": "5597d91d277f2740f3d72c55a7e0b9b293bcff6c41cf192eacad22370ff863d6",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/turn-config.js": {
+      "sha256": "82fbcc091687d72e90fbed08736e218f3cfb4a845f86b3c89dcf2d2484e22962",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/turn-selftest.js": {
+      "sha256": "d44e7bda4d7c0504370232f0c220c56eda4d3e971d215d6e81c235c367bf0985",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/viewer-admission.js": {
+      "sha256": "c5b8f5bd2b81d24a044f3fb1f600e00c097686bc8499750c19a5deee5e6d01ee",
+      "filesystemMode": 384
+    },
+    "signal-server/lib/viewer-bootstrap.js": {
+      "sha256": "91b00284644d0b6d6894ab7f6cd0b5a5c69d4b3d2625eb7e8a45f604e9a00acd",
+      "filesystemMode": 420
+    },
+    "signal-server/lib/web-assets.js": {
+      "sha256": "c690bbc69ae7baaacf9b15a208889d321079a9137760a76f45bf3c595756b0f4",
+      "filesystemMode": 420
+    },
+    "signal-server/package-lock.json": {
+      "sha256": "db3b956b48838c94f7a117f7a0100ce037aa970f638877aa702f54832fe91f69",
+      "filesystemMode": 420
+    },
+    "signal-server/package.json": {
+      "sha256": "4b1df9dd94ad5fd3d505cce2106fc12cb1b70adb5b71ef618c00128005f1b594",
+      "filesystemMode": 420
+    },
+    "signal-server/routes/auth.js": {
+      "sha256": "9cc84854aae268cac1eb9920cce942fe5895c455fbec993036dcebe51ec702f2",
+      "filesystemMode": 384
+    },
+    "signal-server/scripts/build-web-client.js": {
+      "sha256": "f43e5530802252f9b722a215f041c051440b47d0aee39a002656d1f1247ec60a",
+      "filesystemMode": 420
+    },
+    "signal-server/scripts/web-asset-graph.js": {
+      "sha256": "ea63d49365e4505be7f75dea0447780e943d6e07b4764327fbd977d25634d142",
+      "filesystemMode": 420
+    },
+    "signal-server/server.js": {
+      "sha256": "d9e07c72d76534ede6b1f6681ff76c1e351c94e26e607c91e145fa56837b118e",
+      "filesystemMode": 384
+    },
+    "signal-server/test/auth.test.js": {
+      "sha256": "e2b736441c57085f7c62ca6b9fa524f6b71ae20d5095980b68c6412be2d476d6",
+      "filesystemMode": 420
+    },
+    "signal-server/test/config.test.js": {
+      "sha256": "25995696cf281d88c85a82ceb2920176609457fcf9721a17acafc5f8be2db5c6",
+      "filesystemMode": 420
+    },
+    "signal-server/test/datachannel-watchdog-diagnostic.test.js": {
+      "sha256": "cfbf0bc5d3f7336f42325fb7b583e189e0a843b1c33baedead0df32d45d85e70",
+      "filesystemMode": 384
+    },
+    "signal-server/test/diagnostic-store.test.js": {
+      "sha256": "a47f420934dc3336baead37c8330ea274bd936786e573ee7278a3bc192a73918",
+      "filesystemMode": 420
+    },
+    "signal-server/test/diagnostic.test.js": {
+      "sha256": "ffb4ddc2e55c5ff68aee0e492176c4e73792ee7c3a496d46979cfd192295da9a",
+      "filesystemMode": 384
+    },
+    "signal-server/test/lab-proof-signaling.integration.test.js": {
+      "sha256": "29efc907023c165254f90972fe5491d4f0c2890c19c334ea068dab67cfb94f92",
+      "filesystemMode": 420
+    },
+    "signal-server/test/observability-entry.integration.test.js": {
+      "sha256": "1cedbe0e7eafacf8f099cbac36b7a50fd009fb3ca9718dd657d5beb19f286d26",
+      "filesystemMode": 384
+    },
+    "signal-server/test/observability-entry.test.js": {
+      "sha256": "42d853ac34601baf1725b543e2a7a06234f300f3a68434c99588cf9497268eec",
+      "filesystemMode": 384
+    },
+    "signal-server/test/observability-input.test.js": {
+      "sha256": "c97e00aef2bc248586c87fe965347b9f33fc4eef5cee531aca2b6f92ac7b555d",
+      "filesystemMode": 420
+    },
+    "signal-server/test/observability-logger.test.js": {
+      "sha256": "f9f91deebf3229e6e7f1fd774d6446e23ee7513342244a01dd961fa0bfdde076",
+      "filesystemMode": 420
+    },
+    "signal-server/test/proof-admission.test.js": {
+      "sha256": "afe6425f4ae4508e605fee2a9618f1ad699e69f73fa4c299301a54efb0666ec9",
+      "filesystemMode": 420
+    },
+    "signal-server/test/runtime-observability.test.js": {
+      "sha256": "0a7db2543ccd1807737a6e1ff0c188ee6c80eb0f83ad83361e2564d25d9a4288",
+      "filesystemMode": 420
+    },
+    "signal-server/test/signaling-failure-diagnostic.test.js": {
+      "sha256": "5db948c55851a89dc43cd1ad9d03d0521668d066400132ae356d1e05ae89d76b",
+      "filesystemMode": 384
+    },
+    "signal-server/test/signaling-transport-fallback.test.js": {
+      "sha256": "2ddfd8ed4bf62a8bd2fe90b3910e7822d8aac6c0a2c130c7b4ffe761b5891d70",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-auth.test.js": {
+      "sha256": "c752a5945918bf2f9fbf8686598aea89df5ad70f27694edb1719d5beb1bb77bf",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-bootstrap.test.js": {
+      "sha256": "e5949d722264f78d1c226ff5414211964a2f7760c60bf93e2c0adb50e7dcbf07",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-config.test.js": {
+      "sha256": "bc19eaff1867185bf35ed11b2b3c375f254ace2a8f141c2858c8c63d450c35d9",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-environment.test.js": {
+      "sha256": "1622f04e309a934628bc1f5ede8dfb39ce12cf2a1c5eb4f6955df5b687697194",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-flow-control.test.js": {
+      "sha256": "728025be79438f7065347f87c997b927063ccb01e520e52df776266099fd790d",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-geometry.test.js": {
+      "sha256": "eba268edccdc5532bc5a4493786e9202392cb025a844dd8c27fc0d490b9af67c",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-lifecycle.test.js": {
+      "sha256": "fb9910c5c9cd172e945668e326ac1b50634df3af6621a8c166eea7bc8c2de80a",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-metrics.test.js": {
+      "sha256": "ce095469c6235bdad9d90aa57b71e9b5f738cf791b175a91c2b23bf2614aea11",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-presence.test.js": {
+      "sha256": "ede18e2fec38784f989c2155f09313d98e8c38f6b40ee53891d0e4d9bd5269be",
+      "filesystemMode": 420
+    },
+    "signal-server/test/terminal-session-manager.test.js": {
+      "sha256": "8f7c521fc5f3d672f7e57cd82739a58bb8ebc6359bc1c9494c38296c59f85ac1",
+      "filesystemMode": 420
+    },
+    "signal-server/test/turn-config.test.js": {
+      "sha256": "eac02cf34b6f2369db897d3e7b1f32e50ab0582bca5d70c2e62204aeaa1aee3b",
+      "filesystemMode": 420
+    },
+    "signal-server/test/turn-priority-parity.test.js": {
+      "sha256": "3405978ac47af30d8365f25cf54c3193c5aa65ff4a68d0fdfb73e5afcdaf89b0",
+      "filesystemMode": 420
+    },
+    "signal-server/test/turn-selftest.test.js": {
+      "sha256": "2bce7036e18f74335dbe95038aeee8820ad2139e8c3c32eaaab71561b1bd46dc",
+      "filesystemMode": 420
+    },
+    "signal-server/test/viewer-admission-api.test.js": {
+      "sha256": "6ac01bbf09312354690b3fa58cf8951da7e97a0f438eb16b3832fc43ceb79e60",
+      "filesystemMode": 384
+    },
+    "signal-server/test/viewer-auth-regression.test.js": {
+      "sha256": "ebfe8bdcc27cba107a5dba8589f9e95fa669950dbc888ef3590414464a61ea06",
+      "filesystemMode": 384
+    },
+    "signal-server/test/viewer-bootstrap.test.js": {
+      "sha256": "55e10a8bfc06932a222c34091924bf7edcba49096601deee3e0975825cfecd92",
+      "filesystemMode": 420
+    },
+    "signal-server/test/viewer-heartbeat.test.js": {
+      "sha256": "03bf20ceaaac0f08f5a60da0a187c634e6d4b34c404087679612421bdbd7f0ea",
+      "filesystemMode": 384
+    },
+    "signal-server/test/web-asset-build.test.js": {
+      "sha256": "7645c2493e363bf58156b8ba382cfef12f0ed38f28f7403ae1be5ed222fe4a56",
+      "filesystemMode": 420
+    },
+    "signal-server/test/web-asset-retention.test.js": {
+      "sha256": "f1aaebb6176df0216bc31dbdc3971a511c8cb61bc6f64ed784cbd05dbf8f4c96",
+      "filesystemMode": 420
+    },
+    "signal-server/test/web-assets.test.js": {
+      "sha256": "fdb6ac370023e2633413d156b1d5e9df3a7fac33096afb692c85784296240c0c",
+      "filesystemMode": 420
+    },
+    "signal-server/websocket/input.js": {
+      "sha256": "8373d5fb9821edfed3f8059360e57189f8948a0495644b87b604e22a0e1ba1b8",
+      "filesystemMode": 420
+    },
+    "signal-server/websocket/runtime-context.js": {
+      "sha256": "91c1f747fcca7f47e96cca6e7b775e7589c2fad677964eb11a04bdf614ceb14c",
+      "filesystemMode": 384
+    },
+    "signal-server/websocket/runtime-context.test.js": {
+      "sha256": "9533d9c71fb6ebc49183d751ce33f0db82dbcb3ca6c37dd3739bb78348dbab52",
+      "filesystemMode": 420
+    },
+    "signal-server/websocket/signaling-test-fixture.js": {
+      "sha256": "edc7b749c656ab0cb53bc5b9fc405b85fb78c9b09d1e65002540d67c15ae5ed5",
+      "filesystemMode": 384
+    },
+    "signal-server/websocket/signaling.js": {
+      "sha256": "4f35c23321b89b7dd131d1be141da0486b24d2898a5abfb067afabd52d78723e",
+      "filesystemMode": 384
+    },
+    "signal-server/websocket/signaling.test.js": {
+      "sha256": "29f9c4cbf20c4edc59bcea8323c86a0c3bdb286221981a987019460237c94c12",
+      "filesystemMode": 384
+    },
+    "signal-server/websocket/terminal.js": {
+      "sha256": "0dcec57c679827c5819f9ee4f138d12aaf702dd6324c9a3381eb18acc601a3fa",
+      "filesystemMode": 420
+    },
+    "signal-server/websocket/terminal.test.js": {
+      "sha256": "8cc8720fd4161bc24fadab8f9dd191144a7a6510447a55fe8fd12189aea43c90",
+      "filesystemMode": 420
+    },
+    "signal-server/websocket/viewer-admission.integration.test.js": {
+      "sha256": "648b3c53022ff5384c0a48525cc72d85e16f2c4c7eadf1a7fb51b55f4e60251e",
+      "filesystemMode": 384
+    },
+    "skills-lock.json": {
+      "sha256": "c2ec790bb56db712bdebec617b26b182b55f9c637b9921e936800c9b7f6dabac",
+      "filesystemMode": 420
+    },
+    "skills/webremote-service/SKILL.md": {
+      "sha256": "91f237be4422fd7c89329b123a758c9dfabbf825155831443d5bb73e89d271e3",
+      "filesystemMode": 420
+    },
+    "skills/webremote-service/agents/openai.yaml": {
+      "sha256": "d9064eae45446c4b7053f22a903a7a4cced7132da00a772835236927cac14ae7",
+      "filesystemMode": 420
+    },
+    "skills/webremote-service/references/service-rules.md": {
+      "sha256": "54dbd1d725d71bc83c9900f531b3814d554f6e30db705355780f19e67bea7cc9",
+      "filesystemMode": 420
+    },
+    "skills/webremote-service/scripts/wrd_service.py": {
+      "sha256": "a7d80bbf841c1bd03663d8fa7b3a71e0861786ebf0385f55312d0d1a81b6eb04",
+      "filesystemMode": 493
+    },
+    "skills/webremote-service/scripts/wrd_service_test.py": {
+      "sha256": "52da402ab4a8973996d47a892142c27b15e7ab0d3934192933ff1ee92dfb45f5",
+      "filesystemMode": 420
+    },
+    "start_claude.sh": {
+      "sha256": "c24a7f9f781aba8f2428b1b4d924e149d80dc09f103705dba657e3e57bc9078f",
+      "filesystemMode": 493
+    },
+    "superpowers/specs/2026-07-19-terminal-multiline-composer-design.md": {
+      "sha256": "b9a5528c4b4fc36599ec24001f1483e1f5246642a3bcdd98633e018f70d505dd",
+      "filesystemMode": 420
+    },
+    "web-client/css/login.css": {
+      "sha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef",
+      "filesystemMode": 420
+    },
+    "web-client/css/login.test.js": {
+      "sha256": "d973e4d623bc3b0315e6d94070fcb7781c19cfe20a1ed5b6c4daed68188fdf76",
+      "filesystemMode": 420
+    },
+    "web-client/css/tokens.css": {
+      "sha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab",
+      "filesystemMode": 420
+    },
+    "web-client/css/viewer-layout.test.js": {
+      "sha256": "8b3bd164d86eb7698893ba1525b755cf2a0fa73661d39f3860e227469b827f45",
+      "filesystemMode": 420
+    },
+    "web-client/css/viewer.css": {
+      "sha256": "9c877506408133c5ecdb7b740b1cf06d89f1c54e2fa159e2e24b567d6a61a9a8",
+      "filesystemMode": 420
+    },
+    "web-client/index.html": {
+      "sha256": "1f17cbd26e50d1e0aceda7c759ee676d3d8591f3b224ef5da8eb4093c55631eb",
+      "filesystemMode": 420
+    },
+    "web-client/js/asset-loader.js": {
+      "sha256": "2618576dff11e9ee90f8750c8edfdcd69ed34b3f7e58e96b48693d9b60799a21",
+      "filesystemMode": 420
+    },
+    "web-client/js/asset-loader.test.js": {
+      "sha256": "2731b7aa31f55f258dd17daff6b7382cc984a98a04a32efa29e3e0c9a747fdd6",
+      "filesystemMode": 420
+    },
+    "web-client/js/auth-start-integration.test.js": {
+      "sha256": "ddd6b34761d99f0516cff9bae19f2ae7dcdb0def87dfb51212551734fd7e8b1c",
+      "filesystemMode": 384
+    },
+    "web-client/js/auth.js": {
+      "sha256": "b7d6a3df146974ac632b5822fd8577597f35b2e4978691387bba3c0ab59d5848",
+      "filesystemMode": 420
+    },
+    "web-client/js/auth.test.js": {
+      "sha256": "42a9a0ecf18a4916fd7f6cbf61880517ea75122f00cb344f4695e9f0623fffa8",
+      "filesystemMode": 420
+    },
+    "web-client/js/bootstrap-controller.js": {
+      "sha256": "dcd7b62ca54361fa9a168cc5d815201ccfd241901288fb053d2e7852b117e9fe",
+      "filesystemMode": 384
+    },
+    "web-client/js/bootstrap-controller.test.js": {
+      "sha256": "3c1354b55ca1bd79b8f44be1eb634b9b9910622bcc9790180027f2c5c16ff4f2",
+      "filesystemMode": 384
+    },
+    "web-client/js/bounded-request.js": {
+      "sha256": "3a589196df9a4dcba909eea1a0f2bcc1f4eba110c566301d491ed8f9ed4d5058",
+      "filesystemMode": 384
+    },
+    "web-client/js/bounded-request.test.js": {
+      "sha256": "672143f72d5463848370088364a0336a71cd2fc227607bf5746e9850a3e2c6ab",
+      "filesystemMode": 384
+    },
+    "web-client/js/chrome-layout.js": {
+      "sha256": "203515d39fa94d9997fa43136bcd39e9578fda098e9e8a7330772a43e0c62c8f",
+      "filesystemMode": 420
+    },
+    "web-client/js/chrome-layout.test.js": {
+      "sha256": "d08e80847035a8a9374acfbf9d146198a1b5f6e1808df5d414a5796344d3774c",
+      "filesystemMode": 420
+    },
+    "web-client/js/datachannel-watchdog.test.js": {
+      "sha256": "abf0fb5c2f1f280feafa48065999fd955183c3e265225370d86a5f3d37893d1f",
+      "filesystemMode": 384
+    },
+    "web-client/js/desktop-session-state-owner.test.js": {
+      "sha256": "58a4027b1e00567f650f34b53cff19b6eaf452e9eca0b358ad32138cb4bc9c8f",
+      "filesystemMode": 420
+    },
+    "web-client/js/desktop-session-state.js": {
+      "sha256": "520e334d276ac5b99b49b277489199cac5b726530666b843a1ca8e44da56f2c1",
+      "filesystemMode": 420
+    },
+    "web-client/js/desktop-session-state.test.js": {
+      "sha256": "9efb5d6319852c8896521cb4718a023b48bdfaab51599382b2bce2f56e9e2226",
+      "filesystemMode": 420
+    },
+    "web-client/js/diagnostic-core.js": {
+      "sha256": "15e579587abe883497e5a74168ad73fe439b6d8923396d56d2f78f9ac69b4100",
+      "filesystemMode": 384
+    },
+    "web-client/js/diagnostic-delivery.test.js": {
+      "sha256": "2a1d44815b25c1cfac55faf4778a488a1cd1709f0b84d4b792f779d1a9426a0c",
+      "filesystemMode": 384
+    },
+    "web-client/js/diagnostic.js": {
+      "sha256": "4e1cba2080664ed024b63f6b3fec3fb40e3e7ff108d1781926e4f7232e98e872",
+      "filesystemMode": 384
+    },
+    "web-client/js/diagnostic.test.js": {
+      "sha256": "680b242295991f6af26dc4b25da6419001d31ffc163f30d84d0df5cdced598c6",
+      "filesystemMode": 384
+    },
+    "web-client/js/input-backpressure.test.js": {
+      "sha256": "ea789a0d0d0963291fb9063ed7fa4281d48b4bc317406cb2daff83620ff3baeb",
+      "filesystemMode": 384
+    },
+    "web-client/js/input-geometry.js": {
+      "sha256": "9ee3d2f53c79cea740757027a7bbe2f870f128c2b48b416bc2d00545dd219b49",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-geometry.test.js": {
+      "sha256": "d14673070df47f966984184325869cfa16157109c61c00b0bb658a5df5c65270",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-recovery.test.js": {
+      "sha256": "a597bfdc5d6c75553f0b2902c891b84a9ff597e766b52275952dab4ae2f11af4",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-signaling-continuity.test.js": {
+      "sha256": "ca19010bf268014b63827897098ccc11545523e4eaace17b0c55d6c36306f352",
+      "filesystemMode": 384
+    },
+    "web-client/js/input-trace.js": {
+      "sha256": "5fd531d610a4c90c806b706313196ea99f7af09029eb61ae3de077b5b830bc22",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-trace.test.js": {
+      "sha256": "2a93aa0613463969bb24c37ab50b96ba7aea35a706482fe7f645c0b391cae64e",
+      "filesystemMode": 420
+    },
+    "web-client/js/input.js": {
+      "sha256": "7a50a3a86a8013d6da60026be342afb6fd33aef90888f630edbd2b163d366870",
+      "filesystemMode": 384
+    },
+    "web-client/js/input.test.js": {
+      "sha256": "c0644e904f0703b3010d748a0f210fc5f5b1d9b4ae6999c3bc30dcaf5c251c65",
+      "filesystemMode": 384
+    },
+    "web-client/js/keyboard-transport.js": {
+      "sha256": "77e88f60ccc4e3a48f5c0b6f96aa915ae1419342e4cc002d6d7bb4a197906831",
+      "filesystemMode": 420
+    },
+    "web-client/js/keyboard-transport.test.js": {
+      "sha256": "236457bd199361e823667d9bf3158f93e304a7321aecfa021f9b153a48d2017f",
+      "filesystemMode": 420
+    },
+    "web-client/js/latency-monitor.js": {
+      "sha256": "9c24e067f2654604a2d7c1faedec56184e97501793d5c8fc6d1b27ea78178eab",
+      "filesystemMode": 420
+    },
+    "web-client/js/latency-monitor.test.js": {
+      "sha256": "cd7493d9d88b31352b57a527fbfbc40100190f9d4ba3754614c674994786c307",
+      "filesystemMode": 384
+    },
+    "web-client/js/link-quality-controller.js": {
+      "sha256": "74703c9842ab9f077e1a6e0b7c74b849f50d3f3c1ed48d1692400dfd4ae27091",
+      "filesystemMode": 384
+    },
+    "web-client/js/link-quality-controller.test.js": {
+      "sha256": "ff4dfd7181a04b6d27f6bae714e6ca5ff77652b0698526324e6642bf26ef3ce3",
+      "filesystemMode": 384
+    },
+    "web-client/js/login.js": {
+      "sha256": "b74cd0395769efd34075cd44caba4a06f5f844cfabb900b551300f1ab8c185dc",
+      "filesystemMode": 420
+    },
+    "web-client/js/login.test.js": {
+      "sha256": "b16bb0e3b01eacc8e57018ebc21a98b1e6902e4acad9fba23d1370bb8c623fb5",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-controller.js": {
+      "sha256": "b7bad67ac92ff87a986ee057654d4c7cc362378e814b1895672d235238ad792f",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-controller.test.js": {
+      "sha256": "0e49bc37d1e2edef6ae71e40d5f431e269ddf52f4248cfbf22caf43b3f3723e9",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-lifecycle.js": {
+      "sha256": "35f2d23e6c291a9bf0a19a2143c72466e25c5983e7a32b45380c070a1b311b56",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-lifecycle.test.js": {
+      "sha256": "7d385f8237341dbcd5eb54a486f7a89bd25f575c0dcec9393503decb302229d6",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-runtime.js": {
+      "sha256": "94a2a9bbec55e79ad2f078bffa5e433d85065d04f706fe12c94087ede83421ae",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-runtime.test.js": {
+      "sha256": "66540c0e1119ba8eb0d6d7c4fba8d4e8a12276923798d8b5681698c1f999ce05",
+      "filesystemMode": 420
+    },
+    "web-client/js/mobile-text-input.js": {
+      "sha256": "852f7e82e2bee858c9521d579e35af68ba2f1b905b7c531035017443cbb3db61",
+      "filesystemMode": 420
+    },
+    "web-client/js/mobile-text-input.test.js": {
+      "sha256": "a0157e823e78b8ef42d616aad8365d8012812ad0fcf0a2c5d668fcf172eb43e2",
+      "filesystemMode": 420
+    },
+    "web-client/js/presentation-budget.js": {
+      "sha256": "3d49eba6adc89bf784bf1326e7427a5a8aa180ce51fdf00f5963c8f3741a235d",
+      "filesystemMode": 420
+    },
+    "web-client/js/presentation-budget.test.js": {
+      "sha256": "c264cdf497efd8f211cfc7633e33c1fef781f08cc859c397f05c1a604ace5449",
+      "filesystemMode": 420
+    },
+    "web-client/js/remote-keyboard-controller.js": {
+      "sha256": "f8200e3d7468e29e8d641551f3637d680cf0544aa67027840b78552be377b7f1",
+      "filesystemMode": 420
+    },
+    "web-client/js/remote-keyboard-controller.test.js": {
+      "sha256": "34fa0e9cdb79064590261af710c636c1d15a0711c9e980f07ed7c55f8c6efc06",
+      "filesystemMode": 420
+    },
+    "web-client/js/runtime-config.js": {
+      "sha256": "fe14765592344b6225d6c33092416399817bebca70ab28525abd78ebf73af5f2",
+      "filesystemMode": 420
+    },
+    "web-client/js/runtime-config.test.js": {
+      "sha256": "2c378ac7789ab42956443ea5cc771acbd03e6b6bb09b14ceeee0545df5ec4d55",
+      "filesystemMode": 420
+    },
+    "web-client/js/runtime-diagnostic.js": {
+      "sha256": "ef354e6d0d41f88ebded07c63df5754bf448922b78f3186e82fcbe0eda06583a",
+      "filesystemMode": 384
+    },
+    "web-client/js/runtime-diagnostic.test.js": {
+      "sha256": "180efe442ace75b4797b6e98de05f03ffd3d9a79eec18157be3f81823ac7dbac",
+      "filesystemMode": 384
+    },
+    "web-client/js/shell-guard.js": {
+      "sha256": "f4439365d08700ee7118da51d173e79b24fb67b1a1b495b763749c22d070de2b",
+      "filesystemMode": 420
+    },
+    "web-client/js/shell-guard.test.js": {
+      "sha256": "514f6fa0c710a3daa7e0168b1d8e9062a2582b82290d9278a77901108c49e4ea",
+      "filesystemMode": 420
+    },
+    "web-client/js/startup-telemetry.js": {
+      "sha256": "a3ba5abda8603c7a4cbca261744d89cb39bec42109e7efa6620da59ea9d1b391",
+      "filesystemMode": 420
+    },
+    "web-client/js/startup-telemetry.test.js": {
+      "sha256": "a658ba5aeb98fda63e57fe6ca86142f643740df5a5ac76c5fe501a5d1a1d5980",
+      "filesystemMode": 420
+    },
+    "web-client/js/stun-port-search-controller.js": {
+      "sha256": "04d3c58c7f6604918574536f43209b62373500817bda86d14378371ff3a7b87f",
+      "filesystemMode": 420
+    },
+    "web-client/js/stun-port-search-controller.test.js": {
+      "sha256": "77b824452fe5161c90e20168000274fd9692a1bcbc9cce6b3e8f2b5baf2e47e5",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-composer.js": {
+      "sha256": "364e32e61389c378546d18e07cd95ccee47bab2ec45ab12584004e663834d574",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-composer.test.js": {
+      "sha256": "8d6bda31b1adddd551a35bf697e54c9d86d77acafed50b403db6b08c5dbfe2e5",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-echo-controller.js": {
+      "sha256": "97627440511efe0917c780a986693d89dd0b4641914129c3847f7221ecec5c37",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-echo-controller.test.js": {
+      "sha256": "9be6ee29e82f8bb46862599022a16cf70752882608a3b22b89f424275cbf387d",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-input-gate.js": {
+      "sha256": "56da0f24a03b7090c1abf3f44e043c3dc796c75d332ad23c2936cc8aa611dd9d",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-input-gate.test.js": {
+      "sha256": "5a391cefd8652be5169ae1847f00844fef2949ff8cdf277081d6e40538a77077",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-loader.js": {
+      "sha256": "4ee5b820fa35675aed54d1fcbe19ac5caa1030a02d5209fb3169d7a0cda2e71e",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-loader.test.js": {
+      "sha256": "3389c36f566f9e8836911a477a13859ec252afd150ef9a08693d95a5431a3eea",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-session-fsm.js": {
+      "sha256": "d6105b61b6bb5392db6355a97c80fa72e9329d502b282ee8db5c7656b8192d0d",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-session-fsm.test.js": {
+      "sha256": "f9e4e3bdd6b9d74b1e1c111373d792f67ea144d06c90c29a6aa0d54638e54fc3",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-turn-transport.js": {
+      "sha256": "731038d4864759be31d3f015ccc0252f0f8f79beb0a50f3af8575fc88debcee3",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-turn-transport.test.js": {
+      "sha256": "4d1ba5f5afc364d08a3de86569b87917817c4a199f95497d0d11d5f603a77674",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal.js": {
+      "sha256": "3d9f9a8d92590d02ef4761763992debf14d6e8206ecb7e4231b1c3dc5abe5c0c",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal.test.js": {
+      "sha256": "03348a4b40fa12f02d36234729701c259c4bb20c7fe92ea1a76fa899852e4846",
+      "filesystemMode": 420
+    },
+    "web-client/js/touch-input-adapter.js": {
+      "sha256": "68d40c52b6e25d589be66bb913f1fe439b2559bf0f7fbce313191b336070692b",
+      "filesystemMode": 420
+    },
+    "web-client/js/touch-input-adapter.test.js": {
+      "sha256": "c0e822466bb11a42526ce195f53790f2177c6908f5d0758c6e64a0f9f4b452b9",
+      "filesystemMode": 420
+    },
+    "web-client/js/turn-selftest.js": {
+      "sha256": "61f9cbc269c0d11ccfd396e5056155ad8e46c2dafbbebe4d7b6773edc51f1d3f",
+      "filesystemMode": 420
+    },
+    "web-client/js/turn-selftest.test.js": {
+      "sha256": "4fc1b4f21298dad751eff2c66fed897c34bad141babe51d40e5e9f6b33a81535",
+      "filesystemMode": 420
+    },
+    "web-client/js/ui.js": {
+      "sha256": "b508f5c2d434b7f5c2158c5d14a49def379cb1bbfcbc57a95d2b9ce29fe9ab85",
+      "filesystemMode": 420
+    },
+    "web-client/js/ui.test.js": {
+      "sha256": "ecda1f9ad356901b61c80a5f912edfacce1cda08c549e113d8970c4a19652e5d",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc-stats.js": {
+      "sha256": "b208f79d5aa8acadbaa3512925a07e106e6d3fe9e1c02c7c7446ac10901b3346",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc-stats.test.js": {
+      "sha256": "6d5dc0c284e76d72cc8d6f1fb415c0dbaa17016e93cf0a931502e02cd40b1c84",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc.frame-trace.test.js": {
+      "sha256": "c416edaead8de2f217f33ad8294051b95a4244bbb89e19fe0cc49a2a87839139",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc.js": {
+      "sha256": "bb1a6f30280b8422f3fdf512b393f5a63aebe98fc9bb4f8e25d19dc6666d6c74",
+      "filesystemMode": 384
+    },
+    "web-client/js/webrtc.signaling-fallback.test.js": {
+      "sha256": "0f4c5bd02407cd0b99a2bdaa6f6bf73d066e2ae807d35d9e8cf8e217b7c45d83",
+      "filesystemMode": 384
+    },
+    "web-client/js/webrtc.test.js": {
+      "sha256": "894fef31e0ab99973ee5cf618214303072aefde1727386ee9648ba478e9a474e",
+      "filesystemMode": 384
+    },
+    "web-client/viewer.html": {
+      "sha256": "a23b50ba037f68602d3ad0b6a10ca1834a115ed023f01aa65e6aa96b58bdee99",
+      "filesystemMode": 420
+    },
+    "docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md": {
+      "sha256": "b7d8c358ff9969b3c0b6e715af02de50edccf092960d890042f3d8462be1eb19",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/plans/2026-10-18-reset-ack-ordering-plan.md": {
+      "sha256": "084e873b656f52d15b6bc3fb44b3c288e120b9b2d3c48a5bc873be10b64f8e36",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-guarded-ordinary-recovery-review.md": {
+      "sha256": "eb0f7911370f65e8f3275f2b3deae3afe21b3c31e9b7d88a1887a5f2a5a9bfed",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-ordinary-runtime-recovery-source-audit.md": {
+      "sha256": "597061f33b97ad6dd2f1f014e0ba89b5ca57634ec68f60b7d9984e3d7de74f38",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-reset-ack-ordering-assessment.md": {
+      "sha256": "2cf03af549c1abd0b27f0f2e08a138d53460c669367ce5354d4af78e9480e36c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/2026-10-18-reset-ack-ordering-execution.md": {
+      "sha256": "456d528716b2f5d900da6f49f931a9246f7393096697d630de616774412bb359",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/architecture-assessment.md": {
+      "sha256": "78beba504df34d2dc29afe84a882f5697e60847cb165f1492c58c9b251235ec5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/design-r1-review.md": {
+      "sha256": "98be44ac5eb38ba499d0546ab10ae4a4f32e8da1d726ff3932c8601a79607a52",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/design-r2-review.md": {
+      "sha256": "ddd91650380aa28f33ba8cdc0375f05e0229a726d919622b9d0e73037cacf620",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/design-r2-revision.md": {
+      "sha256": "a06be29470e5ab26306f41cdd62e1d79ac7acaf0f07c3e03937408b3a59ccbb0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r2-review.md": {
+      "sha256": "e6f3f02d4b225e37ed48f2226e215e12fb9ce6b0f61d8ab5a0e0aaf6dbb306cf",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r3-review.md": {
+      "sha256": "b3ac9483ae2e620fd65fcaf43ed012fb8713751f7d0cdd77f1dbc5e903738e98",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r4-review.md": {
+      "sha256": "64c22d010a6634b9eabd0477a82b24c3cb5d5312a65e581f628bfc44ab0ee217",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r5-review.md": {
+      "sha256": "52faaef6fe7efc40e28144c17ca0eed6f625292dcd66f15505f59980de08a2a5",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r5-to-r6.patch": {
+      "sha256": "b5f943cfe5d6020785ec5b683027c79be73f14403eaa5c1c62b28ef3f5c17e0d",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r6-manifest.json": {
+      "sha256": "4b0ea13281c859ef38ac6ddb62a3bf3f642b3fba14abc61ef6993c0fda0d30b8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r6-report.md": {
+      "sha256": "70c8bc0c2f2f1c56d428516b78000cf5813b5bacec7a0a7400829a11a5390aff",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/ops-r6-review.md": {
+      "sha256": "d6288c9f103360bad3307f7ce8270b0c49d108f927d8e6c13232a1c6c1775049",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/playwright-api-evidence.md": {
+      "sha256": "a7f03701340320e31d395e4f00289e0139c42b7ac521d46ce98606b16a6a6fc3",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/pure-integration-r1-review.md": {
+      "sha256": "57eb27523001a57aeff2c0ea8226f44b71d7adfbfde6321fba0f4c53c2ae0655",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/pure-integration-r2-preparation.md": {
+      "sha256": "1dcdabc27ce2bb528cde89fd06b70f4124c7e21e37e3dd05d4d21c33d2d6af4f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/pure-integration-r2-review.md": {
+      "sha256": "2b30dc92c428cd413113a7fb4728449cd894f2146c0cffa3c66482940e42247a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-0133016..569b43c.patch": {
+      "sha256": "ee9357f03592b305fea30689358cc0792a52b31d49a6733a490db2d6b9241652",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-2cc162a..7181b7f.patch": {
+      "sha256": "7232cd62e7ef7473e76412bdcf32a5a1686505a58026fb5c0c2d3baef0f19f15",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-550ec9f..ad0b723.patch": {
+      "sha256": "a2ec89dacbf46bbfdd6adf5506622382bf60c8cebd8eeaaaab574638d7cab1f6",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-55e006d..0133016.patch": {
+      "sha256": "6a345741b310d6ca5b0a0169b6a98dea11754d802f54c81233c33c62413b05d8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-710cf04..3c41eb3.patch": {
+      "sha256": "3393816f736d0dce4383198ddaa33f1bf474664e60f228b9d331a3bc0fb08ac0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-7181b7f..710cf04.patch": {
+      "sha256": "174e04dae1539be0be569acb8eeb462f6a9e296cbaa9b5a879a52b8a4a5adec6",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-ad0b723..b6570f7.patch": {
+      "sha256": "47db50afb41c2bf16a7a3585c4b8e25133ac24e8ec48b7f0a2dafeec992aae78",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-b6570f7..55e006d.patch": {
+      "sha256": "886356b97729278f5067b815f1d48ab09c535968a2241a737210a007a7009ce7",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-c78a26e..a41d054.patch": {
+      "sha256": "fd4e1ca14a01a2e7605765b234ede20eb662f70647130a93ac1cc71786001fab",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-c791430..2cc162a.patch": {
+      "sha256": "27887f5b15f65eb9717bbb4a607d025298d15c3d87de198052a649eee8249de9",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/review-ec163c2..c10f0aa.patch": {
+      "sha256": "dac15eceeab753a9110b0dccd2ede14cec77373b36af2d4e3bffbd645006ca9a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/rolling72h-summary.json": {
+      "sha256": "c87ce6c4b4041620b8b23ee344b03bb971216b49f05a48448da45188d29b5654",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/rolling72h.md": {
+      "sha256": "f8d036181bf0eb0e46c8d5294ca473868100d6a84f6be142f0055d6dbeaccc5a",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/root-design-handoff.md": {
+      "sha256": "10d78b76079ddc2c1861accf726ad9efd5246e608d30437eb73e2dce1c2e3148",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/root-integration-rulings.md": {
+      "sha256": "b859f81ad5576215dcca70b81cc3d5c180d9be9d41040a99aba2e018968b1940",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/source-evidence-index.json": {
+      "sha256": "063994efc6be75aea1647d381bc2cf601b0b17fea1f36abb71e9d69517fe3379",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/source-gate-host-idle-context.json": {
+      "sha256": "9125ac37c694f26fdf22e0d190bb15e5bbe7f6058338b86f304af86518e86e18",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/source-gate-system-context.json": {
+      "sha256": "0b38032a45689d6d4d9ce0a7ad4f5f53565719c4eb152426ec262ef9df169f3c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/source-operations-contract-audit.md": {
+      "sha256": "9dcf035047bb8c6cd7d4bd19c2ad7fbbfdcdb1131f69d8416b0979bc572f514d",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/source-secret-match-scan.json": {
+      "sha256": "a0f87121b5b786ead52832c03ac75bf566ee8ada0bb74ebda86f9a6011637ae1",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-1-report.md": {
+      "sha256": "ebf9eaa4fb992d54e92063dc57e65f1847a94119e6732615a25594611821447f",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-1-review.md": {
+      "sha256": "017273e7d2246a69174d0b373f784df6f113593fa3978a6ce95ed4e301e11a45",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-2-fixture-fix-report.md": {
+      "sha256": "ce64c59b118e8f44e317ddcab95c5cffee315ff4d75694463a6f87f1e910d203",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-2-fixture-fix-review.md": {
+      "sha256": "ffc03d9a396f4539c883436ab0dc4ee360be85496fefe6397b2b58f0f7109cac",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-2-report.md": {
+      "sha256": "f04003a185f196e2fbe09d364fb0ddded0045a6a6cd970a8ad72a5fcc89105e1",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-2-review.md": {
+      "sha256": "5aa7c7d8c4f60aa2c1223d06023c4ebc8387fffd82090e109b7ea4eb9431c3db",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-3-correlation-review.md": {
+      "sha256": "6d3e4bbb0c8f8dd4496f9ad121f853cb8f6a90cb19380a7722bfcff8f98a95c0",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-3-fix1-review.md": {
+      "sha256": "735df773d61f9ac48500e8027f98921db95a474ed44959277d44f34c3a1e74d4",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-3-report.md": {
+      "sha256": "8c9cf44891a243e7719a111adbb594bcb4295f7e8a6ec408356b0a58c1310e5c",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-3-review.md": {
+      "sha256": "e005f751212303ba0537a727a2ae2ccf3a88b7a8bee3e4c498b3d21bbf4bc724",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-4-fix1-review.md": {
+      "sha256": "ff8c6ca57af8df4b9f228d52690af79789f75e9da46d1753d6a1db1f00559b78",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-4-report.md": {
+      "sha256": "02d0945b19fad550165904519a210b12486690244d353b9122ebaf233e47e9c8",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-4-review.md": {
+      "sha256": "988d1283e9ec9f1e1599a2f73d097d3b1cea7fd0fc777dff250955c564bb412e",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-5-fix1-review.md": {
+      "sha256": "f2bf0847d1b27651f9ab0f896da0c863ebe19b7361657ace80f9d4a72a655b12",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-5-report.md": {
+      "sha256": "8c30db56426a4763d036f296a64f3722bee6f9e76b5c1767f07976f1101a3f39",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-5-review.md": {
+      "sha256": "a01fff4d07f9855c671079b88a53950cd5294222b46a2f0a822efcc425651d78",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-6-report.md": {
+      "sha256": "820919bb26e432232bbb7aeb2a7ff93069195100d061bc893ff599d12a8db313",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-6-review.md": {
+      "sha256": "438d850c19c1c04d1ceebe67a05743e3d7dfa37c76f8203050b24a5e95d1dc5d",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-guarded-ordinary-recovery/task-6-root-api-result.json": {
+      "sha256": "28ac3d245067404d49b25c7792fc22f3ef114a5d8d3865f9973b82a05c412010",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-reset-ack-ordering/final-source-review.md": {
+      "sha256": "c2a06f3180d06385ec0cad8ec86611a6fecc9c9c5ce2cf71bf9a5bc12c221060",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-reset-ack-ordering/task-1-implementation.md": {
+      "sha256": "487c26c4c2ced6ffa98a6e4977d1490ebd20fda804de557e2ad07d5d0c6a5755",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-reset-ack-ordering/task-1-review.md": {
+      "sha256": "9660a8f591e8ef3c5cb3d5a1f9de4a44add00d331ea6e9d89925029b81564086",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-reset-ack-ordering/task-2-implementation.md": {
+      "sha256": "324264dd929b5d4a1afae286f29b53d6a4abef56151619f43fd5980c09eae4dd",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/reports/evidence/2026-10-18-reset-ack-ordering/task-2-review.md": {
+      "sha256": "870d89e85367db526e4057f5c370f292de83494a6fa2978d3cb897ad5b86d175",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md": {
+      "sha256": "ed0d283644c2e47bb9fa2eb69db64278ee64582dcf924a315ea54bac62e538bc",
+      "filesystemMode": 384
+    },
+    "docs/superpowers/specs/2026-10-18-reset-ack-ordering-design.md": {
+      "sha256": "f5b5e662dea9d5f0094f45ec645a5409b41d4adb321b0cd7866de74df72ec08d",
+      "filesystemMode": 384
+    },
+    "python-host/test_control_transition_status_ordering.py": {
+      "sha256": "9d55e56488456bb440940d3bb4bc5b3da67833b7e816ade85770b5a5dbd999bd",
+      "filesystemMode": 384
+    },
+    "scripts/ordinary_recovery_fault.py": {
+      "sha256": "67f799909c03158012106421a74d80a673949a5380a312c10609de754650c494",
+      "filesystemMode": 384
+    },
+    "scripts/ordinary_session_recovery.py": {
+      "sha256": "2aef30f8123e757dec2f29377cc43c8ad070ab213e40a254b41c4ffbe5cc0f9d",
+      "filesystemMode": 384
+    },
+    "scripts/test_ordinary_recovery_fault.py": {
+      "sha256": "c1d5281e40fda0db631cec832797b9965be835c340a13660d75a5515dadb7e9f",
+      "filesystemMode": 384
+    },
+    "scripts/test_ordinary_session_recovery.py": {
+      "sha256": "71250c3b2bc04c94c68142c1d0557b1935410467f213de80929e1c11b4e587fa",
+      "filesystemMode": 384
+    },
+    "signal-server/lib/viewer-admission.test.js": {
+      "sha256": "9567b804dc3184a967563a3f97409d2c6b583e5dff178e5a549083d99a75094b",
+      "filesystemMode": 384
+    }
+  },
+  "assets": {
+    "buildId": "de4ac13287760f3b",
+    "builtAt": 1792322599160,
+    "exactFinalFileMap": {
+      "index.html": {
+        "sha256": "36b8749af35875829eed6c481485be2170e91b4acf138a65d4d7ba6b16d67463",
+        "filesystemMode": 420,
+        "bytes": 980
+      },
+      "THIRD_PARTY_LICENSES.txt": {
+        "sha256": "22d4385b199a68d9f79a0f0431f1ab32de10f12a5973070c0dcdac47958b973a",
+        "filesystemMode": 420,
+        "bytes": 3556
+      },
+      "asset-manifest.json": {
+        "sha256": "b0d3710814863da341de3b98380ccf1412318f26277d6979859190ff50fbee8a",
+        "filesystemMode": 420,
+        "bytes": 1456
+      },
+      "viewer.html": {
+        "sha256": "955f11764daac1a6beea647507361e3e5be5731fa850ab9bfa55522fdb03601e",
+        "filesystemMode": 420,
+        "bytes": 27225
+      },
+      "css/login.css": {
+        "sha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef",
+        "filesystemMode": 420,
+        "bytes": 1703
+      },
+      "css/tokens.css": {
+        "sha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab",
+        "filesystemMode": 420,
+        "bytes": 1141
+      },
+      "assets/desktop-core.aa4f7d67b87d81bf.js": {
+        "sha256": "aa4f7d67b87d81bf18370a7918064dd67aa1cc1916ccf135f1f88fe6922cc73e",
+        "filesystemMode": 420,
+        "bytes": 499722
+      },
+      "assets/desktop-core.b673f8050beafdbf.js": {
+        "sha256": "b673f8050beafdbf94367f0fc8a1485447493e0283a1d44b4fb13b51aaa78dfa",
+        "filesystemMode": 420,
+        "bytes": 498905
+      },
+      "assets/viewer.47a1f5e1301264d3.css": {
+        "sha256": "47a1f5e1301264d356e74cfda6a388c1fd5c53660de3a9ba5623bbba7e917499",
+        "filesystemMode": 420,
+        "bytes": 49178
+      },
+      "assets/terminal.854a7c0fb70e8b1a.css": {
+        "sha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6",
+        "filesystemMode": 420,
+        "bytes": 7112
+      },
+      "assets/desktop-core.e48e2eb2518903c3.js": {
+        "sha256": "e48e2eb2518903c3e0a52c2616afddc21beb917bac76ebd99f17bd167f970ec2",
+        "filesystemMode": 420,
+        "bytes": 498817
+      },
+      "assets/terminal.4f94c01b7bb6c365.js": {
+        "sha256": "4f94c01b7bb6c365ef2ec10fbefced8b4c7c215d92b16da9cc49edd6f707f2d5",
+        "filesystemMode": 420,
+        "bytes": 555545
+      },
+      "assets/login.a41c71f9960c3ac7.js": {
+        "sha256": "a41c71f9960c3ac76d500aeba8a8646d6bed58219de2f6ae4e0a24fb4011e017",
+        "filesystemMode": 420,
+        "bytes": 4441
+      },
+      "assets/desktop-deferred.f2e69b29163ddf2c.js": {
+        "sha256": "f2e69b29163ddf2c70c0c7daefd4e308f21c2adb12d09da67c876ad20e81f77f",
+        "filesystemMode": 420,
+        "bytes": 28618
+      }
+    },
+    "fullProcessTreeExit": "unknown"
+  },
+  "directoryModes": {
+    ".": 493,
+    "css": 493,
+    "assets": 493
+  },
+  "head": "b6bd0c11fd6055923768ac9f8d457995ac24cde0",
+  "indexSha256": "73b61eb5c361d2b72ac2db66a302b533bea9014b0d345dcafabd57c9075e98c8",
+  "indexMetadataSha256": "8e799da74ea33f12594e37e00940b1485b71c47ae82e725ac0cd400cb46e2975",
+  "exceptions": [
+    "README.md",
+    "docs/archive/worklogs/review-anchors.md",
+    "docs/runbook-safe-startup.md",
+    "docs/\u9700\u6c42\u6587\u6863/WebRemoteDesktop-\u9700\u6c42\u6587\u6863.md",
+    "scripts/lib-fixed-domain.sh",
+    "scripts/restart-fixed-domain-tunnel.sh",
+    "scripts/watch-fixed-domain.sh",
+    "scripts/wrd_entry_health.py"
+  ],
+  "primaryNodeModules": {
+    "type": "directory",
+    "mode": 493
+  },
+  "sourceNodeModules": {
+    "type": "symlink",
+    "mode": 493,
+    "target": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server/node_modules"
+  },
+  "componentTrees": {
+    "signal": "1cab881687688bd4d61d30a57a932e9812155d1138da4dc4c9c637cb2a1fc1e4",
+    "host": "a9145f7098f6862230e1cc9c444e0940a5169c06c388463a756551aab8177a54"
+  },
+  "signalLogPath": "/tmp/wrd-structured/signal-server.jsonl"
+}

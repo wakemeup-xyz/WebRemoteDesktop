@@ -1,0 +1,538 @@
+--- R3/CONTRACT.md
++++ R4-fix1/CONTRACT.md
+@@ -53,3 +53,9 @@
+ ## R3 builder endpoint diagnostic evidence
+ 
+ Each endpoint child result must now include processDiagnostics (exact schema2 diagnostic-only roleworker snapshot) and diagnosticsErrorClass=null. Snapshot fields are schemaVersion/scope/role/events/dropped/failed/expectedStateExitCounts/gaps/gapsDropped/overflow/limits. failed=false, all overflow flags=false, dropped/gapsDropped=0; limits events32/gaps32/contextDepth8/counter2147483647. Lists, counters, enums, nullable identity fields, finite clocks, event ordering, direct scan association and serialized≤32768bytes are validated. Supported events alone do not override unchanged Registry decisions; original coverage/signals/full-tree constraints are still mandatory. Old endpoint records without diagnostics are not valid new R3 build evidence. No actual diagnostic snapshot is pre-created by preparation.
++
++
++## R4 immutable object read optimization
++Only full40 revision/path/tree-OID-bound successful Git blob bytes may be cached in-process; no live state/HEAD/tree/receipt/source/dist/service/ownership cache. Strict batch frame/SHA1/EOF/exit and bounded atomic publication; no error fallback. Cache1024 entries/128MiB, blob32MiB, Git30s unchanged, PIPE acceptance bound not hard OS capture limit. Existing60s quiescence,5s global lsof,all21 identities and600s window retain every original check. Fresh R4 manifest/context/review required; old R3C records never replay.
++
++R4-fix1: only the immutable reader uses git --no-replace-objects for BOTH ls-tree and cat-file --batch; other commands/ENV unchanged. Full40/raw path/OID plus verified blob SHA1 defines cache identity. Existing canonical/content/tree pins continue independently and reject disagreement; this local tightening does not promise equivalence for all replace-ref cases. Initial sealed R4 is preserved unapproved/unexecuted.
+--- /dev/null
++++ R4-fix1/R4-HISTORICAL-FAILURE.json
+@@ -0,0 +1,25 @@
++{
++  "scope": "historical evidence only; no replay authority",
++  "records": {
++    "STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json",
++      "sha256": "532fb0d8fcd27fe4d650f0533894829f6f179e85eeebc7a42899b6abadcf631a"
++    },
++    "STARTUP-JOIN-R3C-DEPLOYMENT-DECISION.json": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-DEPLOYMENT-DECISION.json",
++      "sha256": "a1c6347cc22ed2562d787658278a2ce5dd8b81be0dd3f0654dc5d0694153ec39"
++    },
++    "STARTUP-JOIN-R3C-ASSET-REVIEW.json": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-ASSET-REVIEW.json",
++      "sha256": "c5cef8a9288b7b7cc8064b5330a33ac8c8bd6f002578aeac4eeb40da34f94505"
++    },
++    "STARTUP-JOIN-R3C-REUSED-ACTUAL-OFFLINE-INTEGRATION.json": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-REUSED-ACTUAL-OFFLINE-INTEGRATION.json",
++      "sha256": "845b8a901455702cf46b9c092d6dedeb366fb5d3742dd749757c3b4a3525b17e"
++    }
++  },
++  "frozenSHA256": "00cbecd5afa6417f57272af76b6eba60844abef9d4310f1403cf3f25d71d5a5c",
++  "quiescenceSHA256": "d390755124e238fb0cda2443e5f39b3f7028d1b291a496f0636a911a9a109bef",
++  "applyStarted": false,
++  "sourceCopyOrReloadPerformed": false
++}
+--- /dev/null
++++ R4-fix1/R4-static-verification.json
+@@ -0,0 +1,65 @@
++{
++  "kind": "r4-immutable-blob-batch-static-preparation",
++  "changedInheritedCode": [
++    "bindings.py",
++    "core.py",
++    "source_review_gate.py"
++  ],
++  "unchangedInheritedCode": [
++    "apply-frontend-context.py",
++    "asset_template.py",
++    "build-frontend-template.py",
++    "build_primitives.py",
++    "continuation_common.py",
++    "deployment.py",
++    "freeze-frontend-context.py",
++    "known_attempt_quiescence.py",
++    "mixed-native-integration.py",
++    "operational_common.py",
++    "ordinary-continuation-supervisor.py",
++    "owned_reload.py",
++    "policy.py",
++    "prepare-attempt.py",
++    "prepare-deployment-quiescence.py",
++    "prepare-frontend-sequence.py",
++    "private-builder-entry.js",
++    "process_observation_diagnostics.py",
++    "qualification_evidence.py",
++    "readiness-frontend.py",
++    "readiness_records.py",
++    "restart-signal-frontend.py",
++    "test_builder_diagnostics.py",
++    "test_continuation_guards.py",
++    "test_source_receipt_flow.py",
++    "test_successor_policy.py",
++    "test_supervisor_registration.py",
++    "validation_stages.py"
++  ],
++  "actualTargetedPureMethods": 9,
++  "actualTargetedPureSeconds": 4.61,
++  "actualTargetedPureResult": "PASS-first-run",
++  "oldSuites": "19/3/7 NOT_RERUN; historical fixtures retained, not adapted to new prime_blobs API",
++  "pythonAST": "PASS",
++  "operations": "NOT_RUN",
++  "staticSuccessfulPreMarkerPathCounts": {
++    "originalGitShowCalls": 320,
++    "derivation": "source_review: history32 + own124; frozen: history32 + candidate4 + buildInput96; receipt_file: history32",
++    "replacementBatchCalls": 7,
++    "replacementTreeCallsForBatch": 7,
++    "warmBlobReadsSubprocesses": 0,
++    "notMeasured": "No wall-time profiling; other Git, filesystem, hashing, service and receipt work unchanged"
++  },
++  "limits": {
++    "cacheEntries": 1024,
++    "cacheBytes": 134217728,
++    "blobBytes": 33554432,
++    "batchTimeoutSeconds": 30,
++    "quiescenceSeconds": 60,
++    "globalLsofSeconds": 5,
++    "windowMs": 600000
++  },
++  "actualInitialR4PureMethods": 7,
++  "actualInitialR4PureSeconds": 1.268,
++  "rawReader": "local --no-replace-objects ls-tree and cat-file --batch only",
++  "priorSelfCheck": "initial7PASS omitted replace semantics; sealed unapproved R4 preserved"
++}
+--- R3/REPORT.md
++++ R4-fix1/REPORT.md
+@@ -1,67 +1,40 @@
+-# Viewer + ordinary-tools successor — prepared, operational review pending
++# R4-fix1 raw immutable Git blob batching — prepared, not executed
+ 
+-Package: `/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r3-_77m0ogi`.
++Package: `/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm`. New0700 private derivative; payload0600. Independent operations review is required before any execution. No new execution review, deployment decision, window, quiescence receipt, nonce, build, publication or service operation is created by preparation. R3 and all earlier records remain immutable; R3C is retired, not replayable.
+ 
+-This package is prepared and hash-sealed for independent review. No operational entrypoint, private build, native integration checker, source publication, service/status/network/browser/process observation, sequence, nonce, or execution receipt was run/created here. A separate root-created EXECUTION-REVIEW.json and real per-stage receipts are mandatory before operations; none is supplied by preparation.
++## Pre-execution self-check correction retained
+ 
+-## R3 current delta — builder observation only
++Initial R4 was sealed (manifest1dd51c4ddaba69c48b05305da902078103cc4efb83ca4d8366f4261110dba4f7) but never approved or executed. Root's Git replace/grafts self-check exposed a real mapping assumption: a full40 string alone did not make the ordinary Git ls-tree path mapping immutable, while cache hits skipped that mapping lookup. Blob SHA1 alone did not close this gap. Original package and seven-PASS log remain immutable, and this fresh fix1 is the only candidate handed back now.
+ 
+-The new package changes exactly two inherited runtime files: build_primitives.py and deployment.py. Source41, Viewerfefc, tools282, final fix3 receipt, four existing source-copy paths, known1016 source map, Host/tunnel/watch and all earlier qualification constraints remain unchanged. All other inherited Python/JavaScript files are byte-identical. No actual R3 operation has run. Fresh independent review, EXECUTION-REVIEW, deployment decision and build window are required; no old context is replayable.
++The narrow correction makes only this reader's ls-tree and cat-file --batch commands use local `git --no-replace-objects`. Thus the trusted Git binary resolves raw full40 revision→tree path→OID and supplies the original object; cache retains that exact OID with the bytes under repository/full40/path identity. Raw ls-tree response has strict successful command, bounded32MiB byte length, NUL termination, unique/safe path and requested blob/mode/OID checks. Batch still verifies Git SHA1(blob header+payload)==OID and commits no new entry until the entire group passes. No global ENV or existing Git command changes, no new full commit/tree object-chain parser. Grafts concern ancestry; this local raw lookup selects the pinned revision's original tree rather than a replace-ref substitute. Trust in the original Git binary/object store remains explicit, not a claim of adversarial corruption-proofness.
+ 
+-Root's actual R2 freeze succeeded, but the first lower builder result failed with observation-unavailable despite helperExit0,5.472s, two recorded identities exited and zero recorded signals. The exception detail was not retained. No upper/template/source copy/reload followed; asset review rejected it. R3-HISTORICAL-FAILURES.json pins that result(d6cdeec...), the R1 reference-schema failure(da1d584...), the static assessment(961eb1...), and rejected asset review(029338...). Their classifications do not change.
++All existing replacement-aware canonical/component tree/content pins still run separately. If substitute metadata/content disagrees with these raw bytes or fixed pins, operation fails closed. This is a local raw-object semantic tightening, not a claim that every replace-ref case has identical behavior to old git-show. No working-tree, symbolic HEAD, mutable tree metadata, receipt or service evidence is cached.
+ 
+-child_owned now constructs the unchanged approved module35 Diagnostics with worker role and instrument_registry(original Registry). Root registration uses diagnostic.process for the same already requested PID. Existing loop/scans/signals/cleanup bounds remain; it sets cleanup/result stages, snapshots diagnostics BEFORE ok, persists processDiagnostics/diagnosticsErrorClass, and vetoes diagnostic.failed or snapshot failure. The existing180s deadline placement and one3s owned cleanup remain unchanged. INHERENT, all-recorded exit, original coverage veto and full-tree unknown remain unchanged. A supported exception event is not automatically diagnostic.failed: a transient state AccessDenied may leave original coverage unchanged, while scan NoSuchProcess/AccessDenied/OSError still adds observation-unavailable and still fails.
++Actual fix1 pure command: `python3 -B -m unittest -v test_blob_batch > blob-batch-raw-fix1-pure-run-1.log 2>&1`. Nine methods PASS in4.610s, once. It includes all seven original focused cases plus actual raw tree parsing completeness/path/duplicate failures and simulated sameTIP replace changes with cold/warm raw reads. Fake transports assert the actual --no-replace-objects argv on both commands; altered ordinary mappings cannot feed raw bytes/cache, and substituted expected content pins reject. Earlier 7PASS was insufficient to establish this omitted replace semantic; its log is retained without rewriting. No forced/fabricated RED and no original19/3/builder7 rerun.
+ 
+-deployment.asset_context now explicitly consumes each endpoint's present bounded schema2 worker snapshot. It rejects missing/null/extra/malformed fields, failed, drop/overflow flags, incorrect limits, counters/tags/clocks/IDs or unbounded lists/serialization; requires diagnosticsErrorClass present and null. It preserves original cr classification/errors/coverage/signals checks. Direct scan gap association must refer to a matching recorded event; expected state exits have their separate counters. Diagnostic acceptance is not a replacement for ownership coverage.
++## Actual failure and bounded diagnosis
+ 
+-The separate builder Popen-registration latent gap is intentionally NOT fixed: deadline remains assigned after add_root, and an early registration failure does not gain a new Popen watcher. It remains a qualification veto and grants no unknown PID authority. The actual R2 failure had the root and child recorded, null errorClass and exit0, so this distinct path was not the observed failure. No extension to the original deadline or retry was introduced. This observability delta does not establish the historical gap cause or guarantee a future pass; retry-to-pass is not authorized.
++Root's R3C apply session8691 exited1 at main line9 receipt_file→fresh_at, RuntimeError `quiescence receipt stale`, before apply-started. Root failure record SHA532fb0d8fcd27fe4d650f0533894829f6f179e85eeebc7a42899b6abadcf631a pins qSHA d390755124e238fb0cda2443e5f39b3f7028d1b291a496f0636a911a9a109bef and frozen00cbecd5afa6417f57272af76b6eba60844abef9d4310f1403cf3f25d71d5a5c. Q completed epoch1792346801.528197; later failure-record epoch1792346938.867512 is137.339315s later, not a measured exact apply execution duration. Root reported immediate invocation; no per-function profiler was present. All21 recorded identities were gone and all apply/reload started/results absent per root's actual receipt. No sourcecopy/reload occurred. R4-HISTORICAL-FAILURE.json preserves exact refs.
+ 
+-Actual targeted pure command in this R3 directory: `python3 -B -m unittest -v test_builder_diagnostics > builder-diagnostics-pure-run-1.log 2>&1`. Seven methods PASS in2.444s; no repeat. Tests execute actual child_owned, exact original Registry/Capacity AST, exact approved diagnostics definitions, and actual asset_context plus actual new validator AST. All process/Popen/Git-free filesystem/clocks are injected; only the child_owned local import is removed to supply fake psutil. No operational module is imported. R2/R3 child process-call ledgers and original ownership/coverage/signals/result fields match in normal, scan errors, supported state event, unsupported and overflow cases. Consumer positives and missing/null/failed/overflow/type/role/extra/count/limits/oversized/event/snapshot-error negatives execute the actual consumer. Existing coverage and signal vetoes are separately exercised. Old19 and source-ref3 suites are inherited evidence, NOT rerun.
++Static successful-path accounting identifies320 individual git-show subprocess calls before the first fresh_at: source_review(history32+own124), frozen(history32+candidate4+buildInputs96), receipt_file(history32). History is2 oldtools plus30 oldViewer candidates. This explains substantial fork opportunity; it does not prove subprocess overhead is the unique wall-time cause. Source/filesystem/hash/service work remains and resource pressure can vary. R4 cannot guarantee finishing within60s and must still refuse stale receipts.
+ 
+-The next root window must be new and future, width≤600s; account for measured freeze/context-validation cost when choosing it. Never extend the consumed R2 window. Same CLI entrypoints below apply to this R3 path. Builder diagnostics add no new public/source/operator input schema, only bounded endpoint result evidence and its explicit consumer. The actual mixed checker remains NOT RUN here and must still run after approved actual private template and before source copy.
++## Minimal three-file delta
+ 
+-## Historical R2 exact delta and retained R1 failure
++- core.py: prime_blobs reads explicit full40hex revision and safe paths, obtains their un-cached raw --no-replace-objects ls-tree path/mode/kind/OID bindings, runs one raw --no-replace-objects cat-file --batch per missing group, verifies exact ordered OID/blob type/canonical size, complete binary frame, newline, recomputed Git SHA1 object hash, complete EOF/no extra frame, successful exit, byte/entry bounds; only then commits the entire group into an in-process cache. Timeout/nonzero/error/truncated/extra/OID/type/size/hash/path/capacity failure never publishes any new group entries and never falls back or retries. Existing successful entries remain. Distinct paths sharing a blob OID are valid and fetched once; duplicate requested paths are rejected. Cache keys are source-repository path/full revision/safe relative path, values retain the exact tree OID and immutable bytes. No symbolic ref or HEAD is cacheable.
++- bindings.py: history prefetches oldtools2 and oldViewer30 only; all original historical receipt/hash/lineage/mode checks still execute.
++- source_review_gate.py: prefetches the final build/runtime/four-copy closure and exact component comparisons in five groups. The original blob comparisons and fresh HEAD/canonical/source dirty/node checks still execute. Its existing tree read moved earlier within the same invocation; tree data is never cached across invocations.
+ 
+-R1 root execution attempted freeze once and exited1 at source_review_gate.py14: actual check_ref rejected canonicalPatch's extra bytes/gitDiffFlags keys. It stopped before decision validation or deployment mkdir; root verified no build/publication/reload or primary mutation. Original EXECUTION-REVIEW and deployment decision are consumed and retained. Root failure receipt is `/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json`, SHA256 `da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e`.
++For the inspected successful first pre-marker path,7 batches plus7 added tree calls replace320 individual show calls. Later per-file known21 verification still reads/revalidates history and fresh observations; immutable blob reads are warm only within the same Python process. No cache is serialized, carried between commands, or shared with an old package/context. All candidate/live filesystem bytes and modes, primary HEAD/index metadata, source HEAD/dirty files, canonical diff, dist, private receipts/files, service PID/birth, preserved processes, human-priority/idle, known21,60s freshness,5s global lsof and≤600s window gates remain uncached and unchanged. No gate was moved past fresh_at or omitted.
+ 
+-This fresh R2 changes only final binding/copied source receipt, documentation/provenance, and targeted new test/evidence. ALL inherited Python/JavaScript files are byte-identical, including source_review_gate.py and strict check_ref; no runtime gate is loosened. Root fix3 canonicalPatch is exactly path/sha256; bytes/gitDiffFlags moved to canonicalPatchMetadata. All source/component/review/patch/preimage bytes are unchanged. EXECUTION-REVIEW is absent in R2; root needs new review approval, a new unused deployment decision and future window. R1 decision must not be replayed.
++Cache maxima are1024 path entries/128MiB retained bytes, each blob≤32MiB. Batch acceptance is≤128MiB plus128 bytes per requested unique OID. subprocess.run retains the established PIPE/30s Git-call mechanism: these are strict acceptance/cache bounds, not a claimed OS capture-memory hard limit; as with the old show primitive, PIPE capture occurs before the acceptance length check. No new process supervision or deadline relaxation was added. The trusted local Git/object database immutable-commit assumption remains; cache hits do not re-observe object-database availability or corruption later in the same invocation. They never substitute for live working-tree checks.
+ 
+-`test_source_receipt_flow.py` executes the actual validate_source_review and check_ref AST definitions with injected in-memory Git/filesystem and blob-identity adapters. It loads the actual fix3 nested references, traverses the entire validator, and rejects the actual superseded fix2 four-key canonicalPatch plus single-extra variants. Other direct-ref extra keys also reject. This establishes consumer shape compatibility, not live Git/process/availability evidence. Fixture setup reads only named immutable local records; no operational imports/API/process/browser/network/build/status call occurs.
++## Historical initial R4 pure validation (superseded by fix1 suite above)
+ 
+-Actual targeted command: `python3 -B -m unittest -v test_source_receipt_flow > source-receipt-flow-run-2.log 2>&1` in this R2 directory. All3 methods PASS; see log for exact duration. Run1 also passed before adding the required real-fix2-object negative case; both logs are retained. The inherited19 suite was NOT rerun; its original R1 evidence is copied as historical evidence and remains valid only for its original scope. R2-static-verification.json records exact inherited code parity and metadata refs.
++Command, executed once in this package: `python3 -B -m unittest -v test_blob_batch > blob-batch-pure-run-1.log 2>&1`. Seven methods PASS in1.268s; first run passed, so no invented RED. All Git/process APIs are injected fakes. Actual prime_blobs/blob parser methods execute against binary/NUL/empty/shared-OID fixtures, with success/warm-cache and independent full revision keys. Failure cases cover timeout/nonzero, missing/error/duplicate/extra/truncated frames, malformed size/type/OID/hash, path/tree binding, duplicate paths, entry/byte limits and atomic no-new-entry failure. Actual full source-review validator runs against existing immutable receipt fixtures; original/new logical blob requests and result match, and repeated reads plus changed live HEAD/dirty-file guards still reject. AST/byte comparisons confirm original live gates, deployment, quiescence, apply/reload and builder diagnostics unchanged.
+ 
+-## Exact source and scope
++The historical19/source-ref3/builder7 suites were NOT rerun. Their files/logs remain historical evidence; old standalone fixture scopes do not inject the newly required prime_blobs helper and were not silently changed. The new suite explicitly injects that boundary for actual source-validator tests and separately exercises the real batch helper. This is offline byte/parser/control-flow evidence, not a live Git timing or complete deployment experiment. No actual Git, psutil, Popen, network/browser/native/service/build helper ran in this preparation.
+ 
+-- Final archive/source: `41c7b0998859a7e9d088cefcc0f3a1eeab190684`.
+-- Viewer component: `fefc555aea9640b563bfd22f5b36b6b8ca6365ec`.
+-- Tools: `2822441791b59a021556c7e4eb24715df9d5b277`.
+-- Backend: `dfb15434e79da90b803b763c533836e16c080c71`; diagnostics module35 unchanged.
+-- Root receipt fix3: `/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-VIEWER-TOOLS-FINAL-SOURCE-REVIEW-fix3.json`, SHA256 `dff8d03693e11e14448d838459edd6626105dffb009a9d21dbe4b0e6fd532029`.
+-- Complete c802→41 canonical patch: 57 paths; SHA256 `a6436f4951d25075101d730a21ed49a715f69e1116e219cce27c0067413966b1`, 508881 bytes, binary/full-index/no-renames. Exactly53 documentation paths are explicitly notPromoted.
+-
+-The ordered publication list is exactly `scripts/ordinary_session_recovery.py`, `scripts/test_ordinary_session_recovery.py`, `web-client/js/webrtc.js`, `web-client/js/webrtc.test.js`. All four already exist with actual mode0600; Git100644 does not determine filesystem mode. Publication preserves actual mode and old preimage, backs up first, checks the same known identities immediately before each atomic replace, and never writes the primary index. Known regular map stays1016. No docs/new paths are published.
+-
+-Historical state derives from immutable R6 baseline/deployment → old tools59 promotion → actual R5 c802 deployment. It does not snapshot arbitrary live files or replay old gates. Old Viewer bb581 builtAt1792336142126/exact14 assets, Signal33747 birth1792336141.182036, Host36877 birth1792322600.528357, eight preserved exceptions, node dependency metadata, primaryHEAD/index, tunnel/watch and absent quickURL remain pinned. The new dist graph count comes from actual reviewed endpoint builds, never an assumed14. Only Signal reload is permitted; Host identity must remain the same.
+-
+-## Changes and inherited mechanisms
+-
+-`bindings.py` derives the actual1016 map and all3 failed histories; final binding is metadata-only FINAL-BINDING.json. `source_review_gate.py` verifies exact final receipt, all four component/preimage pins, explicit docs complement, reviewed tool and Viewer component identities, unchanged backend/builder/runtime dependencies, source4dirty/node guards and historical deployment linkage. `policy.py` contains pure partition/map/build-input rules.
+-
+-`deployment.py` and `freeze-frontend-context.py` restrict the proven R5 machinery to four existing replacements. All Viewer source inputs plus five unchanged builder/package inputs are privately frozen. `build-frontend-template.py`, `build_primitives.py`, `private-builder-entry.js`, `asset_template.py`, apply/reload/readiness modules and original validators remain byte-identical to R5 except the explicitly listed adapters in static-verification.json/diffs and the two current R3 changes described above. The build uses two endpoints within one600s window, explicit child022 mode profile, exact retention/output matching except permitted current builtAt spans, and unchanged lifecycle/no-signal acceptance. No dependency install or permission fallback exists.
+-
+-`known_attempt_quiescence.py` retains R5 observation/TTL/per-action rules while binding all3 failed attempts and21 distinct known PID/birth identities. No arbitrary process discovery or signals are added to these observations; full-tree coverage remains unknown. `continuation_common.py`, sequence/attempt preparation and checker distinguish final archive41, Viewerfefc and tools282. Each scenario has its own root decision and fresh strict idle preflight. Final qualification permits occupied-unattributed post-close occupancy but never establishes next-run admission or server map drainage.
+-
+-The private supervisor includes the previously covered limited Popen-registration fix: original deadline is fixed before creation (`started + duration + 128`); if registration fails, retain only the created Popen and observe exit or the original deadline. No unknown PID signals, retry, deadline extension or PASS after failure. Cleanup/coverage/diagnostic first-failure checks remain unchanged. Entire within-/after-grace scenarios disable Host sampling; baseline/continuity preserve existing unexpected-stall thresholds. Pacing diagnostic qualification is not merged into this package.
+-
+-## Historical R1 preparation validation (not rerun in R2)
+-
+-Commands ran in this package directory, with actual AST definitions and injected fake clocks/process factories/data. No operational package module imports occurred.
+-
+-1. `python3 -B -m unittest -v test_successor_policy test_supervisor_registration > pure-successor-run-1.log 2>&1`: 9 PASS/1 FAIL. The historical fixture derived0600 but its initial assertion expected0644. This exposed the same root receipt inference error. Original log retained; root independently confirmed all4 preimages0600 and issued immutable fix1. No primary chmod occurred.
+-2. Same command to `pure-successor-run-2.log`:10 PASS in0.748s. Correct historical assertion only. This also exercised the actual immutable JSON-derived1016 map and21 known identities with injected blob identities; it does not validate live processes.
+-3. `python3 -B -m unittest -v test_successor_policy test_continuation_guards test_supervisor_registration > pure-successor-run-3.log 2>&1`:19 PASS in0.970s, after adding adapted prior9 guard methods. No repeat after this pass. Cases include four-existing partition/docs exclusion, preserved mode/count, full build closure, missing final binding, three-failure/21identity coverage, missing/unclosed/duplicate identities, known-only gone/zombie/reused/alive/unknown, TTL/reversed clocks, mixed component runtime pins, same-sequence success ordering, Signal-only publication boundary and all3 Popen registration paths.
+-
+-During R1 preparation, a separate read-only static check initially rejected the root short-index canonical patch (4a7373...,505119bytes). Root retained it and issued fix2 with exact full-index patch. PREPARATION-CORRECTIONS.json records both events. Final static check verified held sourceHEAD,57/4/53 path coverage, full-index patch, four final component blobs, tree OIDs, all referenced reviews/evidence hashes, original R5manifest45 payloads, and Python AST parsing. See static-verification.json. No source gate/runtime/helper was executed. Historical12PASS evidence in the paused tool-only draft remains unchanged and separately referenced.
++Source41/fix3, Viewerfefc/tools282/backenddfb/module35, four existing copy paths and1016 known map remain unchanged. New R4 code hashes require a new frozen context and exact independent asset review; old R3C frozen/template/window cannot be relabeled or reused. Original R2 observation gap remains failed/unknown; R3 diagnostics, coverage/signals vetoes and the separately documented unfixed builder registration gap remain unchanged. The prior report is preserved as R3-REPORT-HISTORICAL.md, and prior histories/diffs/logs remain in the manifest.
+ 
+ ## Root entrypoints and ordering
+ 
+@@ -79,10 +52,6 @@
+ 9. `prepare-frontend-sequence.py --frozen-dir FROZEN_DIR --frozen-sha256 FROZEN_SHA --asset-review ASSET_REVIEW_PATH --asset-review-sha256 ASSET_REVIEW_SHA --readiness-sha256 READINESS_SHA --decision SEQUENCE_DECISION_PATH --decision-sha256 SEQUENCE_DECISION_SHA --integration-evidence OFFLINE_EVIDENCE_PATH --integration-evidence-sha256 OFFLINE_EVIDENCE_SHA`.
+ 10. For each separately approved scenario: `prepare-attempt.py --sequence-dir SEQUENCE_DIR --sequence-sha256 SEQUENCE_SHA --decision ATTEMPT_DECISION_PATH --decision-sha256 ATTEMPT_DECISION_SHA`, then `ordinary-continuation-supervisor.py --attempt-dir ATTEMPT_DIR --attempt-sha256 ATTEMPT_SHA`. Order: baseline300, within-grace390, after-grace390, continuity10800. A failed/indeterminate attempt stops progression; there is no retry/clear/replay/automatic next run.
+ 
+-## Limits and handback
++## Handback constraints
+ 
+-Independent operational review is still required. Real private builds, new source publication, Signal reload, fresh health/occupancy, native-shaped integration and ordinary scenarios are all NOT RUN. Review and offline tests do not prove live availability or physical input effects. Per-file source publication has a check-to-use race and is not a transaction. Existing lifecycle coverage remains partial/observation-unavailable/full-tree unknown; healthy services do not erase lifecycle failure. Known-identity quiescence does not close earlier full-tree gaps. New generated-mode mismatch fails without chmod/fallback. The existing product builder's bounded publish-error restoration is not permission for wrapper rollback.
+-
+-Any consumed marker or partial result stays immutable. Root owns separate freshly fenced availability restoration when needed. Signal restart may end shared Terminal sessions; current human work takes priority. Root must report both current passwords in chat after any actual restart; this package never saves them. The service skill/runbook boundary was checked; no tunnel/watch/quick URL operation is authorized.
+-
+-No source/primary/index/commit/config writes, operational process/API probes, secret reads, browser/network/native actions, subagents, or changes to old R5/SUP/helper/sampler occurred in this preparation. `/tmp/wrd-successor-adapt-private.py` is a preparation-only private file-writing script, never an operational entrypoint; its path/hash are recorded in provenance.
++Root must supply new independent review/execution review and unused deployment context after this package is approved. Command names/arguments are unchanged. No automatic freshq, retry, rollback, old marker replay or window extension exists. Root inspects any refusal and records partial outcomes using existing behavior. No held source checkout, primary/index/config, service, Host, tunnel/watch, secret or large old log was modified/read for operations here. Only bounded existing evidence and private preparation files were read/written; independent review follows this sealed handback.
+--- R3/bindings.py
++++ R4-fix1/bindings.py
+@@ -82,7 +82,7 @@
+  need(s['productTIP']==PRODUCT and s['toolTIP']==OLD_TOOL_TIP and p['classification']=='tools-promoted' and p['sequenceSHA256']==h['records']['toolSequence']['sha256'] and p['copied']==list(TOOLS) and p['servicesReloaded'] is False and p['errorClass'] is None,'actual old tool deployment linkage')
+  need(h['records']['secondFailure']['sha256']==SECOND_FAILURE and records['secondFailure']['classification']=='failed-or-indeterminate' and records['secondFailure']['priorFailureSHA256']==OLD_FAILURE,'first two failures binding')
+  need(records['secondMarker']['attemptSHA256']==h['records']['secondAttempt']['sha256']==records['secondFailure']['attemptSHA256'] and records['secondAttempt']['promotionSHA256']==h['records']['toolPromotion']['sha256'],'second attempt deployment linkage')
+- expected=dict(b['regularFiles'])
++ expected=dict(b['regularFiles']);prime_blobs(OLD_TOOL_TIP,list(TOOLS))
+  for name,row in s['tools'].items():
+   need(name in TOOLS and row['oldSha256']==expected[name]['sha256'] and row['sha256']==sha(blob(OLD_TOOL_TIP,name)) and row['filesystemMode']==expected[name]['filesystemMode'],'actual old tool override')
+   expected[name]={'sha256':row['sha256'],'filesystemMode':row['filesystemMode']}
+@@ -97,6 +97,7 @@
+  need(ready['classification']=='runtime-ready-observed' and ready['errorClass'] is None and ready['reloadSHA256']==h['records']['r5Reload']['sha256'] and ready['frozenSHA256']==h['records']['r5Frozen']['sha256'] and ready['assetReviewSHA256']==h['records']['r5AssetReview']['sha256'] and ready['newIdentity']==reload['newIdentity'],'actual historical readiness binding')
+  for key in ('assets','identities','sourceTIP','frozenSHA256','componentPins'):need(ready['runtimeValidation'][key]==reload['runtimeValidation'][key],'historical runtime evidence drift')
+  need(asset_review['frozenSHA256']==h['records']['r5Frozen']['sha256'] and asset_review['templateSHA256']==h['records']['r5Template']['sha256'],'historical asset approval binding');check_ref(asset_review['independentReview'])
++ prime_blobs(VIEWER_TIP,list(frozen['candidateFiles']))
+  for name,row in frozen['candidateFiles'].items():
+   old=expected.get(name);need(row['oldSha256']==(old['sha256'] if old else None) and row['oldMode']==(old['filesystemMode'] if old else None),'historical source copy precondition')
+   need(row['sha256']==sha(blob(VIEWER_TIP,name)) and row['filesystemMode']==(old['filesystemMode'] if old else 0o600),'historical exact source bytes/modes');expected[name]={'sha256':row['sha256'],'filesystemMode':row['filesystemMode']}
+--- /dev/null
++++ R4-fix1/blob-batch-pure-run-1.log
+@@ -0,0 +1,12 @@
++test_actual_source_gate_request_equivalence_and_batch_coverage (test_blob_batch.BlobBatch.test_actual_source_gate_request_equivalence_and_batch_coverage) ... ok
++test_actual_source_validator_live_head_and_dirty_guards_repeat (test_blob_batch.BlobBatch.test_actual_source_validator_live_head_and_dirty_guards_repeat) ... ok
++test_binary_empty_shared_oid_equivalence_and_warm_no_fork (test_blob_batch.BlobBatch.test_binary_empty_shared_oid_equivalence_and_warm_no_fork) ... ok
++test_cache_entry_byte_and_response_bounds_are_atomic (test_blob_batch.BlobBatch.test_cache_entry_byte_and_response_bounds_are_atomic) ... ok
++test_failure_atomicity_complete_frame_exit_timeout_and_hash (test_blob_batch.BlobBatch.test_failure_atomicity_complete_frame_exit_timeout_and_hash) ... ok
++test_safe_exact_revision_paths_and_tree_binding (test_blob_batch.BlobBatch.test_safe_exact_revision_paths_and_tree_binding) ... ok
++test_unchanged_live_gates_and_deadlines_ast (test_blob_batch.BlobBatch.test_unchanged_live_gates_and_deadlines_ast) ... ok
++
++----------------------------------------------------------------------
++Ran 7 tests in 1.268s
++
++OK
+--- /dev/null
++++ R4-fix1/blob-batch-raw-fix1-pure-run-1.log
+@@ -0,0 +1,14 @@
++test_actual_source_gate_request_equivalence_and_batch_coverage (test_blob_batch.BlobBatch.test_actual_source_gate_request_equivalence_and_batch_coverage) ... ok
++test_actual_source_validator_live_head_and_dirty_guards_repeat (test_blob_batch.BlobBatch.test_actual_source_validator_live_head_and_dirty_guards_repeat) ... ok
++test_binary_empty_shared_oid_equivalence_and_warm_no_fork (test_blob_batch.BlobBatch.test_binary_empty_shared_oid_equivalence_and_warm_no_fork) ... ok
++test_cache_entry_byte_and_response_bounds_are_atomic (test_blob_batch.BlobBatch.test_cache_entry_byte_and_response_bounds_are_atomic) ... ok
++test_failure_atomicity_complete_frame_exit_timeout_and_hash (test_blob_batch.BlobBatch.test_failure_atomicity_complete_frame_exit_timeout_and_hash) ... ok
++test_raw_tree_complete_path_binding_failure_no_cache (test_blob_batch.BlobBatch.test_raw_tree_complete_path_binding_failure_no_cache) ... ok
++test_replace_mapping_cannot_supply_raw_cached_or_new_bytes (test_blob_batch.BlobBatch.test_replace_mapping_cannot_supply_raw_cached_or_new_bytes) ... ok
++test_safe_exact_revision_paths_and_tree_binding (test_blob_batch.BlobBatch.test_safe_exact_revision_paths_and_tree_binding) ... ok
++test_unchanged_live_gates_and_deadlines_ast (test_blob_batch.BlobBatch.test_unchanged_live_gates_and_deadlines_ast) ... ok
++
++----------------------------------------------------------------------
++Ran 9 tests in 4.610s
++
++OK
+--- R3/core.py
++++ R4-fix1/core.py
+@@ -89,8 +89,54 @@
+   out[rel]={'gitMode':mode,'kind':kind,'objectId':oid}
+  return out,raw
+ 
++# Successful immutable object bytes only; no HEAD/tree/live file or receipt cache.
++_BLOB_CACHE={}
++_BLOB_CACHE_ENTRIES=1024
++_BLOB_CACHE_BYTES=128*1024*1024
++
++def raw_blob_tree(revision):
++ # Only this object reader bypasses replace refs; all live Git gates stay intact.
++ raw=command(['git','--no-replace-objects','-C',str(S),'ls-tree','-r','-z','--full-tree',revision]);out={}
++ need(type(raw) is bytes and len(raw)<=MAX_FILE and (not raw or raw.endswith(b'\0')),'raw tree output bound/termination')
++ for part in raw.split(b'\0'):
++  if not part:continue
++  fields,name=part.split(b'\t',1);mode,kind,oid=fields.decode().split();rel=relative(name.decode())
++  need(rel not in out and mode in ('100644','100755','160000'),'unsupported raw tree entry')
++  out[rel]={'gitMode':mode,'kind':kind,'objectId':oid}
++ return out
++
++def prime_blobs(revision,rels):
++ need(type(revision) is str and re.fullmatch('[a-f0-9]{40}',revision) is not None,'immutable blob revision required')
++ need(type(rels) in (list,tuple,set) and len(rels)<=_BLOB_CACHE_ENTRIES,'bounded blob path request')
++ paths=[relative(n) for n in rels];need(len(paths)==len(set(paths)),'duplicate blob path request')
++ missing=sorted(n for n in paths if (str(S),revision,n) not in _BLOB_CACHE)
++ if not missing:return
++ need(len(_BLOB_CACHE)+len(missing)<=_BLOB_CACHE_ENTRIES,'blob cache entry bound')
++ entries=raw_blob_tree(revision);requests=[]
++ for name in missing:
++  row=entries.get(name);need(type(row) is dict and row.get('kind')=='blob' and row.get('gitMode') in ('100644','100755') and type(row.get('objectId')) is str and re.fullmatch('[a-f0-9]{40}',row['objectId']) is not None,'exact tree path/blob binding')
++  requests.append((name,row['objectId']))
++ # Repeated OIDs across distinct paths are legitimate; fetch once, bind each path.
++ oids=list(dict.fromkeys(oid for _,oid in requests));payload=('\n'.join(oids)+'\n').encode()
++ result=subprocess.run(['git','--no-replace-objects','-C',str(S),'cat-file','--batch'],input=payload,env=ENV,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
++ need(result.returncode==0,'Git batch failed')
++ raw=result.stdout;need(type(raw) is bytes and len(raw)<=_BLOB_CACHE_BYTES+len(oids)*128,'Git batch response bound')
++ values={};offset=0;total=0
++ for oid in oids:
++  end=raw.find(b'\n',offset);need(end>=0 and end-offset<=127,'Git batch header bound')
++  fields=raw[offset:end].split(b' ');need(len(fields)==3 and fields[0]==oid.encode() and fields[1]==b'blob' and re.fullmatch(b'0|[1-9][0-9]*',fields[2]) is not None,'Git batch exact OID/type/size')
++  size=int(fields[2]);need(size<=MAX_FILE,'Git batch blob bound');start=end+1;stop=start+size
++  need(stop<len(raw) and raw[stop:stop+1]==b'\n','Git batch truncated frame')
++  data=raw[start:stop];need(hashlib.sha1(b'blob '+str(size).encode()+b'\0'+data).hexdigest()==oid,'Git blob object hash mismatch')
++  values[oid]=data;total+=size;need(total<=_BLOB_CACHE_BYTES,'Git batch byte bound');offset=stop+1
++ need(offset==len(raw),'Git batch extra response bytes')
++ pending={(str(S),revision,name):(oid,values[oid]) for name,oid in requests}
++ need(sum(len(v[1]) for v in _BLOB_CACHE.values())+sum(len(v[1]) for v in pending.values())<=_BLOB_CACHE_BYTES,'blob cache byte bound')
++ # Publish only after every frame and the complete batch passed all checks.
++ _BLOB_CACHE.update(pending)
++
+ def blob(revision,rel):
+- return git(S,'show',revision+':'+relative(rel))
++ name=relative(rel);prime_blobs(revision,[name]);return _BLOB_CACHE[(str(S),revision,name)][1]
+ 
+ def distmap(folder):
+  need(stat.S_ISDIR(folder.lstat().st_mode),'plain dist root required');out={};total=0
+--- R3/provenance.json
++++ R4-fix1/provenance.json
+@@ -1,6 +1,6 @@
+ {
+   "schemaVersion": 1,
+-  "state": "fresh-r3-builder-observation-integration",
++  "state": "fresh-r4-fix1-raw-object-reader",
+   "references": {
+     "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/bindings.py": {
+       "sha256": "22d381e37ea858ce5cc87cf5c53298eebc687178facc3c55b46f9827b3a90460",
+@@ -131,7 +131,7 @@
+     "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
+     "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
+   },
+-  "scopeConstant": "viewer-tools-successor-r1 retained unchanged; fresh R3 directory and manifest require a new root EXECUTION-REVIEW",
++  "scopeConstant": "viewer-tools-successor-r1 retained; fresh R4 manifest requires new independent review and new root execution context",
+   "r2Package": {
+     "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6/SHA256SUMS.json",
+     "sha256": "a321ec51e966c5ad7ff247e61713100c498d251b27dd02583229b54bc244aa6b"
+@@ -218,5 +218,54 @@
+     "test_successor_policy.py",
+     "test_supervisor_registration.py",
+     "validation_stages.py"
+-  ]
++  ],
++  "r3Package": {
++    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r3-_77m0ogi/SHA256SUMS.json",
++    "sha256": "a60c371799d56cb57016dbe2aab3de2f0e15fea31ea988f71ca3edee759b69f2"
++  },
++  "r4ChangedRuntimeFiles": [
++    "bindings.py",
++    "core.py",
++    "source_review_gate.py"
++  ],
++  "r4HistoricalFailure": {
++    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json",
++    "sha256": "532fb0d8fcd27fe4d650f0533894829f6f179e85eeebc7a42899b6abadcf631a"
++  },
++  "r4UnchangedInheritedCode": [
++    "apply-frontend-context.py",
++    "asset_template.py",
++    "build-frontend-template.py",
++    "build_primitives.py",
++    "continuation_common.py",
++    "deployment.py",
++    "freeze-frontend-context.py",
++    "known_attempt_quiescence.py",
++    "mixed-native-integration.py",
++    "operational_common.py",
++    "ordinary-continuation-supervisor.py",
++    "owned_reload.py",
++    "policy.py",
++    "prepare-attempt.py",
++    "prepare-deployment-quiescence.py",
++    "prepare-frontend-sequence.py",
++    "private-builder-entry.js",
++    "process_observation_diagnostics.py",
++    "qualification_evidence.py",
++    "readiness-frontend.py",
++    "readiness_records.py",
++    "restart-signal-frontend.py",
++    "test_builder_diagnostics.py",
++    "test_continuation_guards.py",
++    "test_source_receipt_flow.py",
++    "test_successor_policy.py",
++    "test_supervisor_registration.py",
++    "validation_stages.py"
++  ],
++  "r4UnapprovedPackage": {
++    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-yhxh80gk/SHA256SUMS.json",
++    "sha256": "1dd51c4ddaba69c48b05305da902078103cc4efb83ca4d8366f4261110dba4f7",
++    "reason": "root pre-execution self-check: replacement-aware revision/path mapping not immutable"
++  },
++  "r4Fix1Scope": "only raw ls-tree/batch reader and focused tests; existing runtime gates unchanged"
+ }
+--- R3/source_review_gate.py
++++ R4-fix1/source_review_gate.py
+@@ -14,6 +14,10 @@
+  patch=git(S,'diff','--binary','--full-index','--no-renames',VIEWER_TIP,tip);need(sha(patch)==v['canonicalPatch']['sha256'] and patch==check_ref(v['canonicalPatch']),'canonical binary full-index patch')
+  for row in raw_diff(viewer,tip):need(row['path'].startswith('docs/superpowers/') and row['status'] in ('A','M') and row['newMode']=='100644','archive docs-only')
+  b,h,records=history();need(set(v['fileSources'])==set(COPY_PATHS),'exact four file sources')
++ tr,_=tree(tip)
++ prime_blobs(tip,{n for n in tr if n.startswith('web-client/')}|BUILD_INPUTS|set(RUNTIME[1:])|set(COPY_PATHS))
++ prime_blobs(TOOL_TIP,list(TOOLS));prime_blobs(viewer,[n for n in COPY_PATHS if n not in TOOLS])
++ prime_blobs(PRODUCT,set(RUNTIME[1:4])|BUILD_INPUTS);prime_blobs(MODULE_TIP,[RUNTIME[4]])
+  for name,pin in v['fileSources'].items():
+   exact(pin,('sha256','bytes','gitMode','oldSha256','oldBytes','oldGitMode','oldFilesystemMode','oldSourceTIP','componentTIP'))
+   component=TOOL_TIP if name in TOOLS else viewer;oldtip=OLD_TOOL_TIP if name in TOOLS else VIEWER_TIP;raw=blob(tip,name);old=blob(oldtip,name)
+@@ -25,7 +29,6 @@
+  need(git(S,'rev-parse',tip+':web-client').decode().strip()==v['viewerTreeOID']==git(S,'rev-parse',viewer+':web-client').decode().strip(),'Viewer exact component tree')
+  for name in (*RUNTIME[1:4],*BUILD_INPUTS):need(blob(tip,name)==blob(PRODUCT,name),'immutable helper/fault/sampler/builder drift')
+  need(blob(tip,RUNTIME[4])==blob(MODULE_TIP,RUNTIME[4])==regular(R/'process_observation_diagnostics.py')[0],'approved diagnostics bytes')
+- tr,_=tree(tip)
+  for name in {n for n in tr if n.startswith('web-client/')}|BUILD_INPUTS:
+   if name not in COPY_PATHS:need(name in b['regularFiles'] and sha(blob(tip,name))==b['regularFiles'][name]['sha256'],'non-published build input differs from deployed source')
+  check_ref({k:v['historicalToolSourceReceipt'][k] for k in ('path','sha256')});need(v['historicalToolSourceReceipt']['executable'] is False,'historical receipt not authority')
+--- /dev/null
++++ R4-fix1/test_blob_batch.py
+@@ -0,0 +1,119 @@
++"""Actual immutable blob/parser and validator methods; no real Git/process calls."""
++import ast,copy,hashlib,pathlib,re,types,unittest
++from test_source_receipt_flow import fixture,extract
++ROOT=pathlib.Path(__file__).resolve().parent
++R3=pathlib.Path('/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r3-_77m0ogi')
++TIP='a'*40
++
++def oid(data):return hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
++def frame(key,data):return key.encode()+b' blob '+str(len(data)).encode()+b'\n'+data+b'\n'
++
++class Timeout(Exception):pass
++
++class FakeGit:
++ def __init__(self):
++  self.data={'a.bin':b'\0binary\nend\xff','b.txt':b'','same.bin':b'\0binary\nend\xff'};self.calls=[];self.mutate=lambda raw:raw;self.exit=0;self.error=None;self.row_mutate=lambda rows:rows
++ def tree(self,revision):
++  self.calls.append(('tree',revision));return self.row_mutate({n:{'kind':'blob','gitMode':'100644','objectId':oid(d)} for n,d in self.data.items()})
++ def command(self,args):
++  assert args==['git','--no-replace-objects','-C','/fake/source','ls-tree','-r','-z','--full-tree',args[-1]]
++  rows=self.tree(args[-1]);return b''.join((row['gitMode']+' '+row['kind']+' '+row['objectId']+'\t'+name).encode()+b'\0' for name,row in rows.items())
++ def run(self,args,**kw):
++  self.calls.append(('batch',args,kw));assert args==['git','--no-replace-objects','-C','/fake/source','cat-file','--batch']
++  assert kw['timeout']==30 and kw['env']=={} and kw['stdout']=='PIPE' and kw['stderr']=='PIPE'
++  if self.error:raise self.error
++  objects={oid(d):d for d in self.data.values()};keys=kw['input'].decode().splitlines();assert len(keys)==len(set(keys))
++  return types.SimpleNamespace(returncode=self.exit,stdout=self.mutate(b''.join(frame(k,objects[k]) for k in keys)),stderr=b'')
++
++def methods(fake):
++ s={'re':re,'pathlib':pathlib,'hashlib':hashlib,'S':pathlib.Path('/fake/source'),'ENV':{},'MAX_FILE':32*1024*1024,'_BLOB_CACHE':{},'_BLOB_CACHE_ENTRIES':1024,'_BLOB_CACHE_BYTES':128*1024*1024,'command':fake.command,'subprocess':types.SimpleNamespace(run=fake.run,PIPE='PIPE')}
++ extract('core.py',{'need','relative','raw_blob_tree','prime_blobs','blob'},s);return s
++
++class BlobBatch(unittest.TestCase):
++ def test_binary_empty_shared_oid_equivalence_and_warm_no_fork(self):
++  f=FakeGit();s=methods(f);s['prime_blobs'](TIP,list(f.data))
++  for name,expected in f.data.items():self.assertEqual(s['blob'](TIP,name),expected)
++  self.assertEqual([x[0] for x in f.calls],['tree','batch']);self.assertEqual(len(s['_BLOB_CACHE']),3)
++  self.assertEqual(s['_BLOB_CACHE'][('/fake/source',TIP,'a.bin')][0],oid(f.data['a.bin']))
++  s['blob']('b'*40,'a.bin');self.assertEqual(len(f.calls),4)
++ def test_failure_atomicity_complete_frame_exit_timeout_and_hash(self):
++  def bad_size(raw):return raw.replace(b' blob 13\n',b' blob 99\n',1) if b' blob 13\n' in raw else raw.replace(b' blob 0\n',b' blob 99\n',1)
++  cases=[lambda r:r[:-1],lambda r:r+b'extra',lambda r:r+r,lambda r:r.replace(b' blob ',b' tree ',1),lambda r:b'f'*40+r[40:],lambda r:r.replace(b' blob 0\n',b' blob 00\n'),lambda r:r.replace(b'binary',b'BINARY'),lambda r:b'bad missing\n',lambda r:r[:r.index(b'\n')+1],bad_size,lambda r:r.replace(b' blob 0\n',b' blob 33554433\n')]
++  for change in cases:
++   with self.subTest(change=cases.index(change)):
++    f=FakeGit();s=methods(f);s['prime_blobs']('c'*40,['b.txt']);before=dict(s['_BLOB_CACHE']);f.mutate=change
++    with self.assertRaises(RuntimeError):s['prime_blobs'](TIP,list(f.data))
++    self.assertEqual(s['_BLOB_CACHE'],before)
++  for exitcode,error in [(2,None),(0,Timeout('fake timeout'))]:
++   f=FakeGit();f.exit=exitcode;f.error=error;s=methods(f)
++   with self.assertRaises((RuntimeError,Timeout)):s['prime_blobs'](TIP,['a.bin'])
++   self.assertEqual(s['_BLOB_CACHE'],{})
++ def test_safe_exact_revision_paths_and_tree_binding(self):
++  for rev,names in [('HEAD',['a.bin']),('a'*39,['a.bin']),(TIP,['../x']),(TIP,['a.bin','a.bin']),(TIP,['absent'])]:
++   s=methods(FakeGit())
++   with self.assertRaises(RuntimeError):s['prime_blobs'](rev,names)
++   self.assertEqual(s['_BLOB_CACHE'],{})
++  for field,value in [('kind','commit'),('gitMode','160000'),('objectId','bad'),('objectId','b'*40)]:
++   f=FakeGit();s=methods(f)
++   def mutate(rows):rows['a.bin'][field]=value;return rows
++   f.row_mutate=mutate
++   # Unknown object in fake transport raises KeyError; real Git emits missing,
++   # covered by the parser negative above. Neither populates the cache.
++   with self.assertRaises((RuntimeError,KeyError)):s['prime_blobs'](TIP,['a.bin'])
++   self.assertEqual(s['_BLOB_CACHE'],{})
++ def test_cache_entry_byte_and_response_bounds_are_atomic(self):
++  for key,value in [('_BLOB_CACHE_ENTRIES',1),('_BLOB_CACHE_BYTES',1),('MAX_FILE',1)]:
++   f=FakeGit();s=methods(f);s[key]=value
++   with self.assertRaises(RuntimeError):s['prime_blobs'](TIP,list(f.data))
++   self.assertEqual(s['_BLOB_CACHE'],{})
++  f=FakeGit();s=methods(f);s['_BLOB_CACHE_BYTES']=1;f.mutate=lambda raw:b'x'*1000
++  with self.assertRaises(RuntimeError):s['prime_blobs'](TIP,['b.txt'])
++  self.assertEqual(s['_BLOB_CACHE'],{})
++ def test_actual_source_validator_live_head_and_dirty_guards_repeat(self):
++  s,v,b,seen=fixture();requests=[];s['prime_blobs']=lambda revision,names:requests.append((revision,tuple(sorted(names))))
++  validate=s['validate_source_review'];ref=b['sourceReview'];out=validate(ref['path'],ref['sha256']);self.assertEqual(out['copyPaths'],list(s['COPY_PATHS']))
++  first=len(seen);validate(ref['path'],ref['sha256']);self.assertGreater(len(seen),first);self.assertEqual(len(requests),10)
++  original_git=s['git'];s['git']=lambda repo,*args:b'0'*40+b'\n' if args==('rev-parse','HEAD') else original_git(repo,*args)
++  with self.assertRaisesRegex(ValueError,'held final checkout'):validate(ref['path'],ref['sha256'])
++  s['git']=original_git;original_file=s['checked_file'];s['checked_file']=lambda root,name:(b'changed',384)
++  with self.assertRaisesRegex(ValueError,'dirty source docs preserved'):validate(ref['path'],ref['sha256'])
++ def test_actual_source_gate_request_equivalence_and_batch_coverage(self):
++  old,current,b,_=fixture();new,v,_,_=fixture();calls_old=[];calls_new=[];primes=[]
++  fn=old['blob'];old['blob']=lambda revision,path:(calls_old.append((revision,path)) or fn(revision,path))
++  fn2=new['blob'];new['blob']=lambda revision,path:(calls_new.append((revision,path)) or fn2(revision,path))
++  new['prime_blobs']=lambda revision,names:primes.extend((revision,n) for n in names)
++  tree=ast.parse((R3/'source_review_gate.py').read_bytes());node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='validate_source_review');exec(compile(ast.Module(body=[node],type_ignores=[]),'original-gate','exec'),old)
++  ref=b['sourceReview'];self.assertEqual(old['validate_source_review'](ref['path'],ref['sha256']),new['validate_source_review'](ref['path'],ref['sha256']))
++  self.assertEqual(calls_old,calls_new)
++  # old preimages are warmed by unchanged history's two new prime calls.
++  missing=set(calls_new)-set(primes);self.assertTrue(all(r in (new['OLD_TOOL_TIP'],new['VIEWER_TIP']) for r,p in missing))
++ def test_raw_tree_complete_path_binding_failure_no_cache(self):
++  for bad in [b'100644 blob '+b'a'*40+b'\ta.bin',b'broken\0',b'100644 blob '+b'a'*40+b'\t../a.bin\0',2*(b'100644 blob '+b'a'*40+b'\ta.bin\0')]:
++   f=FakeGit();s=methods(f);s['command']=lambda args:bad
++   with self.assertRaises((RuntimeError,ValueError)):s['prime_blobs'](TIP,['a.bin'])
++   self.assertEqual(s['_BLOB_CACHE'],{})
++ def test_replace_mapping_cannot_supply_raw_cached_or_new_bytes(self):
++  f=FakeGit();s=methods(f);original=dict(f.data);s['prime_blobs'](TIP,['a.bin'])
++  # Fake replace refs affect ordinary calls only; the actual reader must use
++  # --no-replace-objects for both raw tree binding and blob payload retrieval.
++  raw_command=f.command;raw_run=f.run;ordinary=[]
++  def replacing_command(args):
++   if '--no-replace-objects' not in args:ordinary.append(args);return b'100644 blob '+b'f'*40+b'\ta.bin\0'
++   return raw_command(args)
++  def replacing_run(args,**kw):
++   if '--no-replace-objects' not in args:ordinary.append(args);return types.SimpleNamespace(returncode=0,stdout=frame('f'*40,b'replacement'))
++   return raw_run(args,**kw)
++  s['command']=replacing_command;s['subprocess']=types.SimpleNamespace(run=replacing_run,PIPE='PIPE')
++  self.assertEqual(s['blob'](TIP,'a.bin'),original['a.bin']);s['prime_blobs'](TIP,['b.txt','same.bin'])
++  self.assertEqual(s['blob'](TIP,'same.bin'),original['same.bin']);self.assertEqual(ordinary,[])
++  # Fixed source content pins remain a separate constraint; a substituted
++  # expected payload cannot equal raw bytes merely because replace refs exist.
++  with self.assertRaises(RuntimeError):s['need'](s['blob'](TIP,'a.bin')==b'replacement','fixed content pin mismatch')
++ def test_unchanged_live_gates_and_deadlines_ast(self):
++  for filename,names in [('core.py',{'commit','tree','command','service_set','preserved_gate','health','regular','checked_file','distmap'}),('bindings.py',{'source_map_gate','old_dist_gate','old_service_gate','check_ref','package_guard'})]:
++   def nodes(path):return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(path.read_bytes()).body if isinstance(n,ast.FunctionDef) and n.name in names}
++   self.assertEqual(nodes(ROOT/filename),nodes(R3/filename))
++  for filename in ('deployment.py','known_attempt_quiescence.py','apply-frontend-context.py','restart-signal-frontend.py','build_primitives.py'):
++   self.assertEqual((ROOT/filename).read_bytes(),(R3/filename).read_bytes())
++
++if __name__=='__main__':unittest.main()

@@ -1,0 +1,203 @@
+--- R4-unapproved/CONTRACT.md
++++ R4-fix1/CONTRACT.md
+@@ -57,3 +57,5 @@
+ 
+ ## R4 immutable object read optimization
+ Only full40 revision/path/tree-OID-bound successful Git blob bytes may be cached in-process; no live state/HEAD/tree/receipt/source/dist/service/ownership cache. Strict batch frame/SHA1/EOF/exit and bounded atomic publication; no error fallback. Cache1024 entries/128MiB, blob32MiB, Git30s unchanged, PIPE acceptance bound not hard OS capture limit. Existing60s quiescence,5s global lsof,all21 identities and600s window retain every original check. Fresh R4 manifest/context/review required; old R3C records never replay.
++
++R4-fix1: only the immutable reader uses git --no-replace-objects for BOTH ls-tree and cat-file --batch; other commands/ENV unchanged. Full40/raw path/OID plus verified blob SHA1 defines cache identity. Existing canonical/content/tree pins continue independently and reject disagreement; this local tightening does not promise equivalence for all replace-ref cases. Initial sealed R4 is preserved unapproved/unexecuted.
+--- R4-unapproved/R4-static-verification.json
++++ R4-fix1/R4-static-verification.json
+@@ -35,8 +35,8 @@
+     "test_supervisor_registration.py",
+     "validation_stages.py"
+   ],
+-  "actualTargetedPureMethods": 7,
+-  "actualTargetedPureSeconds": 1.268,
++  "actualTargetedPureMethods": 9,
++  "actualTargetedPureSeconds": 4.61,
+   "actualTargetedPureResult": "PASS-first-run",
+   "oldSuites": "19/3/7 NOT_RERUN; historical fixtures retained, not adapted to new prime_blobs API",
+   "pythonAST": "PASS",
+@@ -57,5 +57,9 @@
+     "quiescenceSeconds": 60,
+     "globalLsofSeconds": 5,
+     "windowMs": 600000
+-  }
++  },
++  "actualInitialR4PureMethods": 7,
++  "actualInitialR4PureSeconds": 1.268,
++  "rawReader": "local --no-replace-objects ls-tree and cat-file --batch only",
++  "priorSelfCheck": "initial7PASS omitted replace semantics; sealed unapproved R4 preserved"
+ }
+--- R4-unapproved/REPORT.md
++++ R4-fix1/REPORT.md
+@@ -1,6 +1,16 @@
+-# R4 immutable Git blob batching — prepared, not executed
++# R4-fix1 raw immutable Git blob batching — prepared, not executed
+ 
+-Package: `/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-yhxh80gk`. New0700 private derivative; payload0600. Independent operations review is required before any execution. No new execution review, deployment decision, window, quiescence receipt, nonce, build, publication or service operation is created by preparation. R3 and all earlier records remain immutable; R3C is retired, not replayable.
++Package: `/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm`. New0700 private derivative; payload0600. Independent operations review is required before any execution. No new execution review, deployment decision, window, quiescence receipt, nonce, build, publication or service operation is created by preparation. R3 and all earlier records remain immutable; R3C is retired, not replayable.
++
++## Pre-execution self-check correction retained
++
++Initial R4 was sealed (manifest1dd51c4ddaba69c48b05305da902078103cc4efb83ca4d8366f4261110dba4f7) but never approved or executed. Root's Git replace/grafts self-check exposed a real mapping assumption: a full40 string alone did not make the ordinary Git ls-tree path mapping immutable, while cache hits skipped that mapping lookup. Blob SHA1 alone did not close this gap. Original package and seven-PASS log remain immutable, and this fresh fix1 is the only candidate handed back now.
++
++The narrow correction makes only this reader's ls-tree and cat-file --batch commands use local `git --no-replace-objects`. Thus the trusted Git binary resolves raw full40 revision→tree path→OID and supplies the original object; cache retains that exact OID with the bytes under repository/full40/path identity. Raw ls-tree response has strict successful command, bounded32MiB byte length, NUL termination, unique/safe path and requested blob/mode/OID checks. Batch still verifies Git SHA1(blob header+payload)==OID and commits no new entry until the entire group passes. No global ENV or existing Git command changes, no new full commit/tree object-chain parser. Grafts concern ancestry; this local raw lookup selects the pinned revision's original tree rather than a replace-ref substitute. Trust in the original Git binary/object store remains explicit, not a claim of adversarial corruption-proofness.
++
++All existing replacement-aware canonical/component tree/content pins still run separately. If substitute metadata/content disagrees with these raw bytes or fixed pins, operation fails closed. This is a local raw-object semantic tightening, not a claim that every replace-ref case has identical behavior to old git-show. No working-tree, symbolic HEAD, mutable tree metadata, receipt or service evidence is cached.
++
++Actual fix1 pure command: `python3 -B -m unittest -v test_blob_batch > blob-batch-raw-fix1-pure-run-1.log 2>&1`. Nine methods PASS in4.610s, once. It includes all seven original focused cases plus actual raw tree parsing completeness/path/duplicate failures and simulated sameTIP replace changes with cold/warm raw reads. Fake transports assert the actual --no-replace-objects argv on both commands; altered ordinary mappings cannot feed raw bytes/cache, and substituted expected content pins reject. Earlier 7PASS was insufficient to establish this omitted replace semantic; its log is retained without rewriting. No forced/fabricated RED and no original19/3/builder7 rerun.
+ 
+ ## Actual failure and bounded diagnosis
+ 
+@@ -10,7 +20,7 @@
+ 
+ ## Minimal three-file delta
+ 
+-- core.py: prime_blobs reads explicit full40hex revision and safe paths, obtains their un-cached ls-tree path/mode/kind/OID bindings, runs one cat-file --batch per missing group, verifies exact ordered OID/blob type/canonical size, complete binary frame, newline, recomputed Git SHA1 object hash, complete EOF/no extra frame, successful exit, byte/entry bounds; only then commits the entire group into an in-process cache. Timeout/nonzero/error/truncated/extra/OID/type/size/hash/path/capacity failure never publishes any new group entries and never falls back or retries. Existing successful entries remain. Distinct paths sharing a blob OID are valid and fetched once; duplicate requested paths are rejected. Cache keys are source-repository path/full revision/safe relative path, values retain the exact tree OID and immutable bytes. No symbolic ref or HEAD is cacheable.
++- core.py: prime_blobs reads explicit full40hex revision and safe paths, obtains their un-cached raw --no-replace-objects ls-tree path/mode/kind/OID bindings, runs one raw --no-replace-objects cat-file --batch per missing group, verifies exact ordered OID/blob type/canonical size, complete binary frame, newline, recomputed Git SHA1 object hash, complete EOF/no extra frame, successful exit, byte/entry bounds; only then commits the entire group into an in-process cache. Timeout/nonzero/error/truncated/extra/OID/type/size/hash/path/capacity failure never publishes any new group entries and never falls back or retries. Existing successful entries remain. Distinct paths sharing a blob OID are valid and fetched once; duplicate requested paths are rejected. Cache keys are source-repository path/full revision/safe relative path, values retain the exact tree OID and immutable bytes. No symbolic ref or HEAD is cacheable.
+ - bindings.py: history prefetches oldtools2 and oldViewer30 only; all original historical receipt/hash/lineage/mode checks still execute.
+ - source_review_gate.py: prefetches the final build/runtime/four-copy closure and exact component comparisons in five groups. The original blob comparisons and fresh HEAD/canonical/source dirty/node checks still execute. Its existing tree read moved earlier within the same invocation; tree data is never cached across invocations.
+ 
+@@ -18,7 +28,7 @@
+ 
+ Cache maxima are1024 path entries/128MiB retained bytes, each blob≤32MiB. Batch acceptance is≤128MiB plus128 bytes per requested unique OID. subprocess.run retains the established PIPE/30s Git-call mechanism: these are strict acceptance/cache bounds, not a claimed OS capture-memory hard limit; as with the old show primitive, PIPE capture occurs before the acceptance length check. No new process supervision or deadline relaxation was added. The trusted local Git/object database immutable-commit assumption remains; cache hits do not re-observe object-database availability or corruption later in the same invocation. They never substitute for live working-tree checks.
+ 
+-## Actual pure validation
++## Historical initial R4 pure validation (superseded by fix1 suite above)
+ 
+ Command, executed once in this package: `python3 -B -m unittest -v test_blob_batch > blob-batch-pure-run-1.log 2>&1`. Seven methods PASS in1.268s; first run passed, so no invented RED. All Git/process APIs are injected fakes. Actual prime_blobs/blob parser methods execute against binary/NUL/empty/shared-OID fixtures, with success/warm-cache and independent full revision keys. Failure cases cover timeout/nonzero, missing/error/duplicate/extra/truncated frames, malformed size/type/OID/hash, path/tree binding, duplicate paths, entry/byte limits and atomic no-new-entry failure. Actual full source-review validator runs against existing immutable receipt fixtures; original/new logical blob requests and result match, and repeated reads plus changed live HEAD/dirty-file guards still reject. AST/byte comparisons confirm original live gates, deployment, quiescence, apply/reload and builder diagnostics unchanged.
+ 
+--- /dev/null
++++ R4-fix1/blob-batch-raw-fix1-pure-run-1.log
+@@ -0,0 +1,14 @@
++test_actual_source_gate_request_equivalence_and_batch_coverage (test_blob_batch.BlobBatch.test_actual_source_gate_request_equivalence_and_batch_coverage) ... ok
++test_actual_source_validator_live_head_and_dirty_guards_repeat (test_blob_batch.BlobBatch.test_actual_source_validator_live_head_and_dirty_guards_repeat) ... ok
++test_binary_empty_shared_oid_equivalence_and_warm_no_fork (test_blob_batch.BlobBatch.test_binary_empty_shared_oid_equivalence_and_warm_no_fork) ... ok
++test_cache_entry_byte_and_response_bounds_are_atomic (test_blob_batch.BlobBatch.test_cache_entry_byte_and_response_bounds_are_atomic) ... ok
++test_failure_atomicity_complete_frame_exit_timeout_and_hash (test_blob_batch.BlobBatch.test_failure_atomicity_complete_frame_exit_timeout_and_hash) ... ok
++test_raw_tree_complete_path_binding_failure_no_cache (test_blob_batch.BlobBatch.test_raw_tree_complete_path_binding_failure_no_cache) ... ok
++test_replace_mapping_cannot_supply_raw_cached_or_new_bytes (test_blob_batch.BlobBatch.test_replace_mapping_cannot_supply_raw_cached_or_new_bytes) ... ok
++test_safe_exact_revision_paths_and_tree_binding (test_blob_batch.BlobBatch.test_safe_exact_revision_paths_and_tree_binding) ... ok
++test_unchanged_live_gates_and_deadlines_ast (test_blob_batch.BlobBatch.test_unchanged_live_gates_and_deadlines_ast) ... ok
++
++----------------------------------------------------------------------
++Ran 9 tests in 4.610s
++
++OK
+--- R4-unapproved/core.py
++++ R4-fix1/core.py
+@@ -94,6 +94,17 @@
+ _BLOB_CACHE_ENTRIES=1024
+ _BLOB_CACHE_BYTES=128*1024*1024
+ 
++def raw_blob_tree(revision):
++ # Only this object reader bypasses replace refs; all live Git gates stay intact.
++ raw=command(['git','--no-replace-objects','-C',str(S),'ls-tree','-r','-z','--full-tree',revision]);out={}
++ need(type(raw) is bytes and len(raw)<=MAX_FILE and (not raw or raw.endswith(b'\0')),'raw tree output bound/termination')
++ for part in raw.split(b'\0'):
++  if not part:continue
++  fields,name=part.split(b'\t',1);mode,kind,oid=fields.decode().split();rel=relative(name.decode())
++  need(rel not in out and mode in ('100644','100755','160000'),'unsupported raw tree entry')
++  out[rel]={'gitMode':mode,'kind':kind,'objectId':oid}
++ return out
++
+ def prime_blobs(revision,rels):
+  need(type(revision) is str and re.fullmatch('[a-f0-9]{40}',revision) is not None,'immutable blob revision required')
+  need(type(rels) in (list,tuple,set) and len(rels)<=_BLOB_CACHE_ENTRIES,'bounded blob path request')
+@@ -101,13 +112,13 @@
+  missing=sorted(n for n in paths if (str(S),revision,n) not in _BLOB_CACHE)
+  if not missing:return
+  need(len(_BLOB_CACHE)+len(missing)<=_BLOB_CACHE_ENTRIES,'blob cache entry bound')
+- entries,_=tree(revision);requests=[]
++ entries=raw_blob_tree(revision);requests=[]
+  for name in missing:
+   row=entries.get(name);need(type(row) is dict and row.get('kind')=='blob' and row.get('gitMode') in ('100644','100755') and type(row.get('objectId')) is str and re.fullmatch('[a-f0-9]{40}',row['objectId']) is not None,'exact tree path/blob binding')
+   requests.append((name,row['objectId']))
+  # Repeated OIDs across distinct paths are legitimate; fetch once, bind each path.
+  oids=list(dict.fromkeys(oid for _,oid in requests));payload=('\n'.join(oids)+'\n').encode()
+- result=subprocess.run(['git','-C',str(S),'cat-file','--batch'],input=payload,env=ENV,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
++ result=subprocess.run(['git','--no-replace-objects','-C',str(S),'cat-file','--batch'],input=payload,env=ENV,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
+  need(result.returncode==0,'Git batch failed')
+  raw=result.stdout;need(type(raw) is bytes and len(raw)<=_BLOB_CACHE_BYTES+len(oids)*128,'Git batch response bound')
+  values={};offset=0;total=0
+--- R4-unapproved/provenance.json
++++ R4-fix1/provenance.json
+@@ -1,6 +1,6 @@
+ {
+   "schemaVersion": 1,
+-  "state": "fresh-r4-immutable-git-blob-batching",
++  "state": "fresh-r4-fix1-raw-object-reader",
+   "references": {
+     "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/bindings.py": {
+       "sha256": "22d381e37ea858ce5cc87cf5c53298eebc687178facc3c55b46f9827b3a90460",
+@@ -261,5 +261,11 @@
+     "test_successor_policy.py",
+     "test_supervisor_registration.py",
+     "validation_stages.py"
+-  ]
++  ],
++  "r4UnapprovedPackage": {
++    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-yhxh80gk/SHA256SUMS.json",
++    "sha256": "1dd51c4ddaba69c48b05305da902078103cc4efb83ca4d8366f4261110dba4f7",
++    "reason": "root pre-execution self-check: replacement-aware revision/path mapping not immutable"
++  },
++  "r4Fix1Scope": "only raw ls-tree/batch reader and focused tests; existing runtime gates unchanged"
+ }
+--- R4-unapproved/test_blob_batch.py
++++ R4-fix1/test_blob_batch.py
+@@ -14,17 +14,20 @@
+  def __init__(self):
+   self.data={'a.bin':b'\0binary\nend\xff','b.txt':b'','same.bin':b'\0binary\nend\xff'};self.calls=[];self.mutate=lambda raw:raw;self.exit=0;self.error=None;self.row_mutate=lambda rows:rows
+  def tree(self,revision):
+-  self.calls.append(('tree',revision));return self.row_mutate({n:{'kind':'blob','gitMode':'100644','objectId':oid(d)} for n,d in self.data.items()}),b''
++  self.calls.append(('tree',revision));return self.row_mutate({n:{'kind':'blob','gitMode':'100644','objectId':oid(d)} for n,d in self.data.items()})
++ def command(self,args):
++  assert args==['git','--no-replace-objects','-C','/fake/source','ls-tree','-r','-z','--full-tree',args[-1]]
++  rows=self.tree(args[-1]);return b''.join((row['gitMode']+' '+row['kind']+' '+row['objectId']+'\t'+name).encode()+b'\0' for name,row in rows.items())
+  def run(self,args,**kw):
+-  self.calls.append(('batch',args,kw));assert args==['git','-C','/fake/source','cat-file','--batch']
++  self.calls.append(('batch',args,kw));assert args==['git','--no-replace-objects','-C','/fake/source','cat-file','--batch']
+   assert kw['timeout']==30 and kw['env']=={} and kw['stdout']=='PIPE' and kw['stderr']=='PIPE'
+   if self.error:raise self.error
+   objects={oid(d):d for d in self.data.values()};keys=kw['input'].decode().splitlines();assert len(keys)==len(set(keys))
+   return types.SimpleNamespace(returncode=self.exit,stdout=self.mutate(b''.join(frame(k,objects[k]) for k in keys)),stderr=b'')
+ 
+ def methods(fake):
+- s={'re':re,'pathlib':pathlib,'hashlib':hashlib,'S':pathlib.Path('/fake/source'),'ENV':{},'MAX_FILE':32*1024*1024,'_BLOB_CACHE':{},'_BLOB_CACHE_ENTRIES':1024,'_BLOB_CACHE_BYTES':128*1024*1024,'tree':fake.tree,'subprocess':types.SimpleNamespace(run=fake.run,PIPE='PIPE')}
+- extract('core.py',{'need','relative','prime_blobs','blob'},s);return s
++ s={'re':re,'pathlib':pathlib,'hashlib':hashlib,'S':pathlib.Path('/fake/source'),'ENV':{},'MAX_FILE':32*1024*1024,'_BLOB_CACHE':{},'_BLOB_CACHE_ENTRIES':1024,'_BLOB_CACHE_BYTES':128*1024*1024,'command':fake.command,'subprocess':types.SimpleNamespace(run=fake.run,PIPE='PIPE')}
++ extract('core.py',{'need','relative','raw_blob_tree','prime_blobs','blob'},s);return s
+ 
+ class BlobBatch(unittest.TestCase):
+  def test_binary_empty_shared_oid_equivalence_and_warm_no_fork(self):
+@@ -84,6 +87,28 @@
+   self.assertEqual(calls_old,calls_new)
+   # old preimages are warmed by unchanged history's two new prime calls.
+   missing=set(calls_new)-set(primes);self.assertTrue(all(r in (new['OLD_TOOL_TIP'],new['VIEWER_TIP']) for r,p in missing))
++ def test_raw_tree_complete_path_binding_failure_no_cache(self):
++  for bad in [b'100644 blob '+b'a'*40+b'\ta.bin',b'broken\0',b'100644 blob '+b'a'*40+b'\t../a.bin\0',2*(b'100644 blob '+b'a'*40+b'\ta.bin\0')]:
++   f=FakeGit();s=methods(f);s['command']=lambda args:bad
++   with self.assertRaises((RuntimeError,ValueError)):s['prime_blobs'](TIP,['a.bin'])
++   self.assertEqual(s['_BLOB_CACHE'],{})
++ def test_replace_mapping_cannot_supply_raw_cached_or_new_bytes(self):
++  f=FakeGit();s=methods(f);original=dict(f.data);s['prime_blobs'](TIP,['a.bin'])
++  # Fake replace refs affect ordinary calls only; the actual reader must use
++  # --no-replace-objects for both raw tree binding and blob payload retrieval.
++  raw_command=f.command;raw_run=f.run;ordinary=[]
++  def replacing_command(args):
++   if '--no-replace-objects' not in args:ordinary.append(args);return b'100644 blob '+b'f'*40+b'\ta.bin\0'
++   return raw_command(args)
++  def replacing_run(args,**kw):
++   if '--no-replace-objects' not in args:ordinary.append(args);return types.SimpleNamespace(returncode=0,stdout=frame('f'*40,b'replacement'))
++   return raw_run(args,**kw)
++  s['command']=replacing_command;s['subprocess']=types.SimpleNamespace(run=replacing_run,PIPE='PIPE')
++  self.assertEqual(s['blob'](TIP,'a.bin'),original['a.bin']);s['prime_blobs'](TIP,['b.txt','same.bin'])
++  self.assertEqual(s['blob'](TIP,'same.bin'),original['same.bin']);self.assertEqual(ordinary,[])
++  # Fixed source content pins remain a separate constraint; a substituted
++  # expected payload cannot equal raw bytes merely because replace refs exist.
++  with self.assertRaises(RuntimeError):s['need'](s['blob'](TIP,'a.bin')==b'replacement','fixed content pin mismatch')
+  def test_unchanged_live_gates_and_deadlines_ast(self):
+   for filename,names in [('core.py',{'commit','tree','command','service_set','preserved_gate','health','regular','checked_file','distmap'}),('bindings.py',{'source_map_gate','old_dist_gate','old_service_gate','check_ref','package_guard'})]:
+    def nodes(path):return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(path.read_bytes()).body if isinstance(n,ast.FunctionDef) and n.name in names}

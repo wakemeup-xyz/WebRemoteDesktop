@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "root-mixed-native-pure-integration",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+  "viewerBuildId": "a3671ba674ad7516",
+  "componentPins": {
+    "host": "dfb15434e79da90b803b763c533836e16c080c71",
+    "signal": "dfb15434e79da90b803b763c533836e16c080c71",
+    "tools": "2822441791b59a021556c7e4eb24715df9d5b277",
+    "viewer": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec"
+  },
+  "checker": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/mixed-native-integration.py",
+    "sha256": "06ccee3f1cfeaa6a41c9d5ddbb3c1e37e581d8e17155d36ff59cad70b1646423"
+  },
+  "independentReview": {
+    "path": "/tmp/wrd-startup-join-r4f1-actual-assets-review-20261019.md",
+    "sha256": "e055f48a0821ba07562fae66f5dd236ed46d50cc278a37eb44c4136b200325d5"
+  },
+  "result": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3B-MIXED-INTEGRATION-RESULT.json",
+    "sha256": "cf484d747f310c4699535a035c68c0dd7b20bf6cf0a0c254cf1a262a8f86155b"
+  },
+  "actualExitCode": 0,
+  "classification": "passed-offline-only"
+}

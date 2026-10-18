@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "state": "fresh-r4-fix1-raw-object-reader",
+  "references": {
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/bindings.py": {
+      "sha256": "22d381e37ea858ce5cc87cf5c53298eebc687178facc3c55b46f9827b3a90460",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/deployment-history.json": {
+      "sha256": "39f9fed12228525408665da86660b9148a4229e3599a98257a8bca5a00f4568b",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/legacy-deployed-reference.json": {
+      "sha256": "eef8320156c7ab9c9a2b0f6dc6a48ec3ed86a475b519f26ccd9c3ae82f760ee6",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/legacy-tool-history.json": {
+      "sha256": "cc9a57bb54c9f3f0b1b68cff2720b8c22679ecab049df59d753d7ae4dc208a20",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/ordinary-continuation-supervisor.py": {
+      "sha256": "611f12745577069aad10f835670ce026e894a395cdc3591d9771dbe0aa791d4d",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/test_supervisor_registration.py": {
+      "sha256": "649b3d8df2e070579125a12512d8e172906a5b98dd480e3e6fa43cf71e69e4f3",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/test_continuation_guards.py": {
+      "sha256": "b0d7a2ae935a8a2b1879d5ac18ac2adf20c01f21477aa16adc1fd37ff3931d81",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/supervisor-registration-pure.log": {
+      "sha256": "630e3df00006279f77340df2b0390e57ec06abcdaa99286633fd27fe6c639637",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/combined-pure-guards-run-1.log": {
+      "sha256": "a5d3e83f2c2932903603d2617844e0b2e0e867e6dc78e1375275ca8e9535c519",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/SHA256SUMS.json": {
+      "sha256": "3983cba582cb5d972149739621cc5cd13f2b6f3f458713d2db4e8e181b73ab7f",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/deployment.py": {
+      "sha256": "94862ed674b778ba1621726a36df779772c89c4d736dc8331729ce18414d8e59",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/freeze-frontend-context.py": {
+      "sha256": "20389b260398eff12008436887d1ec407f7a0909006021b8b4b996354053b152",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/build-frontend-template.py": {
+      "sha256": "2f0abaac1a44a3c893092ddd7e795e550f48abd5c113ef71098d0c764dd090e6",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/build_primitives.py": {
+      "sha256": "7321204786b7449c442360a0287b9846ac1625b69559f6fda7171e8ae357cb9a",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/private-builder-entry.js": {
+      "sha256": "018d74ebfbec66de3c234bf5b5af99dad73a8665862aa443701387e0644e73e2",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/asset_template.py": {
+      "sha256": "3efa7982fcebebcf807d2d4540d162c846330e9f807ee53a00deaeb537e44bf5",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/apply-frontend-context.py": {
+      "sha256": "e64daa7b9cf033fec65355331d805845e574e678d20dcef3ecd1de5082717c70",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/owned_reload.py": {
+      "sha256": "3ac947969760350f8c09ed5cc7b2c069a4f1eca2d152eb69f2cccad9e851320a",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/restart-signal-frontend.py": {
+      "sha256": "fcc9ee1675a12ec2539716143884f90a92b384d8a46a2ae9b428aae3b9f7ee12",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/readiness_records.py": {
+      "sha256": "ce35cf06b063e700fe693301608e63a6de4232fb20d91c6a62472868dce1edc9",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/readiness-frontend.py": {
+      "sha256": "1fdfe193c790408a31d0751c793e3f037c869aa8631b603dd45ed8506f54dc3e",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/known_attempt_quiescence.py": {
+      "sha256": "1f0b272f991f590b7606e45845de5d7c1305820ca4b8a45de66e5d308266ab92",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/continuation_common.py": {
+      "sha256": "15c06b5ab7af482595d9cc4e604e70c25bda84810e825b98bd86e0d4d1b0838d",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/prepare-attempt.py": {
+      "sha256": "42273a90b584f1063042badebf67dde8c3a6c370cfa96fe42f693d142984d5c9",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/prepare-frontend-sequence.py": {
+      "sha256": "41babcc58066ac35007cc277297618b8a61c73fca07780689be059177893141f",
+      "role": "historical derivation only, no execution authority"
+    },
+    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/mixed-native-integration.py": {
+      "sha256": "5d04326be8f94a38f20944a98041a4d743c86af3363a39c44ab7ec58f2e0b5f6",
+      "role": "historical derivation only, no execution authority"
+    }
+  },
+  "finalBinding": {
+    "schemaVersion": 1,
+    "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+    "viewerSourceTIP": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+    "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+    "sourceReview": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-VIEWER-TOOLS-FINAL-SOURCE-REVIEW-fix3.json",
+      "sha256": "dff8d03693e11e14448d838459edd6626105dffb009a9d21dbe4b0e6fd532029"
+    }
+  },
+  "preparationScript": {
+    "path": "/tmp/wrd-successor-adapt-private.py",
+    "sha256": "dc23bacc93adc81c06ae99247a27719390aff4a072770efd88ab63d1d16e9db1",
+    "role": "private file preparation only; not operational"
+  },
+  "limitations": "No operational entrypoint executed; only actual AST definitions with injected fake boundaries ran in the targeted pure tests. No independent review authored by preparer.",
+  "r1Package": {
+    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/SHA256SUMS.json",
+    "sha256": "99cb70a0ebde7226df22a1bc39251d4a119d6e5d04ceecab5994f18c37ee5494"
+  },
+  "r1ActualFailure": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
+    "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
+  },
+  "scopeConstant": "viewer-tools-successor-r1 retained; fresh R4 manifest requires new independent review and new root execution context",
+  "r2Package": {
+    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6/SHA256SUMS.json",
+    "sha256": "a321ec51e966c5ad7ff247e61713100c498d251b27dd02583229b54bc244aa6b"
+  },
+  "r3HistoricalFailures": {
+    "r1FreezeFailure": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
+      "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
+    },
+    "r2BuildFailure": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6/deployment-1a04390f599949ea9bf756f7b3390a36/build-result.json",
+      "sha256": "d6cdeec27ec086f43b97f1f2d79437bf27b203ae6addfb0817f1f0aa1a248c31"
+    },
+    "assessment": {
+      "path": "/tmp/wrd-private-build-observation-failure-assessment-20261019.md",
+      "sha256": "961eb1b80f3b7a3f67144f8a1152d8190b5b0565478269cd3f462eb9a10a1f8a"
+    },
+    "rejectedAssetReview": {
+      "path": "/tmp/wrd-startup-join-r2-actual-assets-review-20261019.md",
+      "sha256": "02933832a6c4885b329ae182aeddcf30745e2de3115c82071c780709465fab6f"
+    }
+  },
+  "r3ChangedRuntimeFiles": [
+    "build_primitives.py",
+    "deployment.py"
+  ],
+  "r3UnchangedInheritedCode": [
+    "apply-frontend-context.py",
+    "asset_template.py",
+    "bindings.py",
+    "build-frontend-template.py",
+    "continuation_common.py",
+    "core.py",
+    "freeze-frontend-context.py",
+    "known_attempt_quiescence.py",
+    "mixed-native-integration.py",
+    "operational_common.py",
+    "ordinary-continuation-supervisor.py",
+    "owned_reload.py",
+    "policy.py",
+    "prepare-attempt.py",
+    "prepare-deployment-quiescence.py",
+    "prepare-frontend-sequence.py",
+    "private-builder-entry.js",
+    "process_observation_diagnostics.py",
+    "qualification_evidence.py",
+    "readiness-frontend.py",
+    "readiness_records.py",
+    "restart-signal-frontend.py",
+    "source_review_gate.py",
+    "test_continuation_guards.py",
+    "test_source_receipt_flow.py",
+    "test_successor_policy.py",
+    "test_supervisor_registration.py",
+    "validation_stages.py"
+  ],
+  "r2HistoricalInheritedCodeByteIdentical": [
+    "apply-frontend-context.py",
+    "asset_template.py",
+    "bindings.py",
+    "build-frontend-template.py",
+    "build_primitives.py",
+    "continuation_common.py",
+    "core.py",
+    "deployment.py",
+    "freeze-frontend-context.py",
+    "known_attempt_quiescence.py",
+    "mixed-native-integration.py",
+    "operational_common.py",
+    "ordinary-continuation-supervisor.py",
+    "owned_reload.py",
+    "policy.py",
+    "prepare-attempt.py",
+    "prepare-deployment-quiescence.py",
+    "prepare-frontend-sequence.py",
+    "private-builder-entry.js",
+    "process_observation_diagnostics.py",
+    "qualification_evidence.py",
+    "readiness-frontend.py",
+    "readiness_records.py",
+    "restart-signal-frontend.py",
+    "source_review_gate.py",
+    "test_continuation_guards.py",
+    "test_successor_policy.py",
+    "test_supervisor_registration.py",
+    "validation_stages.py"
+  ],
+  "r3Package": {
+    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r3-_77m0ogi/SHA256SUMS.json",
+    "sha256": "a60c371799d56cb57016dbe2aab3de2f0e15fea31ea988f71ca3edee759b69f2"
+  },
+  "r4ChangedRuntimeFiles": [
+    "bindings.py",
+    "core.py",
+    "source_review_gate.py"
+  ],
+  "r4HistoricalFailure": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json",
+    "sha256": "532fb0d8fcd27fe4d650f0533894829f6f179e85eeebc7a42899b6abadcf631a"
+  },
+  "r4UnchangedInheritedCode": [
+    "apply-frontend-context.py",
+    "asset_template.py",
+    "build-frontend-template.py",
+    "build_primitives.py",
+    "continuation_common.py",
+    "deployment.py",
+    "freeze-frontend-context.py",
+    "known_attempt_quiescence.py",
+    "mixed-native-integration.py",
+    "operational_common.py",
+    "ordinary-continuation-supervisor.py",
+    "owned_reload.py",
+    "policy.py",
+    "prepare-attempt.py",
+    "prepare-deployment-quiescence.py",
+    "prepare-frontend-sequence.py",
+    "private-builder-entry.js",
+    "process_observation_diagnostics.py",
+    "qualification_evidence.py",
+    "readiness-frontend.py",
+    "readiness_records.py",
+    "restart-signal-frontend.py",
+    "test_builder_diagnostics.py",
+    "test_continuation_guards.py",
+    "test_source_receipt_flow.py",
+    "test_successor_policy.py",
+    "test_supervisor_registration.py",
+    "validation_stages.py"
+  ],
+  "r4UnapprovedPackage": {
+    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-yhxh80gk/SHA256SUMS.json",
+    "sha256": "1dd51c4ddaba69c48b05305da902078103cc4efb83ca4d8366f4261110dba4f7",
+    "reason": "root pre-execution self-check: replacement-aware revision/path mapping not immutable"
+  },
+  "r4Fix1Scope": "only raw ls-tree/batch reader and focused tests; existing runtime gates unchanged"
+}

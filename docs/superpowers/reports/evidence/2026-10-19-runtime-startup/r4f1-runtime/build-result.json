@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "frozenSHA256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
+  "templateDirectory": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/two-time-template-ue2ctc6z",
+  "templateSHA256": "6b88170a18dc68154244dcdb0727217532dbbeb2c05ebc15ed4cb350328e57c9",
+  "children": [
+    {
+      "endpoint": "lower",
+      "result": {
+        "processDiagnostics": {
+          "schemaVersion": 2,
+          "scope": "diagnostic-only",
+          "role": "worker",
+          "events": [],
+          "dropped": 0,
+          "failed": false,
+          "expectedStateExitCounts": {
+            "worker-loop": 1,
+            "cleanup": 28,
+            "result": 2
+          },
+          "gaps": [],
+          "gapsDropped": 0,
+          "overflow": {
+            "events": false,
+            "gaps": false,
+            "contexts": false,
+            "counters": false
+          },
+          "limits": {
+            "events": 32,
+            "gaps": 32,
+            "contextDepth": 8,
+            "counter": 2147483647
+          }
+        },
+        "diagnosticsErrorClass": null,
+        "helperExit": 0,
+        "timedOut": false,
+        "errorClass": null,
+        "cleanupErrorClass": null,
+        "elapsedSeconds": 5.866,
+        "ownership": {
+          "identities": [
+            {
+              "birth": 1792347907.978112,
+              "parent": null,
+              "firstObservedEpoch": 1792347907.9997172,
+              "lastObservedEpoch": 1792347907.999719,
+              "pid": 29792,
+              "status": "exited"
+            },
+            {
+              "birth": 1792347908.685572,
+              "parent": {
+                "pid": 29792,
+                "birth": 1792347907.978112
+              },
+              "firstObservedEpoch": 1792347908.895766,
+              "lastObservedEpoch": 1792347909.9789288,
+              "pid": 29793,
+              "status": "exited"
+            }
+          ],
+          "signals": [],
+          "allRecordedIdentitiesExited": true,
+          "completeProcessTreeExitEstablished": false,
+          "coverage": [
+            "polling-may-miss-fast-orphan",
+            "macos-check-to-signal-race",
+            "no-CDP-no-manager-proxy"
+          ]
+        },
+        "ownershipErrorClass": null,
+        "intervened": false,
+        "unexpectedCoverage": [],
+        "fullProcessTreeExit": "unknown",
+        "classification": "observed-private-build-completed"
+      }
+    },
+    {
+      "endpoint": "upper",
+      "result": {
+        "processDiagnostics": {
+          "schemaVersion": 2,
+          "scope": "diagnostic-only",
+          "role": "worker",
+          "events": [],
+          "dropped": 0,
+          "failed": false,
+          "expectedStateExitCounts": {
+            "worker-loop": 0,
+            "cleanup": 28,
+            "result": 2
+          },
+          "gaps": [],
+          "gapsDropped": 0,
+          "overflow": {
+            "events": false,
+            "gaps": false,
+            "contexts": false,
+            "counters": false
+          },
+          "limits": {
+            "events": 32,
+            "gaps": 32,
+            "contextDepth": 8,
+            "counter": 2147483647
+          }
+        },
+        "diagnosticsErrorClass": null,
+        "helperExit": 0,
+        "timedOut": false,
+        "errorClass": null,
+        "cleanupErrorClass": null,
+        "elapsedSeconds": 5.975,
+        "ownership": {
+          "identities": [
+            {
+              "birth": 1792347931.2301,
+              "parent": null,
+              "firstObservedEpoch": 1792347931.249129,
+              "lastObservedEpoch": 1792347931.24913,
+              "pid": 30163,
+              "status": "exited"
+            },
+            {
+              "birth": 1792347932.149819,
+              "parent": {
+                "pid": 30163,
+                "birth": 1792347931.2301
+              },
+              "firstObservedEpoch": 1792347932.611121,
+              "lastObservedEpoch": 1792347933.6857018,
+              "pid": 30168,
+              "status": "exited"
+            }
+          ],
+          "signals": [],
+          "allRecordedIdentitiesExited": true,
+          "completeProcessTreeExitEstablished": false,
+          "coverage": [
+            "polling-may-miss-fast-orphan",
+            "macos-check-to-signal-race",
+            "no-CDP-no-manager-proxy"
+          ]
+        },
+        "ownershipErrorClass": null,
+        "intervened": false,
+        "unexpectedCoverage": [],
+        "fullProcessTreeExit": "unknown",
+        "classification": "observed-private-build-completed"
+      }
+    }
+  ],
+  "errorClass": null,
+  "classification": "private-two-time-template-frozen",
+  "primaryMutation": false,
+  "fullProcessTreeExit": "unknown"
+}

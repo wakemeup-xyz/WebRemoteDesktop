@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "records": {
+    "r5PackageManifest": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/SHA256SUMS.json",
+      "sha256": "3983cba582cb5d972149739621cc5cd13f2b6f3f458713d2db4e8e181b73ab7f"
+    },
+    "r5ExecutionReview": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/EXECUTION-REVIEW.json",
+      "sha256": "46eb7b02e0d21e1eb953fcb6ce4fce4b46cb3aa1367ab75e35a462a3fda31b49"
+    },
+    "r5Frozen": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/deployment-162d7df633095f8bae0362447412f168/frozen.json",
+      "sha256": "7f200fbc7c1b274fc6f5f211d4342a4109779296be41a3ed37a06ebbd61a134c"
+    },
+    "r5Apply": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/deployment-162d7df633095f8bae0362447412f168/apply-result.json",
+      "sha256": "741e272323d2d157b963a68d8dd67d177749172073fc582d4b3ba2bc9c4518f7"
+    },
+    "r5Reload": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/deployment-162d7df633095f8bae0362447412f168/reload-result.json",
+      "sha256": "aa56b8de1a3894344c6bfcb8e29aa5a2bbc0337bf3a589757a2837ed8ffd0927"
+    },
+    "r5Readiness": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/deployment-162d7df633095f8bae0362447412f168/readiness-result.json",
+      "sha256": "5b7724e6b222c9762ad9040550915efa8d8e4b7807a65204e396e4efac53d124"
+    },
+    "r5Template": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/deployment-162d7df633095f8bae0362447412f168/two-time-template-30yw59h3/template.json",
+      "sha256": "1e6bfc9c4634c3425cc8d3a33dfa3f16d7839f5ec4aa2c5c1615af521ba195b7"
+    },
+    "r5AssetReview": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/R5-ASSET-REVIEW.json",
+      "sha256": "98ff00aa770ab947ee6ef65754982fc2732411f6c914e2793fcc156bc309f056"
+    },
+    "thirdSequence": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/sequence-93750d2ec1ca42f35e838a96e58c6708/sequence.json",
+      "sha256": "66052862619d37de287fe4a3d16c0de39dc984c0bc67399f6213b51134a111c4"
+    },
+    "thirdAttempt": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/sequence-93750d2ec1ca42f35e838a96e58c6708/attempts/ba047879c33f00f14b603780026ba53a/attempt.json",
+      "sha256": "463e596796d007d9f81db2c99a7790f9722f0e3b2d869c11abbcaa8d1cf92775"
+    },
+    "thirdMarker": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/sequence-93750d2ec1ca42f35e838a96e58c6708/attempts/ba047879c33f00f14b603780026ba53a/qualification-started.json",
+      "sha256": "641240f26b4630e092d8484dc32c02bee67b05325208a90489f70d1482d76eec"
+    },
+    "thirdFailure": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/sequence-93750d2ec1ca42f35e838a96e58c6708/attempts/ba047879c33f00f14b603780026ba53a/qualification-result.json",
+      "sha256": "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+    },
+    "thirdRuntimeManifest": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/sequence-93750d2ec1ca42f35e838a96e58c6708/attempts/ba047879c33f00f14b603780026ba53a/runtime-manifest.json",
+      "sha256": "f56f375d2efe31a82e4b69551343de710fed07f4bd467b58bd230adc5ac35df2"
+    }
+  }
+}

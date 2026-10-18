@@ -1,0 +1,8 @@
+test_actual_validator_fix3_ref_flow_accepts (test_source_receipt_flow.SourceReceiptFlow.test_actual_validator_fix3_ref_flow_accepts) ... ok
+test_actual_validator_rejects_canonical_extra_keys (test_source_receipt_flow.SourceReceiptFlow.test_actual_validator_rejects_canonical_extra_keys) ... ok
+test_other_direct_references_keep_strict_shape (test_source_receipt_flow.SourceReceiptFlow.test_other_direct_references_keep_strict_shape) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.636s
+
+OK

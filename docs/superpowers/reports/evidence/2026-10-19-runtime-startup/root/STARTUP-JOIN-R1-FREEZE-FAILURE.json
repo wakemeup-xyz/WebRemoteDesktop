@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "observedAtEpoch": 1792342896.0916858,
+  "kind": "actual-source-freeze-entry-failure",
+  "packageManifestSHA256": "99cb70a0ebde7226df22a1bc39251d4a119d6e5d04ceecab5994f18c37ee5494",
+  "deploymentId": "01976df1bc5646b5ab437b96066a6846",
+  "decision": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-DEPLOYMENT-DECISION.json",
+    "sha256": "190364884c6ca76006183cdec8870ac9792f6fbfac2e2abe1b7243e73c2e86b3"
+  },
+  "entrypoint": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/freeze-frontend-context.py",
+  "sessionId": 29773,
+  "actualExitCode": 1,
+  "timedOut": false,
+  "errorClass": "RuntimeError",
+  "reason": "exact keys required",
+  "actualFailureLocation": "source_review_gate.py:14 → bindings.py check_ref:30 → exact:16",
+  "rootCause": "canonicalPatch ref expected exact path/sha256; root fix2 receipt additionally supplied bytes/gitDiffFlags",
+  "stage": "source_review before decision parsing and deployment mkdir",
+  "deploymentDirectoryExists": false,
+  "buildStarted": false,
+  "sourcePublicationStarted": false,
+  "servicesReloaded": false,
+  "classification": "failed-before-freeze-no-deployment",
+  "traceRetention": "original full tool trace remains in chat tool output; no claimed stderr file hash",
+  "noReplay": true
+}

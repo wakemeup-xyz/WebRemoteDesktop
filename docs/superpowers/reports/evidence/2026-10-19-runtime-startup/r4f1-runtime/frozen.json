@@ -1,0 +1,551 @@
+{
+  "schemaVersion": 1,
+  "deploymentId": "1a71096791fb71844ae08c95c50fb9cc",
+  "packageManifestSHA256": "bcd09baaa0b0936e7424cd0dea5e51fb067503399ca49d3a236e789fc0fa6861",
+  "tip": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+  "productTIP": "dfb15434e79da90b803b763c533836e16c080c71",
+  "sourceReview": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-VIEWER-TOOLS-FINAL-SOURCE-REVIEW-fix3.json",
+    "sha256": "dff8d03693e11e14448d838459edd6626105dffb009a9d21dbe4b0e6fd532029"
+  },
+  "rootDecision": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-DEPLOYMENT-DECISION.json",
+    "sha256": "f1e4b370945108c1861185d51d5ff6bfbe3f09d26516c420bd8327dc49f94720"
+  },
+  "failedHistory": [
+    "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242",
+    "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+    "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+  ],
+  "preMapSHA256": "7f9fd72c9e518ee230e21ef218d776e223dd1bfc2ef19168c3e1aed643fe4a52",
+  "candidateFiles": {
+    "scripts/ordinary_session_recovery.py": {
+      "sha256": "0203396cad0a65871f97604a3dbf275f95331939e4e42bc07e392a248fd85341",
+      "filesystemMode": 384,
+      "oldSha256": "dc4f678d70a11009a16062d48b597294e0360a280165a893da59b9c185322fb4",
+      "oldMode": 384,
+      "gitMode": "100644",
+      "objectId": "81651dcdb650de9a3ad136c53959b768eb10e5da"
+    },
+    "scripts/test_ordinary_session_recovery.py": {
+      "sha256": "8687334287d8810942b5d240cd5eb2ebc0be8bfb010e828e540d15f9b46c1170",
+      "filesystemMode": 384,
+      "oldSha256": "f43025781dc307233cb676d7c1cee6918c690b60d5880910e57f119a54ed3e8c",
+      "oldMode": 384,
+      "gitMode": "100644",
+      "objectId": "b5ea1b059a38542c8519ce89b6eaeb65355514e8"
+    },
+    "web-client/js/webrtc.js": {
+      "sha256": "4fde802193ca0057203a6fdf40a0c9a37ef64626444cb33bcde6bb8f82052924",
+      "filesystemMode": 384,
+      "oldSha256": "3e74b71536ff1bdbe52cc7e0447a887ac4a1e333ab9eb9e574306c62688fcbd9",
+      "oldMode": 384,
+      "gitMode": "100644",
+      "objectId": "467b3be0044d2501847889e680fbe72767c9231b"
+    },
+    "web-client/js/webrtc.test.js": {
+      "sha256": "014419a505c6f2170bb3d91fc3f53e00e31bcb1ad5d86398eb66b0f2200eff8c",
+      "filesystemMode": 384,
+      "oldSha256": "7ca95f42c0be8fe92d1c541e85d0eff1d813defd9a40532bcfed102546935cbd",
+      "oldMode": 384,
+      "gitMode": "100644",
+      "objectId": "e68b0766f978b70fb07d7dc0739efc9510c74bce"
+    }
+  },
+  "buildInputs": {
+    "signal-server/lib/web-assets.js": {
+      "sha256": "c690bbc69ae7baaacf9b15a208889d321079a9137760a76f45bf3c595756b0f4",
+      "filesystemMode": 420
+    },
+    "signal-server/package-lock.json": {
+      "sha256": "db3b956b48838c94f7a117f7a0100ce037aa970f638877aa702f54832fe91f69",
+      "filesystemMode": 420
+    },
+    "signal-server/package.json": {
+      "sha256": "4b1df9dd94ad5fd3d505cce2106fc12cb1b70adb5b71ef618c00128005f1b594",
+      "filesystemMode": 420
+    },
+    "signal-server/scripts/build-web-client.js": {
+      "sha256": "f43e5530802252f9b722a215f041c051440b47d0aee39a002656d1f1247ec60a",
+      "filesystemMode": 420
+    },
+    "signal-server/scripts/web-asset-graph.js": {
+      "sha256": "ea63d49365e4505be7f75dea0447780e943d6e07b4764327fbd977d25634d142",
+      "filesystemMode": 420
+    },
+    "web-client/css/login.css": {
+      "sha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef",
+      "filesystemMode": 420
+    },
+    "web-client/css/login.test.js": {
+      "sha256": "d973e4d623bc3b0315e6d94070fcb7781c19cfe20a1ed5b6c4daed68188fdf76",
+      "filesystemMode": 420
+    },
+    "web-client/css/tokens.css": {
+      "sha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab",
+      "filesystemMode": 420
+    },
+    "web-client/css/viewer-layout.test.js": {
+      "sha256": "8b3bd164d86eb7698893ba1525b755cf2a0fa73661d39f3860e227469b827f45",
+      "filesystemMode": 420
+    },
+    "web-client/css/viewer.css": {
+      "sha256": "9c877506408133c5ecdb7b740b1cf06d89f1c54e2fa159e2e24b567d6a61a9a8",
+      "filesystemMode": 420
+    },
+    "web-client/index.html": {
+      "sha256": "1f17cbd26e50d1e0aceda7c759ee676d3d8591f3b224ef5da8eb4093c55631eb",
+      "filesystemMode": 420
+    },
+    "web-client/js/asset-loader.js": {
+      "sha256": "2618576dff11e9ee90f8750c8edfdcd69ed34b3f7e58e96b48693d9b60799a21",
+      "filesystemMode": 420
+    },
+    "web-client/js/asset-loader.test.js": {
+      "sha256": "2731b7aa31f55f258dd17daff6b7382cc984a98a04a32efa29e3e0c9a747fdd6",
+      "filesystemMode": 420
+    },
+    "web-client/js/auth-start-integration.test.js": {
+      "sha256": "ddd6b34761d99f0516cff9bae19f2ae7dcdb0def87dfb51212551734fd7e8b1c",
+      "filesystemMode": 384
+    },
+    "web-client/js/auth.js": {
+      "sha256": "b7d6a3df146974ac632b5822fd8577597f35b2e4978691387bba3c0ab59d5848",
+      "filesystemMode": 420
+    },
+    "web-client/js/auth.test.js": {
+      "sha256": "42a9a0ecf18a4916fd7f6cbf61880517ea75122f00cb344f4695e9f0623fffa8",
+      "filesystemMode": 420
+    },
+    "web-client/js/bootstrap-controller.js": {
+      "sha256": "dcd7b62ca54361fa9a168cc5d815201ccfd241901288fb053d2e7852b117e9fe",
+      "filesystemMode": 384
+    },
+    "web-client/js/bootstrap-controller.test.js": {
+      "sha256": "3c1354b55ca1bd79b8f44be1eb634b9b9910622bcc9790180027f2c5c16ff4f2",
+      "filesystemMode": 384
+    },
+    "web-client/js/bounded-request.js": {
+      "sha256": "3a589196df9a4dcba909eea1a0f2bcc1f4eba110c566301d491ed8f9ed4d5058",
+      "filesystemMode": 384
+    },
+    "web-client/js/bounded-request.test.js": {
+      "sha256": "672143f72d5463848370088364a0336a71cd2fc227607bf5746e9850a3e2c6ab",
+      "filesystemMode": 384
+    },
+    "web-client/js/chrome-layout.js": {
+      "sha256": "203515d39fa94d9997fa43136bcd39e9578fda098e9e8a7330772a43e0c62c8f",
+      "filesystemMode": 420
+    },
+    "web-client/js/chrome-layout.test.js": {
+      "sha256": "d08e80847035a8a9374acfbf9d146198a1b5f6e1808df5d414a5796344d3774c",
+      "filesystemMode": 420
+    },
+    "web-client/js/datachannel-watchdog.test.js": {
+      "sha256": "abf0fb5c2f1f280feafa48065999fd955183c3e265225370d86a5f3d37893d1f",
+      "filesystemMode": 384
+    },
+    "web-client/js/desktop-session-state-owner.test.js": {
+      "sha256": "58a4027b1e00567f650f34b53cff19b6eaf452e9eca0b358ad32138cb4bc9c8f",
+      "filesystemMode": 420
+    },
+    "web-client/js/desktop-session-state.js": {
+      "sha256": "520e334d276ac5b99b49b277489199cac5b726530666b843a1ca8e44da56f2c1",
+      "filesystemMode": 420
+    },
+    "web-client/js/desktop-session-state.test.js": {
+      "sha256": "9efb5d6319852c8896521cb4718a023b48bdfaab51599382b2bce2f56e9e2226",
+      "filesystemMode": 420
+    },
+    "web-client/js/diagnostic-core.js": {
+      "sha256": "15e579587abe883497e5a74168ad73fe439b6d8923396d56d2f78f9ac69b4100",
+      "filesystemMode": 384
+    },
+    "web-client/js/diagnostic-delivery.test.js": {
+      "sha256": "2a1d44815b25c1cfac55faf4778a488a1cd1709f0b84d4b792f779d1a9426a0c",
+      "filesystemMode": 384
+    },
+    "web-client/js/diagnostic.js": {
+      "sha256": "4e1cba2080664ed024b63f6b3fec3fb40e3e7ff108d1781926e4f7232e98e872",
+      "filesystemMode": 384
+    },
+    "web-client/js/diagnostic.test.js": {
+      "sha256": "680b242295991f6af26dc4b25da6419001d31ffc163f30d84d0df5cdced598c6",
+      "filesystemMode": 384
+    },
+    "web-client/js/input-backpressure.test.js": {
+      "sha256": "ea789a0d0d0963291fb9063ed7fa4281d48b4bc317406cb2daff83620ff3baeb",
+      "filesystemMode": 384
+    },
+    "web-client/js/input-geometry.js": {
+      "sha256": "9ee3d2f53c79cea740757027a7bbe2f870f128c2b48b416bc2d00545dd219b49",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-geometry.test.js": {
+      "sha256": "d14673070df47f966984184325869cfa16157109c61c00b0bb658a5df5c65270",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-recovery.test.js": {
+      "sha256": "3d23b332c5a77fbbfc49cd846247ed1f8af70e59bbcca54d65fdde349b4b1c2c",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-signaling-continuity.test.js": {
+      "sha256": "ca19010bf268014b63827897098ccc11545523e4eaace17b0c55d6c36306f352",
+      "filesystemMode": 384
+    },
+    "web-client/js/input-trace.js": {
+      "sha256": "5fd531d610a4c90c806b706313196ea99f7af09029eb61ae3de077b5b830bc22",
+      "filesystemMode": 420
+    },
+    "web-client/js/input-trace.test.js": {
+      "sha256": "2a93aa0613463969bb24c37ab50b96ba7aea35a706482fe7f645c0b391cae64e",
+      "filesystemMode": 420
+    },
+    "web-client/js/input.js": {
+      "sha256": "7a50a3a86a8013d6da60026be342afb6fd33aef90888f630edbd2b163d366870",
+      "filesystemMode": 384
+    },
+    "web-client/js/input.test.js": {
+      "sha256": "c0644e904f0703b3010d748a0f210fc5f5b1d9b4ae6999c3bc30dcaf5c251c65",
+      "filesystemMode": 384
+    },
+    "web-client/js/keyboard-transport.js": {
+      "sha256": "77e88f60ccc4e3a48f5c0b6f96aa915ae1419342e4cc002d6d7bb4a197906831",
+      "filesystemMode": 420
+    },
+    "web-client/js/keyboard-transport.test.js": {
+      "sha256": "236457bd199361e823667d9bf3158f93e304a7321aecfa021f9b153a48d2017f",
+      "filesystemMode": 420
+    },
+    "web-client/js/latency-monitor.js": {
+      "sha256": "9c24e067f2654604a2d7c1faedec56184e97501793d5c8fc6d1b27ea78178eab",
+      "filesystemMode": 420
+    },
+    "web-client/js/latency-monitor.test.js": {
+      "sha256": "cd7493d9d88b31352b57a527fbfbc40100190f9d4ba3754614c674994786c307",
+      "filesystemMode": 384
+    },
+    "web-client/js/link-quality-controller.js": {
+      "sha256": "74703c9842ab9f077e1a6e0b7c74b849f50d3f3c1ed48d1692400dfd4ae27091",
+      "filesystemMode": 384
+    },
+    "web-client/js/link-quality-controller.test.js": {
+      "sha256": "ff4dfd7181a04b6d27f6bae714e6ca5ff77652b0698526324e6642bf26ef3ce3",
+      "filesystemMode": 384
+    },
+    "web-client/js/login.js": {
+      "sha256": "b74cd0395769efd34075cd44caba4a06f5f844cfabb900b551300f1ab8c185dc",
+      "filesystemMode": 420
+    },
+    "web-client/js/login.test.js": {
+      "sha256": "b16bb0e3b01eacc8e57018ebc21a98b1e6902e4acad9fba23d1370bb8c623fb5",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-controller.js": {
+      "sha256": "b7bad67ac92ff87a986ee057654d4c7cc362378e814b1895672d235238ad792f",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-controller.test.js": {
+      "sha256": "0e49bc37d1e2edef6ae71e40d5f431e269ddf52f4248cfbf22caf43b3f3723e9",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-lifecycle.js": {
+      "sha256": "35f2d23e6c291a9bf0a19a2143c72466e25c5983e7a32b45380c070a1b311b56",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-lifecycle.test.js": {
+      "sha256": "7d385f8237341dbcd5eb54a486f7a89bd25f575c0dcec9393503decb302229d6",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-runtime.js": {
+      "sha256": "94a2a9bbec55e79ad2f078bffa5e433d85065d04f706fe12c94087ede83421ae",
+      "filesystemMode": 420
+    },
+    "web-client/js/media-activity-runtime.test.js": {
+      "sha256": "66540c0e1119ba8eb0d6d7c4fba8d4e8a12276923798d8b5681698c1f999ce05",
+      "filesystemMode": 420
+    },
+    "web-client/js/mobile-text-input.js": {
+      "sha256": "852f7e82e2bee858c9521d579e35af68ba2f1b905b7c531035017443cbb3db61",
+      "filesystemMode": 420
+    },
+    "web-client/js/mobile-text-input.test.js": {
+      "sha256": "a0157e823e78b8ef42d616aad8365d8012812ad0fcf0a2c5d668fcf172eb43e2",
+      "filesystemMode": 420
+    },
+    "web-client/js/presentation-budget.js": {
+      "sha256": "3d49eba6adc89bf784bf1326e7427a5a8aa180ce51fdf00f5963c8f3741a235d",
+      "filesystemMode": 420
+    },
+    "web-client/js/presentation-budget.test.js": {
+      "sha256": "c264cdf497efd8f211cfc7633e33c1fef781f08cc859c397f05c1a604ace5449",
+      "filesystemMode": 420
+    },
+    "web-client/js/remote-keyboard-controller.js": {
+      "sha256": "f8200e3d7468e29e8d641551f3637d680cf0544aa67027840b78552be377b7f1",
+      "filesystemMode": 420
+    },
+    "web-client/js/remote-keyboard-controller.test.js": {
+      "sha256": "34fa0e9cdb79064590261af710c636c1d15a0711c9e980f07ed7c55f8c6efc06",
+      "filesystemMode": 420
+    },
+    "web-client/js/runtime-config.js": {
+      "sha256": "fe14765592344b6225d6c33092416399817bebca70ab28525abd78ebf73af5f2",
+      "filesystemMode": 420
+    },
+    "web-client/js/runtime-config.test.js": {
+      "sha256": "2c378ac7789ab42956443ea5cc771acbd03e6b6bb09b14ceeee0545df5ec4d55",
+      "filesystemMode": 420
+    },
+    "web-client/js/runtime-diagnostic.js": {
+      "sha256": "ef354e6d0d41f88ebded07c63df5754bf448922b78f3186e82fcbe0eda06583a",
+      "filesystemMode": 384
+    },
+    "web-client/js/runtime-diagnostic.test.js": {
+      "sha256": "180efe442ace75b4797b6e98de05f03ffd3d9a79eec18157be3f81823ac7dbac",
+      "filesystemMode": 384
+    },
+    "web-client/js/shell-guard.js": {
+      "sha256": "f4439365d08700ee7118da51d173e79b24fb67b1a1b495b763749c22d070de2b",
+      "filesystemMode": 420
+    },
+    "web-client/js/shell-guard.test.js": {
+      "sha256": "514f6fa0c710a3daa7e0168b1d8e9062a2582b82290d9278a77901108c49e4ea",
+      "filesystemMode": 420
+    },
+    "web-client/js/startup-telemetry.js": {
+      "sha256": "a3ba5abda8603c7a4cbca261744d89cb39bec42109e7efa6620da59ea9d1b391",
+      "filesystemMode": 420
+    },
+    "web-client/js/startup-telemetry.test.js": {
+      "sha256": "a658ba5aeb98fda63e57fe6ca86142f643740df5a5ac76c5fe501a5d1a1d5980",
+      "filesystemMode": 420
+    },
+    "web-client/js/stun-port-search-controller.js": {
+      "sha256": "04d3c58c7f6604918574536f43209b62373500817bda86d14378371ff3a7b87f",
+      "filesystemMode": 420
+    },
+    "web-client/js/stun-port-search-controller.test.js": {
+      "sha256": "77b824452fe5161c90e20168000274fd9692a1bcbc9cce6b3e8f2b5baf2e47e5",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-composer.js": {
+      "sha256": "364e32e61389c378546d18e07cd95ccee47bab2ec45ab12584004e663834d574",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-composer.test.js": {
+      "sha256": "8d6bda31b1adddd551a35bf697e54c9d86d77acafed50b403db6b08c5dbfe2e5",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-echo-controller.js": {
+      "sha256": "97627440511efe0917c780a986693d89dd0b4641914129c3847f7221ecec5c37",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-echo-controller.test.js": {
+      "sha256": "9be6ee29e82f8bb46862599022a16cf70752882608a3b22b89f424275cbf387d",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-input-gate.js": {
+      "sha256": "56da0f24a03b7090c1abf3f44e043c3dc796c75d332ad23c2936cc8aa611dd9d",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-input-gate.test.js": {
+      "sha256": "5a391cefd8652be5169ae1847f00844fef2949ff8cdf277081d6e40538a77077",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-loader.js": {
+      "sha256": "4ee5b820fa35675aed54d1fcbe19ac5caa1030a02d5209fb3169d7a0cda2e71e",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-loader.test.js": {
+      "sha256": "3389c36f566f9e8836911a477a13859ec252afd150ef9a08693d95a5431a3eea",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-session-fsm.js": {
+      "sha256": "d6105b61b6bb5392db6355a97c80fa72e9329d502b282ee8db5c7656b8192d0d",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-session-fsm.test.js": {
+      "sha256": "f9e4e3bdd6b9d74b1e1c111373d792f67ea144d06c90c29a6aa0d54638e54fc3",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-turn-transport.js": {
+      "sha256": "731038d4864759be31d3f015ccc0252f0f8f79beb0a50f3af8575fc88debcee3",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal-turn-transport.test.js": {
+      "sha256": "4d1ba5f5afc364d08a3de86569b87917817c4a199f95497d0d11d5f603a77674",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal.js": {
+      "sha256": "3d9f9a8d92590d02ef4761763992debf14d6e8206ecb7e4231b1c3dc5abe5c0c",
+      "filesystemMode": 420
+    },
+    "web-client/js/terminal.test.js": {
+      "sha256": "03348a4b40fa12f02d36234729701c259c4bb20c7fe92ea1a76fa899852e4846",
+      "filesystemMode": 420
+    },
+    "web-client/js/touch-input-adapter.js": {
+      "sha256": "68d40c52b6e25d589be66bb913f1fe439b2559bf0f7fbce313191b336070692b",
+      "filesystemMode": 420
+    },
+    "web-client/js/touch-input-adapter.test.js": {
+      "sha256": "c0e822466bb11a42526ce195f53790f2177c6908f5d0758c6e64a0f9f4b452b9",
+      "filesystemMode": 420
+    },
+    "web-client/js/turn-selftest.js": {
+      "sha256": "61f9cbc269c0d11ccfd396e5056155ad8e46c2dafbbebe4d7b6773edc51f1d3f",
+      "filesystemMode": 420
+    },
+    "web-client/js/turn-selftest.test.js": {
+      "sha256": "4fc1b4f21298dad751eff2c66fed897c34bad141babe51d40e5e9f6b33a81535",
+      "filesystemMode": 420
+    },
+    "web-client/js/ui.js": {
+      "sha256": "b508f5c2d434b7f5c2158c5d14a49def379cb1bbfcbc57a95d2b9ce29fe9ab85",
+      "filesystemMode": 420
+    },
+    "web-client/js/ui.test.js": {
+      "sha256": "ecda1f9ad356901b61c80a5f912edfacce1cda08c549e113d8970c4a19652e5d",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc-stats.js": {
+      "sha256": "b208f79d5aa8acadbaa3512925a07e106e6d3fe9e1c02c7c7446ac10901b3346",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc-stats.test.js": {
+      "sha256": "6d5dc0c284e76d72cc8d6f1fb415c0dbaa17016e93cf0a931502e02cd40b1c84",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc.frame-trace.test.js": {
+      "sha256": "c416edaead8de2f217f33ad8294051b95a4244bbb89e19fe0cc49a2a87839139",
+      "filesystemMode": 420
+    },
+    "web-client/js/webrtc.js": {
+      "sha256": "4fde802193ca0057203a6fdf40a0c9a37ef64626444cb33bcde6bb8f82052924",
+      "filesystemMode": 384
+    },
+    "web-client/js/webrtc.signaling-fallback.test.js": {
+      "sha256": "0f4c5bd02407cd0b99a2bdaa6f6bf73d066e2ae807d35d9e8cf8e217b7c45d83",
+      "filesystemMode": 384
+    },
+    "web-client/js/webrtc.test.js": {
+      "sha256": "014419a505c6f2170bb3d91fc3f53e00e31bcb1ad5d86398eb66b0f2200eff8c",
+      "filesystemMode": 384
+    },
+    "web-client/viewer.html": {
+      "sha256": "a23b50ba037f68602d3ad0b6a10ca1834a115ed023f01aa65e6aa96b58bdee99",
+      "filesystemMode": 420
+    }
+  },
+  "windowLowerMs": 1792347944120,
+  "windowUpperMs": 1792348534120,
+  "oldDistMap": {
+    "index.html": {
+      "sha256": "a843427813798630f7e96e4e9466df38212e354acac665b5f219a9a2c1f9f897",
+      "filesystemMode": 420,
+      "bytes": 980
+    },
+    "THIRD_PARTY_LICENSES.txt": {
+      "sha256": "22d4385b199a68d9f79a0f0431f1ab32de10f12a5973070c0dcdac47958b973a",
+      "filesystemMode": 420,
+      "bytes": 3556
+    },
+    "asset-manifest.json": {
+      "sha256": "fe7ad813aee4638a66d48bba57266a021666c7f7a5eeca3dc1e9b498ce9abee9",
+      "filesystemMode": 420,
+      "bytes": 1456
+    },
+    "viewer.html": {
+      "sha256": "b62ed5a3c51c244100b3dfd51fc0858a982c59b2953a298d8f5b31139a36a19c",
+      "filesystemMode": 420,
+      "bytes": 27225
+    },
+    "css/login.css": {
+      "sha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef",
+      "filesystemMode": 420,
+      "bytes": 1703
+    },
+    "css/tokens.css": {
+      "sha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab",
+      "filesystemMode": 420,
+      "bytes": 1141
+    },
+    "assets/desktop-core.aa4f7d67b87d81bf.js": {
+      "sha256": "aa4f7d67b87d81bf18370a7918064dd67aa1cc1916ccf135f1f88fe6922cc73e",
+      "filesystemMode": 420,
+      "bytes": 499722
+    },
+    "assets/desktop-core.b673f8050beafdbf.js": {
+      "sha256": "b673f8050beafdbf94367f0fc8a1485447493e0283a1d44b4fb13b51aaa78dfa",
+      "filesystemMode": 420,
+      "bytes": 498905
+    },
+    "assets/desktop-core.6910769b4fc68e56.js": {
+      "sha256": "6910769b4fc68e56f0520c329c6e7a725f363e004e16e5a6eed8c349d9570ed9",
+      "filesystemMode": 420,
+      "bytes": 499705
+    },
+    "assets/viewer.47a1f5e1301264d3.css": {
+      "sha256": "47a1f5e1301264d356e74cfda6a388c1fd5c53660de3a9ba5623bbba7e917499",
+      "filesystemMode": 420,
+      "bytes": 49178
+    },
+    "assets/terminal.854a7c0fb70e8b1a.css": {
+      "sha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6",
+      "filesystemMode": 420,
+      "bytes": 7112
+    },
+    "assets/terminal.4f94c01b7bb6c365.js": {
+      "sha256": "4f94c01b7bb6c365ef2ec10fbefced8b4c7c215d92b16da9cc49edd6f707f2d5",
+      "filesystemMode": 420,
+      "bytes": 555545
+    },
+    "assets/login.a41c71f9960c3ac7.js": {
+      "sha256": "a41c71f9960c3ac76d500aeba8a8646d6bed58219de2f6ae4e0a24fb4011e017",
+      "filesystemMode": 420,
+      "bytes": 4441
+    },
+    "assets/desktop-deferred.f2e69b29163ddf2c.js": {
+      "sha256": "f2e69b29163ddf2c70c0c7daefd4e308f21c2adb12d09da67c876ad20e81f77f",
+      "filesystemMode": 420,
+      "bytes": 28618
+    }
+  },
+  "codeHashes": {
+    "apply-frontend-context.py": "e64daa7b9cf033fec65355331d805845e574e678d20dcef3ecd1de5082717c70",
+    "asset_template.py": "3efa7982fcebebcf807d2d4540d162c846330e9f807ee53a00deaeb537e44bf5",
+    "bindings.py": "01d0891a4122ae797c2ec2192e358d8d52206e138bf4ba85e8ea5c47153bff70",
+    "build-frontend-template.py": "2f0abaac1a44a3c893092ddd7e795e550f48abd5c113ef71098d0c764dd090e6",
+    "build_primitives.py": "1e67304f18ac7d34672e49c82b8a6418568cafa75c10dac4ac7e56e7cd3c8cd1",
+    "continuation_common.py": "d0fe02e028f6c5ba3b27f67628639f99d7c4d835f8eaeaf7ed569bf36870c897",
+    "core.py": "d78804708d6e7da5581ad9288faefb8ed9a785e51084ad3bdac5f63f9f2b12a3",
+    "deployment.py": "13994c6a56a29759e04669eb2c1702013d4026039596e43bc00c14afd6432187",
+    "freeze-frontend-context.py": "1a3d34d0933d22a482074038bc1532d090a05ba2b52f71834cc34133d764ddef",
+    "known_attempt_quiescence.py": "a64687c3a220a8b995e86c44296ccee19923663c64e4e23d8e0a6fbdbd6e38e0",
+    "mixed-native-integration.py": "06ccee3f1cfeaa6a41c9d5ddbb3c1e37e581d8e17155d36ff59cad70b1646423",
+    "operational_common.py": "091099da66914034875a3fffec7899edbcbdf3a8492dd8aef955f6104807f7c6",
+    "ordinary-continuation-supervisor.py": "b485f982befac8e284861af24e6684b006850b67c43847219a5503ec234308df",
+    "owned_reload.py": "3ac947969760350f8c09ed5cc7b2c069a4f1eca2d152eb69f2cccad9e851320a",
+    "policy.py": "9ef6f5e3bc43942199864107cda1c7b6da0bf8bc9770a07387b1fe539a3133d8",
+    "prepare-attempt.py": "5e68568a99ced40c8e105a0bf147cf812017f1ba7e284b934e827d02d037813e",
+    "prepare-deployment-quiescence.py": "09e88dece026bd033066efdbfff5f16003a682fa8ac2d1a1b517e59826b57159",
+    "prepare-frontend-sequence.py": "3004e837a5986730dae43546be2a1275eb37e4943b64ca777e1d57be2d05ffb9",
+    "private-builder-entry.js": "018d74ebfbec66de3c234bf5b5af99dad73a8665862aa443701387e0644e73e2",
+    "process_observation_diagnostics.py": "00bd2366d770b9e65b272acadf54027c77cde48050b12106a2fd79338059f82b",
+    "qualification_evidence.py": "ea398d2260c405a6115808c3c5f3f975974974e62bc6cb88be61c414e0c941b4",
+    "readiness-frontend.py": "1fdfe193c790408a31d0751c793e3f037c869aa8631b603dd45ed8506f54dc3e",
+    "readiness_records.py": "ce35cf06b063e700fe693301608e63a6de4232fb20d91c6a62472868dce1edc9",
+    "restart-signal-frontend.py": "fcc9ee1675a12ec2539716143884f90a92b384d8a46a2ae9b428aae3b9f7ee12",
+    "source_review_gate.py": "a6ee41d85848110a9b69ae0bbafccc023eed577f49686744947b7ac869e3c992",
+    "test_blob_batch.py": "9fd19bdae83ca5a1ae71e676c6558f7382ef7c4ad6bf6ce1bfebc19c77db564c",
+    "test_builder_diagnostics.py": "4c683bb9922fcc2266669e0623611d9bfbcb9037b18d5994271fda73caf55062",
+    "test_continuation_guards.py": "3e63b1a31c52df0138908855a44356df39a9ca349190ed306901ef764c82bb5c",
+    "test_source_receipt_flow.py": "cdb8dfb535311c5ac607d04210709fd5f87b566ef39301f69b4887a477235a8a",
+    "test_successor_policy.py": "3aad185219cd2df18ebfa761463a2a4c781d326efcd7a7b137e085fc39d4e9fa",
+    "test_supervisor_registration.py": "649b3d8df2e070579125a12512d8e172906a5b98dd480e3e6fa43cf71e69e4f3",
+    "validation_stages.py": "2646ce4e70aaf97b2d41a6b289a68403e34de59dbcd76b76c0ef69efc058251c"
+  },
+  "expectedPostCount": 1016
+}

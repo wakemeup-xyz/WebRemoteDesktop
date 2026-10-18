@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "kind": "root-one-scenario-attempt",
+  "sequenceId": "ff601377b608c2c4b1b51e55123e2f20",
+  "attemptId": "f6e5f8e72e4195767164f168bcbe3550",
+  "runNonce": "0acf96f102fcd33e8f17b884a75e93f7",
+  "scenario": "baseline",
+  "mode": "relay",
+  "origin": "https://link.stockhub.wiki",
+  "productTIP": "dfb15434e79da90b803b763c533836e16c080c71",
+  "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+  "priorFailureSHA256": "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9",
+  "failedHistory": [
+    "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242",
+    "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+    "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+  ],
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "previousResult": null
+}

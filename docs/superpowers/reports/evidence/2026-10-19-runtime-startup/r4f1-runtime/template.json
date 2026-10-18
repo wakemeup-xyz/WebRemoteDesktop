@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "kind": "frontend-two-time-template",
+  "tip": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "windowLowerMs": 1792347944120,
+  "windowUpperMs": 1792348534120,
+  "buildId": "a3671ba674ad7516",
+  "assets": {
+    "loginJs": "assets/login.a41c71f9960c3ac7.js",
+    "desktopJs": "assets/desktop-core.23d4e5e6416b1792.js",
+    "viewerCss": "assets/viewer.47a1f5e1301264d3.css",
+    "terminalJs": "assets/terminal.4f94c01b7bb6c365.js",
+    "terminalCss": "assets/terminal.854a7c0fb70e8b1a.css",
+    "desktopDeferredJs": "assets/desktop-deferred.f2e69b29163ddf2c.js"
+  },
+  "retainedReleases": [
+    {
+      "buildId": "bb581651b422e400",
+      "builtAt": 1792336142126,
+      "assets": {
+        "loginJs": "assets/login.a41c71f9960c3ac7.js",
+        "desktopJs": "assets/desktop-core.6910769b4fc68e56.js",
+        "viewerCss": "assets/viewer.47a1f5e1301264d3.css",
+        "terminalJs": "assets/terminal.4f94c01b7bb6c365.js",
+        "terminalCss": "assets/terminal.854a7c0fb70e8b1a.css",
+        "desktopDeferredJs": "assets/desktop-deferred.f2e69b29163ddf2c.js"
+      }
+    },
+    {
+      "buildId": "de4ac13287760f3b",
+      "builtAt": 1792322599160,
+      "assets": {
+        "loginJs": "assets/login.a41c71f9960c3ac7.js",
+        "desktopJs": "assets/desktop-core.aa4f7d67b87d81bf.js",
+        "viewerCss": "assets/viewer.47a1f5e1301264d3.css",
+        "terminalJs": "assets/terminal.4f94c01b7bb6c365.js",
+        "terminalCss": "assets/terminal.854a7c0fb70e8b1a.css",
+        "desktopDeferredJs": "assets/desktop-deferred.f2e69b29163ddf2c.js"
+      }
+    }
+  ],
+  "files": {
+    "THIRD_PARTY_LICENSES.txt": {
+      "templateSha256": "22d4385b199a68d9f79a0f0431f1ab32de10f12a5973070c0dcdac47958b973a",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "22d4385b199a68d9f79a0f0431f1ab32de10f12a5973070c0dcdac47958b973a",
+      "upperByteSha256": "22d4385b199a68d9f79a0f0431f1ab32de10f12a5973070c0dcdac47958b973a"
+    },
+    "asset-manifest.json": {
+      "templateSha256": "29db66ceeed719fd763520a0ef0dc23b2eb3dda7c0cd4396490e29895ba5c78d",
+      "filesystemMode": 420,
+      "timestampTemplate": true,
+      "lowerByteSha256": "e806d7232de1a6fb9d8c0ce6b18a946756cc70c99e1269113ac0fb46da8b697b",
+      "upperByteSha256": "39bc7948529479a8f08865cd020bfab7cc7a661b5456e9cb94770aeb5642a048"
+    },
+    "assets/desktop-core.23d4e5e6416b1792.js": {
+      "templateSha256": "23d4e5e6416b17929c4adfcb79227687831e74455d723a02d1943b18d90bc76e",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "23d4e5e6416b17929c4adfcb79227687831e74455d723a02d1943b18d90bc76e",
+      "upperByteSha256": "23d4e5e6416b17929c4adfcb79227687831e74455d723a02d1943b18d90bc76e"
+    },
+    "assets/desktop-core.6910769b4fc68e56.js": {
+      "templateSha256": "6910769b4fc68e56f0520c329c6e7a725f363e004e16e5a6eed8c349d9570ed9",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "6910769b4fc68e56f0520c329c6e7a725f363e004e16e5a6eed8c349d9570ed9",
+      "upperByteSha256": "6910769b4fc68e56f0520c329c6e7a725f363e004e16e5a6eed8c349d9570ed9"
+    },
+    "assets/desktop-core.aa4f7d67b87d81bf.js": {
+      "templateSha256": "aa4f7d67b87d81bf18370a7918064dd67aa1cc1916ccf135f1f88fe6922cc73e",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "aa4f7d67b87d81bf18370a7918064dd67aa1cc1916ccf135f1f88fe6922cc73e",
+      "upperByteSha256": "aa4f7d67b87d81bf18370a7918064dd67aa1cc1916ccf135f1f88fe6922cc73e"
+    },
+    "assets/desktop-deferred.f2e69b29163ddf2c.js": {
+      "templateSha256": "f2e69b29163ddf2c70c0c7daefd4e308f21c2adb12d09da67c876ad20e81f77f",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "f2e69b29163ddf2c70c0c7daefd4e308f21c2adb12d09da67c876ad20e81f77f",
+      "upperByteSha256": "f2e69b29163ddf2c70c0c7daefd4e308f21c2adb12d09da67c876ad20e81f77f"
+    },
+    "assets/login.a41c71f9960c3ac7.js": {
+      "templateSha256": "a41c71f9960c3ac76d500aeba8a8646d6bed58219de2f6ae4e0a24fb4011e017",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "a41c71f9960c3ac76d500aeba8a8646d6bed58219de2f6ae4e0a24fb4011e017",
+      "upperByteSha256": "a41c71f9960c3ac76d500aeba8a8646d6bed58219de2f6ae4e0a24fb4011e017"
+    },
+    "assets/terminal.4f94c01b7bb6c365.js": {
+      "templateSha256": "4f94c01b7bb6c365ef2ec10fbefced8b4c7c215d92b16da9cc49edd6f707f2d5",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "4f94c01b7bb6c365ef2ec10fbefced8b4c7c215d92b16da9cc49edd6f707f2d5",
+      "upperByteSha256": "4f94c01b7bb6c365ef2ec10fbefced8b4c7c215d92b16da9cc49edd6f707f2d5"
+    },
+    "assets/terminal.854a7c0fb70e8b1a.css": {
+      "templateSha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6",
+      "upperByteSha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6"
+    },
+    "assets/viewer.47a1f5e1301264d3.css": {
+      "templateSha256": "47a1f5e1301264d356e74cfda6a388c1fd5c53660de3a9ba5623bbba7e917499",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "47a1f5e1301264d356e74cfda6a388c1fd5c53660de3a9ba5623bbba7e917499",
+      "upperByteSha256": "47a1f5e1301264d356e74cfda6a388c1fd5c53660de3a9ba5623bbba7e917499"
+    },
+    "css/login.css": {
+      "templateSha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef",
+      "upperByteSha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef"
+    },
+    "css/tokens.css": {
+      "templateSha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab",
+      "filesystemMode": 420,
+      "timestampTemplate": false,
+      "lowerByteSha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab",
+      "upperByteSha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab"
+    },
+    "index.html": {
+      "templateSha256": "a28f70fd2a04acfdcde7e300b4edaa1a19c86dec798adbc25c6cbc24e25b18f0",
+      "filesystemMode": 420,
+      "timestampTemplate": true,
+      "lowerByteSha256": "dbbbbf1949b3085a1f927494c2c916ec9af160ad2fa080826e37aa24d325f177",
+      "upperByteSha256": "f48b67110eea5b45cd93ed6e655b2829d13fe19b981d18c4df2abc92d6ae73c0"
+    },
+    "viewer.html": {
+      "templateSha256": "19931d23341a997fa90c01ddfdc6917944c13587f3b943b2556e54a84394f564",
+      "filesystemMode": 420,
+      "timestampTemplate": true,
+      "lowerByteSha256": "67ce6c99ecc38dc1305dbfa95f55506d72ac1876e9c7ef112f090e767b452346",
+      "upperByteSha256": "7d12683e28caf5fd258025a60b6e7fd265f6d1eac1d90e1b7e353fb2882465ca"
+    }
+  },
+  "installedDependencies": "trusted-existing-installation; directory metadata only",
+  "directoryModes": {
+    ".": 493,
+    "css": 493,
+    "assets": 493
+  },
+  "fileModes": "explicit private child022 predicts files0644/dirs0755; actual startup exact equality required, no fallback",
+  "primaryMutated": false,
+  "startupOrReadiness": "NOT_RUN",
+  "fullProcessTreeExit": "unknown",
+  "frozenSHA256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
+  "codeHashes": {
+    "apply-frontend-context.py": "e64daa7b9cf033fec65355331d805845e574e678d20dcef3ecd1de5082717c70",
+    "asset_template.py": "3efa7982fcebebcf807d2d4540d162c846330e9f807ee53a00deaeb537e44bf5",
+    "bindings.py": "01d0891a4122ae797c2ec2192e358d8d52206e138bf4ba85e8ea5c47153bff70",
+    "build-frontend-template.py": "2f0abaac1a44a3c893092ddd7e795e550f48abd5c113ef71098d0c764dd090e6",
+    "build_primitives.py": "1e67304f18ac7d34672e49c82b8a6418568cafa75c10dac4ac7e56e7cd3c8cd1",
+    "continuation_common.py": "d0fe02e028f6c5ba3b27f67628639f99d7c4d835f8eaeaf7ed569bf36870c897",
+    "core.py": "d78804708d6e7da5581ad9288faefb8ed9a785e51084ad3bdac5f63f9f2b12a3",
+    "deployment.py": "13994c6a56a29759e04669eb2c1702013d4026039596e43bc00c14afd6432187",
+    "freeze-frontend-context.py": "1a3d34d0933d22a482074038bc1532d090a05ba2b52f71834cc34133d764ddef",
+    "known_attempt_quiescence.py": "a64687c3a220a8b995e86c44296ccee19923663c64e4e23d8e0a6fbdbd6e38e0",
+    "mixed-native-integration.py": "06ccee3f1cfeaa6a41c9d5ddbb3c1e37e581d8e17155d36ff59cad70b1646423",
+    "operational_common.py": "091099da66914034875a3fffec7899edbcbdf3a8492dd8aef955f6104807f7c6",
+    "ordinary-continuation-supervisor.py": "b485f982befac8e284861af24e6684b006850b67c43847219a5503ec234308df",
+    "owned_reload.py": "3ac947969760350f8c09ed5cc7b2c069a4f1eca2d152eb69f2cccad9e851320a",
+    "policy.py": "9ef6f5e3bc43942199864107cda1c7b6da0bf8bc9770a07387b1fe539a3133d8",
+    "prepare-attempt.py": "5e68568a99ced40c8e105a0bf147cf812017f1ba7e284b934e827d02d037813e",
+    "prepare-deployment-quiescence.py": "09e88dece026bd033066efdbfff5f16003a682fa8ac2d1a1b517e59826b57159",
+    "prepare-frontend-sequence.py": "3004e837a5986730dae43546be2a1275eb37e4943b64ca777e1d57be2d05ffb9",
+    "private-builder-entry.js": "018d74ebfbec66de3c234bf5b5af99dad73a8665862aa443701387e0644e73e2",
+    "process_observation_diagnostics.py": "00bd2366d770b9e65b272acadf54027c77cde48050b12106a2fd79338059f82b",
+    "qualification_evidence.py": "ea398d2260c405a6115808c3c5f3f975974974e62bc6cb88be61c414e0c941b4",
+    "readiness-frontend.py": "1fdfe193c790408a31d0751c793e3f037c869aa8631b603dd45ed8506f54dc3e",
+    "readiness_records.py": "ce35cf06b063e700fe693301608e63a6de4232fb20d91c6a62472868dce1edc9",
+    "restart-signal-frontend.py": "fcc9ee1675a12ec2539716143884f90a92b384d8a46a2ae9b428aae3b9f7ee12",
+    "source_review_gate.py": "a6ee41d85848110a9b69ae0bbafccc023eed577f49686744947b7ac869e3c992",
+    "test_blob_batch.py": "9fd19bdae83ca5a1ae71e676c6558f7382ef7c4ad6bf6ce1bfebc19c77db564c",
+    "test_builder_diagnostics.py": "4c683bb9922fcc2266669e0623611d9bfbcb9037b18d5994271fda73caf55062",
+    "test_continuation_guards.py": "3e63b1a31c52df0138908855a44356df39a9ca349190ed306901ef764c82bb5c",
+    "test_source_receipt_flow.py": "cdb8dfb535311c5ac607d04210709fd5f87b566ef39301f69b4887a477235a8a",
+    "test_successor_policy.py": "3aad185219cd2df18ebfa761463a2a4c781d326efcd7a7b137e085fc39d4e9fa",
+    "test_supervisor_registration.py": "649b3d8df2e070579125a12512d8e172906a5b98dd480e3e6fa43cf71e69e4f3",
+    "validation_stages.py": "2646ce4e70aaf97b2d41a6b289a68403e34de59dbcd76b76c0ef69efc058251c"
+  }
+}

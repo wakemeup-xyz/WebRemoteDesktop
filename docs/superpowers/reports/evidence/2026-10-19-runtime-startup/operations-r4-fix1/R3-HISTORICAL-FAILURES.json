@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "scope": "historical evidence only; never success or replay authority",
+  "records": {
+    "r1FreezeFailure": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
+      "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
+    },
+    "r2BuildFailure": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6/deployment-1a04390f599949ea9bf756f7b3390a36/build-result.json",
+      "sha256": "d6cdeec27ec086f43b97f1f2d79437bf27b203ae6addfb0817f1f0aa1a248c31"
+    },
+    "assessment": {
+      "path": "/tmp/wrd-private-build-observation-failure-assessment-20261019.md",
+      "sha256": "961eb1b80f3b7a3f67144f8a1152d8190b5b0565478269cd3f462eb9a10a1f8a"
+    },
+    "rejectedAssetReview": {
+      "path": "/tmp/wrd-startup-join-r2-actual-assets-review-20261019.md",
+      "sha256": "02933832a6c4885b329ae182aeddcf30745e2de3115c82071c780709465fab6f"
+    }
+  }
+}

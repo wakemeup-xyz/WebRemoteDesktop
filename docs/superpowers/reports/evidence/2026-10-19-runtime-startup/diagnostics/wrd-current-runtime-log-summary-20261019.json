@@ -1,0 +1,338 @@
+{
+  "schemaVersion": 1,
+  "sampleVersion": {
+    "parser": "bounded-log-tail-summary-v1",
+    "liveSignalPidFromParent": 33747,
+    "liveHostPidFromParent": 36877,
+    "parentStatesNewFefcAnd282ChangesNotLoaded": true,
+    "liveCommitOrSourceHash": null,
+    "noRuntimeProcessQuery": true
+  },
+  "sampledAtUtc": "2026-10-18T18:18:12.944571+00:00",
+  "sampledAtAsiaShanghai": "2026-10-19T02:18:12.944571+08:00",
+  "requestedCutoffUtc": "2026-10-18T17:18:12.944571+00:00",
+  "requestedWindowSeconds": 3600,
+  "readBudget": {
+    "initialAttempt": {
+      "signalTailReads": 1,
+      "signalBytes": 1048576,
+      "signalInode": 31830923,
+      "signalOffset": 2638239,
+      "hostTailReads": 1,
+      "hostBytes": 456941,
+      "hostInode": 46264698,
+      "hostOffset": 0,
+      "sampledAtUtc": "2026-10-18T18:11:34.465739+00:00",
+      "analysisSucceeded": false,
+      "failure": "Execution tool closed stdin after metadata output, causing memory-only process to exit before event parsing; raw tails not retained"
+    },
+    "explicitlyAuthorizedSupplementalMaxTailReadsPerFile": 1,
+    "supplementalActualTailReads": {
+      "signal": 1,
+      "host": 1
+    },
+    "capBytesPerTailRead": 1048576,
+    "automaticRetries": 0
+  },
+  "logs": {
+    "signal": {
+      "path": "/tmp/signal-server.log",
+      "device": 16777220,
+      "inode": 31830923,
+      "capturedFileSize": 3694039,
+      "fileSizeAfterRead": 3694039,
+      "capturedOffset": 2645463,
+      "capturedBytes": 1048576,
+      "firstCompleteLineOffset": 2645468,
+      "completeBytes": 1048571,
+      "droppedInitialPartialLineBytes": 5,
+      "droppedTrailingPartialLineBytes": 0,
+      "completeLineCount": 43357,
+      "openedInodeStable": true,
+      "pathStillSameInode": true,
+      "mtimeNsBefore": 1792347486769323318,
+      "mtimeNsAfter": 1792347486769323318,
+      "shortRead": false,
+      "utf8ReplacementCharacterCount": 0,
+      "summary": {
+        "parser": {
+          "structured_record_count": 0,
+          "plain_header_record_count": 4022,
+          "multiline_json_objects_reconstructed": 0,
+          "json_candidate_decode_failures": 7059,
+          "complete_lines_not_attributed_to_dated_records": 1
+        },
+        "all_dated_record_count": null,
+        "all_dated_first_utc": null,
+        "all_dated_last_utc": null,
+        "in_requested_hour_record_count": null,
+        "actual_first_in_hour_utc": null,
+        "actual_last_in_hour_utc": null,
+        "captured_timestamp_extent_reaches_hour_start": null,
+        "requested_hour_leading_seconds_outside_timestamp_extent": null,
+        "seconds_since_last_logged_record": null,
+        "category_record_counts": {
+          "connection_open": null,
+          "connection_disconnection": null,
+          "connection_retry": null,
+          "connection_failure": null,
+          "control_grace": null,
+          "control_loss_or_block": null,
+          "host_lag": null,
+          "input_processing_error": null,
+          "serious_exception": null,
+          "viewer_diagnostic_received": null,
+          "automatic_maintenance_hint": null
+        },
+        "severity_record_counts": null,
+        "known_event_counts": null,
+        "exception_class_record_counts": null,
+        "allowlisted_top_level_field_counts": {},
+        "host_lag_explicit_metric_names": [],
+        "host_lag_explicit_value_min_ms": null,
+        "host_lag_explicit_value_max_ms": null,
+        "host_lag_last_12_observations": [],
+        "notable_last_24_records": [],
+        "notable_records_summary_truncated": null,
+        "occupancy_observation_count": null,
+        "last_occupancy_observation": null,
+        "continuous_event_delivery_or_full_session_coverage": null,
+        "unique_real_failure_incidents": null
+      },
+      "analysisStatus": "UNKNOWN_EVENT_SCHEMA",
+      "analysisLimitation": "No complete structured root object was decoded from this Signal text format. Date-group counts are unvalidated and must not be treated as events or absence of errors; no additional log read is authorized.",
+      "unvalidatedTimestampGrouping": {
+        "plainHeaderGroups": 4022,
+        "groupsWithinRequestedHour": 179,
+        "allTimestampFirstUtc": "2026-10-17T20:40:09.356000+00:00",
+        "allTimestampLastUtc": "2026-10-18T18:18:06.767000+00:00",
+        "inHourTimestampFirstUtc": "2026-10-18T17:19:05.128000+00:00",
+        "inHourTimestampLastUtc": "2026-10-18T18:18:06.767000+00:00",
+        "warning": "Timestamp token grouping is not reliable event reconstruction and does not prove full-hour event coverage"
+      }
+    },
+    "host": {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "device": 16777220,
+      "inode": 46264698,
+      "capturedFileSize": 650354,
+      "fileSizeAfterRead": 650354,
+      "capturedOffset": 0,
+      "capturedBytes": 650354,
+      "firstCompleteLineOffset": 0,
+      "completeBytes": 650354,
+      "droppedInitialPartialLineBytes": 0,
+      "droppedTrailingPartialLineBytes": 0,
+      "completeLineCount": 256,
+      "openedInodeStable": true,
+      "pathStillSameInode": true,
+      "mtimeNsBefore": 1792347521522855957,
+      "mtimeNsAfter": 1792347521522855957,
+      "shortRead": false,
+      "utf8ReplacementCharacterCount": 0,
+      "summary": {
+        "parser": {
+          "structured_record_count": 256,
+          "plain_header_record_count": 0,
+          "multiline_json_objects_reconstructed": 0,
+          "json_candidate_decode_failures": 0,
+          "complete_lines_not_attributed_to_dated_records": 0
+        },
+        "all_dated_record_count": 256,
+        "all_dated_first_utc": "2026-10-18T17:54:50.702344+00:00",
+        "all_dated_last_utc": "2026-10-18T18:18:41.499315+00:00",
+        "in_requested_hour_record_count": 251,
+        "actual_first_in_hour_utc": "2026-10-18T17:54:50.702344+00:00",
+        "actual_last_in_hour_utc": "2026-10-18T18:18:12.715562+00:00",
+        "captured_timestamp_extent_reaches_hour_start": false,
+        "requested_hour_leading_seconds_outside_timestamp_extent": 2197.758,
+        "seconds_since_last_logged_record": null,
+        "category_record_counts": {
+          "connection_open": 0,
+          "connection_disconnection": 0,
+          "connection_retry": 0,
+          "connection_failure": 0,
+          "control_grace": 0,
+          "control_loss_or_block": 0,
+          "host_lag": 251,
+          "input_processing_error": 0,
+          "serious_exception": 0,
+          "viewer_diagnostic_received": 0,
+          "automatic_maintenance_hint": 0
+        },
+        "severity_record_counts": {
+          "info": 56,
+          "warning": 195
+        },
+        "known_event_counts": {
+          "host_event_loop_lag": 251
+        },
+        "exception_class_record_counts": {},
+        "allowlisted_top_level_field_counts": {
+          "ts": 251,
+          "level": 251,
+          "event": 251,
+          "message": 251
+        },
+        "host_lag_explicit_metric_names": [
+          "lagMs",
+          "maxLagMs"
+        ],
+        "host_lag_explicit_value_min_ms": null,
+        "host_lag_explicit_value_max_ms": null,
+        "host_lag_last_12_observations": [
+          {
+            "timestamp_utc": "2026-10-18T18:17:10.552857+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:15.897884+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:21.704999+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:26.792943+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:32.609816+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:38.130740+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:43.512010+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:49.561413+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:17:55.569357+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:18:01.561411+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:18:07.504693+00:00",
+            "severity": "warning"
+          },
+          {
+            "timestamp_utc": "2026-10-18T18:18:12.715562+00:00",
+            "severity": "warning"
+          }
+        ],
+        "notable_last_24_records": [],
+        "notable_records_summary_truncated": false,
+        "occupancy_observation_count": 0,
+        "last_occupancy_observation": null,
+        "continuous_event_delivery_or_full_session_coverage": null,
+        "unique_real_failure_incidents": null,
+        "last_record_after_anchor_seconds": 28.555,
+        "recordsAfterReferenceInstantExcludedFromHourCounts": 5,
+        "host_lag_value_semantics": "Per-metric numeric summaries unavailable: initial extractor merged direct and rolling values; these incomparable extrema were removed rather than reinterpreted.",
+        "direct_lagMs": {
+          "count": null,
+          "max_ms": null,
+          "first_timestamp_utc": null,
+          "last_timestamp_utc": null,
+          "window_seconds": null,
+          "metric_kind": "direct instantaneous lagMs",
+          "status": "MISSING: distinct field counts/extrema/window were not retained"
+        },
+        "rolling_maxLagMs": {
+          "count": null,
+          "max_ms": null,
+          "first_timestamp_utc": null,
+          "last_timestamp_utc": null,
+          "window_seconds": null,
+          "metric_kind": "rolling maximum maxLagMs",
+          "status": "MISSING: distinct field counts/extrema/window were not retained"
+        },
+        "rolling_p95LagMs": {
+          "count": null,
+          "max_ms": null,
+          "first_timestamp_utc": null,
+          "last_timestamp_utc": null,
+          "window_seconds": null,
+          "metric_kind": "rolling percentile p95LagMs",
+          "status": "MISSING: no valid separately retained per-field sample summary"
+        },
+        "lagMetricExtractionGap": {
+          "mixedDirectAndRollingExtremaWereDiscarded": true,
+          "perRecordMixedMaximaWereDiscarded": true,
+          "rawTailRetained": false,
+          "processAlreadyExited": true,
+          "noReReadAfterExhaustedBudget": true,
+          "rootRecordCountIsNotLagSampleCount": true
+        }
+      },
+      "analysisStatus": "BOUNDED_SUMMARY",
+      "fullHourInputControlExceptionConclusion": null
+    }
+  },
+  "inputToVisibleSixMetrics": {
+    "ackRoundTripMs": null,
+    "hostQueueMs": null,
+    "hostExecutionMs": null,
+    "appliedToFreshFrameMs": null,
+    "browserFramePresentationMs": null,
+    "inputToTrueVisibleEffectMs": null
+  },
+  "method": {
+    "naiveLineCountsNotEvents": true,
+    "jsonObjectReassembly": true,
+    "plainTimestampHeaderAndContinuationGrouping": true,
+    "timestampsWithoutZoneAssumed": "Asia/Shanghai",
+    "onlyRequestedHourDatedRecordsClassified": true,
+    "nestedDiagnosticEntriesNotCountedAsSeparateRuntimeEvents": true,
+    "categoryCountsMayOverlap": true,
+    "reportedAggregateCountersNotSummedAsRawEvents": true,
+    "rawMessagesInputsCoordinatesHostIdsPasswordsPersisted": false,
+    "noHistoricalPrefixScan": true,
+    "onlyTwoSupplementalLogTailReads": true
+  },
+  "actions": {
+    "lsofCalls": 0,
+    "netstatCalls": 0,
+    "globalProcessSamples": 0,
+    "serviceCommands": 0,
+    "externalNetworkRequests": 0,
+    "sourceOrIndexEdits": 0
+  },
+  "completedAtUtc": "2026-10-18T18:18:47.390434+00:00",
+  "samplingTimeCaveat": "Reference instant was chosen before sequential capture/analysis. Host was acquired after Signal parsing; five Host records later than the reference instant were excluded from the requested-hour counts. Their timestamps are not evidence of clock skew. Acquisition itself was bounded to the captured file size; no second read occurred.",
+  "analysisStatus": "PARTIAL: Host bounded summary valid; Signal event schema unknown",
+  "contextAttribution": {
+    "hourEntirelyIdle": null,
+    "lastOccupancy": null,
+    "allActivityAutomaticMaintenance": null,
+    "reason": "No allowed occupancy/actor evidence in the successfully classified Host roots, and Signal root schema could not be validated. Prior zero-viewer snapshots cannot establish this full window idle."
+  },
+  "boundedInterpretation": {
+    "hostSchedulingDelayObserved": "Host emits event-loop-lag records/warnings; separate numeric direct/rolling lag magnitudes were not established by the retained summary",
+    "hostSchedulingDelayPossibleImpact": "Scheduling delay can affect input ACK, reset/rebind and connection timers; warnings make this a plausible risk, but no per-metric delay magnitude, actual user incident or sole cause is proved here.",
+    "hostInputProcessingExceptionsMatched": null,
+    "hostControlGraceMatched": null,
+    "hostConnectionFailureMatched": null,
+    "countsCaveat": "The accepted Host tail contains only host_event_loop_lag root types; this is not evidence that the entire hour, other log files, or any live user session had no input/control/connection error.",
+    "signalConnectionControlFailureCounts": null,
+    "newChangesLoaded": "No according to parent; no runtime/source verification was attempted here",
+    "inputToVisibleProof": "NOT_RUN; six fields remain null"
+  },
+  "finalizedAtUtc": "2026-10-18T18:22:38.878712+00:00",
+  "observabilityGaps": [
+    "Initial tail read consumed budget but process exited before event parsing, leaving metadata only; explicit supplemental budget was required",
+    "Signal text/root format did not match the JSON reconstruction parser, so Signal event categories remain UNKNOWN/null",
+    "Host root event types and levels were retained, but lagMs and rolling maxLagMs were initially merged; distinct direct/rolling count/max/window could not be recovered without another unauthorized read and therefore remain null",
+    "Host tail covers only about23 minutes of the anchored hour; occupancy/actor attribution and six input-to-visible stages are absent"
+  ]
+}
