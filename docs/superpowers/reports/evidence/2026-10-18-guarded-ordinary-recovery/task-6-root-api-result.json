@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node",
+    "--test",
+    "--test-concurrency=1",
+    "signal-server/test/viewer-admission-api.test.js",
+    "signal-server/test/proof-admission.test.js"
+  ],
+  "exitCode": 0,
+  "wallSeconds": 34.53632996487431,
+  "logBytes": 1980,
+  "logSha256": "0df94ccbfc75f23925c19f70f934bff2ad08b930c502d3708850b0dfd7ad3784",
+  "scope": "isolated-existing-ephemeral-loopback-api-not-production"
+}

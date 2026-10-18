@@ -1,0 +1,36 @@
+# Review package: ec163c262d4651d4a440886a943f2a562a6f38bf..HEAD
+
+## Commits
+c10f0aa test(viewer): supply URLSearchParams in browser fixture
+
+## Files changed
+ web-client/js/webrtc.test.js | 1 +
+ 1 file changed, 1 insertion(+)
+
+## Diff
+diff --git a/web-client/js/webrtc.test.js b/web-client/js/webrtc.test.js
+index 014c3b3..c668148 100644
+--- a/web-client/js/webrtc.test.js
++++ b/web-client/js/webrtc.test.js
+@@ -109,20 +109,21 @@ function loadWebRTC(overrides = {}) {
+   };
+   const clearTrackedInterval = (timer) => {
+     timers.intervals.delete(timer);
+     return global.clearInterval(timer);
+   };
+   const context = {
+     console,
+     // Explicit offline configuration response; never use a real network fetch.
+     fetch: async (url) => ({ ok: true, status: 200, json: async () => url.endsWith('/api/auth/viewer-admission') ? { admission: { ticket: 'fixture-ticket' } } : {} }),
+     AbortController,
++    URLSearchParams,
+     setTimeout: trackTimeout,
+     clearTimeout: clearTrackedTimeout,
+     setInterval: trackInterval,
+     clearInterval: clearTrackedInterval,
+     performance: { now: () => 0 },
+     navigator: { platform: 'MacIntel', userAgent: 'node-test' },
+     requestAnimationFrame: (fn) => fn(),
+     getComputedStyle: () => ({ objectFit: 'contain' }),
+     localStorage: {
+       getItem: () => null,
