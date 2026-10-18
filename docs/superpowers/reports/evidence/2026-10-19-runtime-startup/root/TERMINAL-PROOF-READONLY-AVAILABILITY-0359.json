@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "scope": "bounded-availability-readonly",
+  "startedEpoch": 1792353570.004778,
+  "requestConditions": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "proxy": "explicit-direct",
+    "redirects": false,
+    "perRequestTimeoutSeconds": 5
+  },
+  "routes": {
+    "local-health": {
+      "httpStatus": 200,
+      "elapsedMs": 5.086858058348298,
+      "bodyWithin4096": true,
+      "summary": {
+        "status": "ok"
+      }
+    },
+    "local-status": {
+      "httpStatus": 200,
+      "elapsedMs": 4.122958984225988,
+      "bodyWithin4096": true,
+      "summary": {
+        "status": "ok",
+        "hostOnline": true,
+        "viewerCount": 0,
+        "relayViewerCount": 0
+      }
+    },
+    "formal-health": {
+      "httpStatus": 200,
+      "elapsedMs": 1096.6871371492743,
+      "bodyWithin4096": true,
+      "summary": {
+        "status": "ok"
+      }
+    }
+  },
+  "knownIdentities": {
+    "signal": {
+      "pid": 33179,
+      "birthEpoch": 1792348311.587397,
+      "birthAgainEpoch": 1792348311.587397,
+      "independentHandles": true,
+      "expectedBirthMatches": true,
+      "status": "running"
+    },
+    "host": {
+      "pid": 36877,
+      "birthEpoch": 1792322600.528357,
+      "birthAgainEpoch": 1792322600.528357,
+      "independentHandles": true,
+      "expectedBirthMatches": true,
+      "status": "running"
+    },
+    "tunnel": {
+      "pid": 84671,
+      "birthEpoch": 1792151067.803588,
+      "birthAgainEpoch": 1792151067.803588,
+      "independentHandles": true,
+      "expectedBirthMatches": true,
+      "status": "running"
+    },
+    "watcher": {
+      "pid": 897,
+      "birthEpoch": 1790840870.948583,
+      "birthAgainEpoch": 1790840870.948583,
+      "independentHandles": true,
+      "expectedBirthMatches": true,
+      "status": "running"
+    }
+  },
+  "safeUrlFileExists": false,
+  "completedEpoch": 1792353571.105962
+}

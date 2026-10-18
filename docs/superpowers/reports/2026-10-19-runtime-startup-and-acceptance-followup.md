@@ -44,7 +44,7 @@ R4F1源复制结果 `4eb2f339…` 为 source-applied。重载 helper 退出0、1
 
 ## 补充复查：源码边界与公网403
 
-Host lag observer 的六文件有限静态 review 未确认可重复秒级阻塞的确定 bug。首次 Thread.start、producer 侧 redact/JSON/format 和短锁确有同步边界，但耗时未测；资源命令在私有 loop、writer I/O 在锁外。受审源码尚未加载到旧 live Host，因此这些结果不能作为本次6条秒级 lag 的根因。当前源码 percentile 位于 eventLoop.p95，不能据此反填日志顶层 p95LagMs。详情及文件 SHA 已归档。
+Host lag observer 的六文件有限静态 review 未确认可重复秒级阻塞的确定 bug。首次 Thread.start、producer 侧 redact/JSON/format 和短锁确有同步边界，但耗时未测；资源命令在私有 loop、writer I/O 在锁外。后来按已部署 backend dfb15434 的 Git 对象逐文件校对，六文件均与受审 held41 文件字节相同；原“尚未加载”说法撤回。静态边界可关联该版本，但不能证明本次6条秒级 lag 的运行耗时或根因。当前源码 percentile 位于 eventLoop.p95，不能据此反填日志顶层 p95LagMs。详情及文件 SHA 已归档。
 
 03:16:08.419–03:16:10.412 CST 的独立检查取得本地 health/status200，16.791/12.469ms，Host在线、Viewer0/relay0；四个受保护服务身份均匹配原 birth，safe URL 文件不存在。但同一窗口公网健康请求为 HTTPError（首次摘要未保存错误状态码）。03:16:38.228–03:16:40.600 CST 的有界补查确认公网 `/health` 与 `/` 均403、server=cloudflare、响应前缀17字节、约2162/2362ms。此时不能宣布公网可用；server header 不能独自区分边缘策略、客户端请求条件或源站路径。02:56的200不覆盖该新异常，未因403重启或重建任何服务/tunnel。后续精确错误码与请求条件检查单独记录。
 
@@ -55,3 +55,40 @@ Host lag observer 的六文件有限静态 review 未确认可重复秒级阻塞
 Cloudflare [1010官方说明](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/)将其解释为按浏览器签名拒绝访问；[BIC官方说明](https://developers.cloudflare.com/waf/tools/browser-integrity-check/)列出非标准/缺失UA可能被挑战。该通用含义与本轮对照一致，但没有CF规则/源站链日志，不能据此确认本域名的具体配置。今后的诊断应单列HTTP状态、body错误码、请求UA与代理条件，避免将自动探针403计为服务离线；真实浏览器/媒体/输入仍需独立验收。本轮没有关闭或修改任何安全功能。
 
 Task1独立review发现exact ownership五字段schema未严格拒绝额外字段。修正312a163新增严格键集合，实际行为RED后2项定向测试GREEN（0.089秒），独立窄复审确认全部finding已解决、无新Critical/Important。Task1至此通过代码review；Task2集成、全分支review、真实只读check-only及新runtime资格尚未运行。原43项完整fixture结果来自修正前f5b932e，修正后只运行覆盖该差异的2项测试，不伪称整套重跑。
+
+版本边界澄清已单独保存v2（原v1原件不改），附live backend六文件的精确SHA与比对manifest。此次只修正来源判断，没有新增现场采样或阻塞因果结论；不外推为整个worktree或所有运行模块相同。
+
+分析器边界再澄清：已保存的373条Host白名单仅包含lagMs/maxLagMs/sampleCount及有限上下文，没有保留eventLoop嵌套对象。受审源码的percentile是eventLoop.p95；因此“p95LagMs=null”只表示本次分析未观测该精确键，不能推出原日志不含其他percentile字段。由于有界尾读预算已用完，不为补数字重读原日志；下一次获准采样应按已部署schema显式采集eventLoop.p95并标注统计窗口。六项真实输入指标仍独立保持null，不由任何percentile/ACK/帧间隔推算。
+
+## 已加载新版的启动与传输耗时
+
+离线复算上述失败资格中已保存的312行，未新增现场会话。Viewer fefc555/build a3671ba674ad7516，relay↔relay UDP/H.264；浏览器行观测窗口02:37:39.7245–02:42:48.9209 CST。相同performance.now时钟的mark：点击→signal-connected3668.1ms，bootstrap672.1ms，bootstrap-ready→signal2995.3ms，signal→媒体就绪2469.6ms，点击→媒体就绪6137.7ms。旧单次点击→信令4577.8ms，本次少909.7ms，但跨样本没有受控对照，不能称因果改善或P95。
+
+“first-frame”与“active”由markMediaAttemptReady一起写，可来自rVFC、解码进展stats或relay绘制等路径；它们不能唯一证明首次视频回调，更不能证明control grant/input-ready。第一次callbacks-positive行已有12回调，lastFrameAtMs是最新值，精确首次回调继续null。配置/授权/offer/peer-connected没有独立时间戳，serverEvents数组全空；不能将2995.3ms或2469.6ms再拆成未观测的服务阶段。
+
+| 保存字段 | 有数值的行数 | 最小–最大 | 最新值 | 边界 |
+|---|---:|---:|---:|---|
+| transport.rttMs | 304 | 28–161ms | 33ms | WebRTC往返快照，非单程 |
+| candidateRttMs.last | 303 | 28–161ms | 45ms | 5秒滚动窗口最新值 |
+| jitterBufferMs.last | 301 | 4.5–104.3ms | 61.4ms | 5秒滚动窗口最新值 |
+| decodeMs.last | 301 | 1.09863–3.7034ms | 2.43589ms | 5秒滚动窗口最新值 |
+| paintIntervalMs.last | 303 | 16.6–216.7ms | 50ms | 帧呈现间隔，不是输入耗时 |
+| encoderMs.last / relayFrameAckRttMs.last | 各0 | null | null | 有字段、无数值 |
+
+累计接收7467491bytes、解码5111帧、framesDropped0，都是计数器，不能作为速率或packet-loss证明。行数不是独立包/帧/事件数；滚动窗口重叠，不相加、不重建全程P95。本批未保存capture/relay queue/packet loss分段证据，六项输入指标312行全为count0、last/p95=null。网络RTT、解码和帧间隔不能相加推导完整输入到物理显示延迟。真实输入、原生执行、业务/可见效果/物理显示仍NOT_RUN；整体资格仍failed-or-indeterminate。
+
+后续性能定位优先补齐配置/授权/offer/首个实际视频回调/input-ready的独立有界时标及来源，再在合格被动基线之后按已审pacing方案取得线程现场证据；不修改视频质量或用这些被动数值代替输入验收。两份离线分析和精确artifactSHA均已归档。
+
+03:36:24.518–03:36:25.369 CST 的新独立只读状态检查：显式direct/no-proxy、无重定向、浏览器UA；本地health/status200，7.330/6.321ms，Host在线、Viewer0/relay0；公网health200，845.139ms。Signal/Host/tunnel/watcher四个原PID/birth均匹配，safe URL仍不存在。该一次状态检查不构成持续可用或输入验收，且不能抹去默认PythonUA403/1010记录。
+
+## 新验收工具的集成review阻断（未用于实际运行）
+
+Task2代码0589da2完成38项离线测试（15.900秒）后，独立review通过两个仅fake的定向复现确认P2：ProductionIO.observe_known及Task1 proof producer重复读取同一psutil.Process.create_time，实际命中缓存，不能证明第二次birth新鲜；另previous outer result/legacy result与previous attempt/root decision只分组内部绑定scenario，缺少跨组相等及完整prior envelope校验，混合baseline结果与continuity决定可错误准入nextwithin。完整旧链始终标NOT_CLOSED，尚未做真实check-only或新资格；这些问题位于新开发的验收工具，不是当前Viewer控制故障的因果证明。
+
+已在修复前提交spec/plan0b11baa：present观察使用两个独立fresh same-PID public handles、同对象/第二次读取失败保守拒绝、原始rawgap/exception不改；五份previous记录scenario必须等于expected previous，补exactschema/kind/version。32条/32768B/1秒、60秒/5秒以及原场景和画质门槛不变。按Task1fixround2→独立复审→Task2fixround1顺序进行。新cache-faithful测试已对zombie/reused候选及same-handle-return复现实际行为RED，修复/完整GREEN/复审结果尚待后续记录，不能把原测试通过当作当前工具已经可用。
+
+Task1fixround2已提交1498469：present采用独立第二same-PID handle，第二错误保守拒绝。实际cache-faithful RED三个行为失败后，完整受影响文件50项GREEN（1.496秒），独立窄复审Approved，无新Critical/Important；初始absent仍1次resolve、normalpath零额外读取，原异常与rawgap/所有限额保留。此前报告before-fix内容保留为历史，由本轮记录补充。Task2fixround1已开始，仍未真实check-only或运行新资格。
+
+Task2fixround1已提交0a7e6c7，两项实际新增行为RED后完整受影响文件45项GREEN（30.186秒），原38项全部保留。已有schema不变；legacy started的显式scenario与另四份记录严格相等，外层r5-started通过input/decision哈希间接绑定且严格schema/kind/version。独立窄复审尚未完成。03:59:30.005–31.106 CST 的另一次独立只读检查取得本地health/status200、5.087/4.123ms，公网health200、1096.687ms（显式direct浏览器UA），Host在线0/0、四服务独立双handle birth均匹配，safe URL不存在；不构成新资格。
+
+Task2fixround1独立窄复审确认两P2全部解决、无新Critical/Important，无deferred minor；共享legacy marker helper仍保留final source校验。至此两项实现任务完成代码、fixture和逐任务review，当前转入新鲜most-capable全分支review；真实check-only与新资格仍NOT_RUN，不能把逐任务通过视为上线/连接验收。上述全部补充证据已核对归档regular文件、长度与SHA，运行服务未因此重启。

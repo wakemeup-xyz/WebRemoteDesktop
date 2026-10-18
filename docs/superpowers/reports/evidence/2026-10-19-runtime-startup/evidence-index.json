@@ -592,7 +592,87 @@
       "sha256": "a54c8e986a414af2aa5ee2ba29437dfadd014dc3a9541af6179fb6e9bc153307",
       "bytes": 2168,
       "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-fix-1-review.md"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-v2-20261019.md": {
+      "sha256": "f4b3a2f50145e7d7e9c50fb501f95e2d435de409697783b924778621a4f1688e",
+      "bytes": 2666,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-v2-20261019.md"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-v2-20261019.json": {
+      "sha256": "de338544d07a254bd3cb6a49517aee9e1b1fe3f765abc23a2cf98a708b0e365f",
+      "bytes": 9964,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-v2-20261019.json"
+    },
+    "diagnostics/wrd-live-host-source-manifest-20261019.json": {
+      "sha256": "c7a6d8e599ab86e9ff30f6015f06970558dfd225f0144604eceb001123e64a55",
+      "bytes": 1611,
+      "originalPath": "/tmp/wrd-live-host-source-review-20261019-walu85ev/manifest.json"
+    },
+    "diagnostics/wrd-loaded-viewer-startup-evidence-20261019.md": {
+      "sha256": "246d6a349233ee05e1c36cdce3c032b15c387b76c1766cf6f47c50a47f744e6e",
+      "bytes": 4508,
+      "originalPath": "/tmp/wrd-loaded-viewer-startup-evidence-20261019.md"
+    },
+    "diagnostics/wrd-loaded-viewer-startup-evidence-20261019.json": {
+      "sha256": "5a3a6b31d3fbf7fd42ade24dfd27c66b28e83a768461ea2f85548cca1a725256",
+      "bytes": 9652,
+      "originalPath": "/tmp/wrd-loaded-viewer-startup-evidence-20261019.json"
+    },
+    "diagnostics/wrd-loaded-viewer-transport-evidence-20261019.md": {
+      "sha256": "a8fa62a10c853da51d38066ca6b41c8146f806f1e86927c54ae175ecd360a53d",
+      "bytes": 2840,
+      "originalPath": "/tmp/wrd-loaded-viewer-transport-evidence-20261019.md"
+    },
+    "diagnostics/wrd-loaded-viewer-transport-evidence-20261019.json": {
+      "sha256": "02b7b6deaf91f777226a5116960b39ea0ec1113612b7da8bed82a6c9044cbfcb",
+      "bytes": 7328,
+      "originalPath": "/tmp/wrd-loaded-viewer-transport-evidence-20261019.json"
+    },
+    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0336.json": {
+      "sha256": "6151760875c8635c6724a1b8797f5cf05a0851c7b387a01f73c823996279a471",
+      "bytes": 1652,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0336.json"
+    },
+    "terminal-proof-task2/task-2-report-before-fix.md": {
+      "sha256": "a39ff32377a00193621b879ab7f2d427858ea229c3a9eb2643ea35d36ade1c0d",
+      "bytes": 14901,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-report.md"
+    },
+    "terminal-proof-task2/task-2-review.md": {
+      "sha256": "be08cea3e51bb88f0956a2d75d58cbf4fb1636e5cbdbc8c0b6f5ecadae92df82",
+      "bytes": 11595,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-review.md"
+    },
+    "terminal-proof-task1/task-1-report-fix-2.md": {
+      "sha256": "df5efc692caee85287589c29fc71089e5cb991ee14474ee72c06ac483ee02e02",
+      "bytes": 15348,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-report.md"
+    },
+    "terminal-proof-task1/task-1-fix-2-review.md": {
+      "sha256": "d273bb8a25237c9d80b1c569c343ad767e2089d563e364d07ce045dd75d7d277",
+      "bytes": 3356,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-fix-2-review.md"
+    },
+    "terminal-proof-task2/task-2-report-fix-1.md": {
+      "sha256": "e93e620f46c8a9771b787ec1ddae6df70d79321d2b91bdf95627318c05e29a7d",
+      "bytes": 21910,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-report.md"
+    },
+    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0359.json": {
+      "sha256": "c713206ba20183b28b4e7abf57e7775e74ed4f8ddd41c274e590ad00a2391bcf",
+      "bytes": 1966,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0359.json"
+    },
+    "terminal-proof-task2/task-2-fix-1-review.md": {
+      "sha256": "9480760ff1a2002a358d34be10ce458f817d199400a953c2116747b4d26584ca",
+      "bytes": 4111,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-fix-1-review.md"
+    },
+    "terminal-proof-sdd/progress-before-final-review.md": {
+      "sha256": "d97b85062d48bb96a8ddbfa936d7fdc5753a3b74156be3722d92ceedcff852fa",
+      "bytes": 12069,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md"
     }
   },
-  "totalBytes": 1313088
+  "totalBytes": 1438565
 }
