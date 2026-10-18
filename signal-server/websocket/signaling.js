@@ -536,7 +536,7 @@ function setupSignaling(io, options = {}) {
           }
           clearRebind();
           sendGrant(nextId, activeLease);
-          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId });
+          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, leaseEpoch: activeLease.leaseEpoch });
           return;
         }
         clearLegacyRelayCompanion(nextId, { stop: true });
@@ -582,7 +582,18 @@ function setupSignaling(io, options = {}) {
       if (!binding || binding.socket !== socket) return;
       viewerSessionBindings.delete(sessionId);
       socket._wrdViewerSessionTimer = null;
-      removeDesktopViewer(socket, 'viewer-disconnect-timeout');
+      const removed = removeDesktopViewer(socket, 'viewer-disconnect-timeout');
+      // Observation follows the identity-checked authority operation. A sink
+      // failure must not change removal or the reset-only barrier.
+      if (removed) {
+        try {
+          const snapshot = desktopLease.snapshot();
+          emitControlEvent('viewer_disconnect_grace_expired', {
+            viewerId: socket.id, sessionId, reason: 'viewer-disconnect-timeout',
+            leaseEpoch: snapshot.leaseEpoch, state: snapshot.state,
+          });
+        } catch (_error) { /* best effort */ }
+      }
     }, viewerDisconnectGraceMs);
     timer?.unref?.();
     viewerSessionBindings.set(sessionId, { socket, timer });

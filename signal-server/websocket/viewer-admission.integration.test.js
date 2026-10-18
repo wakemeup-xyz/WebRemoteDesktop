@@ -15,6 +15,7 @@ function fixture(options = {}) {
   const lease = new DesktopControlLease({ now: () => now, makeLeaseId: () => require("node:crypto").randomUUID() });
   const io = makeIo();
   setupSignaling(io, { runtimeContext: runtime, desktopControlLease: lease, now: () => now,
+    structuredLogger: options.structuredLogger,
     scheduler: { setInterval: () => ({ unref() {} }), setTimeout(fn, ms) {
       const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer;
     }, clearTimeout(timer) { if (timer) timer.cancelled = true; } } });
@@ -343,3 +344,37 @@ for (const changed of ['old-operation', 'host']) {
     }
   });
 }
+
+for (const throwing of [false, true]) {
+  test(`grace expiry observes resulting epoch after identity-checked removal; logger throws=${throwing}`, () => {
+    const events = [];
+    const h = fixture({ structuredLogger: { info(value) {
+      if (value.event === 'viewer_disconnect_grace_expired') {
+        assert.equal(h.runtime.connections.viewers.has('expiry-owner'), false);
+        events.push(value);
+        if (throwing) throw new Error('fixture logger failure');
+      }
+    } } });
+    const a = h.manual('expiry-owner', 'expiry-session'); h.grant(a); a.disconnect();
+    const timer = h.timers.find(t => t.ms === 8000 && !t.cancelled);
+    assert.equal(timer.ms, 8000); h.advance(8001);
+    assert.doesNotThrow(() => timer.fn());
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0].correlation, { viewerId: 'expiry-owner', browserSessionId: 'expiry-session' });
+    assert.deepEqual(events[0].meta, { reason: 'viewer-disconnect-timeout', leaseEpoch: h.lease.snapshot().leaseEpoch, state: 'REVOKING' });
+    assert.deepEqual([...h.runtime.connections.viewers.keys()], []);
+    timer.fn(); assert.equal(events.length, 1, 'stale callback cannot repeat evidence');
+  });
+}
+test('rebind evidence requires applied Host ACK and contains current epoch; replaced grace callback is silent', () => {
+  const events = []; const h = fixture({ structuredLogger: { info: value => events.push(value) } });
+  const a = h.manual('before', 'same-session'); h.grant(a); const identity = admissionOf(a); a.disconnect();
+  const old = h.timers.find(t => t.ms === 8000 && !t.cancelled);
+  const next = h.viewer('after', 'same-session', identity);
+  old.fn(); assert.equal(events.some(e => e.event === 'viewer_disconnect_grace_expired'), false);
+  assert.equal(events.some(e => e.event === 'viewer_rebind_confirmed'), false);
+  h.host.sent.find(e => e.event === 'viewer-session-rebind').ack(null, { status: 'applied' });
+  const confirmed = events.filter(e => e.event === 'viewer_rebind_confirmed');
+  assert.equal(confirmed.length, 1); assert.equal(confirmed[0].meta.leaseEpoch, h.lease.snapshot().leaseEpoch);
+  assert.equal(next._wrdRebindPending, false);
+});
