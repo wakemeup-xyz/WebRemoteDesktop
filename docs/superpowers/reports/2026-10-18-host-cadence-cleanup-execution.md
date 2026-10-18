@@ -46,7 +46,7 @@ R1独立审查修正Git权限/实际权限混淆与遗漏261项已部署源码�
 
 首个当前Engine事件为WebSocket1006、wasClean=false、transport-close；它比helper preclose早75ms，真实异常关闭先于测试清理。最后好→首坏样本：PC/attempt/media generation/build/relay身份不变，rVFC和decoded各+19、字节+15605，首坏帧龄16.436ms；socket、lease和输入gate关闭。**这是信令中断造成的控制中断，不能宣称频繁失控已经彻底解决。** 初次连接click→bootstrap9.1ms、signal5217.8ms、首帧10410ms，仅一次启动点，不是总体P95。
 
-15:01:15.585 CST检测失败；Signal记录transport close在15:01:15.853，晚于浏览器close开始，不能用该服务端记录确认最初关闭发起方。服务端仅一次ping/pong、最终age19537/18711ms，Node60样本max65ms/P954ms/missed0，实际原因不是ping timeout。浏览器1006不能唯一归因Cloudflare、网络或服务端；当前缺少能区分该网络跳点的证据。
+15:01:15.585 CST检测失败；Signal记录transport close在15:01:15.853，晚于浏览器close开始，不能用该服务端记录确认最初关闭发起方。服务端仅一次ping/pong、最终age19537/18711ms，Node60样本max65ms/P954ms/missed0，实际原因不是ping timeout。浏览器1006不能唯一归因Cloudflare、网络或服务端；当前缺少能区分该网络跳点的证据。进一步只读核对：connector日志止于12:56:05，无故障时段覆盖；watcher15:01:27为HTTP健康/action none，不能证明持久WS正常；窄OS日志没有支持系统进入睡眠导致首次关闭的肯定证据。见新增transport-hop审计。
 
 另定位到发生在断线约8秒后的确定清理竞争：控制transition A已detach旧PC/track并等待关闭，随后zero-viewer-status B再次空清理并推进peer authority。A实际57.565ms返回、owner closed/thread false/join returned/PC closed，但authorityCurrent=false，首个reset ACK可被旧fence压掉；Signal等1秒重试后FREE。**它是可修复的后续恢复延迟，不能解释更早的首次WS关闭。** 后续应以实际交叠行为RED、保留新offer/新peer/Signal身份fence的最小修复处理，不可直接放松authority检查。
 

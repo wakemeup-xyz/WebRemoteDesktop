@@ -17,6 +17,10 @@
     {
       "path": "readiness-docs-review.md",
       "sha256": "e3af13f215191a9224fd8328e11558633b1004abb298e098240985208e0862fb"
+    },
+    {
+      "path": "long-a-transport-hop-audit.md",
+      "sha256": "dc5fe40a17e3d4c50140b031c4909bec61162f841eab8c5d8494271c9a928586"
     }
   ]
 }
