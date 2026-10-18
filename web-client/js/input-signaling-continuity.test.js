@@ -347,6 +347,178 @@ test('old async offer cannot use replacement peer or send under its lease', asyn
 });
 
 
+function ordinaryAfterGraceBridge(t, expectedWarnings = []) {
+  process.env.JWT_SECRET ||= '12345678';
+  process.env.ACCESS_PASSWORD ||= 'test-viewer-password';
+  process.env.HOST_PASSWORD ||= 'test-host-password';
+  const { FakeSocket, makeIo, resetConnections } = require('../../signal-server/websocket/signaling-test-fixture');
+  const { setupSignaling } = require('../../signal-server/websocket/signaling');
+  resetConnections();
+  const h = fixture();
+  const warnings = [];
+  h.context.console = { ...console, warn: (...args) => warnings.push(args) };
+  t.after(() => assert.deepEqual(warnings, expectedWarnings));
+  const io = makeIo(), serverTimers = new Map();
+  let timerId = 0, leaseId = 0;
+  setupSignaling(io, { makeLeaseId: () => `ordinary-lease-${++leaseId}`,
+    scheduler: { setInterval: () => ({ unref() {} }),
+      setTimeout(fn, ms) { const id = ++timerId; serverTimers.set(id, { fn, ms }); return id; },
+      clearTimeout(id) { serverTimers.delete(id); } } });
+  const host = new FakeSocket('ordinary-host', 'host');
+  host.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host);
+  const deliveries = [], admissionRequests = [];
+  const makeClient = (server, auth = server.handshake.auth) => {
+    const handlers = new Map();
+    return { server, auth, id: server.id, connected: true, handlers,
+      on(event, fn) { handlers.set(event, fn); },
+      emit(event, payload) {
+        h.emitted.push({ event, payload });
+        if (event === 'input') h.sent.push({ channel: 'socket', ...payload });
+        this.server.trigger(event, payload);
+      },
+      disconnect() { this.connected = false; this.server.disconnect(); },
+    };
+  };
+  const wire = (server, client) => {
+    const original = server.emit.bind(server);
+    server.emit = (event, payload, ack) => {
+      original(event, payload, ack);
+      deliveries.push(() => client.handlers.get(event)?.(payload));
+      return true;
+    };
+  };
+  const flush = () => { while (deliveries.length) deliveries.shift()(); };
+  const makeServer = id => {
+    const server = new FakeSocket(id, 'viewer');
+    server.handshake.auth.inputProtocolVersion = 2;
+    server.handshake.auth.viewerSessionId = 'ordinary-session-0001';
+    return server;
+  };
+  const first = makeServer('ordinary-first');
+  const initial = makeClient(first);
+  wire(first, initial);
+  const episode = h.WebRTC.beginStartupEpisode();
+  episode.state = 'complete';
+  h.WebRTC.socket = initial;
+  // Initial admission starts FREE; subsequent reconnects retain the real freeze result.
+  h.WebRTC.controlState = { state: 'FREE', controller: false, lease: null, hostOnline: true };
+  h.WebRTC.setupSocketListeners();
+  io.connectManual(first); flush();
+  const transitions = () => host.sent.filter(e => e.event === 'control-transition');
+  const apply = () => {
+    host.trigger('control-transition-ack', { leaseEpoch: transitions().at(-1).data.leaseEpoch, status: 'applied' });
+    flush();
+  };
+  apply();
+  assert.equal(h.WebRTC.hasActiveControl(), true);
+  const admission = { ...h.WebRTC._viewerAdmission };
+  assert.equal(admission.mode, 'resume');
+  assert.ok(admission.generation);
+  h.context.Auth = { getToken: () => first.handshake.auth.token };
+  h.context.fetch = (url) => {
+    admissionRequests.push(url);
+    throw new Error('automatic recovery must not request admission');
+  };
+  initial.connected = false;
+  initial.handlers.get('disconnect')('transport close');
+  first.disconnect();
+  assert.equal(h.WebRTC.controlState.state, 'ACTIVE');
+  assert.equal(h.WebRTC.controlState.controller, false);
+  const grace = [...serverTimers.values()].find(timer => timer.ms === 8000);
+  assert.ok(grace);
+  grace.fn(); apply();
+  assert.equal(transitions().at(-1).data.viewerId, undefined, 'offline grace ends in a reset-only transition');
+  h.emitted.length = 0;
+  const resume = (kind) => {
+    const server = makeServer(`ordinary-${kind}`);
+    let client;
+    if (kind === 'same-object') {
+      client = initial; client.server = server; client.id = server.id; client.connected = true;
+    } else {
+      h.context.io = (_base, options) => makeClient(server, options.auth);
+      h.advance(12000); // Let the actual outage watchdog recreate Socket.IO.
+      client = h.WebRTC.socket;
+      assert.notEqual(client, initial);
+      client.connected = true;
+    }
+    server.handshake.auth.viewerAdmission = { ...client.auth.viewerAdmission };
+    assert.deepEqual(server.handshake.auth.viewerAdmission, admission);
+    wire(server, client);
+    io.connect(server);
+    return { server, client };
+  };
+  return { ...h, initial, host, io, apply, resume, flush, deliveries, transitions, admissionRequests };
+}
+
+for (const kind of ['same-object', 'watchdog-replacement']) {
+  test(`ordinary after-grace ${kind} welcome retains ACTIVE until authoritative FREE and acquires once`, t => {
+    const h = ordinaryAfterGraceBridge(t, kind === 'watchdog-replacement'
+      ? [['[RECOVERY] Recreating signaling socket after %sms reason=%s', 12000, 'signal-disconnected']] : []);
+    const { server } = h.resume(kind);
+    assert.deepEqual(server.sent.slice(0, 2).map(e => e.event), ['connected', 'control-state']);
+    const before = h.sent.length;
+    h.deliveries.shift()(); // Actual welcome precedes the authoritative FREE snapshot.
+    assert.equal(h.WebRTC.controlState.state, 'ACTIVE');
+    assert.equal(h.WebRTC.controlState.controller, false);
+    assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 0);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+    h.flush();
+    const acquires = () => h.emitted.filter(e => e.event === 'control-acquire');
+    assert.equal(acquires().length, 1);
+    assert.equal(acquires()[0].payload.takeover, false);
+    assert.equal(h.admissionRequests.length, 0);
+    assert.equal(h.WebRTC._currentControlAcquireIntent().remaining, 0);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false, 'Host grant/reset barrier still closed');
+    assert.equal(h.sent.length, before, 'no suspended input is replayed');
+    h.apply();
+    assert.equal(h.WebRTC.hasActiveControl(), true);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false, 'new lease needs current attempt media');
+    assert.equal(acquires().length, 1);
+    h.WebRTC.socket.handlers.get('control-state')({ state: 'FREE', controller: false, hostOnline: true });
+    h.WebRTC.socket.handlers.get('control-state')({ state: 'FREE', controller: false, hostOnline: true });
+    assert.equal(acquires().length, 1, 'duplicate FREE cannot replenish the budget');
+  });
+}
+
+for (const cancel of ['release', 'host-offline', 'superseded', 'auth-changed', 'new-start', 'stale-socket']) {
+  test(`ordinary after-grace waiting intent is cancelled by actual ${cancel} lifecycle`, t => {
+    const h = ordinaryAfterGraceBridge(t, [
+      ['[RECOVERY] Recreating signaling socket after %sms reason=%s', 12000, 'signal-disconnected'],
+      ...(cancel === 'superseded' ? [['[VIEWER] superseded', 'single-desktop-viewer', '']] : []),
+    ]);
+    const { client } = h.resume('watchdog-replacement');
+    h.deliveries.shift()();
+    assert.equal(h.WebRTC._currentControlAcquireIntent().waiting, true);
+    if (cancel === 'release') h.WebRTC.releaseControl('manual');
+    if (cancel === 'host-offline') client.handlers.get('host-status')({ online: false });
+    if (cancel === 'superseded') h.WebRTC.handleViewerSuperseded({ reason: 'single-desktop-viewer' });
+    if (cancel === 'auth-changed') h.WebRTC.retireStartupEpisode('auth-changed', { cleanup: true });
+    if (cancel === 'new-start') h.WebRTC.beginStartupEpisode();
+    if (cancel === 'stale-socket') h.WebRTC.createSignalingSocket(true);
+    h.flush();
+    assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 0);
+    assert.equal(h.WebRTC.hasActiveControl(), false);
+    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  });
+}
+
+test('ordinary after-grace occupied ACTIVE remains non-acquiring until authoritative FREE', t => {
+  const h = ordinaryAfterGraceBridge(t);
+  const { client } = h.resume('same-object');
+  h.deliveries.shift()();
+  const intent = h.WebRTC._currentControlAcquireIntent();
+  client.handlers.get('control-state')({ state: 'ACTIVE', controller: false,
+    controllerViewerId: 'occupied-controller', hostOnline: true });
+  assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 0);
+  assert.equal(intent.waiting, true);
+  assert.equal(intent.remaining, 1);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  h.flush();
+  assert.equal(h.emitted.filter(e => e.event === 'control-acquire').length, 1);
+  assert.equal(intent.remaining, 0);
+});
+
 function reconnectBridge() {
   process.env.JWT_SECRET ||= '12345678';
   process.env.ACCESS_PASSWORD ||= 'test-viewer-password';

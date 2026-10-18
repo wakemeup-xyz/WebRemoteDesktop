@@ -2805,6 +2805,11 @@ const WebRTC = {
   quiesceDisconnectedSocket() {
     const socket = this.socket;
     if (!socket || socket.connected) return false;
+    // Retire this socket's watchdog without discarding the elapsed outage budget.
+    if (this._signalRecoveryTimer != null) {
+      clearTimeout(this._signalRecoveryTimer);
+      this._signalRecoveryTimer = null;
+    }
     // Invalidate the old listener closures before disconnecting. Socket.IO may
     // already have a reconnect callback queued; those callbacks must not
     // create a PeerConnection while init() is waiting for fresh config.
@@ -4044,6 +4049,7 @@ const WebRTC = {
     }
     // Automatic paths must not silently steal an existing ACTIVE controller.
     if (this.controlState.state === 'ACTIVE' && !this.controlState.controller && !allowTakeover) {
+      intent.waiting = true;
       return false;
     }
     const requestId = `control-${Date.now()}-${++this._controlRequestId}`;
@@ -6869,9 +6875,12 @@ if (this.tunnelLastObjectUrl) {
     const delay = Math.min(this.SIGNAL_RECOVERY_RETRY_MS, remaining || this.SIGNAL_RECOVERY_RETRY_MS);
     const episode = this._startupEpisode || null;
     const recoverySocket = this.socket;
-    this._signalRecoveryTimer = setTimeout(() => {
-      if (!this.startupAllowed(episode) || this.socket !== recoverySocket) return;
+    const recoveryTimer = setTimeout(() => {
+      // A cancelled callback may already be queued; only its own handle can
+      // retire or act, never a successor socket's freshly armed watchdog.
+      if (this._signalRecoveryTimer !== recoveryTimer) return;
       this._signalRecoveryTimer = null;
+      if (!this.startupAllowed(episode) || this.socket !== recoverySocket) return;
       if (this.manualDisconnect || this._superseded) return;
       if (this.socket?.connected) {
         this.handleSignalingRecoveryConnected();
@@ -6889,6 +6898,7 @@ if (this.tunnelLastObjectUrl) {
       }
       this.scheduleSignalingRecovery(reason);
     }, delay);
+    this._signalRecoveryTimer = recoveryTimer;
     this._signalRecoveryTimer?.unref?.();
     return true;
   },

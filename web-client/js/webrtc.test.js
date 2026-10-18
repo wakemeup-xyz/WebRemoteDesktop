@@ -7657,6 +7657,140 @@ function webRtcDurationFixture() {
   };
 }
 
+function modeSwitchRecoveryFixture({ withEpisode = false } = {}) {
+  const h = webRtcDurationFixture();
+  const { WebRTC, context } = h;
+  const sockets = [], peers = [];
+  let resolveConfig;
+  context.setInterval = () => 1;
+  context.clearInterval = () => {};
+  context.io = (_url, options) => {
+    const handlers = new Map();
+    const socket = { id: `mode-socket-${sockets.length}`, auth: options.auth, connected: false,
+      on(event, fn) { handlers.set(event, fn); }, emit() {},
+      disconnect() { this.connected = false; },
+      trigger(event, data) { return handlers.get(event)?.(data); },
+      io: { opts: options, engine: { readyState: 'opening', transport: { name: 'websocket' } },
+        _readyState: 'closed', reconnection() {} } };
+    sockets.push(socket);
+    return socket;
+  };
+  WebRTC.serverConfig = { turnConfigured: true, turnStatus: 'configured', iceServers: [] };
+  WebRTC.loadServerConfig = () => new Promise(resolve => { resolveConfig = resolve; });
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.bindControlLifecycle = () => {};
+  WebRTC.createPeerConnection = () => {
+    const peer = { connectionState: 'new', close() {} };
+    WebRTC.pc = peer; peers.push(peer);
+  };
+  if (withEpisode) {
+    const episode = WebRTC.beginStartupEpisode();
+    episode.state = 'complete';
+  }
+  const a = WebRTC.createSignalingSocket();
+  WebRTC.scheduleSignalingRecovery();
+  const oldTimer = WebRTC._signalRecoveryTimer;
+  const queuedA = h.timers.get(oldTimer).fn;
+  WebRTC.setNetworkMode('stun');
+  assert.equal(WebRTC.socket, null);
+  assert.equal(typeof resolveConfig, 'function');
+  return { ...h, sockets, peers, a, oldTimer, queuedA,
+    async finishConfig() {
+      resolveConfig();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      assert.equal(sockets.length, 2);
+      return sockets[1];
+    } };
+}
+
+for (const ordering of ['expiry-during-config', 'error-before-expiry', 'error-after-expiry', 'queued-A-after-B-timer']) {
+  test(`mode-switch watchdog ownership: ${ordering} recreates current socket at original max wait`, async t => {
+    const h = modeSwitchRecoveryFixture(), { WebRTC } = h;
+    const expected = [['[RECOVERY] Signaling connect error:', 'timeout'],
+      ['[RECOVERY] Recreating signaling socket after %sms reason=%s', 12000, 'signal-connect-error']];
+    captureExpectedSignalingWarnings(t, h.context, expected);
+    const oldOrigin = WebRTC._signalRecoveryStartedAt;
+    if (ordering === 'expiry-during-config' || ordering === 'error-after-expiry') {
+      h.advanceTo(1500);
+      h.queuedA();
+    } else h.advanceTo(500);
+    assert.equal(h.peers.length, 0);
+    h.a.connected = true;
+    await h.a.trigger('connect');
+    assert.equal(h.peers.length, 0, 'old connect cannot create a peer during config');
+    h.a.connected = false;
+    if (ordering === 'error-after-expiry') h.advanceTo(2000);
+    const b = await h.finishConfig();
+    assert.equal(h.peers.length, 1);
+    b.trigger('connect_error', { message: 'timeout' });
+    const timerB = WebRTC._signalRecoveryTimer;
+    if (ordering === 'queued-A-after-B-timer') {
+      h.advanceTo(1500);
+      h.queuedA(); // Cancellation cannot remove an already queued callback.
+      assert.equal(WebRTC._signalRecoveryTimer, timerB);
+      assert.equal(WebRTC.socket, b);
+      assert.equal(h.sockets.length, 2);
+    }
+    assert.equal(WebRTC._signalRecoveryStartedAt, oldOrigin, 'quiesce/error retain elapsed budget');
+    assert.equal(WebRTC._signalRecoveryPending, true);
+    h.advanceTo(11999);
+    assert.equal(h.sockets.length, 2);
+    h.advanceTo(12000);
+    assert.equal(h.sockets.length, 3, 'current socket watchdog must recreate at unchanged maximum wait');
+    assert.notEqual(WebRTC.socket, b);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 12000);
+  });
+}
+
+for (const outcome of ['connect', 'manual-disconnect', 'superseded', 'retired-episode']) {
+  test(`mode-switch watchdog ownership: ${outcome} cancels current recovery and fences queued timers`, async t => {
+    const h = modeSwitchRecoveryFixture({ withEpisode: outcome === 'retired-episode' }), { WebRTC } = h;
+    captureExpectedSignalingWarnings(t, h.context, [
+      ['[RECOVERY] Signaling connect error:', 'timeout'],
+      ...(outcome === 'superseded' ? [['[VIEWER] superseded', 'unknown', '']] : []),
+    ]);
+    h.advanceTo(500);
+    const b = await h.finishConfig();
+    b.trigger('connect_error', { message: 'timeout' });
+    const timerB = WebRTC._signalRecoveryTimer;
+    const queuedB = h.timers.get(timerB).fn;
+    if (outcome === 'connect') {
+      // Actual connect cleanup can refresh a stale peer; isolate that media effect.
+      WebRTC.refresh = () => {};
+      b.connected = true; await b.trigger('connect');
+    } else if (outcome === 'manual-disconnect') WebRTC.disconnect();
+    else if (outcome === 'superseded') WebRTC.handleViewerSuperseded();
+    else WebRTC.retireStartupEpisode('startup-cancelled', { cleanup: true });
+    assert.equal(WebRTC._signalRecoveryTimer, null);
+    assert.equal(WebRTC._signalRecoveryStartedAt, null);
+    assert.equal(WebRTC._signalRecoveryPending, false);
+    h.queuedA(); queuedB(); h.advanceTo(15000);
+    assert.equal(h.sockets.length, 2);
+    assert.equal(WebRTC._signalRecoveryTimer, null);
+  });
+}
+
+test('signaling watchdog retires its own spent handle before stale socket or episode returns', () => {
+  for (const stale of ['socket', 'episode']) {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    const episode = WebRTC.beginStartupEpisode();
+    episode.state = 'complete';
+    const handlers = new Map();
+    h.context.io = () => ({ connected: false, on(event, fn) { handlers.set(event, fn); }, emit() {}, disconnect() {} });
+    WebRTC.createSignalingSocket();
+    WebRTC.scheduleSignalingRecovery();
+    const timer = WebRTC._signalRecoveryTimer;
+    if (stale === 'socket') WebRTC.createSignalingSocket(true);
+    else WebRTC.retireStartupEpisode('startup-cancelled');
+    h.advanceTo(1500);
+    assert.equal(h.timers.has(timer), false);
+    assert.equal(WebRTC._signalRecoveryTimer, null, stale);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 0, stale);
+    assert.equal(WebRTC._signalRecoveryPending, true, stale);
+    assert.equal(WebRTC.pc, null, stale);
+  }
+});
+
 for (const wallStep of [-60000, 60000]) {
   test(`duration clock: signaling preserves mono0 through 1500/12000/13500 with wall step ${wallStep}`, () => {
     const h = webRtcDurationFixture(), { WebRTC } = h;
