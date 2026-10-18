@@ -163,7 +163,7 @@ class ServerRecoveryEvidence:
         raise ValueError(self.reason) from None
 
     def start(self):
-        if self._fd is not None or self._status == 'failed': self._fail('server-log-unavailable')
+        if self._status != 'not-started' or self._fd is not None: self._fail('server-log-unavailable')
         try:
             fd = os.open(self._path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             try:
@@ -305,7 +305,7 @@ _status_owner = None
 async def read_local_host_status():
     """One fixed loopback request, including owned cancellation and writer close."""
     global _status_owner
-    if _status_owner is not None and not _status_owner.done():
+    if _status_owner is not None:
         raise ValueError('host-observation-unavailable')
 
     async def request():
@@ -350,13 +350,16 @@ async def read_local_host_status():
                 writer.close()
                 # wait_closed is owned directly, never detached from this stage.
                 await asyncio.wait_for(writer.wait_closed(), max(0, deadline-time.monotonic()))
-    _status_owner = asyncio.create_task(request())
+    # Reserve the slot through wrapper settlement, including the interval after
+    # the child finishes but before lifecycle_stage returns to this caller.
+    owned_task = asyncio.create_task(request())
+    _status_owner = owned_task
     try:
-        return await lifecycle_stage(_status_owner, .75, settlement=.075)
+        return await lifecycle_stage(owned_task, .75, settlement=.075)
     except (asyncio.CancelledError, CancellationCooperationError): raise
     except Exception: raise ValueError('host-observation-unavailable') from None
     finally:
-        if _status_owner.done(): _status_owner = None
+        if owned_task.done() and _status_owner is owned_task: _status_owner = None
 
 
 _METRICS = ('inputAckRttMs', 'inputToPostApplyFrameMs', 'inputToVisibleEffectMs', 'hostQueueMs',

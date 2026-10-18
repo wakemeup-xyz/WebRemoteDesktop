@@ -427,3 +427,73 @@ class AmbiguousEpochTests(unittest.TestCase):
             self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': epoch, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
         with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.read_tick(IDS)
         self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
+
+
+class OneShotLogTests(unittest.TestCase):
+    setUp = LogTests.setUp
+    append = LogTests.append
+
+    def test_closed_complete_cannot_reopen_and_skip_host_disconnect(self):
+        self.e.start(); self.append(event()); self.e.read_tick(IDS)
+        selected = self.e.snapshot()['selectedEvents']
+        self.e.close(); self.assertEqual(self.e.snapshot()['coverage'], 'complete')
+        h = event('signal_socket_disconnected', meta={'role': 'host', 'reason': 'other'})
+        h['domain'] = 'signaling'; h['correlation'] = {}; self.append(h)
+        with self.assertRaisesRegex(ValueError, '^server-log-unavailable$'): self.e.start()
+        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
+        self.assertEqual(self.e.snapshot()['status'], 'failed')
+        self.assertEqual(self.e.snapshot()['selectedEvents'], selected)
+        self.assertIsNone(self.e._fd)
+        # A separate run needs a fresh instance. It cannot repair this interval.
+        fresh = ServerRecoveryEvidence(self.path, SALT); self.addCleanup(fresh.close)
+        fresh.start(); self.assertEqual(fresh.read_tick(IDS), [])
+        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
+
+    def test_closed_incomplete_cannot_reopen_or_clear_first_failure(self):
+        self.e.start(); self.path.write_bytes(b'{'); self.e.read_tick(IDS); self.e.close()
+        self.assertEqual(self.e.reason, 'server-log-gap')
+        with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.start()
+        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
+        self.assertEqual(self.e.reason, 'server-log-gap'); self.assertIsNone(self.e._fd)
+        with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.start()
+        self.assertEqual(self.e.snapshot()['status'], 'failed')
+
+
+class SettlingHttpOwnershipTests(unittest.IsolatedAsyncioTestCase):
+    async def test_done_child_reserves_slot_until_wrapper_settles(self):
+        from scripts import ordinary_session_recovery as recovery
+        real_stage = recovery.lifecycle_stage
+        for cancel_first in (False, True):
+            with self.subTest(cancel_first=cancel_first):
+                done_child = asyncio.Event(); release_wrapper = asyncio.Event()
+                calls = []; owned_tasks = []; writers = []
+                async def connect(*args):
+                    calls.append(args)
+                    reader = asyncio.StreamReader(); reader.feed_data(response()); reader.feed_eof()
+                    writer = Writer(); writers.append(writer)
+                    return reader, writer
+                async def paused_stage(operation, timeout, *, settlement):
+                    owned_tasks.append(operation)
+                    value = await real_stage(operation, timeout, settlement=settlement)
+                    if len(owned_tasks) == 1:
+                        done_child.set(); await release_wrapper.wait()
+                    return value
+                first = None
+                with patch('scripts.ordinary_session_recovery.asyncio.open_connection', connect), patch('scripts.ordinary_session_recovery.lifecycle_stage', paused_stage):
+                    try:
+                        first = asyncio.create_task(read_local_host_status())
+                        await done_child.wait()
+                        self.assertTrue(owned_tasks[0].done()); self.assertFalse(first.done())
+                        second_result, = await asyncio.gather(read_local_host_status(), return_exceptions=True)
+                    finally:
+                        if cancel_first: first.cancel()
+                        release_wrapper.set()
+                        first_result, = await asyncio.gather(first, return_exceptions=True)
+                self.assertIsInstance(second_result, ValueError, f'first={first_result!r}; second={second_result!r}')
+                self.assertEqual(str(second_result), 'host-observation-unavailable')
+                if cancel_first: self.assertIsInstance(first_result, asyncio.CancelledError)
+                else: self.assertEqual(first_result, {'hostOnline': True, 'hostId': 'host-canary'})
+                self.assertEqual(len(calls), 1); self.assertEqual(len(owned_tasks), 1)
+                self.assertTrue(all(w.closed and w.waited for w in writers))
+                self.assertIsNone(recovery._status_owner)
+                self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])
