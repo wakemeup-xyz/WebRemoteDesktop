@@ -24,24 +24,42 @@
 - Task1 review 的计时归属问题已由原实现者修复并定向复审 Approved；Task2、Task3 独立并发 review 均 Approved；最终整体 Astra review 也已 Approved，可在 fresh preflight 后受控 Host-only 加载。四份任务 review 与固定测试事实已归档到 [证据目录](evidence/2026-10-18-host-cadence-cleanup/source-review.md)。
 - 早期命令工作目录/路径错误已纠正，只是工具执行错误，不当作行为 RED 或产品故障。
 
-## 上线前的实际运行状态
+## 实际加载及维护结果
 
-目前生产仍为原有53ed5d7/build79bf9a5afea0458e，Signal45287/Host94398；本轮新 Host 源码尚未同步、未重载。最近一次本地 status 健康/Host在线；canonical 公网 health 返回200。这是瞬时可达性，不是新增会话验收。
+本轮已实际加载：运行包 e5927c7（产品 Host 代码 c239482），Host **76982 / birth1792305148.350696 / 10月18日14:32:28 CST**；Signal45287/birth1792269606.193945、Viewer build79bf9a5afea0458e及14项dist字节保持。主仓HEAD b6bd0c1和原索引SHA73b61eb5…保持；四项W2未部署文件、四个既有脏文档、node_modules类型、tunnel84671/watcher897及quick URL文件缺失状态保持。没有操作tunnel。
 
-08:13:03.731684–13:14:36.733746 CST 的新增日志只读审计：3253条 Host lag 窗口、302条 Signal entry 窗口，Viewer登录/verify/admission/bootstrap/namespace accepted 和 inputEventCount 都为0；没有新真实业务会话，不能用“无故障”证明控制已恢复。Host空闲 lag 最大883.333ms，非总体延迟分布；没有缺失轮转段或JSON解析失败。
+R1独立审查修正Git权限/实际权限混淆与遗漏261项已部署源码后，保护890个BASE regular文件（629项原索引+261项非索引），实际冻结/逐文件原子发布22项（10Host/12文档）。原子性只覆盖单文件；不是整体事务，也未自动回滚。只执行一次safe helper→restart-host.sh，helper exit0、29.29秒；30项登记身份记录exited、0signals。运行密码已从本机配置读取并在聊天单独回报，不写入本报告。
 
-维护包 R0 的两个 P1（Git执行位与实际权限混淆、遗漏已部署未进主索引的261个源码文件）已在独立 R1 修正并 Approved。覆盖890个 BASE regular 文件，含629个原索引 regular 文件；四个既有脏文档与四个W2未部署路径只保留原字节/权限。主HEAD/index、14个dist文件、node_modules类型、Signal/tunnel/watch/quick状态均为保护条件。原子发布仅限单文件，保留备份并禁止自动回滚/重试；完整进程树退出依然不可由登记轮询保证。维护包尚未执行，不等于产品已加载。
+**原维护结果保持failed-or-indeterminate**：唯一额外覆盖标签为observation-unavailable；完整进程树退出UNKNOWN。不重跑、不覆盖、不升级原记录。独立审查的R2只读核对另记 **runtime-ready-with-lifecycle-uncertainty**，两次新观察确认同一Host/Signal、源文件、dist、健康/Host在线/Viewer0/relay0；它不修复原生命周期证据或验收结果。最终文档同步必须同时钉住原失败记录与该readiness记录，不重载服务。
 
-## 新 Host 加载与运行验收
+## 新 Host 的三次独立运行
 
-NOT RUN。独立任务和整体源码 review 已全部 Approved；接着核对 fresh health/Hostonline/Viewer0/relay0，按现有 safe helper 仅 restart-host；重载后单独回报两项本机运行密码，密码不进入本报告。Signal、Viewer build/assets、tunnel/watcher、quick URL状态保持。
+| 运行 | 实际结果 | 关键事实 |
+|---|---|---|
+| short A，14:35:47–14:43:49元数据窗口 | **INCOMPLETE** | 301行、0缺样/迟到/gate失败/身份变化，max rVFC983.2ms；browser.close API 4.626s超时，不能改成PASS。真实Host旧track清理164.372ms在该浏览器失败之后，不是其直接原因 |
+| short B，14:50:57–14:57:53元数据窗口 | **PASS** | 同代码、同参数独立重测，301行/300.0001202058047s，0缺样/迟到/失败/身份变化，max rVFC416.7ms；browser.close164ms、manager.stop31ms。未把A失败删除或声称中间修复了未知浏览器原因 |
+| long A，14:59:46–15:03:29元数据窗口，计划10800s | **INCOMPLETE，三小时未通过** | 37行/36.002444840s采样跨度、helper36.321748069s；第36行发生socket/lease/input gate失效，1失败/1lease身份变化，无缺样/迟到，max rVFC300ms。媒体仍推进，随后测试按连续性契约退出 |
 
-随后新的正式路径300秒与10800秒被动连续性分别记录；使用正常UI登录、一次Start、一次性proof和既有已审查SUP。短测失败先定位，不拼接旧PASS；真实MSS close返回、线程状态、join与executor请求分别取证。新计时仅解释观测范围，不构造全会话P95、单向网络耗时或内容新鲜度因果结论。
+三次均使用正式relay路径、正常UI登录/一次Start/一次性proof；不发业务原生输入，不重放/重领proof。A/B/long的登记7项测试身份均记录exited、0signals；完整进程树退出仍UNKNOWN。long另有observation-unavailable。short通过不替代长测失败。旧53ed/build79版本10801行/10800.000087秒PASS也不属于本次新Host。
 
-## 尚未验收的边界
+## 新增长测故障与延迟定位
 
-真实业务输入ACK、Host排队/应用、应用后帧、真实可见效果、物理显示，当前仍无新增有效输入样本；保留null/NOT RUN。普通用户自动恢复、多设备网络、启动时延分布也未获得新资格。共享WindowServer缺少可证明的隔离目标，不能用DOM事件、PID/CLI标志或另一种HID目标伪装真实原生验收；用户无暇测试时继续独立修复，不再重复请求人工试用。
+首个当前Engine事件为WebSocket1006、wasClean=false、transport-close；它比helper preclose早75ms，真实异常关闭先于测试清理。最后好→首坏样本：PC/attempt/media generation/build/relay身份不变，rVFC和decoded各+19、字节+15605，首坏帧龄16.436ms；socket、lease和输入gate关闭。**这是信令中断造成的控制中断，不能宣称频繁失控已经彻底解决。** 初次连接click→bootstrap9.1ms、signal5217.8ms、首帧10410ms，仅一次启动点，不是总体P95。
 
-旧三小时的10801行、10800.000087秒PASS只属于原53ed/build79会话。输入门禁全真和rVFC推进可包含复用帧，不能证明真实输入成功或所有性能目标已达成。
+15:01:15.585 CST检测失败；Signal记录transport close在15:01:15.853，晚于浏览器close开始，不能用该服务端记录确认最初关闭发起方。服务端仅一次ping/pong、最终age19537/18711ms，Node60样本max65ms/P954ms/missed0，实际原因不是ping timeout。浏览器1006不能唯一归因Cloudflare、网络或服务端；当前缺少能区分该网络跳点的证据。
 
-设计与计划：[spec](../specs/2026-10-18-host-cadence-cleanup-design.md)、[plan](../plans/2026-10-18-host-cadence-cleanup-plan.md)。当前总览与运行结果将在本次真实验收后更新。
+另定位到发生在断线约8秒后的确定清理竞争：控制transition A已detach旧PC/track并等待关闭，随后zero-viewer-status B再次空清理并推进peer authority。A实际57.565ms返回、owner closed/thread false/join returned/PC closed，但authorityCurrent=false，首个reset ACK可被旧fence压掉；Signal等1秒重试后FREE。**它是可修复的后续恢复延迟，不能解释更早的首次WS关闭。** 后续应以实际交叠行为RED、保留新offer/新peer/Signal身份fence的最小修复处理，不可直接放松authority检查。
+
+抓屏仍是性能限制：short A最大成对间隔1595.024ms=grab1586.578+postGrab7.193+pacing0+other1.253；同次grab CPU36.211/nonCPU1550.366ms。B最大成对间隔701.983ms、其中grab698.717ms；long断线前最大间隔411.606ms、其中grab407.989ms，active滚动速率约5.98–10.35Hz，低于20fps目标。不同滚动窗口不可拼接计算全会话P95，nonCPU差值不唯一证明OS/调度器原因。编码short A局部max1666.208ms；质量、FPS、分辨率、码率和deadline未调低。
+
+独立浏览器审计、Signal/Host字节边界审计和short A节奏审计见[证据目录](evidence/2026-10-18-host-cadence-cleanup/runtime-audit-provenance.json)。各自报告注明真实窗口、字节范围、头部保守丢弃和覆盖缺失；没有用阈值告警充当完整延迟分布。
+
+## 尚未完成与下一步
+
+真实业务输入ACK、Host排队/应用、应用后帧、真实可见效果和物理显示：六项有效输入样本仍为0，last/P95=null，**BLOCKED/NOT_RUN**。共享WindowServer缺少可证明的隔离目标，不用DOM事件、PID/CLI标志或其他HID目标冒充原生验收；不重复要求用户人工试用。
+
+当前proof测试有意不允许普通恢复，首个中断即退出。普通用户自动恢复还没有真实生产资格；不能通过proof重放、清标记或重新Start掩盖。只读架构审查发现现成ordinary Start缺少原子vacant-only自动入场条件，先poll状态再Start仍可能抢占人类；直接复用发行器还会使已发给人类的待用Start票失效。下一独立spec/plan须明确保护待处理人类意图、issue/consume两处vacancy+epoch、复用现有C5 current-owner恢复、保留proof和所有控制fence，再实施与独立review；不是在本Host-only规格下悄悄扩大权限。
+
+15:03:29.437 CST末次边界：本地健康、Host在线、Viewer0/relay0；同一Host/Signal/build/tunnel/watcher。这是瞬时健康，不是三小时或输入验收完成。接下来继续修复清理ACK竞争、补足信令证据和普通恢复验收，长测失败状态保留。
+
+设计与计划：[spec](../specs/2026-10-18-host-cadence-cleanup-design.md)、[plan](../plans/2026-10-18-host-cadence-cleanup-plan.md)。保留分支/worktree及先前修改；未merge、push或操作tunnel。

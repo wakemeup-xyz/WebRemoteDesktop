@@ -1,6 +1,6 @@
 # 稳定性、网页与输入延迟：诊断和验收总览
 
-> **10月18日后续代码实施中：** 已提交抓屏初始化竞态、退出后迟到画面回写和worker关闭归属修复，补齐成对capture节奏与invocation清理事实；103项相关纯测试、三项独立任务review通过，最终整体review也已通过；新Host加载/验收尚待执行。当前运行仍是下面53ed/build79记录，不能用旧三小时PASS替代新源码验收。[本轮实施](2026-10-18-host-cadence-cleanup-execution.md)。
+> **10月18日15:03后最新状态：** Host追加代码已加载c239482（运行包e5927c7），Host76982、Signal45287、build79保持在线。新short A因浏览器关闭超时INCOMPLETE；独立同参数short B300.000120s/301样本PASS；新long A约36秒发生WS1006和输入gate中断，媒体仍推进，**三小时未通过，频繁失控尚未彻底验收**。另定位断线清理ACK竞争导致一次1秒重试；原维护生命周期记录failed-or-indeterminate、独立readiness及完整进程树UNKNOWN均保留。真实业务输入/可见/物理效果NOT_RUN，普通恢复尚未生产验收。[本轮实际加载与失败证据](2026-10-18-host-cadence-cleanup-execution.md)。下面旧53ed三小时记录仅属于其历史版本。
 
 更新：**2026-10-18 08:06，Asia/Shanghai。代码修复已实际部署，正式中继路径三小时被动连续性通过，服务保持在线。真实业务输入和可见效果仍未验收，不能据此宣布所有远控性能目标达标。** 最新详细证据见[本轮实施与系统复核](2026-10-18-verified-warmup-execution.md)。
 

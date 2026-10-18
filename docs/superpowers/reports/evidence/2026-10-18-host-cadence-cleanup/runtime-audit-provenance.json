@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "evidence": "independent bounded audits, no credentials or raw input",
+  "files": [
+    {
+      "path": "short-a-runtime-audit.md",
+      "sha256": "844535021942715753c6ea508e84b220f41c1a58b62f77610a83dccab8b1203f"
+    },
+    {
+      "path": "long-a-browser-audit.md",
+      "sha256": "fec688e798976c252093114c281c95700c4db60fe7d6278c888f858ec844a492"
+    },
+    {
+      "path": "long-a-signaling-audit.md",
+      "sha256": "36b75ed890a331f848b281f3a08734a9685e7c24d7231446420a03a92c8674b4"
+    },
+    {
+      "path": "readiness-docs-review.md",
+      "sha256": "e3af13f215191a9224fd8328e11558633b1004abb298e098240985208e0862fb"
+    }
+  ]
+}

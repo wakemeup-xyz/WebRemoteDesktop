@@ -1,6 +1,6 @@
 # 稳定性与延迟整改实施记录
 
-> **追加 Host 代码整改：** Task1–3已提交并通过独立任务review，最新103项相关纯测试通过；当前运行尚未加载本次增量。最终整体review也已通过；接着做Host-only重载与新的300s/10800s验收，详见[追加实施与边界](2026-10-18-host-cadence-cleanup-execution.md)。原运行结果和旧失败保留。
+> **10月18日15:03后追加实施状态：** 新Host c239482/e5927c7已加载（PID76982，Signal45287/build79保持）。short A浏览器关闭超时INCOMPLETE，short B300.000120s/301样本PASS，新long A在约36秒出现WS1006/信令与输入gate中断而媒体仍推进，**本次三小时未通过**；另发现后续清理竞争压掉首次reset ACK、1秒重试后释放。真实输入仍NOT_RUN、普通恢复未验收；服务边界健康不等于全部解决。原维护失败与完整进程树UNKNOWN不升级。[新增代码、实际加载及故障报告](2026-10-18-host-cadence-cleanup-execution.md)。
 
 > **2026-10-18 08:06最新状态：** 实际产品代码已部署为53ed5d7/build79bf9a5afea0458e，Signal45287/Host94398在线，tunnel/watcher未操作。新正式短测300.000051s/301样本PASS，独立三小时10800.000087s/10801样本PASS，缺样/迟到/失败/身份变化0，最大rVFC间隔766.58ms；不合并旧失败片段。源采集约8.171次/秒，输出19.458FPS包含59.062%复用，内容新鲜度和编码局部尖峰仍有限制；真实业务输入、可见/物理效果NOT RUN，普通恢复未验收。SUP观察缺失和完整进程树UNKNOWN保留。新增HTTP请求头相关403/200差异已记录，未动边缘配置。详见[最新诊断总览](2026-10-17-diagnosis-and-acceptance-status.md)和[本轮代码、上线与三小时证据](2026-10-18-verified-warmup-execution.md)。**以下是各自时间点的历史记录，不代表当前部署；旧FAIL/INCOMPLETE不改写。**
 
