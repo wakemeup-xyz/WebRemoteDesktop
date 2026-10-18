@@ -1284,3 +1284,78 @@ class FinalCoverageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['ordinaryRecovery']['status'],'INCOMPLETE')
             self.assertEqual(result['hostObservation']['coverage'],'incomplete')
             self.assertTrue(row['sample']['inputAllowed']); self.assertEqual(row['identity']['admissionHash'],'d'*16)
+
+
+class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
+    setUp=RuntimeRunTests.setUp
+    status=RuntimeRunTests.status
+    summary=RuntimeRunTests.summary
+
+    async def test_fully_qualified_baseline_final_export_must_keep_continuity(self):
+        # Advance only the runner's scheduling clock. The original reducer still
+        # observes every one-second baseline row and the actual final run path;
+        # no prequalified state, shortened duration or fake PASS is injected.
+        class QualifiedPage(RuntimePage):
+            def __init__(self,change):
+                super().__init__(); self.change=change; self.final_before=None
+            async def evaluate(self,script):
+                if 'window.__wrdPassiveSampler.sample()' not in script:
+                    return await super().evaluate(script)
+                self.samples+=1
+                state=ui_state(); state['startClickMarks']=int(self.clicks>0)
+                state.update(sessionId='session-canary',socketId='socket-canary',admissionId='admission-canary')
+                sample=ready_sample(10+self.samples); sample.pop('attemptHash'); sample['attempt']='attempt-canary'
+                result=dict(state=state,sample=sample)
+                if 'finalize' in script:
+                    self.final_before=json.loads((Path(self.output)/'samples.jsonl').read_text().splitlines()[-1])
+                    if self.change=='lease': sample['leaseEpoch']+=1
+                    elif self.change=='path': sample['transport']['pathIdentity']='path-2'
+                    elif self.change=='counter': sample['callbacks']=1
+                    elif self.change=='pc': sample['pcIdentity']+=1
+                    elif self.change=='attempt': sample['attempt']='changed-attempt-canary'
+                    elif self.change=='generation': sample['generation']+=1
+                    result['diagnostic']=runner.empty_diagnostic()
+                return result
+
+        original_sleep=asyncio.sleep
+        original_time=runner.time
+        for change in ('unchanged','lease','path','counter','pc','attempt','generation'):
+            with self.subTest(change=change):
+                self.args.output_dir=str(self.root/change)
+                page=QualifiedPage(change); page.output=self.args.output_dir; manager=RuntimeManager(page)
+                clock=[0.125]
+                async def sleep(delay):
+                    clock[0]+=delay
+                    await original_sleep(0)
+                async_proxy=SimpleNamespace(**{name:getattr(asyncio,name) for name in dir(asyncio)})
+                async_proxy.sleep=sleep
+                with patch.object(runner,'time',SimpleNamespace(monotonic=lambda:clock[0],time=original_time.time)), patch.object(runner,'asyncio',async_proxy):
+                    result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
+                summary=self.summary()
+                rows=[json.loads(line) for line in (Path(self.args.output_dir)/'samples.jsonl').read_text().splitlines()]
+                qualified=[row for row in rows[:-1] if row['phase']=='baseline']
+                self.assertGreaterEqual(len(qualified),300)
+                self.assertEqual(summary['continuity']['elapsedSeconds'],300)
+                # The first ready row transitions from startup into baseline;
+                # the persisted wrapper keeps its actual observation phase.
+                self.assertEqual(summary['continuity']['samples'],len(qualified)+1)
+                self.assertEqual(page.final_before,rows[-2])
+                self.assertEqual(page.clicks,1)
+                self.assertEqual(summary['ordinaryRecovery']['status'],'NOT_RUN')
+                if change=='unchanged':
+                    self.assertEqual(result,0); self.assertEqual(summary['continuity']['status'],'PASS')
+                    self.assertIsNone(summary['failure'])
+                    self.assertEqual(summary['lifecycle']['cleanupStatus'],'api-finished-exit-unknown')
+                else:
+                    self.assertEqual(result,1)
+                    self.assertNotEqual(summary['continuity']['status'],'PASS')
+                    self.assertEqual(summary['failure'],{'phase':'baseline','reason':'baseline-failed'})
+                self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
+
+    def test_fractional_elapsed_seconds_allowed_but_counts_stay_integer(self):
+        value=runner.OrdinaryRecoverySummary('baseline','stun').result(cleanup_complete=False)
+        value['continuity']['elapsedSeconds']=300.125
+        self.assertIs(runner.validate_summary(value),value)
+        for field in ('samples','missingSamples','failedObservations','identityChangeObservations'):
+            changed=json.loads(json.dumps(value)); changed['continuity'][field]=1.5
+            with self.subTest(field=field), self.assertRaises(ValueError): runner.validate_summary(changed)

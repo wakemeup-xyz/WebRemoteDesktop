@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import inspect
 from datetime import datetime
 import hashlib
@@ -1106,7 +1107,7 @@ def validate_summary(value):
             or host['status']!='stable' or host['coverage']!='complete' or host['hostDisconnectObserved']): raise ValueError('schema-rejected')
     # Continuity is generated solely by the unchanged reducer. Validate every
     # emitted key and scalar against its fixed result schema before persistence.
-    c=value['continuity']; template=passive.ContinuitySummary(duration_s=10800 if value['scenario']=='continuity' else 300,mode=value['mode']).result(elapsed_s=0)
+    c=value['continuity']; template=passive.ContinuitySummary(duration_s=10800 if value['scenario']=='continuity' else 300,mode=value['mode']).result(elapsed_s=0.0)
     _keys(c,template)
     for key,expected in template.items():
         item=c[key]
@@ -1234,6 +1235,13 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
                     raise ValueError('recovery-gates-unmet')
                 if model.failure is None and not _gates(sample,args.mode,recovery=model.triggered is not None):
                     raise ValueError('recovery-gates-unmet' if model.triggered is not None else 'baseline-failed')
+                if model.failure is None and model.triggered is None:
+                    # Validate against the qualified history, without advancing
+                    # its duration, sample count, identity or counter baselines.
+                    final_continuity=copy.copy(model.continuity)
+                    final_continuity.observe(dict(elapsedSeconds=model.elapsed,status='observed',sample=sample))
+                    if final_continuity.result(elapsed_s=model.elapsed)['status']!='PASS':
+                        raise ValueError('baseline-failed')
         except BaseException as exc:
             if isinstance(exc,CancellationCooperationError): observation_poisoned=True
             if isinstance(exc,(TimeoutError,CancellationCooperationError)) or sample is None:
