@@ -67,6 +67,7 @@ from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 from capture_experiment import CaptureExperiment
 from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
+from capture_resource_owner import CaptureResourceOwner
 from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
 from relay_frame_worker import RelayFrameWorker
 from runtime_observability import (
@@ -1348,6 +1349,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         if capture_strategy is not None and not isinstance(capture_strategy, CaptureExperiment):
             raise TypeError("capture_strategy must be a CaptureExperiment or None")
         self.sct = MSS()
+        self._capture_resource_owner = CaptureResourceOwner(self.sct)
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
         self.last_time = time.monotonic()
@@ -1419,9 +1421,24 @@ class ScreenCaptureTrack(VideoStreamTrack):
         }
         self._trace_interval_lock = threading.Lock()
         self._host_ref = None
+        self._capture_shutdown_join = 'not-requested'
+        self._executor_shutdown_requested = False
         # Every field visible to a fast worker exists before Thread.start().
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._capture_thread.start()
+        try:
+            self._capture_thread.start()
+        except BaseException:
+            # A start failure can race a late worker entry. Stop first, then
+            # atomically claim fallback closure only if no worker owns it.
+            with self._activity_condition:
+                self._capture_running = False
+                self._capture_generation += 1
+                self._activity_condition.notify_all()
+            self._capture_resource_owner.close_unclaimed()
+            self.sct = None
+            self._executor_shutdown_requested = True
+            self._process_executor.shutdown(wait=False)
+            raise
 
         logger.info(
             "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s",
@@ -1466,107 +1483,115 @@ class ScreenCaptureTrack(VideoStreamTrack):
             except Exception:
                 return None
 
-        while self._capture_running:
-            phase('activity-gate')
-            with self._activity_condition:
-                while self._capture_running and self._suspended:
-                    observe(cadence, 'break_continuity', 'suspended')
-                    phase('suspended')
-                    self._activity_condition.wait(timeout=0.2)
-                if not self._capture_running:
-                    break
-            phase('target-config')
-            with self._target_lock:
-                target_fps = self._target_fps
-                target_generation = getattr(self, '_target_generation', 0)
-            capture_generation = getattr(self, '_capture_generation', 0)
-            _min_interval = 1.0 / self.capture_fps_for_target(target_fps, capture_strategy=self._capture_strategy)
-            grab_completed = False
-            captured = False
-            publish_wait_started_ns = publish_entered_ns = publish_exited_ns = None
-            # Mark the phase before the original wall/CPU grab bracket. Cycle
-            # aggregation is deferred until that bracket has finished, so its
-            # CPU belongs to postGrab rather than grab/non-CPU time.
-            phase('grab')
-            grab_started_ns = time.monotonic_ns()
-            try:
-                # Gate again immediately before MSS grab.
-                if self._suspended or not self._capture_running:
-                    observe(cadence, 'break_continuity', 'suspended' if self._suspended else 'stopped')
-                    continue
-                cpu_started_ns = current_thread_cpu_ns()
-                observe(self._capture_observation, 'begin', grab_started_ns, thread_cpu_ns=cpu_started_ns)
+        owner = self._capture_resource_owner
+        resource = owner.claim_worker()
+        if resource is None:
+            return
+        try:
+            while self._capture_running:
+                phase('activity-gate')
+                with self._activity_condition:
+                    while self._capture_running and self._suspended:
+                        observe(cadence, 'break_continuity', 'suspended')
+                        phase('suspended')
+                        self._activity_condition.wait(timeout=0.2)
+                    if not self._capture_running:
+                        break
+                phase('target-config')
+                with self._target_lock:
+                    target_fps = self._target_fps
+                    target_generation = getattr(self, '_target_generation', 0)
+                capture_generation = getattr(self, '_capture_generation', 0)
+                _min_interval = 1.0 / self.capture_fps_for_target(target_fps, capture_strategy=self._capture_strategy)
+                grab_completed = False
+                captured = False
+                publish_wait_started_ns = publish_entered_ns = publish_exited_ns = None
+                # Mark the phase before the original wall/CPU grab bracket. Cycle
+                # aggregation is deferred until that bracket has finished, so its
+                # CPU belongs to postGrab rather than grab/non-CPU time.
+                phase('grab')
+                grab_started_ns = time.monotonic_ns()
                 try:
-                    shot = self.sct.grab(self.monitor)
-                except Exception:
+                    # Gate again immediately before MSS grab.
+                    if self._suspended or not self._capture_running:
+                        observe(cadence, 'break_continuity', 'suspended' if self._suspended else 'stopped')
+                        continue
+                    cpu_started_ns = current_thread_cpu_ns()
+                    observe(self._capture_observation, 'begin', grab_started_ns, thread_cpu_ns=cpu_started_ns)
+                    try:
+                        shot = resource.grab(self.monitor)
+                    except Exception:
+                        cpu_finished_ns = current_thread_cpu_ns()
+                        grab_finished_ns = time.monotonic_ns()
+                        observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=False,
+                                thread_cpu_ns=cpu_finished_ns)
+                        observe(cadence, 'start', grab_started_ns,
+                            capture_generation=capture_generation, target_generation=target_generation,
+                            min_interval_ns=int(_min_interval * 1_000_000_000))
+                        raise
                     cpu_finished_ns = current_thread_cpu_ns()
                     grab_finished_ns = time.monotonic_ns()
-                    observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=False,
+                    grab_completed = True
+                    observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=True,
                             thread_cpu_ns=cpu_finished_ns)
                     observe(cadence, 'start', grab_started_ns,
                         capture_generation=capture_generation, target_generation=target_generation,
                         min_interval_ns=int(_min_interval * 1_000_000_000))
-                    raise
-                cpu_finished_ns = current_thread_cpu_ns()
-                grab_finished_ns = time.monotonic_ns()
-                grab_completed = True
-                observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=True,
-                        thread_cpu_ns=cpu_finished_ns)
-                observe(cadence, 'start', grab_started_ns,
-                    capture_generation=capture_generation, target_generation=target_generation,
-                    min_interval_ns=int(_min_interval * 1_000_000_000))
-                phase('publish')
-                publish_wait_started_ns = cadence_now()
-                with self._capture_lock:
-                    publish_entered_ns = cadence_now()
-                    if self._suspended:
-                        observe(cadence, 'break_continuity', 'discarded')
-                        continue
-                    self._capture_buffer = shot
-                    self._capture_seq += 1
-                    self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
-                    captured = True
-                    while len(self._capture_bounds_ns) > 2048:
-                        self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
-                    publish_exited_ns = cadence_now()
-                phase('post-publish')
-                if captured and self._frame_trace_context is not None:
-                    self._increment_trace_interval(captures=1)
-                with self._activity_condition:
-                    self._activity_condition.notify_all()
-            except Exception:
-                if cadence is not None and grab_completed and captured:
-                    # Publication already happened even if trace/notification
-                    # failed. Count its outcome, then break before any interval
-                    # can be admitted across the existing error retry.
-                    failed_post_ns = cadence_now()
+                    phase('publish')
+                    publish_wait_started_ns = cadence_now()
+                    with self._capture_lock:
+                        publish_entered_ns = cadence_now()
+                        if (not self._capture_running or self._suspended or
+                                capture_generation != self._capture_generation):
+                            observe(cadence, 'break_continuity', 'discarded')
+                            continue
+                        self._capture_buffer = shot
+                        self._capture_seq += 1
+                        self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
+                        captured = True
+                        while len(self._capture_bounds_ns) > 2048:
+                            self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
+                        publish_exited_ns = cadence_now()
+                    phase('post-publish')
+                    if captured and self._frame_trace_context is not None:
+                        self._increment_trace_interval(captures=1)
+                    with self._activity_condition:
+                        self._activity_condition.notify_all()
+                except Exception:
+                    if cadence is not None and grab_completed and captured:
+                        # Publication already happened even if trace/notification
+                        # failed. Count its outcome, then break before any interval
+                        # can be admitted across the existing error retry.
+                        failed_post_ns = cadence_now()
+                        observe(cadence, 'finish', grab_finished_ns=grab_finished_ns,
+                            post_grab_finished_ns=failed_post_ns, sleep_started_ns=failed_post_ns,
+                            sleep_finished_ns=failed_post_ns, sleep_requested_ns=0,
+                            publish_lock_wait_ns=difference(publish_entered_ns, publish_wait_started_ns),
+                            publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=True)
+                    observe(cadence, 'break_continuity', 'publish-error' if grab_completed else 'error')
+                    phase('error')
+                    time.sleep(0.005)
+                    continue
+                # This is the original elapsed endpoint and >1ms pacing policy.
+                post_grab_finished_ns = time.monotonic_ns()
+                elapsed = (post_grab_finished_ns - grab_started_ns) / 1_000_000_000
+                sleep_time = max(0.0, _min_interval - elapsed)
+                phase('pacing')
+                sleep_started_ns = cadence_now()
+                if sleep_time > 0.001:
+                    time.sleep(sleep_time)
+                sleep_finished_ns = cadence_now() if sleep_time > 0.001 else sleep_started_ns
+                if cadence is not None:
                     observe(cadence, 'finish', grab_finished_ns=grab_finished_ns,
-                        post_grab_finished_ns=failed_post_ns, sleep_started_ns=failed_post_ns,
-                        sleep_finished_ns=failed_post_ns, sleep_requested_ns=0,
+                        post_grab_finished_ns=post_grab_finished_ns,
+                        sleep_started_ns=sleep_started_ns, sleep_finished_ns=sleep_finished_ns,
+                        sleep_requested_ns=int(sleep_time * 1_000_000_000) if sleep_time > 0.001 else 0,
                         publish_lock_wait_ns=difference(publish_entered_ns, publish_wait_started_ns),
-                        publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=True)
-                observe(cadence, 'break_continuity', 'publish-error' if grab_completed else 'error')
-                phase('error')
-                time.sleep(0.005)
-                continue
-            # This is the original elapsed endpoint and >1ms pacing policy.
-            post_grab_finished_ns = time.monotonic_ns()
-            elapsed = (post_grab_finished_ns - grab_started_ns) / 1_000_000_000
-            sleep_time = max(0.0, _min_interval - elapsed)
-            phase('pacing')
-            sleep_started_ns = cadence_now()
-            if sleep_time > 0.001:
-                time.sleep(sleep_time)
-            sleep_finished_ns = cadence_now() if sleep_time > 0.001 else sleep_started_ns
-            if cadence is not None:
-                observe(cadence, 'finish', grab_finished_ns=grab_finished_ns,
-                    post_grab_finished_ns=post_grab_finished_ns,
-                    sleep_started_ns=sleep_started_ns, sleep_finished_ns=sleep_finished_ns,
-                    sleep_requested_ns=int(sleep_time * 1_000_000_000) if sleep_time > 0.001 else 0,
-                    publish_lock_wait_ns=difference(publish_entered_ns, publish_wait_started_ns),
-                    publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=captured)
-        observe(cadence, 'break_continuity', 'stopped')
-        phase('stopped')
+                        publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=captured)
+        finally:
+            observe(cadence, 'break_continuity', 'stopped')
+            phase('stopped')
+            owner.close_worker()
 
     def set_suspended(self, suspended):
         """Gate MSS capture/conversion. Returns capture_seq baseline at transition."""
@@ -1610,32 +1635,36 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._suspended = False
             self._capture_generation += 1
             self._activity_condition.notify_all()
-        if self._capture_thread and self._capture_thread.is_alive():
-            try:
-                await asyncio.to_thread(self._capture_thread.join, timeout=2.0)
-            except Exception:
-                pass
-        self._process_executor.shutdown(wait=False)
-        if self.sct:
-            try:
-                await asyncio.to_thread(self.sct.close)
-            except Exception:
-                pass
-        # Release the last captured image and correlation buffers after the
-        # worker has stopped.  A reconnect creates a fresh track; retaining
-        # these references on the old track needlessly keeps a large BGRA
-        # frame and pending input metadata alive across offers.
-        with self._capture_lock:
-            self._capture_buffer = None
-            self._capture_bounds_ns.clear()
-        with self._pending_input_lock:
-            self._pending_input_ids.clear()
-            self._pending_input_data.clear()
-        self._last_img = None
-        self._last_img_shape = (0, 0)
-        self._last_img_capture = (0, None)
-        self._frame_trace_context = None
-        self.sct = None
+        thread = getattr(self, '_capture_thread', None)
+        try:
+            if thread is not None and thread.is_alive():
+                self._capture_shutdown_join = 'pending'
+                try:
+                    await asyncio.to_thread(thread.join, timeout=2.0)
+                except asyncio.CancelledError:
+                    self._capture_shutdown_join = 'unknown'
+                    raise
+                except Exception:
+                    self._capture_shutdown_join = 'unknown'
+                else:
+                    self._capture_shutdown_join = 'pending' if thread.is_alive() else 'returned'
+        finally:
+            # Request-only executor evidence; wait=False proves no termination.
+            self._executor_shutdown_requested = True
+            self._process_executor.shutdown(wait=False)
+            # A late grab keeps its worker-local native resource, but cannot
+            # publish after the stop flag/generation changed. No caller close.
+            with self._capture_lock:
+                self._capture_buffer = None
+                self._capture_bounds_ns.clear()
+            with self._pending_input_lock:
+                self._pending_input_ids.clear()
+                self._pending_input_data.clear()
+            self._last_img = None
+            self._last_img_shape = (0, 0)
+            self._last_img_capture = (0, None)
+            self._frame_trace_context = None
+            self.sct = None
 
     def capture_observation_snapshot(self, now_ns):
         """Read scalar operation evidence without waiting for capture or output."""
@@ -1659,6 +1688,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
     def resource_snapshot(self) -> dict:
         """Return bounded lifecycle counters for disconnect/reconnect audits."""
         executor = getattr(self, "_process_executor", None)
+        owner = getattr(self, '_capture_resource_owner', None)
+        close_state = owner.snapshot()['state'] if owner is not None else 'unknown'
         return {
             "captureRunning": bool(getattr(self, "_capture_running", False)),
             "captureThreadAlive": bool(
@@ -1667,7 +1698,12 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "captureSeq": int(getattr(self, "_capture_seq", 0) or 0),
             "targetGeneration": int(getattr(self, "_target_generation", 0) or 0),
             "pendingInputIds": len(getattr(self, "_pending_input_ids", ()) or ()),
+            "captureCloseState": close_state,
+            "captureShutdownJoin": getattr(self, '_capture_shutdown_join', 'not-requested'),
+            # Both executor fields mean shutdown requested, never released.
             "executorShutdown": bool(getattr(executor, "_shutdown", False)),
+            "executorShutdownRequested": bool(getattr(self, '_executor_shutdown_requested', False)
+                or getattr(executor, '_shutdown', False)),
         }
 
     async def next_timestamp(self):

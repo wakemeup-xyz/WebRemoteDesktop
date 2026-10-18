@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import unittest
 
 from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
+from capture_resource_owner import CaptureResourceOwner
 
 from runtime_observability import (
     CaptureObservation, RuntimeObservability, unavailable_capture_observation,
@@ -341,6 +342,7 @@ class CaptureLoopTest(unittest.TestCase):
         def sleep(delay):
             clock.sleeps.append(delay)
             clock.now += int(delay * 1_000_000_000)
+            track._capture_running = False
         class ObservedCapture(CaptureObservation):
             def begin(self, *args, **kwargs):
                 clock.events.append('begin')
@@ -350,7 +352,7 @@ class CaptureLoopTest(unittest.TestCase):
                 clock.events.append('finish')
                 return super().finish(*args, **kwargs)
         track = SimpleNamespace(_capture_running=True, _suspended=suspended,
-            _target_fps=20, _capture_strategy=None, _activity_condition=Guard(),
+            _target_fps=20, _capture_generation=0, _capture_strategy=None, _activity_condition=Guard(),
             _target_lock=Guard(), _capture_lock=Guard(), _capture_observation=ObservedCapture(),
             monitor=object(), _capture_buffer=None, _capture_seq=0, _capture_bounds_ns={},
             _frame_trace_context=None,
@@ -363,11 +365,15 @@ class CaptureLoopTest(unittest.TestCase):
             track.inside = snapshot(track._capture_observation, clock.now)
             clock.now = 10_000_000
             clock.cpu += 2_000_000
-            track._capture_running = False
             if action:
                 action(track)
             return 'pixels-canary'
-        track.sct = SimpleNamespace(grab=grab)
+        track.sct = SimpleNamespace(grab=grab, close=lambda: None)
+        track._capture_resource_owner = CaptureResourceOwner(track.sct)
+        def stop_after_discard():
+            if clock.events.count('grab') and track._suspended:
+                track._capture_running = False
+        track._activity_condition.enter = stop_after_discard
         if publication_error:
             track._capture_lock.enter = lambda: (_ for _ in ()).throw(RuntimeError('publication-secret-canary'))
         if suspended:
@@ -464,11 +470,14 @@ class CaptureLoopTest(unittest.TestCase):
         self.assertEqual(clock.sleeps, [])
         self.assertEqual(track._activity_condition.notifications, 0)
 
-    def test_stop_inside_grab_keeps_original_publication(self):
-        track, clock, result = self.run_loop()
+    def test_stop_inside_grab_keeps_completion_and_discards_publication(self):
+        track, clock, result = self.run_loop(lambda track: setattr(track, '_capture_running', False))
         self.assertFalse(track._capture_running)
         self.assertEqual(result['completed'], 1)
-        self.assertEqual(track._capture_seq, 1)
+        self.assertEqual(track._capture_seq, 0)
+        self.assertIsNone(track._capture_buffer)
+        self.assertEqual(track._capture_bounds_ns, {})
+        self.assertEqual(clock.sleeps, [])
 
     def test_stop_before_final_gate_does_not_count_attempt(self):
         track, clock, result = self.run_loop(gate_cancel=True)
@@ -495,9 +504,9 @@ class CaptureLoopTest(unittest.TestCase):
         def sleep(delay):
             clock.sleeps.append(delay)
             clock.now += int(delay * 1_000_000_000)
+            track_holder[0]._capture_running = False
         def grab(_):
             clock.now = 10_000_000
-            track_holder[0]._capture_running = False
             return 'pixels'
         tree = ast.parse(Path(__file__).with_name('host.py').read_text())
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ScreenCaptureTrack')
@@ -505,11 +514,12 @@ class CaptureLoopTest(unittest.TestCase):
         selected = ast.ClassDef(name='ScreenCaptureTrack', bases=[ast.Name(id='VideoStreamTrack', ctx=ast.Load())],
             keywords=[], body=[n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in names], decorator_list=[])
         namespace = dict(VideoStreamTrack=type('Base', (), {}), CaptureExperiment=type('Experiment', (), {}),
-            MSS=lambda: SimpleNamespace(monitors=[], grab=grab),
+            MSS=lambda: SimpleNamespace(monitors=[], grab=grab, close=lambda: None),
             select_capture_monitor=lambda *a, **k: {}, get_screeninfo_monitors=lambda: [],
             RtpFrameClock=lambda: None, HAS_CV2=False,
             threading=SimpleNamespace(Lock=Guard, Condition=Guard, Thread=ImmediateThread),
             ThreadPoolExecutor=lambda **k: None, CaptureObservation=CaptureObservation,
+            CaptureResourceOwner=CaptureResourceOwner,
             time=SimpleNamespace(monotonic=lambda: 0, monotonic_ns=lambda: clock.now,
                 thread_time_ns=lambda: 0, process_time_ns=lambda: 0, time=lambda: 0, sleep=sleep),
             logger=SimpleNamespace(info=lambda *a, **k: None))
@@ -549,6 +559,8 @@ class CaptureLoopTest(unittest.TestCase):
             clock.config_calls += 1
             if clock.config_calls > 1:
                 clock.now += config_ns
+            if clock.calls == len(grabs):
+                track._capture_running = False
         track._target_lock.enter = target_config
         if fail_trace_at is not None:
             track._frame_trace_context = object()
@@ -565,8 +577,6 @@ class CaptureLoopTest(unittest.TestCase):
             clock.calls += 1
             clock.now += grabs[clock.calls - 1]
             clock.cpu += grabs[clock.calls - 1]
-            if clock.calls == len(grabs):
-                track._capture_running = False
             if clock.calls == suspend_at:
                 # A full pause/resume crossing must break cadence even if the
                 # next admitted grab sees active state again.
@@ -579,7 +589,8 @@ class CaptureLoopTest(unittest.TestCase):
         def sleep(delay):
             clock.sleeps.append(delay)
             clock.now += int(delay * 1_000_000_000) + (oversleep_ns if delay != .005 else 0)
-        track.sct = SimpleNamespace(grab=grab)
+        track.sct = SimpleNamespace(grab=grab, close=lambda: None)
+        track._capture_resource_owner = CaptureResourceOwner(track.sct)
         loop = method('ScreenCaptureTrack', '_capture_loop', time=SimpleNamespace(
             monotonic_ns=lambda: clock.now, thread_time_ns=lambda: clock.cpu, sleep=sleep))
         loop(track)
@@ -670,9 +681,11 @@ class CaptureLoopTest(unittest.TestCase):
         for option in ('suspend_at', 'profile_at'):
             with self.subTest(option=option):
                 _, clock, result = self.run_cadence_loop([10_000_000] * 3, **{option: 1})
-                self.assertEqual(clock.sleeps, [.04] * 3)
+                self.assertEqual(clock.sleeps, [.04] * (2 if option == 'suspend_at' else 3))
                 self.assertEqual(result['intervalCount'], 1)
-                self.assertEqual(result['discontinuous'], 2)  # Generation mismatch plus final stop.
+                self.assertEqual(result['discontinuous'], 2)  # Discard/mismatch plus final stop.
+                self.assertEqual(result['discarded'], 1 if option == 'suspend_at' else 0)
+                self.assertEqual(result['published'], 2 if option == 'suspend_at' else 3)
 
     def test_observation_failures_cannot_add_error_retry_or_block_publication(self):
         class Broken:
