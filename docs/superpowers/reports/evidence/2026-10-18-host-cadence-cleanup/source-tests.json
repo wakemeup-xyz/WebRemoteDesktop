@@ -1,0 +1,99 @@
+{
+  "kind": "source-test-and-task-review-evidence",
+  "productionQualification": "NOT RUN for this increment",
+  "base": "4d591bb27434cca0c6071aadf7478cb8fba956ca",
+  "productTip": "c23948256803afda3383080849a7b5fb9076632d",
+  "interpreter": "/Users/macstudio1/.homebrew/opt/python@3.11/bin/python3.11",
+  "cwd": "python-host",
+  "sourceCommits": {
+    "task1": [
+      "9d25cd97efeacfd0149fc9c31c1a387cd4a683ec",
+      "d3eaa28304b934c728b5b396e3a07b6eae066b19"
+    ],
+    "task2": "2d3583201e96e545c701a4fafebe7b8e20db8b3a",
+    "task3": "c23948256803afda3383080849a7b5fb9076632d"
+  },
+  "finalAffectedCommand": [
+    "-m",
+    "unittest",
+    "test_peer_cleanup_observation",
+    "test_capture_resource_owner",
+    "test_capture_shutdown_contract",
+    "test_capture_cadence",
+    "test_capture_observation",
+    "test_runtime_observability"
+  ],
+  "finalAffectedResult": {
+    "tests": 103,
+    "seconds": 30.241,
+    "exit": 0,
+    "status": "OK",
+    "warnings": 0
+  },
+  "priorAffectedGreenCounts": [
+    67,
+    84
+  ],
+  "countsAreOverlappingNotAdditive": true,
+  "behavioralRed": {
+    "task1ImmediateFakeStart": "notification 0 versus 1",
+    "task1R1ObserverTiming": "7ms observer + 10ms grab incorrectly 17/10/7; fixed 10/10/0 with 7ms postGrab",
+    "task2LatePixels": {
+      "tests": 2,
+      "exit": 1,
+      "stopAndResumeFailures": 2
+    },
+    "task3Overlap": {
+      "tests": 1,
+      "exit": 1,
+      "missingEarlierManualTerminal": true
+    },
+    "task3DiagnosticFailures": {
+      "tests": 1,
+      "subcaseErrors": 8,
+      "exit": 1,
+      "fixedPreservesOriginalExceptionIdentity": true
+    }
+  },
+  "testBoundary": {
+    "realThreads": false,
+    "realSleep": false,
+    "subprocesses": false,
+    "hostOrNativeImports": false,
+    "businessNativeInput": false,
+    "serviceOperations": false
+  },
+  "taskReview": "Approved for all three tasks; whole increment pending",
+  "reviewArtifacts": {
+    "task-1-review.md": {
+      "sha256": "622cdddf6693788aad802c43373d30448f4d3439c30beb5c82279937c73b48fd",
+      "bytes": 8135
+    },
+    "task-1-r1-review.md": {
+      "sha256": "c4bf103b92998f5d7a608834e754d467a3cb0f291a0568797d127ee25e2f7f4e",
+      "bytes": 4558
+    },
+    "task-2-review.md": {
+      "sha256": "9b07e4e8f59bbc2d1c1b521a0cacc71784fe1d2e598bc3c9477a238087553358",
+      "bytes": 6179
+    },
+    "task-3-review.md": {
+      "sha256": "e00b9ff5170d0be049ae2a0de9a7ab26fb409f2b4e82dd44469399849b0dac38",
+      "bytes": 6387
+    }
+  },
+  "implementerReports": {
+    "task-1-report.md": {
+      "sha256": "f2d9ef8c3188c7bebc17019453a4aaa6f9652f4e2ec84edc1688037bb6aae620",
+      "bytes": 12581
+    },
+    "task-2-report.md": {
+      "sha256": "d31b2bbc9934abbed12ec6c732df7163615835d7734c2791efe34af465e2e954",
+      "bytes": 10074
+    },
+    "task-3-report.md": {
+      "sha256": "db2ddc74ea654815ea7be7fcdeaa77a24a993ace5e8b5d357ae17a0675e3b8e3",
+      "bytes": 10085
+    }
+  }
+}
