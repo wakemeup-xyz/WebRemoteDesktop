@@ -1,0 +1,243 @@
+--- R5/qualification_evidence.py
++++ R6/qualification_evidence.py
+@@ -77,25 +77,42 @@
+ class ObservationGate:
+  """Sticky invalid/missing/phase/Host/event evidence. Summary cannot clear failure."""
+  def __init__(self,scenario,build,pure):
+-  self.scenario=scenario;self.build=build;self.pure=pure;self.failure=None;self.phase=None;self.elapsed=None;self.rows=0;self.host_hash=None;self.host_samples=0;self.event_n=0;self.event_time=0;self.seen=set();self.events=[];self.phase_windows={};self.owner=None;self.baseline_lease=None;self.stable_lease=None
++  self.scenario=scenario;self.build=build;self.pure=pure;self.failure=None;self.phase=None;self.elapsed=None;self.rows=0;self.host_hash=None;self.host_samples=0;self.event_n=0;self.event_time=0;self.seen=set();self.events=[];self.phase_windows={};self.owner=None;self.startup_owner=[None,None];self.baseline_lease=None;self.stable_lease=None
+  def reject(self):
+   if self.failure is None:self.failure='invalid-or-missing-observation'
+  def observe(self,raw):
+   need(self.failure is None,'latched observation failure')
+   try:
+    row=row_valid(raw,self.scenario,self.build,self.pure);phase=row['phase'];recovery=self.scenario in ('within-grace','after-grace')
+-   chain=('baseline','fault','recovering','recovered-stability') if recovery else (('continuity',) if self.scenario=='continuity' else ('baseline',))
+-   # Only forward-reachable observed phases; transient internal phases may fall
+-   # between ticks. This does not witness every internal state-machine edge.
+-   # Final source review must independently verify those exact producer edges.
++   qualified=('baseline','fault','recovering','recovered-stability') if recovery else (('continuity',) if self.scenario=='continuity' else ('baseline',))
++   chain=('startup',)+qualified
++   # Actual producer persists startup before the qualified chain. Transient
++   # recovery edges may remain between ticks; no mandatory edge-row API.
+    need(phase in chain or phase=='terminal','sample phase outside scenario')
+-   if self.phase is None:need(phase==chain[0],'first sampling phase missing')
++   if self.phase is None:need(phase=='startup','initial startup observation missing')
+    else:
+     need(self.phase!='terminal','row after terminal')
+-    if phase!='terminal':need(chain.index(phase)>=chain.index(self.phase),'unreachable/backward/restarted phase')
++    if phase!='terminal':
++     need(chain.index(phase)>=chain.index(self.phase),'unreachable/backward/restarted phase')
++     if self.phase=='startup' and phase!='startup':need(phase==qualified[0],'initial qualified phase missing')
++   # Same elapsed anchor as qualified rows; use the existing startup allowance,
++   # never restart the clock or credit startup toward a qualified phase window.
++   if phase=='startup':need(row['elapsedSeconds']<=120,'startup observation budget exceeded')
+    if self.elapsed is not None:need(row['elapsedSeconds']>=self.elapsed and row['elapsedSeconds']-self.elapsed<=1.5,'sample clock/gap')
+    h=row['hostObservation'];need(self.host_hash in (None,h['hostHash']) and h['samples']>=self.host_samples,'Host observation changed/regressed')
+-   identity=(row['identity']['sessionHash'],row['identity']['admissionHash']);need(all(v is not None for v in identity),'missing ordinary owner evidence');need(self.owner in (None,identity),'ordinary owner changed');self.owner=identity
++   identity=(row['identity']['sessionHash'],row['identity']['admissionHash'])
++   if phase=='startup':
++    # A null is no identity observation and never establishes admission authority.
++    for index,value in enumerate(identity):
++     if value is not None:
++      need(self.startup_owner[index] in (None,value),'startup identity contradicted')
++      self.startup_owner[index]=value
++   else:
++    need(all(v is not None for v in identity),'missing ordinary owner evidence')
++    if self.owner is None:
++     need(phase==qualified[0] and row['identity']['socketHash'] is not None,'complete first qualified identity required')
++     need(all(previous in (None,value) for previous,value in zip(self.startup_owner,identity)),'qualified owner contradicts startup')
++    need(self.owner in (None,identity),'ordinary owner changed');self.owner=identity
+    for event in row['serverEvents']:
+     need(event['n']==self.event_n+1 and event['serverTimestampMs']>=self.event_time,'server event gap/order');need(event['event']!='host-disconnected','Host disconnect alarm');self.event_n=event['n'];self.event_time=event['serverTimestampMs'];self.events.append(event)
+    if phase=='baseline':self.baseline_lease=row['sample']['leaseEpoch']
+@@ -104,7 +121,7 @@
+    window=self.phase_windows.setdefault(phase,{'first':row['elapsedSeconds'],'last':row['elapsedSeconds'],'count':0});window['last']=row['elapsedSeconds'];window['count']+=1;return row
+   except BaseException:self.reject();raise
+  def finish(self,summary):
+-  need(self.failure is None and self.rows>0,'latched/missing observations')
++  need(self.failure is None and self.rows>0 and 'startup' in self.seen and self.owner is not None,'latched/missing startup or qualified owner observations')
+   expected='recovered-stability' if self.scenario in ('within-grace','after-grace') else 'continuity' if self.scenario=='continuity' else 'baseline'
+   need(expected in self.seen and self.phase in (expected,'terminal'),'terminal phase coherence')
+   h=summary['hostObservation'];need(h['hostHash']==self.host_hash and h['samples']>=self.host_samples,'terminal Host contradiction')
+--- R5/REPORT.md
++++ R6/REPORT.md
+@@ -1,23 +1,34 @@
+-# Private R5 operational fixes — preparation only
++# Private R6 actual-producer startup consumer correction
+ 
+-2026-10-18. Fresh0700 private package; all files0600. REPORT.md was the first file created. R4 and all predecessors are preserved. This round implements only root's Option A post-close ruling and the private-build child cleanup finding. It is ready for scoped independent re-review, not runtime execution.
++Prepared2026-10-18; independent scoped review pending. This fresh0700 directory was created with REPORT.md first. All files0600. Only executable change: qualification_evidence.py, inside ObservationGate.__init__, observe and finish. R5 and all predecessors are immutable; this is no deployment or execution approval.
+ 
+-## Changes
++## Actual producer evidence
+ 
+-`operational_common.py` keeps health and current_gate strict idle by default. Health first validates bounded loopback responses as objects, status=ok, Host online exactly true, and both counts as exact Python integers in0..9007199254740991 (JSON/JavaScript safe-integer representation bound, not a claimed product capacity). Missing, null, boolean, negative, oversized or malformed counts are fatal, as are offline/unhealthy responses. A named qualification_integrity path alone explicitly selects require_idle=False. It still runs the identical source/freeze/asset review, exact dist, service-birth, tunnel/watch/quick preservation and before/after service-identity fences.
++Read root's R6 requirements, the complete Task4 report including its later completion section, final-operations-integration-checks.md, and actual run/tick/model/startup code. Source inspected is b6570f7af1637dd08495f83a0a4925c6c0e1d723; at inspection time the working runner SHA256 equaled the Git blob SHA2568c022bd75ed930c74e03ffd6361aa48700399a42d044727cc325b70dfc170c1b. This is an inspected producer reference, not the final combined candidate TIP. The report's132 pure-test GREEN is author-reported source evidence; no tests were rerun here. Root subsequently reported an Important terminal no-fault identity/counter comparison finding and an active source-only fix on the two Task4 Python paths. No startup/schema/clock change is expected, but b6570f7 is not approved final source. R6 does not attempt that source fix; final integration must use the actual corrected and reviewed commit.
+ 
+-`ordinary-supervisor.py` uses that path only after worker/owned lifecycle validation at the ended interval's final gate. Both existing scenario preflights still call default-strict current_gate. Source pins and runtime-manifest hash/expiry are checked in their existing final position. Terminal rows, sticky failure, exact schemas, inherited browserClose=closed / manager stages=ok and original diagnostics remain unchanged. The final record adds finalRuntimeIntegrity, postCloseOccupancy (bounded counts, observation time, idle-observed or occupied-unattributed), nextRunAdmission=NOT_ESTABLISHED, strictFreshPreflightRequired=true and serverMapDrainEstablished=false. Unavailable/failed integrity leaves the new observation fields null and fails qualification; it is never forgiven as grace. A later terminal-evidence failure may coexist with successfully observed final integrity/occupancy, without becoming PASS.
++At runner1296 the model enters startup. At1320 the observation clock began is assigned once, then tick1322 completes before the UI action is created. _observe_start1032–1045 keeps tick observations active while Start awaits. tick1254–1265 persists the wrapper before model.observe; row phase can therefore still be startup on the sample that triggers the internal transition. Model715–720 enforces the actual graph. Model752–758 starts qualification only after complete identity/full readiness and fresh progress, using a separate started anchor. Wrapper elapsedSeconds continues from began; it is not reset at admission. check_state1170–1181 hashes actual session/socket/admission independently, permitting null until present. The model keeps session/admission stable after qualification and permits the recovery socket gap under its existing fault gates. Final tick can persist another row but does not advance qualified duration.
+ 
+-Nonzero occupancy after the ended interval has no asserted cause: it can neither be labeled own grace, human activity nor leaked cleanup from counts alone. Zero counts also do not grant next-run admission or establish complete server-session teardown. Every later scenario requires a separate root invocation with fresh strict idle checks and the product's guarded admission, including retained human owner/pending intent. No wait, deadline addition, timer change, owner clearing, reclaim, remint or automatic next run was added. Cost: completed qualification does not prove the server map has drained; root must inspect pending occupancy and preserve human priority. currentReadiness remains the existing independent best-effort strict diagnostic, whose caught errors neither retroactively classify the interval nor prove grace.
++## Exact new consumer invariants
+ 
+-`build-private-two-time-template.py child_owned` now has one coordinated finally cleanup for every outcome, including normal Node exit, registration/scan error and timeout. The work deadline is start+180s, and polling sleep cannot intentionally extend it. The single cleanup uses the existing registered-identity Registry with grace0, TERM observation2s, KILL observation1s. Normal-exit observe_for(.25) was removed, not stacked on the cleanup. The first operation error and timedOut flag remain untouched by cleanup; cleanupErrorClass remains separate, as does ownershipErrorClass. The new intervened field is true for any nonempty recorded signal-attempt list, false for an exact empty list and null for missing/malformed signal-list evidence. Completion requires intervened is false in addition to all prior exit/coverage/identity conditions. Node exit0 and output files cannot override signals, timeout, unknown ownership or cleanup error. The existing two-endpoint caller stops after failure and never retries a build.
++Every row still first passes the unchanged exact wrapper/nested schemas, finite bounds, build identity, valid nonnull private sample, complete stable Host observation, hash formats and server event schema. Null sample is always fatal, including startup. Startup cannot bypass Host continuity, monotonic elapsed/gap<=1.5s, event numbering/time order or Host-disconnect alarms, the12000 row cap, or the outer byte/line caps. Any contradiction remains sticky; terminal summary cannot clear it.
+ 
+-## Budget and authority
++The first observed row must be startup. The scenario chain is startup -> baseline for baseline/recovery or startup -> continuity for continuity; recovery can then advance forward through fault/recovering/recovered-stability. Startup may repeat only as a prefix. A transition out of startup must first observe baseline/continuity, so startup cannot skip directly into recovery. No preflight row, unknown/wrong-scenario phase, backward transition, startup restart or row after terminal is accepted. Recovery transient phases may still be skipped by sampled rows when forward reachable: source review enforces each real edge; no new producer event-row API is required. A terminal-only startup failure cannot complete qualification. finish explicitly requires observed startup and an established qualified owner.
+ 
+-Each private child retains the180s work allowance plus3s cleanup observation allowance. These are configured monotonic wait budgets, not a hard OS scheduling/syscall wall-clock guarantee; Registry scans/signals/result and process startup have unavoidable observation/check-to-use overhead. No repeated cleanup stage or new grace wait was added. Normal completion now consumes the existing3s cleanup allowance too. TERM/KILL authority remains limited to birth-verified registered direct-created or observed descendant identities; the immutable builder path does not launch managed services. Registry may discover direct children of currently verified owned parents; no global process enumeration or signal authority over unregistered/unknown identities or managed services is introduced. Original SUP, helper exclusion-aware Registry derivative, primary helper and service ownership rules are unchanged. If registration fails or unobserved orphaning occurs, the record stays failed/unknown; this code cannot invent ownership. A cleanup API error is recorded and does not authorize a second cleanup/retry. No claim is made that a surviving esbuild child has actually occurred.
++Startup elapsedSeconds is limited to the existing120s supervisor startup allowance, measured on the same wrapper anchor; this is a consumer bound, not a new wait or deadline extension. Existing12000 row/time and1.5s gap bounds remain. First qualification still follows the same clock. The existing phase_windows mechanism stores startup separately and never uses it for the required300s baseline,10800s continuity or30s recovered-stability windows. Existing qualified counts and seconds-minus1.5 observation tolerance are unchanged. The transition-triggering row remains startup for consumer accounting: no inferred reassignment of its time/sample is added. Exact producer/consumer boundary counts and final export remain part of the final source integration gate.
+ 
+-## Verification and outstanding gates
++During startup only sessionHash and admissionHash accumulate partial equality observations. A null adds no identity and does not erase an earlier nonnull value. A later different nonnull value rejects immediately. A repeated same value is acceptable. SocketHash remains an individually nullable actual observation during startup and is not promoted to admission authority. No startup value alone establishes ordinary owner authority.
+ 
+-Static AST parsing and source-structure assertions only: no imports of this package or pinned helper/Registry, no calls of operational functions, no mocks, tests, build, process/status/network/browser/service operations. The focused R4-to-R5 diff contains the three code changes and current explanatory records. All other code, including qualification_evidence.py and all strict-schema/exclusion/sampling fixes, is byte-preserved. R4/R3/R2 manifest entries and original SUP/helper/sampler pins are re-hashed unchanged. See static-checks.json and provenance.json for recorded scope; syntax/source checks do not demonstrate runtime behavior.
++At the first qualified baseline/continuity row, sessionHash, admissionHash and socketHash must all be nonnull. Session/admission must match every previously observed nonnull startup value; the pair becomes the immutable ordinary owner. All subsequent rows retain the prior exact nonnull session/admission equality requirement. SocketHash is not added to that immutable pair: the existing confirmed recovery socket-gap behavior remains possible; no previous socket hash is substituted for a current null. Original server-session correlation and recovery-event predicates are byte-preserved, as are source enforcement of fault/owner/socket gates and its terminal fail-closed checks. This small consumer correction neither invents admission nor claims an unobserved internal phase or identity.
+ 
+-No EXECUTION-REVIEW.json, frozen final candidate, dummy TIP, runtime manifest or execution receipt is created. The inherited receipt scope string private-r3-combined-operations is intentionally unchanged; any later receipt must pin this R5 manifest and actual independent review. Final actual runner CLI, schemas/counts, final source allowlist, exact reviewed TIP and build asset template are still integration gates. Root alone can execute after all gates and fresh authorization fences. R4 approval remains historical approval of R4 bytes, not approval of R5 or execution.
++## Preserved scope and digests
++
++qualification_evidence.py SHA256: ea398d2260c405a6115808c3c5f3f975974974e62bc6cb88be61c414e0c941b4
++All other10 executable package files, including ordinary-supervisor.py, operational_common.py, private-builder-entry.js and build-private-two-time-template.py, are byte-identical to R5. The latter retains the unconditional single finally cleanup and no-intervention completion rule exactly. Validator code outside the three ObservationGate methods is unchanged: browserClose=closed/manager stages=ok, strict schemas, first failure, original diagnostics, induced continuity INCOMPLETE, Host and server-event correlation all remain. R5 final-ended-interval integrity versus fresh strict next-run preflight, unattributed occupancy, whole-recovery-scenario Host-sampling prohibition, managed-service exclusion logic and immutable original SUP/helper/sampler pins remain unchanged. Full predecessor manifests R2–R5 were rehashed unchanged.
++
++Changed artifacts are this report, SELF-REVIEW.md, STATUS.json, provenance.json, static-checks.json, OPERATIONAL-CONTRACT.md, qualification_evidence.py, r5-to-r6-focused.diff and SHA256SUMS.json; original R5 active records are also copied unchanged under R5-* history names. package-code-files.json remains byte-identical. Detailed immutable input digests are in provenance.json; manifest contains exact artifact digests, and focused diff shows only this round.
++
++## Verification, limits and handback
++
++All10 Python files parsed with ast.parse. Static AST/text comparisons confirm only the three named methods changed, mandatory startup/qualified entry and owner checks exist, and unchanged core rejection/counter/window predicates remain. No operational functions or package imports, executable mocks/tests, Registry, source module execution, build, process/status/network/browser/native/service/tunnel action, source/index/primary write, secret access or subagent occurred. Hash tool emitted only a locale fallback warning; resulting runner digest was independently matched using static Python hashlib.
++
++Static checks do not establish runtime behavior, full producer/consumer integration, live qualification or process-tree completion. Actual final Task5/6 source, final reviewed TIP, complete CLI/import/schema/count comparison, exact source allowlist, reviewed build template and execution receipt remain pending root gates. No execution receipt, frozen candidate or placeholder TIP was created. The inherited execution-review scope string is unchanged, and future approval must pin this new manifest. Explicit handback to root for full report reading and scoped independent review of startup-prefix/owner-establishment only; R5 approval does not approve these new bytes.
+--- R5/OPERATIONAL-CONTRACT.md
++++ R6/OPERATIONAL-CONTRACT.md
+@@ -1,4 +1,4 @@
+-# Full private R5 operational contract
++# Full private R6 operational contract
+ 
+ This is a complete implementation pending independent review and exact future source inputs. No step below was executed. Commands are interfaces, not execution requests. Use the configured Python3.11 runtime with psutil; do not import these modules during static review. Original prep R1 and Host R1/R2 artifacts are provenance only and cannot be replayed against the38bfd terminal-docs primary baseline.
+ 
+@@ -49,3 +49,7 @@
+ Strict idle remains the default for all health/current_gate consumers, including apply, reload, readiness, docs and both preflights of each ordinary scenario. Only the supervisor's final ended-interval qualification calls qualification_integrity, with identical runtime integrity and healthy Host requirements but validated nonzero occupancy allowed. Counts must be exact integers0..9007199254740991; invalid/missing/offline health remains fatal. finalRuntimeIntegrity and postCloseOccupancy record the single final observation; occupancy is idle-observed or occupied-unattributed, without cause attribution. nextRunAdmission is always NOT_ESTABLISHED, strictFreshPreflightRequired is true and serverMapDrainEstablished is false, including zero counts. Existing strict currentReadiness is a separate best-effort diagnostic. No grace drain wait or auto-next invocation exists; root must inspect pending/human priority before a separate fresh strict preflight and server-guarded admission.
+ 
+ Every private build child takes one finally cleanup (grace0/TERM2s/KILL1s), including normal Node exit. Work deadline=start+180s; cleanup observation allowance3s, with inherent scheduling/syscall overhead acknowledged. Missing/malformed signals evidence, any recorded signal attempt, operation/cleanup/ownership error, timeout or non-exited recorded identity prevents observed-private-build-completed. First failure is preserved; no rerun, duplicate cleanup or service authority is added. Full unobserved process tree remains unknown.
++
++## R6 actual-producer startup prefix
++
++ObservationGate requires actual startup rows before the scenario's first baseline/continuity row. Startup uses the same elapsed anchor, existing120s startup allowance, global caps and1.5s gap, full validated nonnull sample, complete Host and ordered event checks. Partial startup session/admission nonnull values are equality observations only; null establishes nothing and contradictory nonnull values reject. First qualified row must have all three identity hashes nonnull and agree with observed startup session/admission. That owner pair stays immutable thereafter; current socket may be null during source-confirmed recovery. No backward/restart/post-terminal row or missing startup shortcut. Startup phase_windows never contribute qualified duration/counts; original300/10800/30 checks remain. All prior R2–R5 fixes and other executable bytes are preserved. Final source/CLI/schema/count integration remains a separate pending gate.
+--- R5/SELF-REVIEW.md
++++ R6/SELF-REVIEW.md
+@@ -1,10 +1,5 @@
+-# R5 static self-review
++# R6 static self-review
+ 
+-This is author review, not independent approval or executed tests.
++Author review only; no independent approval or runtime tests. Read actual b6570f7 runner/report and root requirements/integration checklist. Verified mandatory first startup, forward-only prefix/qualified entry, no restart/post-terminal rows; partial session/admission observation equality; all three nonnull hashes at first qualified entry; stable owner pair thereafter. Startup null sample, incomplete/changed Host, event gap/Host alarm, identity contradiction, clock reversal/gap and unknown phase still latch failure. Successful summary cannot erase that latch or supply missing startup/owner/window coverage. Startup has its own window, bounded by existing120s startup allowance; no startup row/time is relabeled into qualification. Source transition-triggering startup row and final export count semantics are explicitly deferred to full final integration rather than inferred here.
+ 
+-- Checked only final ordinary call uses qualification_integrity; existing two preflight current_gate calls remain default strict, and other wrapper callsites are byte-preserved. Shared default health/current_gate both require idle. Validation of health object/type/range precedes occupancy classification; boolean/null/malformed/offline cannot qualify. Exact sources/assets/service births/preservation fences remain shared and unchanged in order.
+-- Traced zero versus nonzero occupancy: both retain NOT_ESTABLISHED next admission, fresh strict preflight, no automatic next run and no map-drain claim. Invalid final integrity fails before completed_result; successful integrity plus terminal schema failure remains failed. Strict diagnostic currentReadiness retains its nonfatal role and cannot excuse an earlier failure.
+-- Traced child normal exit, live descendant, timeout, registration/scan error and cleanup exception through the one finally block. Normal exit always cleans recorded descendants. Any signal attempt blocks completion even if it races with exit. Work/timeout error remains separate from cleanup error. No extra observe_for(.25), retries or second cleanup. Missing/malformed signal-list evidence rejects success.
+-- Checked no alterations to existing helper Registry exclusions, original supervisor, lifecycle closed/ok predicates, strict sample/terminal schemas, whole-scenario recovery sampling prohibition, frozen baseline, modes policy or source promotion behavior.
+-- Static AST/source assertions and hashes passed. These are structural checks only, not executed case tests; actual process behavior, wall timing, status and runner integration remain unobserved. Full process tree exit is unknown. Scheduling/syscall overhead cannot be claimed bounded by Python wait budgets.
+-- Independent re-review covers these two increments. Final exact source/runner CLI/schema/count integration and execution/asset receipts remain required, not generated here.
++AST parsing of10 Python files passed. Comparison shows only ObservationGate.__init__/observe/finish changed inside the sole modified executable file. All other package executable bytes including R5 two-time-build finally cleanup are unchanged. R2–R5 manifest files and pinned original SUP/helper/sampler hashes match. No package/function/module imports or execution, mocks/tests/runtime/build/status/browser/service operations. Hand back for scoped independent review; final source integration and execution receipts remain absent.
+--- R5/STATUS.json
++++ R6/STATUS.json
+@@ -1,12 +1,13 @@
+ {
+   "schemaVersion": 1,
+-  "kind": "private-r5-combined-operational-fix-round3",
+-  "classification": "prepared-not-executed-scoped-rereview-pending",
+-  "sourceTIP": null,
++  "kind": "private-r6-actual-startup-consumer-correction",
++  "classification": "prepared-not-executed-scoped-review-pending",
++  "inspectedProducerCommit": "b6570f7af1637dd08495f83a0a4925c6c0e1d723",
++  "finalSourceTIP": null,
+   "executionReviewReceipt": null,
+-  "runtimeManifest": null,
+   "packageImportedOrExecuted": false,
+   "mocksOrTestsExecuted": false,
+   "primaryMutated": false,
++  "fullSourceIntegration": "PENDING",
+   "fullProcessTreeExit": "unknown"
+ }
+--- R5/provenance.json
++++ R6/provenance.json
+@@ -1,23 +1,28 @@
+ {
+   "schemaVersion": 1,
+-  "predecessor": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r4-_3tf2j9g",
++  "predecessor": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r5-6tsv3vak",
+   "inputs": {
+-    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r4-_3tf2j9g/SHA256SUMS.json": "5f40c1b787ec0081170378ffcc1ed3c5ca2fb201b4aee0fa5d0666200c1befce",
+-    "/tmp/wrd-combined-recovery-operations-r4-rereview.md": "64c22d010a6634b9eabd0477a82b24c3cb5d5312a65e581f628bfc44ab0ee217",
+-    "/tmp/wrd-ordinary-supervisor-postclose-grace-assessment.md": "c5e33de4459c95e04157aa217ac0b857e196b20e04265e63e224116000806222",
++    "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r5-6tsv3vak/SHA256SUMS.json": "e6667fcb51a7cf8500ab694e8eda79fdb51871e92fe2336fbd915181c9af63e1",
++    "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/scripts/ordinary_session_recovery.py": "8c022bd75ed930c74e03ffd6361aa48700399a42d044727cc325b70dfc170c1b",
++    "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/.superpowers/sdd/2026-10-18-guarded-ordinary-recovery-plan/private-r6-startup-consumer-requirements.md": "aa4d86d0f5f403eb8b29a42bac1e595fc00e52ea4a2cda557348788015c27f93",
++    "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/.superpowers/sdd/2026-10-18-guarded-ordinary-recovery-plan/task-4-report.md": "30404632a38810f09be847a33ce0082e00a73f94e98486c821ed11fa572a4b82",
++    "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/.superpowers/sdd/2026-10-18-guarded-ordinary-recovery-plan/final-operations-integration-checks.md": "d170983c07be39f74e3b41506e1f54d45331d56054b0cc55bae0520e3d2a585a",
+     "/tmp/wrd-owned-turn-probe-private/supervisor.py": "d03cc2025f41d26c0079d3f820fdb2cd5479ae14448fb1c6f91c4589d6bd5c7b",
+     "/Users/macstudio1/AI/Claude/WebRemoteDesktop/scripts/passive_session_soak.py": "b0a15095651c9147eb451b27eb815ec4ea4cc984f2d293d3617c4cee89a15426",
+     "/Users/macstudio1/AI/Claude/WebRemoteDesktop/scripts/passive_session_sampler.js": "f862b739cbe7eb543ccab304203c71c62a43014530fa2da9a7655cba293665d3"
+   },
+-  "acceptedChanges": [
+-    "root Option A final qualification integrity/occupancy separation",
+-    "one unconditional owned private-build cleanup; intervention bars completion"
++  "inspectedProducerCommit": "b6570f7af1637dd08495f83a0a4925c6c0e1d723",
++  "executableChanges": [
++    "qualification_evidence.py"
+   ],
+-  "executableChanges": [
+-    "build-private-two-time-template.py",
+-    "operational_common.py",
+-    "ordinary-supervisor.py"
++  "changedMethods": [
++    "ObservationGate.__init__",
++    "ObservationGate.observe",
++    "ObservationGate.finish"
+   ],
++  "startupSecondsBound": 120,
++  "boundBasis": "existing supervisor startup allowance; no wait or deadline extension",
+   "predecessorsModified": false,
+-  "packageImportedOrExecuted": false
++  "packageImportedOrExecuted": false,
++  "producerApproval": "not final approved source; root-reported terminal no-fault correction/review pending"
+ }
+--- R5/static-checks.json
++++ R6/static-checks.json
+@@ -12,19 +12,15 @@
+     "restart-reviewed-combined-local.py",
+     "sync-reviewed-terminal-docs-only.py"
+   ],
+-  "onlyExecutableFilesChanged": [
+-    "build-private-two-time-template.py",
+-    "operational_common.py",
+-    "ordinary-supervisor.py"
+-  ],
+-  "otherCodeBytePreserved": true,
+-  "strictIdleDefaultsAndTwoPreflights": true,
+-  "singleExplicitFinalNonIdlePath": true,
+-  "singleChildFinallyCleanup": true,
+-  "cleanupWaitSeconds": 3,
+-  "workDeadlineSeconds": 180,
+-  "signalInterventionBarsCompletionSourceAssertion": true,
++  "onlyExecutableFileChanged": "qualification_evidence.py",
++  "otherTenExecutableFilesBytePreserved": true,
++  "onlyThreeObservationGateMethodsChanged": true,
++  "mandatoryStartupAndFirstQualifiedEntrySourceAssertions": true,
++  "partialOwnerContradictionAndCompleteQualifiedOwnerSourceAssertions": true,
++  "originalNullSampleHostEventClockCapPhaseWindowChecksPreserved": true,
++  "R5BuildFinallyAndFinalOccupancyCodeBytePreserved": true,
+   "predecessorManifestEntriesUnchanged": [
++    "R5",
+     "R4",
+     "R3",
+     "R2"
+@@ -32,5 +28,5 @@
+   "originalSUPHelperSamplerMatchPins": true,
+   "packageImportedOrExecuted": false,
+   "mocksOrTestsExecuted": false,
+-  "limitation": "AST/source assertions and hashes only; no runtime behavior, hard wall-clock bound or actual runner integration demonstrated."
++  "limitation": "Static structure and hashes only; actual runtime/final source CLI/schema/count integration not established."
+ }

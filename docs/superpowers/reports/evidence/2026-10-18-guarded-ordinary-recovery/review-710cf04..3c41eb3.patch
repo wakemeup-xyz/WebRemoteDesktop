@@ -1,0 +1,180 @@
+# Review package: 710cf04ebac03787c360fc342737e7f591456118..HEAD
+
+## Commits
+3c41eb3 fix(recovery): retain evidence and request ownership
+
+## Files changed
+ scripts/ordinary_session_recovery.py      | 13 +++---
+ scripts/test_ordinary_session_recovery.py | 70 +++++++++++++++++++++++++++++++
+ 2 files changed, 78 insertions(+), 5 deletions(-)
+
+## Diff
+diff --git a/scripts/ordinary_session_recovery.py b/scripts/ordinary_session_recovery.py
+index b50632e..5006e9e 100644
+--- a/scripts/ordinary_session_recovery.py
++++ b/scripts/ordinary_session_recovery.py
+@@ -156,21 +156,21 @@ class ServerRecoveryEvidence:
+         self._session = None; self._status, self._coverage = 'not-started', 'not-started'
+         self.reason = 'none'
+ 
+     def _fail(self, reason):
+         if self.reason == 'none': self.reason = reason
+         self._status, self._coverage = 'failed', 'incomplete'
+         self.close()
+         raise ValueError(self.reason) from None
+ 
+     def start(self):
+-        if self._fd is not None or self._status == 'failed': self._fail('server-log-unavailable')
++        if self._status != 'not-started' or self._fd is not None: self._fail('server-log-unavailable')
+         try:
+             fd = os.open(self._path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+             try:
+                 info = os.fstat(fd)
+                 if not stat.S_ISREG(info.st_mode): raise OSError()
+                 self._offset = os.lseek(fd, 0, os.SEEK_END)
+                 self._device, self._inode = info.st_dev, info.st_ino
+             except BaseException: os.close(fd); raise
+             self._fd = fd
+         except OSError: self._fail('server-log-unavailable')
+@@ -298,21 +298,21 @@ class ServerRecoveryEvidence:
+                'leaseEpoch': epoch, 'state': state}
+         self._events.append(validate_server_event(row)); self._last_time = timestamp
+ 
+ 
+ _status_owner = None
+ 
+ 
+ async def read_local_host_status():
+     """One fixed loopback request, including owned cancellation and writer close."""
+     global _status_owner
+-    if _status_owner is not None and not _status_owner.done():
++    if _status_owner is not None:
+         raise ValueError('host-observation-unavailable')
+ 
+     async def request():
+         writer = None
+         deadline = time.monotonic()+.75
+         try:
+             reader, writer = await asyncio.open_connection('127.0.0.1', 8080)
+             writer.write(b'GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nConnection: close\r\nCache-Control: no-store\r\nAccept: application/json\r\n\r\n')
+             await writer.drain()
+             total = 0
+@@ -343,27 +343,30 @@ async def read_local_host_status():
+             value = _json(await reader.readexactly(int(length)))
+             if type(value) is not dict or 'hostId' not in value or type(value.get('hostOnline')) is not bool: raise ValueError()
+             host_id = value.get('hostId')
+             if not _id(host_id) and not (value['hostOnline'] is False and host_id is None): raise ValueError()
+             return {'hostOnline': value['hostOnline'], 'hostId': host_id}
+         finally:
+             if writer is not None:
+                 writer.close()
+                 # wait_closed is owned directly, never detached from this stage.
+                 await asyncio.wait_for(writer.wait_closed(), max(0, deadline-time.monotonic()))
+-    _status_owner = asyncio.create_task(request())
++    # Reserve the slot through wrapper settlement, including the interval after
++    # the child finishes but before lifecycle_stage returns to this caller.
++    owned_task = asyncio.create_task(request())
++    _status_owner = owned_task
+     try:
+-        return await lifecycle_stage(_status_owner, .75, settlement=.075)
++        return await lifecycle_stage(owned_task, .75, settlement=.075)
+     except (asyncio.CancelledError, CancellationCooperationError): raise
+     except Exception: raise ValueError('host-observation-unavailable') from None
+     finally:
+-        if _status_owner.done(): _status_owner = None
++        if owned_task.done() and _status_owner is owned_task: _status_owner = None
+ 
+ 
+ _METRICS = ('inputAckRttMs', 'inputToPostApplyFrameMs', 'inputToVisibleEffectMs', 'hostQueueMs',
+     'hostApplyMs', 'hostAdapterAwaitMs', 'paintIntervalMs', 'freshFrameAgeMs', 'candidateRttMs',
+     'jitterBufferMs', 'decodeMs', 'encoderMs', 'relayFrameAckRttMs')
+ _SAMPLE_KEYS = ('schemaVersion', 'browserNowMs', 'scopeStable', 'socketConnected', 'pcIdentity', 'pcState',
+     'transport', 'attemptHash', 'generation', 'leaseEpoch', 'mediaPhase', 'inputAllowed', 'inputGate',
+     'startupMarks', 'callbacks', 'lastFrameAtMs', 'frameAgeMs', 'maxFrameGapMs', 'width', 'height',
+     'relayFrameSeq', 'tunnelRelayActive', 'relayLoadCallbacks', 'lastRelayLoadAtMs', 'relayLoadAgeMs',
+     'maxRelayLoadGapMs', 'relayEvidenceKind', 'buildId', 'metrics', 'diagnostics')
+diff --git a/scripts/test_ordinary_session_recovery.py b/scripts/test_ordinary_session_recovery.py
+index fbe8e6b..7ac28f7 100644
+--- a/scripts/test_ordinary_session_recovery.py
++++ b/scripts/test_ordinary_session_recovery.py
+@@ -420,10 +420,80 @@ class HttpBoundaryTests(unittest.IsolatedAsyncioTestCase):
+ class AmbiguousEpochTests(unittest.TestCase):
+     setUp = LogTests.setUp
+     append = LogTests.append
+ 
+     def test_two_different_pending_expiry_epochs_cannot_bind_reset(self):
+         self.e.start()
+         for epoch in (2, 3):
+             self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': epoch, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
+         with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.read_tick(IDS)
+         self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++
++
++class OneShotLogTests(unittest.TestCase):
++    setUp = LogTests.setUp
++    append = LogTests.append
++
++    def test_closed_complete_cannot_reopen_and_skip_host_disconnect(self):
++        self.e.start(); self.append(event()); self.e.read_tick(IDS)
++        selected = self.e.snapshot()['selectedEvents']
++        self.e.close(); self.assertEqual(self.e.snapshot()['coverage'], 'complete')
++        h = event('signal_socket_disconnected', meta={'role': 'host', 'reason': 'other'})
++        h['domain'] = 'signaling'; h['correlation'] = {}; self.append(h)
++        with self.assertRaisesRegex(ValueError, '^server-log-unavailable$'): self.e.start()
++        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++        self.assertEqual(self.e.snapshot()['status'], 'failed')
++        self.assertEqual(self.e.snapshot()['selectedEvents'], selected)
++        self.assertIsNone(self.e._fd)
++        # A separate run needs a fresh instance. It cannot repair this interval.
++        fresh = ServerRecoveryEvidence(self.path, SALT); self.addCleanup(fresh.close)
++        fresh.start(); self.assertEqual(fresh.read_tick(IDS), [])
++        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++
++    def test_closed_incomplete_cannot_reopen_or_clear_first_failure(self):
++        self.e.start(); self.path.write_bytes(b'{'); self.e.read_tick(IDS); self.e.close()
++        self.assertEqual(self.e.reason, 'server-log-gap')
++        with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.start()
++        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++        self.assertEqual(self.e.reason, 'server-log-gap'); self.assertIsNone(self.e._fd)
++        with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.start()
++        self.assertEqual(self.e.snapshot()['status'], 'failed')
++
++
++class SettlingHttpOwnershipTests(unittest.IsolatedAsyncioTestCase):
++    async def test_done_child_reserves_slot_until_wrapper_settles(self):
++        from scripts import ordinary_session_recovery as recovery
++        real_stage = recovery.lifecycle_stage
++        for cancel_first in (False, True):
++            with self.subTest(cancel_first=cancel_first):
++                done_child = asyncio.Event(); release_wrapper = asyncio.Event()
++                calls = []; owned_tasks = []; writers = []
++                async def connect(*args):
++                    calls.append(args)
++                    reader = asyncio.StreamReader(); reader.feed_data(response()); reader.feed_eof()
++                    writer = Writer(); writers.append(writer)
++                    return reader, writer
++                async def paused_stage(operation, timeout, *, settlement):
++                    owned_tasks.append(operation)
++                    value = await real_stage(operation, timeout, settlement=settlement)
++                    if len(owned_tasks) == 1:
++                        done_child.set(); await release_wrapper.wait()
++                    return value
++                first = None
++                with patch('scripts.ordinary_session_recovery.asyncio.open_connection', connect), patch('scripts.ordinary_session_recovery.lifecycle_stage', paused_stage):
++                    try:
++                        first = asyncio.create_task(read_local_host_status())
++                        await done_child.wait()
++                        self.assertTrue(owned_tasks[0].done()); self.assertFalse(first.done())
++                        second_result, = await asyncio.gather(read_local_host_status(), return_exceptions=True)
++                    finally:
++                        if cancel_first: first.cancel()
++                        release_wrapper.set()
++                        first_result, = await asyncio.gather(first, return_exceptions=True)
++                self.assertIsInstance(second_result, ValueError, f'first={first_result!r}; second={second_result!r}')
++                self.assertEqual(str(second_result), 'host-observation-unavailable')
++                if cancel_first: self.assertIsInstance(first_result, asyncio.CancelledError)
++                else: self.assertEqual(first_result, {'hostOnline': True, 'hostId': 'host-canary'})
++                self.assertEqual(len(calls), 1); self.assertEqual(len(owned_tasks), 1)
++                self.assertTrue(all(w.closed and w.waited for w in writers))
++                self.assertIsNone(recovery._status_owner)
++                self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])

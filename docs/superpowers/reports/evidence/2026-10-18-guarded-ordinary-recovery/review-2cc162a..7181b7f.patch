@@ -1,0 +1,514 @@
+# Review package: 2cc162a282cde5846232026db8265b67592aa798..HEAD
+
+## Commits
+7181b7f feat(viewer): select guarded initial admission explicitly
+
+## Files changed
+ web-client/js/auth-start-integration.test.js | 256 +++++++++++++++++++++++++--
+ web-client/js/input-recovery.test.js         |  42 ++++-
+ web-client/js/webrtc.js                      |  23 ++-
+ 3 files changed, 306 insertions(+), 15 deletions(-)
+
+## Diff
+diff --git a/web-client/js/auth-start-integration.test.js b/web-client/js/auth-start-integration.test.js
+index 94eddb9..04987d2 100644
+--- a/web-client/js/auth-start-integration.test.js
++++ b/web-client/js/auth-start-integration.test.js
+@@ -3,64 +3,77 @@ const test = require('node:test');
+ const assert = require('node:assert/strict');
+ const fs = require('node:fs');
+ const path = require('node:path');
+ const vm = require('node:vm');
+ 
+ const json = (status, data) => ({ status, ok: status >= 200 && status < 300, json: async () => data });
+ const proxy403 = () => ({ status: 403, ok: false, json: async () => { throw new SyntaxError('proxy HTML'); } });
+ async function flush() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
+ 
+ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proof = false,
+-  readyState = 'loading', dispatchReady = true } = {}) {
++  readyState = 'loading', dispatchReady = true, search = '',
++  admission = () => json(201, { admission: { ticket: 'fixture-ticket' } }), actualSignaling = false } = {}) {
+   const nodes = new Map();
+   const domReady = [];
+   const tokens = new Map([['wrd_token', 'fixture-token']]);
+   if (proof) tokens.set('wrdProofAdmission', JSON.stringify({ proof: 'fixture-proof' }));
+   const requests = [], failures = [], controllers = [];
+-  let signals = 0, inits = 0, admissions = 0, time = 0;
++  let signals = 0, inits = 0, admissions = 0, time = 0, nextTimer = 0;
++  const timers = new Map(), admissionRequests = [], sockets = [];
+   function element() {
+     const classes = new Set();
+     return {
+       style: {}, dataset: {}, children: [], listeners: {}, disabled: false,
+       classList: { add(...names) { names.forEach((name) => classes.add(name)); }, remove(...names) { names.forEach((name) => classes.delete(name)); }, contains(name) { return classes.has(name); } },
+       setAttribute() {},
+       appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
++      append(...children) { children.forEach((child) => this.appendChild(child)); },
+       remove() { nodes.delete(this.id); },
+       addEventListener(name, listener) { this.listeners[name] = listener; },
+     };
+   }
+   for (const id of ['startBtn', 'loading', 'loadingText']) nodes.set(id, element());
+   const context = {
+-    AbortController, queueMicrotask,
++    AbortController, queueMicrotask, URLSearchParams,
+     console: { log() {}, warn() {}, error() {} },
+-    setTimeout() { return 1; }, clearTimeout() {}, setInterval() { throw new Error('unexpected live interval'); }, clearInterval() {},
++    setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
++    clearTimeout(id) { timers.delete(id); }, setInterval() { throw new Error('unexpected live interval'); }, clearInterval() {},
+     performance: { now: () => time }, navigator: {},
+     addEventListener() {},
+     document: {
+       readyState, body: element(),
+       createElement: element, getElementById(id) { return nodes.get(id) || null; },
+       querySelector() { return null; }, querySelectorAll() { return []; },
+       addEventListener(name, listener) { if (name === 'DOMContentLoaded') domReady.push(listener); },
+     },
+-    location: { href: 'viewer.html', origin: 'http://fixture' },
+-    RuntimeConfig: { getApiBase: () => 'http://fixture' },
++    location: { href: 'viewer.html', origin: 'http://fixture', search },
++    RuntimeConfig: { getApiBase: () => 'http://fixture', getSocketBase: () => 'http://fixture' },
+     sessionStorage: { getItem(key) { return tokens.get(key) || null; }, setItem(key, value) { tokens.set(key, value); }, removeItem(key) { tokens.delete(key); } },
+     localStorage: { getItem() { return null; }, removeItem() {}, setItem() {} },
+     fetch: async (url, options) => {
+       if (url.endsWith('/api/auth/viewer-admission')) {
+         admissions++;
+-        return json(201, { admission: { ticket: 'fixture-ticket' } });
++        admissionRequests.push({ url, options });
++        return admission({ url, options });
+       }
+       requests.push(url.endsWith('/api/auth/verify') ? 'verify' : 'bootstrap');
+       return url.endsWith('/api/auth/verify') ? verify() : bootstrap({ url, options });
+     },
+-    io() { throw new Error('integration fixture must not open a real Viewer'); },
++    io(_url, options) {
++      signals++;
++      const listeners = new Map();
++      const socket = { auth: options.auth, connected: true, io: {},
++        on(event, handler) { listeners.set(event, handler); }, emit() {}, disconnect() {},
++        dispatch(event, data) { return listeners.get(event)?.(data); } };
++      sockets.push(socket);
++      return socket;
++    },
+   };
+   context.window = context;
+   context.globalThis = context;
+   vm.createContext(context);
+   vm.runInContext(fs.readFileSync(path.join(__dirname, 'shell-guard.js'), 'utf8'), context);
+   // Join the real dependencies in production desktop-core declaration order.
+   // In interactive/defer mode WebRTC must wait for the later ChromeLayout declaration.
+   const { desktopScripts } = require('../../signal-server/scripts/web-asset-graph.js');
+   const included = new Set(['bounded-request.js', 'auth.js', 'bootstrap-controller.js', 'webrtc.js', 'chrome-layout.js']);
+   if (readyState === 'interactive') context.__WRD_ASSETS__ = {};
+@@ -70,39 +83,48 @@ function runtime({ verify = () => proxy403(), bootstrap = () => proxy403(), proo
+   const Auth = context.__Auth, WebRTC = context.__WebRTC;
+   const create = context.createViewerBootstrap;
+   context.createViewerBootstrap = (options) => { const controller = create(options); controllers.push(controller); return controller; };
+   // Only platform/media/layout effects are replaced. Auth, shell, boot adapter,
+   // Start handler, bootstrap controller, and capability computation remain real.
+   WebRTC.initializeMediaActivity = () => {};
+   WebRTC.bindFullscreenLifecycle = () => {};
+   WebRTC.configureNetworkControls = () => {};
+   WebRTC.updateNetworkUI = () => {};
+   WebRTC.renderPortSearchStatus = () => {};
+-  WebRTC.createSignalingSocket = () => { signals++; };
++  if (!actualSignaling) WebRTC.createSignalingSocket = () => { signals++; };
+   WebRTC.init = async () => { inits++; };
+-  WebRTC.enterBootstrapFailure = (error) => { failures.push(error.code); };
++  const enterBootstrapFailure = WebRTC.enterBootstrapFailure;
++  WebRTC.enterBootstrapFailure = (error) => {
++    failures.push(error.code);
++    if (actualSignaling) return enterBootstrapFailure.call(WebRTC, error);
++  };
+   context.ChromeLayout.applyCapabilities = (snapshot) => {
+     const capabilities = context.ChromeLayout.getCapabilities(snapshot);
+     nodes.get('startBtn').disabled = !capabilities.canConnect;
+     return capabilities;
+   };
+   WebRTC.networkMode = 'relay';
+   let readyDispatched = false;
+   function dispatchDOMContentLoaded() {
+     if (readyDispatched) throw new Error('DOMContentLoaded already dispatched');
+     readyDispatched = true;
+     context.document.readyState = 'interactive';
+     domReady.forEach((listener) => listener());
+   }
+   if (dispatchReady) dispatchDOMContentLoaded();
+   return { Auth, WebRTC, context, nodes, tokens, requests, failures, controllers,
+-    signals: () => signals, inits: () => inits, admissions: () => admissions,
++    signals: () => signals, inits: () => inits, admissions: () => admissions, admissionRequests, sockets,
++    expireRequest() {
++      const entry = [...timers].find(([, timer]) => timer.delay === 5000);
++      assert.ok(entry, 'real bounded admission request has a deadline');
++      timers.delete(entry[0]); entry[1].callback();
++    },
+     dispatchDOMContentLoaded,
+     setTime(value) { time = value; } };
+ }
+ 
+ for (const proof of [false, true]) {
+   test(`completed warmup is reused by verified Start with ${proof ? 'proof' : 'fresh explicit'} admission`, async () => {
+     const ready = { schemaVersion: 1, webrtc: { iceServers: [] } };
+     const r = runtime({ proof, verify: () => json(200, { valid: true }),
+       bootstrap: () => json(200, ready) });
+     await flush();
+@@ -312,10 +334,222 @@ test('a successful bootstrap response from an old auth generation is fenced befo
+     ? new Promise((resolve) => { resolveOld = resolve; })
+     : json(200, { schemaVersion: 1, webrtc: {} }) });
+   await flush();
+   r.Auth.setToken('new-token');
+   resolveOld(json(200, { schemaVersion: 1, webrtc: { selectedTurnServerId: 'old' } }));
+   await flush();
+   assert.notEqual(r.controllers[0].getSnapshot().state, 'ready');
+   assert.equal((await r.controllers[0].load({ mode: 'relay' })).webrtc.selectedTurnServerId, undefined);
+   assert.equal(calls, 2);
+ });
++
++
++function guardedRuntime(options = {}) {
++  return runtime({ search: '?wrdAdmission=vacant-only-v1', actualSignaling: true,
++    verify: () => json(200, { valid: true }),
++    bootstrap: () => json(200, { schemaVersion: 1, webrtc: {} }), ...options });
++}
++
++for (const search of ['?wrdAdmission=', '?wrdAdmission=unknown',
++  '?wrdAdmission=vacant-only-v1&wrdAdmission=vacant-only-v1',
++  '?wrdAdmission=vacant-only-v1&wrdAdmission=unknown']) {
++  test(`invalid initial selector rejects real Start before admission or io: ${search}`, async () => {
++    const r = guardedRuntime({ search });
++    await flush();
++    await r.context.__WRD_SHELL__.acknowledgeStartClick();
++    assert.deepEqual(r.failures, ['invalid-initial-policy']);
++    assert.equal(r.admissions(), 0);
++    assert.equal(r.signals(), 0);
++    assert.equal(r.inits(), 0);
++  });
++}
++
++test('unreadable selector location reports the fixed parser error', async () => {
++  const r = guardedRuntime();
++  await flush();
++  Object.defineProperty(r.context.location, 'search', { get() { throw new Error('private-location'); } });
++  assert.throws(() => r.WebRTC.readInitialAdmissionPolicy(),
++    { code: 'invalid-initial-policy', message: '桌面连接授权暂不可用，请手动重试' });
++  assert.equal(r.admissions(), 0);
++  assert.equal(r.signals(), 0);
++});
++
++for (const proof of ['{malformed', 'null', '{}']) {
++  test(`proof marker plus guarded selector rejects before API or io (${proof})`, async () => {
++    const r = guardedRuntime();
++    r.tokens.set('wrdProofAdmission', proof);
++    await flush();
++    await r.context.__WRD_SHELL__.acknowledgeStartClick();
++    assert.deepEqual(r.failures, ['invalid-initial-policy']);
++    assert.equal(r.admissions(), 0);
++    assert.equal(r.signals(), 0);
++    assert.equal(r.inits(), 0);
++  });
++}
++
++for (const [search, guarded] of [['', false], ['?unrelated=1', false], ['?wrdAdmission=vacant-only-v1', true]]) {
++  test(`real Start sends exactly the ${guarded ? 'guarded' : 'existing human'} admission body: ${search}`, async () => {
++    const r = guardedRuntime({ search });
++    await flush();
++    await r.context.__WRD_SHELL__.acknowledgeStartClick();
++    const expected = { viewerSessionId: r.WebRTC.resolveViewerSessionId() };
++    if (guarded) expected.initialPolicy = 'vacant-only-v1';
++    assert.equal(r.admissions(), 1);
++    assert.deepEqual(JSON.parse(r.admissionRequests[0].options.body), expected);
++    assert.equal(r.signals(), 1);
++    assert.equal(r.inits(), 1);
++    assert.equal(r.WebRTC._viewerAdmission.ticket, 'fixture-ticket');
++  });
++}
++
++test('malformed proof-only marker preserves existing proof socket branch', async () => {
++  const r = guardedRuntime({ search: '' });
++  r.tokens.set('wrdProofAdmission', '{malformed');
++  await flush();
++  await r.context.__WRD_SHELL__.acknowledgeStartClick();
++  assert.equal(r.admissions(), 0);
++  assert.equal(r.signals(), 1);
++  assert.equal(r.sockets[0].auth.proofAdmission.invalid, true);
++  assert.equal(Object.hasOwn(r.sockets[0].auth, 'viewerAdmission'), false);
++});
++
++for (const [name, mutate] of [
++  ['selector removed', (r) => { r.context.location.search = ''; }],
++  ['selector changed', (r) => { r.context.location.search = '?wrdAdmission=unknown'; }],
++  ['selector duplicated', (r) => { r.context.location.search += '&wrdAdmission=vacant-only-v1'; }],
++  ['proof appeared', (r) => { r.tokens.set('wrdProofAdmission', '{malformed'); }],
++  ['episode cancelled', (r) => { r.WebRTC.retireStartupEpisode('cancelled'); }],
++  ['new auth generation with same token', async (r) => { r.Auth.setToken('fixture-token'); await r.Auth.init(); }],
++  ['logout and login', async (r) => { r.Auth.logout(); r.Auth.setToken('fixture-token'); await r.Auth.init(); }],
++]) {
++  test(`late guarded admission cannot publish or connect after ${name}`, async () => {
++    let complete;
++    const r = guardedRuntime({ admission: () => new Promise((resolve) => { complete = resolve; }) });
++    await flush();
++    const retained = r.WebRTC._viewerAdmission = { mode: 'resume', generation: 'retained-owner' };
++    const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
++    await flush();
++    assert.equal(r.admissions(), 1);
++    await mutate(r);
++    complete(json(201, { admission: { ticket: 'late-ticket' } }));
++    await start;
++    await flush();
++    assert.equal(r.WebRTC._viewerAdmission, retained);
++    assert.equal(r.signals(), 0);
++    assert.equal(r.inits(), 0);
++    assert.equal(r.admissions(), 1, 'no fallback or remint after response rejection');
++  });
++}
++
++test('older request sequence cannot overwrite a newer admission', async () => {
++  let complete;
++  let calls = 0;
++  const r = guardedRuntime({ admission: () => ++calls === 1
++    ? new Promise((resolve) => { complete = resolve; })
++    : json(201, { admission: { ticket: 'newer-ticket' } }) });
++  await flush();
++  const episode = r.WebRTC.beginStartupEpisode();
++  const older = r.WebRTC.requestExplicitViewerAdmission(episode);
++  await flush();
++  await r.WebRTC.requestExplicitViewerAdmission(episode);
++  const newer = r.WebRTC._viewerAdmission;
++  complete(json(201, { admission: { ticket: 'older-ticket' } }));
++  await assert.rejects(older, { code: 'superseded' });
++  assert.equal(r.WebRTC._viewerAdmission, newer);
++  assert.equal(newer.ticket, 'newer-ticket');
++  assert.equal(r.signals(), 0);
++});
++
++for (const failure of ['HTTP denial', 'timeout']) {
++  test(`guarded ${failure} stops without automatic reclaim or unrestricted fallback`, async () => {
++    let complete;
++    const r = guardedRuntime({ admission: () => failure === 'timeout'
++      ? new Promise((resolve) => { complete = resolve; }) : json(409, { error: 'human-owner-retained' }) });
++    await flush();
++    const retained = r.WebRTC._viewerAdmission = { mode: 'resume', generation: 'retained-owner' };
++    const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
++    await flush();
++    if (failure === 'timeout') r.expireRequest();
++    await start;
++    if (complete) complete(json(201, { admission: { ticket: 'after-timeout-ticket' } }));
++    r.Auth._publishCheck({ state: 'verified', reason: 'ok', httpStatus: 200 });
++    await flush();
++    assert.equal(r.failures.length, 1);
++    if (failure === 'timeout') assert.equal(r.failures[0], 'timeout');
++    assert.equal(r.WebRTC._viewerAdmission, retained);
++    assert.equal(r.admissions(), 1);
++    assert.equal(r.signals(), 0);
++    assert.equal(r.inits(), 0);
++    assert.equal(JSON.parse(r.admissionRequests[0].options.body).initialPolicy, 'vacant-only-v1');
++  });
++}
++
++test('duplicate UI Start shares one guarded admission and one socket', async () => {
++  let complete;
++  const r = guardedRuntime({ admission: () => new Promise((resolve) => { complete = resolve; }) });
++  await flush();
++  const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
++  const duplicate = r.context.__WRD_SHELL__.acknowledgeStartClick();
++  await flush();
++  assert.equal(r.admissions(), 1);
++  complete(json(201, { admission: { ticket: 'one-ticket' } }));
++  await Promise.all([start, duplicate]);
++  assert.equal(r.admissions(), 1);
++  assert.equal(r.signals(), 1);
++  assert.equal(r.inits(), 1);
++});
++
++test('actual ordinary welcome updates Socket.IO resume auth and reconnect requests no ticket', async () => {
++  let completeBootstrap;
++  const r = guardedRuntime({ bootstrap: () => new Promise((resolve) => { completeBootstrap = resolve; }) });
++  await flush();
++  const start = r.context.__WRD_SHELL__.acknowledgeStartClick();
++  await flush();
++  const socket = r.sockets[0];
++  assert.ok(socket);
++  assert.equal(socket.auth.viewerAdmission.ticket, 'fixture-ticket');
++  socket.dispatch('connected', { hostOnline: false, viewerAdmission: { mode: 'resume', generation: 'ordinary-generation' } });
++  assert.deepEqual(JSON.parse(JSON.stringify(socket.auth.viewerAdmission)), { mode: 'resume', generation: 'ordinary-generation' });
++  assert.equal(socket.auth.viewerAdmission, r.WebRTC._viewerAdmission);
++  await socket.dispatch('connect');
++  await socket.dispatch('connect');
++  assert.equal(r.admissions(), 1);
++  assert.equal(r.signals(), 1);
++  completeBootstrap(json(200, { schemaVersion: 1, webrtc: {} }));
++  await start;
++  assert.equal(r.admissions(), 1);
++});
++
++
++for (const [search, guarded] of [['', false], ['?wrdAdmission=vacant-only-v1', true]]) {
++  test(`explicit manual reconnect selects the ${guarded ? 'guarded' : 'human'} policy`, async () => {
++    const r = guardedRuntime({ search });
++    await flush();
++    // Tunnel avoids native PeerConnection effects; admission and reclaim stay real.
++    r.WebRTC.networkMode = 'tunnel';
++    r.nodes.set('remoteVideo', r.context.document.createElement('video'));
++    await r.WebRTC.reclaimDesktopSession();
++    const expected = { viewerSessionId: r.WebRTC.resolveViewerSessionId() };
++    if (guarded) expected.initialPolicy = 'vacant-only-v1';
++    assert.deepEqual(JSON.parse(r.admissionRequests[0].options.body), expected);
++    assert.equal(r.admissions(), 1);
++    assert.equal(r.signals(), 1);
++    assert.equal(r.WebRTC._viewerAdmission.ticket, 'fixture-ticket');
++  });
++}
++
++test('Socket.IO admission denial disables the current owner without automatic remint', async () => {
++  const r = guardedRuntime();
++  await flush();
++  await r.context.__WRD_SHELL__.acknowledgeStartClick();
++  const socket = r.sockets[0];
++  socket.dispatch('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
++  await flush();
++  assert.equal(r.WebRTC._viewerAdmission, null);
++  assert.equal(r.WebRTC._superseded, true);
++  assert.equal(r.WebRTC.socket, null);
++  assert.equal(r.admissions(), 1);
++  assert.equal(r.signals(), 1);
++  assert.equal(r.WebRTC.createSignalingSocket(true), null);
++  assert.equal(r.admissions(), 1);
++  assert.equal(r.signals(), 1);
++});
+diff --git a/web-client/js/input-recovery.test.js b/web-client/js/input-recovery.test.js
+index 477efd6..7469684 100644
+--- a/web-client/js/input-recovery.test.js
++++ b/web-client/js/input-recovery.test.js
+@@ -280,21 +280,21 @@ globalThis.__Input = Input;`, context);
+     const suspended = latestMediaRequest('suspended');
+     window.dispatch('pageshow');
+     document.hidden = false;
+     document.dispatch('visibilitychange');
+     const active = latestMediaRequest('active');
+     if (active) freshFrame();
+     return { suspended, active };
+   }
+ 
+   return {
+-    Input, WebRTC, document, window, video, elements, sent, timers, documentListeners, windowListeners,
++    Input, WebRTC, context, document, window, video, elements, sent, timers, documentListeners, windowListeners,
+     advance, ack, writes, inputs: writes, pointer, keydown, keyup, blur, resume, trace,
+     setDataChannelOpen, latestMediaRequest, freshFrame, suspendAndResume,
+     setNow(value) { now = value; },
+   };
+ }
+ 
+ test('recovery fixture records real gate, send, ACK-timeout, and lifecycle decisions', () => {
+   const h = loadRecoveryFixture();
+   h.pointer('pointerdown');
+   h.pointer('pointerup');
+@@ -1791,10 +1791,50 @@ test('unordered hints are payload free, bounded, pruned by scope/TTL and never r
+   h.advance(3001);
+   assert.equal(Input.peekInputAckMetadata(ack('hint-999')).late, true);
+   h.advance(7000);
+   assert.equal(Input.peekInputAckMetadata(ack('hint-999')).reliable, undefined);
+   assert.equal(Input._unorderedTraceSends.size, 0);
+   send('scope-hint');
+   h.WebRTC.currentConnectionAttemptId = 'another-attempt';
+   Input.peekInputAckMetadata(ack('scope-hint'));
+   assert.equal(Input._unorderedTraceSends.size, 0);
+ });
++
++
++for (const outcome of ['denied', 'selector-removed']) {
++  test(`guarded admission ${outcome} retains a blocked local draft and cannot release input gates`, async () => {
++    const h = loadRecoveryFixture({ touchPoints: 5 });
++    const mobile = h.elements.get('mobileTextInput');
++    h.WebRTC.freezeControl('signal-disconnect');
++    mobile.value = 'guarded-retained-local-draft';
++    mobile.dispatch('input');
++    const retained = h.WebRTC._viewerAdmission = { mode: 'resume', generation: 'retained-generation' };
++    h.window.location.search = '?wrdAdmission=vacant-only-v1';
++    h.context.URLSearchParams = URLSearchParams;
++    h.context.AbortController = AbortController;
++    h.context.Auth = { getToken: () => 'fixture-token', getGeneration: () => 1, isVerified: () => true };
++    h.context.sessionStorage = { getItem: () => null };
++    let complete;
++    const requests = [];
++    h.context.fetch = (_url, options) => {
++      requests.push(options);
++      return new Promise((resolve) => { complete = resolve; });
++    };
++    vm.runInContext(fs.readFileSync(path.join(__dirname, 'bounded-request.js'), 'utf8'), h.context);
++    const writes = h.inputs().length;
++    const pending = h.WebRTC.requestExplicitViewerAdmission();
++    await Promise.resolve();
++    assert.equal(requests.length, 1);
++    assert.equal(JSON.parse(requests[0].body).initialPolicy, 'vacant-only-v1');
++    if (outcome === 'selector-removed') h.window.location.search = '';
++    complete({ ok: outcome !== 'denied', status: outcome === 'denied' ? 409 : 201,
++      json: async () => ({ admission: { ticket: 'late-guarded-ticket' } }) });
++    await assert.rejects(pending);
++    assert.equal(requests.length, 1);
++    assert.equal(h.WebRTC._viewerAdmission, retained);
++    assert.equal(mobile.value, 'guarded-retained-local-draft');
++    assert.equal(h.WebRTC.hasActiveControl(), false);
++    assert.equal(h.Input.getEffectiveInputGate().allowed, false);
++    assert.equal(h.inputs().length, writes, 'no reset, business-input replay or reacquire from an admission response');
++    assert.equal(h.sent.filter(({ event }) => event === 'control-acquire').length, 0);
++  });
++}
+diff --git a/web-client/js/webrtc.js b/web-client/js/webrtc.js
+index 019896b..de18481 100644
+--- a/web-client/js/webrtc.js
++++ b/web-client/js/webrtc.js
+@@ -2854,34 +2854,51 @@ const WebRTC = {
+   readProofAdmission() {
+     try {
+       if (typeof sessionStorage === 'undefined') return null;
+       const raw = sessionStorage.getItem('wrdProofAdmission');
+       if (raw == null) return null;
+       try { return JSON.parse(raw) || { invalid: true }; }
+       catch (_error) { return { invalid: true }; }
+     } catch (_error) { return null; }
+   },
+ 
++  readInitialAdmissionPolicy() {
++    try {
++      const values = new URLSearchParams(window.location.search).getAll('wrdAdmission');
++      if (values.length === 0) return null;
++      if (values.length === 1 && values[0] === 'vacant-only-v1') return values[0];
++    } catch (_error) { /* Unreadable location is not ordinary admission. */ }
++    throw Object.assign(new Error('桌面连接授权暂不可用，请手动重试'), { code: 'invalid-initial-policy' });
++  },
++
+   async requestExplicitViewerAdmission(episode = this._startupEpisode || null) {
++    const initialPolicy = this.readInitialAdmissionPolicy();
+     // A proof-bearing page must never upgrade itself to ordinary human takeover.
+-    if (this.readProofAdmission()) { this._viewerAdmission = null; return; }
++    if (this.readProofAdmission()) {
++      if (initialPolicy) {
++        throw Object.assign(new Error('桌面连接授权暂不可用，请手动重试'), { code: 'invalid-initial-policy' });
++      }
++      this._viewerAdmission = null;
++      return;
++    }
+     const token = Auth.getToken();
+     const authGeneration = Auth.getGeneration?.();
+     if (!token || Auth.isVerified?.() !== true) throw new Error('请重新验证登录');
+     const sequence = ++this._explicitAdmissionSequence;
+     const base = typeof RuntimeConfig !== 'undefined' ? RuntimeConfig.getApiBase() : window.location.origin;
+     const result = await fetchJsonWithin(`${base}/api/auth/viewer-admission`, {
+       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ viewerSessionId: this.resolveViewerSessionId() }),
++      body: JSON.stringify({ viewerSessionId: this.resolveViewerSessionId(), ...(initialPolicy ? { initialPolicy } : {}) }),
+     }, { timeoutMs: 5000 });
+     if (!this.startupAllowed(episode) || sequence !== this._explicitAdmissionSequence || Auth.getToken() !== token
+-        || Auth.getGeneration?.() !== authGeneration || Auth.isVerified?.() !== true) {
++        || Auth.getGeneration?.() !== authGeneration || Auth.isVerified?.() !== true
++        || this.readInitialAdmissionPolicy() !== initialPolicy || this.readProofAdmission()) {
+       throw Object.assign(new Error('superseded'), { code: 'superseded' });
+     }
+     if (!result.ok || typeof result.data?.admission?.ticket !== 'string') {
+       throw new Error('桌面连接授权暂不可用，请手动重试');
+     }
+     this._viewerAdmission = { mode: 'explicit', ticket: result.data.admission.ticket };
+   },
+ 
+   signalingConnectBudgetMs: 5000,
+ 

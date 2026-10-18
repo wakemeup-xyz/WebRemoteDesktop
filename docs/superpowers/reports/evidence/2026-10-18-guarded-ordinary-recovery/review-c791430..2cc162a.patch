@@ -1,0 +1,966 @@
+# Review package: c7914309e01e45f5f8678fd872a9cdb989ac530f..HEAD
+
+## Commits
+2cc162a feat(admission): add human-first vacant ordinary admission
+
+## Files changed
+ signal-server/lib/viewer-admission.js              |  69 +++++--
+ signal-server/lib/viewer-admission.test.js         | 229 +++++++++++++++++++++
+ signal-server/routes/auth.js                       |  16 +-
+ signal-server/test/proof-admission.test.js         |  21 ++
+ signal-server/test/viewer-admission-api.test.js    |  84 +++++++-
+ signal-server/websocket/runtime-context.js         |  10 +
+ signal-server/websocket/runtime-context.test.js    |  14 ++
+ signal-server/websocket/signaling.js               |   1 +
+ .../websocket/viewer-admission.integration.test.js | 198 +++++++++++++++---
+ 9 files changed, 596 insertions(+), 46 deletions(-)
+
+## Diff
+diff --git a/signal-server/lib/viewer-admission.js b/signal-server/lib/viewer-admission.js
+index 81f92d4..75bc5a8 100644
+--- a/signal-server/lib/viewer-admission.js
++++ b/signal-server/lib/viewer-admission.js
+@@ -1,71 +1,114 @@
+ 'use strict';
+ const { randomUUID } = require('node:crypto');
+ 
++const VACANT_ONLY = 'vacant-only-v1';
+ function validSession(value) {
+   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(value);
+ }
+ 
++function contextError(context) {
++  if (!context || !Number.isSafeInteger(context.viewerEpoch) || context.viewerEpoch < 0
++      || typeof context.occupied !== 'boolean' || typeof context.relayOccupied !== 'boolean'
++      || typeof context.hostOnline !== 'boolean') return 'admission-unavailable';
++  if (context.occupied) return 'viewer-occupied';
++  if (context.relayOccupied) return 'relay-occupied';
++  if (!context.hostOnline) return 'host-unavailable';
++  return null;
++}
++
+ // One pinned owner/high-water mark survives socket removal and ticket expiry.
+ // Only expiring tickets occupy the bounded map; never evict live replay evidence.
+ function createViewerAdmission(options = {}) {
+   const now = options.now || Date.now;
+   const ttlMs = Math.max(1, Math.min(120000, Number(options.viewerAdmissionTtlMs) || 30000));
+   const capacity = Math.max(1, Math.min(256, Number(options.maxViewerAdmissions) || 128));
+   const tickets = new Map();
+   let sequence = 0;
+   let owner = null;
+   let pristine = true;
+-  function cleanup() {
+-    for (const [key, record] of tickets) if (record.expiresAt <= now()) tickets.delete(key);
++  const isLive = (record, at) => record.expiresAt > at;
++  const isPendingHuman = (record, at) => isLive(record, at) && !record.consumed && record.initialPolicy === null;
++  const isRevocableGuard = (record, at) => isLive(record, at) && !record.consumed && record.initialPolicy === VACANT_ONLY;
++  function cleanup(at) {
++    for (const [key, record] of tickets) if (!isLive(record, at)) tickets.delete(key);
++  }
++  function guardError(context, at) {
++    const error = contextError(context);
++    if (error) return error;
++    if (owner && owner.initialPolicy !== VACANT_ONLY) return 'human-owner-retained';
++    for (const record of tickets.values()) if (isPendingHuman(record, at)) return 'human-intent-pending';
++    return null;
+   }
+   function sameOwner(subject, session) {
+     return owner && owner.subject === subject && owner.session === session;
+   }
+   function accepted() { return { ok: true, generation: owner.generation }; }
+   return {
+-    issue(subject, session) {
+-      cleanup();
++    issue(subject, session, { initialPolicy = null, context = null } = {}) {
++      const at = now();
+       if (!subject || !validSession(session)) return { error: 'invalid-session' };
+-      if (tickets.size >= capacity) return { error: 'admission-capacity' };
++      if (initialPolicy !== null && initialPolicy !== VACANT_ONLY) return { error: 'invalid-initial-policy' };
++      const guarded = initialPolicy === VACANT_ONLY;
++      if (guarded) {
++        const error = guardError(context, at);
++        if (error) return { error };
++      }
++      let liveSize = 0;
++      for (const record of tickets.values()) {
++        if (isLive(record, at) && (guarded || !isRevocableGuard(record, at))) liveSize += 1;
++      }
++      if (liveSize >= capacity) return { error: 'admission-capacity' };
++      // No rejection below this point: human Start can revoke pending guards,
++      // but live consumed records remain evidence even when capacity is full.
++      cleanup(at);
++      if (!guarded) {
++        for (const [key, record] of tickets) if (isRevocableGuard(record, at)) tickets.delete(key);
++        sequence += 1;
++      }
+       const ticket = randomUUID();
+-      const record = { subject, session, sequence: ++sequence, generation: randomUUID(), expiresAt: now() + ttlMs, consumed: false };
++      const record = { subject, session, sequence, generation: randomUUID(), expiresAt: at + ttlMs,
++        consumed: false, initialPolicy, viewerEpoch: guarded ? context.viewerEpoch : null };
+       tickets.set(ticket, record);
+       return { ticket, expiresAt: record.expiresAt };
+     },
+-    admit({ subject, session, admission, occupied = false, sameSessionOccupancy = false }) {
+-      cleanup();
++    admit({ subject, session, admission, occupied = false, sameSessionOccupancy = false, initialContext = null }) {
++      const at = now();
+       const reject = () => ({ ok: false, reason: 'explicit-reconnect-required' });
+       if (!subject) return reject();
+       if (admission?.mode === 'explicit') {
+         const record = tickets.get(admission.ticket);
+-        if (!record || record.subject !== subject || record.session !== session) return reject();
++        if (!record || !isLive(record, at) || record.subject !== subject || record.session !== session) return reject();
+         if (record.consumed) {
+-          // Lost welcome can retry only its original current generation.
++          // Lost welcome can retry only its original current generation. Its
++          // initial vacancy gate was already spent; keep the recorded policy.
+           return sameOwner(subject, session) && owner.generation === record.generation ? accepted() : reject();
+         }
+-        // Issuance order prevents a slow older Start overtaking a later Start.
++        // Only human issuance advances this high-water fence.
+         if (record.sequence !== sequence) return reject();
++        if (record.initialPolicy === VACANT_ONLY
++            && (guardError(initialContext, at) || initialContext.viewerEpoch !== record.viewerEpoch)) return reject();
+         record.consumed = true;
+         pristine = false;
+-        owner = { subject, session, generation: record.generation, legacy: false };
++        owner = { subject, session, generation: record.generation, legacy: false, initialPolicy: record.initialPolicy };
+         return accepted();
+       }
+       if (admission != null && admission.mode !== 'resume') return reject();
+       if (sameOwner(subject, session) && validSession(session)
+           && (!occupied || sameSessionOccupancy)
+           && (admission == null ? owner.legacy : admission.generation === owner.generation)) return accepted();
+       // Legacy compatibility: only the first unknown client of this server
+       // lifetime, at zero Viewers. No history eviction can revive this branch.
+       if (admission == null && pristine && !occupied) {
+         pristine = false;
+-        owner = { subject, session: validSession(session) ? session : null, generation: randomUUID(), legacy: true };
++        owner = { subject, session: validSession(session) ? session : null, generation: randomUUID(),
++          legacy: true, initialPolicy: null };
+         return accepted();
+       }
+       return reject();
+     },
+     noteProofAdmission() {
+       pristine = false;
+       owner = null;
+       sequence += 1;
+       // Proofs remain separate one-use leases; old ordinary tickets/resumes
+       // cannot follow a proof admission. A new human Start can still supersede.
+diff --git a/signal-server/lib/viewer-admission.test.js b/signal-server/lib/viewer-admission.test.js
+new file mode 100644
+index 0000000..7da7002
+--- /dev/null
++++ b/signal-server/lib/viewer-admission.test.js
+@@ -0,0 +1,229 @@
++'use strict';
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { createViewerAdmission } = require('./viewer-admission');
++const vacant = { viewerEpoch: 0, occupied: false, relayOccupied: false, hostOnline: true };
++const guarded = context => ({ initialPolicy: 'vacant-only-v1', context });
++const explicit = (a, ticket, session = 'session-guard', subject = 'subject', initialContext = vacant) =>
++  a.admit({ subject, session, admission: { mode: 'explicit', ticket: ticket.ticket }, initialContext });
++
++test('pending human Start survives a rejected guard', () => {
++  const a = createViewerAdmission();
++  const human = a.issue('subject', 'session-human');
++  assert.equal(a.issue('subject', 'session-guard', guarded(vacant)).error, 'human-intent-pending');
++  assert.equal(explicit(a, human, 'session-human').ok, true);
++});
++test('human owner survives vacancy and all ticket expiry', () => {
++  let now = 0;
++  const a = createViewerAdmission({ now: () => now });
++  const human = a.issue('subject', 'session-human');
++  const accepted = explicit(a, human, 'session-human');
++  now = 120001;
++  assert.equal(a.issue('subject', 'session-guard', guarded(vacant)).error, 'human-owner-retained');
++  assert.equal(a.admit({ subject: 'subject', session: 'session-human',
++    admission: { mode: 'resume', generation: accepted.generation } }).ok, true);
++});
++
++test('guard issue preserves the human fence: two guards at one epoch race at consume', () => {
++  const a = createViewerAdmission();
++  const first = a.issue('subject', 'session-first', guarded(vacant));
++  const second = a.issue('subject', 'session-second', guarded(vacant));
++  const owner = explicit(a, first, 'session-first');
++  assert.equal(owner.ok, true, 'later guard issuance must not stale the earlier guard');
++  assert.equal(explicit(a, second, 'session-second', 'subject', { ...vacant, viewerEpoch: 1 }).ok, false);
++  assert.equal(a.admit({ subject: 'subject', session: 'session-first',
++    admission: { mode: 'resume', generation: owner.generation } }).ok, true);
++});
++
++test('human later issue then expiry permanently invalidates pending guarded admission', () => {
++  let now = 0;
++  const a = createViewerAdmission({ now: () => now, viewerAdmissionTtlMs: 100 });
++  const guard = a.issue('subject', 'session-guard', guarded(vacant));
++  a.issue('subject', 'session-human');
++  now = 101;
++  assert.equal(explicit(a, guard).ok, false);
++  assert.ok(a.issue('subject', 'session-fresh', guarded(vacant)).ticket);
++});
++
++test('older stale pending human intent also blocks guard issue', () => {
++  const a = createViewerAdmission();
++  const old = a.issue('subject', 'session-oldhuman');
++  const current = a.issue('subject', 'session-human');
++  assert.equal(explicit(a, old, 'session-oldhuman').ok, false);
++  assert.equal(a.issue('subject', 'session-guard', guarded(vacant)).error, 'human-intent-pending');
++  assert.equal(explicit(a, current, 'session-human').ok, true);
++});
++
++test('current epoch changes then vacancy rejects the initial guard without spending it', () => {
++  const a = createViewerAdmission();
++  const ticket = a.issue('subject', 'session-guard', guarded(vacant));
++  assert.equal(explicit(a, ticket, 'session-guard', 'subject', { ...vacant, viewerEpoch: 1 }).ok, false);
++  assert.equal(explicit(a, ticket).ok, true);
++});
++
++for (const [field, value, error] of [
++  ['occupied', true, 'viewer-occupied'],
++  ['relayOccupied', true, 'relay-occupied'],
++  ['hostOnline', false, 'host-unavailable'],
++]) {
++  test(`${field} change blocks issue and consume without spending guard`, () => {
++    const a = createViewerAdmission();
++    const changed = { ...vacant, [field]: value };
++    assert.equal(a.issue('subject', 'session-guard', guarded(changed)).error, error);
++    const ticket = a.issue('subject', 'session-guard', guarded(vacant));
++    assert.equal(explicit(a, ticket, 'session-guard', 'subject', changed).ok, false);
++    assert.equal(explicit(a, ticket).ok, true);
++  });
++}
++
++test('malformed contexts and unknown policies fail closed without changing pristine compatibility', () => {
++  for (const context of [null, {}, { ...vacant, viewerEpoch: -1 }, { ...vacant, viewerEpoch: 1.5 },
++    { ...vacant, viewerEpoch: Number.MAX_SAFE_INTEGER + 1 }, { ...vacant, occupied: 0 },
++    { ...vacant, relayOccupied: null }, { ...vacant, hostOnline: 1 }]) {
++    const a = createViewerAdmission();
++    assert.equal(a.issue('subject', 'session-guard', guarded(context)).error, 'admission-unavailable');
++    assert.equal(a.admit({ subject: 'subject', session: 'session-legacy' }).ok, true);
++  }
++  for (const initialPolicy of ['', false, 1, [], {}, 'unknown']) {
++    const a = createViewerAdmission();
++    assert.equal(a.issue('subject', 'session-guard', { initialPolicy, context: vacant }).error, 'invalid-initial-policy');
++    assert.equal(a.admit({ subject: 'subject', session: 'session-legacy' }).ok, true);
++  }
++});
++
++test('prior guarded owner survives TTL and can yield to a new guarded generation', () => {
++  let now = 0;
++  const a = createViewerAdmission({ now: () => now, viewerAdmissionTtlMs: 10 });
++  const first = explicit(a, a.issue('subject', 'session-guard', guarded(vacant)));
++  now = 11;
++  assert.equal(a.admit({ subject: 'subject', session: 'session-guard',
++    admission: { mode: 'resume', generation: first.generation } }).ok, true);
++  const second = a.issue('subject', 'session-nextguard', guarded({ ...vacant, viewerEpoch: 1 }));
++  assert.ok(second.ticket);
++  const accepted = explicit(a, second, 'session-nextguard', 'subject', { ...vacant, viewerEpoch: 1 });
++  assert.equal(accepted.ok, true);
++  assert.notEqual(accepted.generation, first.generation);
++});
++
++test('current consumed lost-welcome retry preserves guard policy and bypasses only its spent initial gate', () => {
++  const a = createViewerAdmission();
++  const guard = a.issue('subject', 'session-guard', guarded(vacant));
++  const first = explicit(a, guard);
++  const retry = explicit(a, guard, 'session-guard', 'subject', { ...vacant, occupied: true, viewerEpoch: 1 });
++  assert.deepEqual(retry, first);
++  assert.ok(a.issue('subject', 'session-nextguard', guarded({ ...vacant, viewerEpoch: 1 })).ticket);
++});
++
++test('a later pending human does not revoke current guard recovery or consumed replay evidence', () => {
++  const a = createViewerAdmission({ maxViewerAdmissions: 2 });
++  const ticket = a.issue('subject', 'session-guard', guarded(vacant));
++  const owner = explicit(a, ticket);
++  assert.ok(a.issue('subject', 'session-human').ticket);
++  assert.deepEqual(explicit(a, ticket, 'session-guard', 'subject', null), owner);
++  assert.equal(a.admit({ subject: 'subject', session: 'session-guard',
++    admission: { mode: 'resume', generation: owner.generation } }).ok, true);
++  assert.equal(a.issue('subject', 'session-full').error, 'admission-capacity');
++  assert.deepEqual(explicit(a, ticket), owner);
++});
++
++test('stale consumed retry and resume lose to newer human even after human ticket TTL', () => {
++  let now = 0;
++  const a = createViewerAdmission({ now: () => now, viewerAdmissionTtlMs: 10 });
++  const guard = a.issue('subject', 'session-guard', guarded(vacant));
++  const owner = explicit(a, guard);
++  const human = a.issue('subject', 'session-human');
++  assert.equal(explicit(a, human, 'session-human').ok, true);
++  assert.equal(explicit(a, guard).ok, false);
++  now = 11;
++  assert.equal(a.admit({ subject: 'subject', session: 'session-guard',
++    admission: { mode: 'resume', generation: owner.generation } }).ok, false);
++  assert.equal(a.issue('subject', 'session-newguard', guarded(vacant)).error, 'human-owner-retained');
++});
++
++test('same-session explicit human Start creates a new generation and pins human ownership', () => {
++  const a = createViewerAdmission();
++  const guard = a.issue('subject', 'session-guard', guarded(vacant));
++  const old = explicit(a, guard);
++  const current = explicit(a, a.issue('subject', 'session-guard'));
++  assert.notEqual(current.generation, old.generation);
++  assert.equal(explicit(a, guard).ok, false);
++  assert.equal(a.issue('subject', 'session-nextguard', guarded(vacant)).error, 'human-owner-retained');
++});
++
++test('capacity full of pending guards allows human Start; invalid human request cannot evict them', () => {
++  const a = createViewerAdmission({ maxViewerAdmissions: 2 });
++  const pendingOnly = createViewerAdmission({ maxViewerAdmissions: 2 });
++  const revoked = pendingOnly.issue('subject', 'session-first', guarded(vacant));
++  pendingOnly.issue('subject', 'session-second', guarded(vacant));
++  const prioritizedHuman = pendingOnly.issue('subject', 'session-human');
++  assert.ok(prioritizedHuman.ticket);
++  assert.equal(explicit(pendingOnly, revoked, 'session-first').ok, false);
++  assert.equal(explicit(pendingOnly, prioritizedHuman, 'session-human').ok, true);
++  const first = a.issue('subject', 'session-first', guarded(vacant));
++  a.issue('subject', 'session-second', guarded(vacant));
++  assert.equal(a.issue('subject', 'session-third', guarded(vacant)).error, 'admission-capacity');
++  assert.equal(a.issue('subject', 'bad').error, 'invalid-session');
++  assert.equal(explicit(a, first, 'session-first').ok, true);
++  // The consumed first record stays live; only the second pending guard yields.
++  const human = a.issue('subject', 'session-human');
++  assert.ok(human.ticket);
++  assert.equal(a.issue('subject', 'session-full').error, 'admission-capacity');
++  assert.equal(explicit(a, human, 'session-human').ok, true);
++});
++
++test('capacity consumed records denies human without evicting evidence or advancing fence', () => {
++  const a = createViewerAdmission({ maxViewerAdmissions: 1 });
++  const ticket = a.issue('subject', 'session-guard', guarded(vacant));
++  const owner = explicit(a, ticket);
++  assert.equal(a.issue('subject', 'session-human').error, 'admission-capacity');
++  assert.deepEqual(explicit(a, ticket), owner);
++  assert.equal(a.issue('subject', 'session-nextguard', guarded(vacant)).error, 'admission-capacity');
++});
++
++test('guard subject and session confusion cannot consume its ticket', () => {
++  const a = createViewerAdmission();
++  const ticket = a.issue('subject', 'session-guard', guarded(vacant));
++  assert.equal(explicit(a, ticket, 'session-foreign').ok, false);
++  assert.equal(explicit(a, ticket, 'session-guard', 'other').ok, false);
++  assert.equal(explicit(a, ticket).ok, true);
++});
++
++test('legacy retained owner blocks guard forever without destroying same-session recovery', () => {
++  let now = 0;
++  const a = createViewerAdmission({ now: () => now });
++  assert.equal(a.admit({ subject: 'subject', session: 'session-legacy' }).ok, true);
++  now = 120001;
++  assert.equal(a.issue('subject', 'session-guard', guarded(vacant)).error, 'human-owner-retained');
++  assert.equal(a.admit({ subject: 'subject', session: 'session-legacy' }).ok, true);
++});
++
++test('proof admission clears pending guards and guarded recovery without reviving legacy compatibility', () => {
++  const a = createViewerAdmission();
++  const ticket = a.issue('subject', 'session-guard', guarded(vacant));
++  const owner = explicit(a, ticket);
++  const pending = a.issue('subject', 'session-pending', guarded(vacant));
++  a.noteProofAdmission();
++  assert.equal(explicit(a, pending).ok, false);
++  assert.equal(explicit(a, ticket).ok, false);
++  assert.equal(a.admit({ subject: 'subject', session: 'session-guard',
++    admission: { mode: 'resume', generation: owner.generation } }).ok, false);
++  assert.equal(a.admit({ subject: 'subject', session: 'session-legacy' }).ok, false);
++});
++
++test('each issue and admission operation captures time exactly once', () => {
++  let calls = 0;
++  const a = createViewerAdmission({ now: () => { calls += 1; return 0; } });
++  const ticket = a.issue('subject', 'session-guard', guarded(vacant));
++  assert.equal(calls, 1);
++  assert.equal(explicit(a, ticket).ok, true);
++  assert.equal(calls, 2);
++});
++
++
++test('legacy acceptance after guard issuance pins owner against guarded first consume', () => {
++  const a = createViewerAdmission();
++  const pending = a.issue('subject', 'session-guard', guarded(vacant));
++  assert.equal(a.admit({ subject: 'subject', session: 'session-legacy' }).ok, true);
++  assert.equal(explicit(a, pending).ok, false);
++  assert.equal(a.admit({ subject: 'subject', session: 'session-legacy' }).ok, true);
++});
+diff --git a/signal-server/routes/auth.js b/signal-server/routes/auth.js
+index 4eebdbb..d2cc893 100644
+--- a/signal-server/routes/auth.js
++++ b/signal-server/routes/auth.js
+@@ -92,22 +92,34 @@ function createAuthRouter(options = {}) {
+   router.post('/login/viewer', limiters.viewer, loginViewer);
+ 
+   router.post('/viewer-admission', limiters.verify, (req, res) => {
+     res.set('Cache-Control', 'no-store');
+     let decoded;
+     try { decoded = verifyAccessToken(readBearerToken(req.headers.authorization), getConfig()); }
+     catch { return res.status(401).json({ error: 'Invalid token' }); }
+     if (decoded.role !== 'viewer') return res.status(403).json({ error: 'Viewer role required' });
+     const runtime = options.runtimeContext;
+     if (!runtime || runtime.requiresViewerProof()) return res.status(403).json({ error: 'Explicit admission unavailable' });
+-    const admission = runtime.viewerAdmission.issue(decoded.sub, req.body?.viewerSessionId);
+-    if (admission.error) return res.status(admission.error === 'admission-capacity' ? 429 : 400).json({ error: admission.error });
++    const hasInitialPolicy = Object.prototype.hasOwnProperty.call(req.body || {}, 'initialPolicy');
++    if (hasInitialPolicy && req.body.initialPolicy !== 'vacant-only-v1') {
++      return res.status(400).json({ error: 'invalid-initial-policy' });
++    }
++    const admission = runtime.viewerAdmission.issue(decoded.sub, req.body?.viewerSessionId,
++      hasInitialPolicy ? { initialPolicy: req.body.initialPolicy, context: runtime.viewerAdmissionContext?.() } : {});
++    if (admission.error) {
++      const statuses = {
++        'invalid-session': 400, 'invalid-initial-policy': 400, 'admission-capacity': 429,
++        'viewer-occupied': 409, 'relay-occupied': 409, 'host-unavailable': 409,
++        'human-intent-pending': 409, 'human-owner-retained': 409,
++      };
++      return res.status(statuses[admission.error] || 503).json({ error: admission.error });
++    }
+     return res.status(201).json({ admission });
+   });
+ 
+   router.post('/login/host', limiters.host, (req, res) => {
+     const { hostSharedSecret } = getConfig();
+     const secret = String(req.body?.secret || '');
+ 
+     if (!secret) {
+       return res.status(400).json({ error: 'Host secret required' });
+     }
+diff --git a/signal-server/test/proof-admission.test.js b/signal-server/test/proof-admission.test.js
+index 40cc76a..55f56ae 100644
+--- a/signal-server/test/proof-admission.test.js
++++ b/signal-server/test/proof-admission.test.js
+@@ -101,10 +101,31 @@ test('proof route limiters count only authenticated exact leases and isolate eac
+     }
+     released = await fetch(`${lab.origin}/api/proof-admission/release`, {
+       method: 'POST', headers: auth, body: JSON.stringify(targetProof),
+     });
+     assert.equal(released.status, 200);
+     assert.equal((await released.json()).released, true);
+   } finally {
+     await lab.close();
+   }
+ });
++
++test('proof-only routes refuse guarded ordinary admission without consuming the outstanding proof', async () => {
++  const lab = await createLabRuntime({ allowSourceFallback: true });
++  try {
++    const token = await viewerToken(lab.origin, lab.credentials.viewerPassword);
++    const auth = { Authorization: `Bearer ${token}`, 'content-type': 'application/json' };
++    const proof = await issueProof(lab.origin, auth);
++    const response = await fetch(`${lab.origin}/api/auth/viewer-admission`, {
++      method: 'POST', headers: auth,
++      body: JSON.stringify({ viewerSessionId: 'session-guard', initialPolicy: 'vacant-only-v1' }),
++    });
++    assert.equal(response.status, 403);
++    const status = await fetch(`${lab.origin}/api/proof-admission/status`, {
++      method: 'POST', headers: auth, body: JSON.stringify(proof),
++    });
++    assert.equal(status.status, 200);
++    assert.equal((await status.json()).active, true);
++  } finally {
++    await lab.close();
++  }
++});
+diff --git a/signal-server/test/viewer-admission-api.test.js b/signal-server/test/viewer-admission-api.test.js
+index 41c7f00..e2b616f 100644
+--- a/signal-server/test/viewer-admission-api.test.js
++++ b/signal-server/test/viewer-admission-api.test.js
+@@ -13,37 +13,48 @@ process.env.HOST_SHARED_SECRET = 'fixture-api-host-secret';
+ 
+ async function withRuntime(run, options = {}) {
+   const state = createRuntimeContext(options);
+   const config = { ...loadConfig(), enableTerminal: false, logDir: '', terminalAuditLog: '', enableDiagPersist: false };
+   const runtime = createServerApp({ config, signalingRuntimeContext: state, allowSourceFallback: true,
+     logger: { log() {}, info() {}, warn() {}, error() {} } });
+   const sockets = [];
+   await new Promise(resolve => runtime.server.listen(0, '127.0.0.1', resolve));
+   const origin = `http://127.0.0.1:${runtime.server.address().port}`;
+   const token = signAccessToken('viewer', 'viewer-password-login', config);
+-  const request = (session, auth = token) => fetch(`${origin}/api/auth/viewer-admission`, {
++  const request = (session, auth = token, fields = {}) => fetch(`${origin}/api/auth/viewer-admission`, {
+     method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) },
+-    body: JSON.stringify({ viewerSessionId: session }),
++    body: JSON.stringify({ viewerSessionId: session, ...fields }),
+   });
+   async function viewer(session, admission) {
+     return new Promise((resolve, reject) => {
+       const socket = connect(origin, { autoConnect: false, reconnection: false, transports: ['websocket'],
+         auth: { role: 'viewer', token, viewerSessionId: session, viewerAdmission: admission } });
+       sockets.push(socket);
+       const deadline = setTimeout(() => reject(new Error('fixture socket deadline')), 2000);
+       socket.once('connected', data => { clearTimeout(deadline); resolve({ socket, data }); });
+       socket.once('viewer-admission-rejected', data => { clearTimeout(deadline); resolve({ socket, rejected: data }); });
+       socket.once('connect_error', error => { clearTimeout(deadline); reject(error); });
+       socket.connect();
+     });
+   }
+-  try { await run({ state, runtime, request, viewer, config }); }
++  async function host() {
++    return new Promise((resolve, reject) => {
++      const socket = connect(origin, { autoConnect: false, reconnection: false, transports: ['websocket'],
++        auth: { role: 'host', token: signAccessToken('host', 'host-daemon', config) } });
++      sockets.push(socket);
++      const deadline = setTimeout(() => reject(new Error('fixture host deadline')), 2000);
++      socket.once('connected', () => { clearTimeout(deadline); resolve(socket); });
++      socket.once('connect_error', error => { clearTimeout(deadline); reject(error); });
++      socket.connect();
++    });
++  }
++  try { await run({ state, runtime, request, viewer, host, config, token }); }
+   finally {
+     sockets.forEach(socket => socket.disconnect());
+     await runtime.close();
+     await new Promise(resolve => runtime.io.close(resolve));
+   }
+ }
+ 
+ test('real server auth route and Socket.IO share admission state, enforce auth binding and bounded capacity', async () => {
+   await withRuntime(async ({ request, viewer, state, config }) => {
+     assert.equal((await request('session-alpha', null)).status, 401);
+@@ -65,12 +76,79 @@ test('real server auth route and Socket.IO share admission state, enforce auth b
+     const old = await viewer('session-alpha', a.data.viewerAdmission);
+     assert.ok(old.rejected);
+     assert.equal([...state.connections.viewers.keys()][0], b.socket.id);
+     assert.equal((await request('session-full')).status, 429, 'consumption must not evict replay evidence');
+   }, { maxViewerAdmissions: 2 });
+ });
+ 
+ test('proof-only runtime refuses human ticket issuance', async () => {
+   await withRuntime(async ({ request }) => {
+     assert.equal((await request('session-alpha')).status, 403);
++    assert.equal((await request('session-guard', undefined, { initialPolicy: 'vacant-only-v1' })).status, 403);
+   }, { requireViewerProof: true, realm: 'lab-test' });
+ });
++
++test('guard route validates own policy presence exactly, and ignores client context', async () => {
++  await withRuntime(async ({ request, state, host }) => {
++    for (const initialPolicy of [null, [], {}, true, false, 0, 1, '', 'unknown']) {
++      const response = await request('session-guard', undefined, { initialPolicy });
++      assert.equal(response.status, 400);
++      assert.equal((await response.json()).error, 'invalid-initial-policy');
++    }
++    const unavailable = await request('session-guard', undefined, { initialPolicy: 'vacant-only-v1',
++      context: { viewerEpoch: 0, occupied: false, relayOccupied: false, hostOnline: true } });
++    assert.equal(unavailable.status, 409);
++    assert.equal((await unavailable.json()).error, 'host-unavailable');
++    await host();
++    const issued = await request('session-guard', undefined, { initialPolicy: 'vacant-only-v1',
++      context: { viewerEpoch: 99, occupied: true, relayOccupied: true, hostOnline: false }, viewerEpoch: 99 });
++    assert.equal(issued.status, 201);
++    assert.equal(issued.headers.get('cache-control'), 'no-store');
++    const admission = (await issued.json()).admission;
++    assert.deepEqual(Object.keys(admission).sort(), ['expiresAt', 'ticket']);
++    assert.equal(state.viewerEpoch(), 0);
++    assert.equal((await request('bad', undefined, { initialPolicy: 'vacant-only-v1' })).status, 400);
++    // An absent own property retains unrestricted human issuance.
++    assert.equal((await request('session-human')).status, 201);
++    const pending = await request('session-nextguard', undefined, { initialPolicy: 'vacant-only-v1' });
++    assert.equal(pending.status, 409); assert.equal((await pending.json()).error, 'human-intent-pending');
++  });
++});
++
++test('guard API fails closed on unavailable snapshot and maps guarded capacity and occupancy', async () => {
++  await withRuntime(async ({ state, request, host }) => {
++    await host();
++    const snapshot = state.viewerAdmissionContext;
++    state.viewerAdmissionContext = () => null;
++    let response = await request('session-guard', undefined, { initialPolicy: 'vacant-only-v1' });
++    assert.equal(response.status, 503); assert.equal((await response.json()).error, 'admission-unavailable');
++    state.viewerAdmissionContext = snapshot;
++    state.connections.relayViewers.set('relay', {});
++    response = await request('session-guard', undefined, { initialPolicy: 'vacant-only-v1' });
++    assert.equal(response.status, 409); assert.equal((await response.json()).error, 'relay-occupied');
++    state.connections.relayViewers.clear();
++    for (const session of ['session-first', 'session-second']) {
++      assert.equal((await request(session, undefined, { initialPolicy: 'vacant-only-v1' })).status, 201);
++    }
++    assert.equal((await request('session-full', undefined, { initialPolicy: 'vacant-only-v1' })).status, 429);
++    assert.equal((await request('session-human')).status, 201, 'human revokes pending guards at capacity');
++  }, { maxViewerAdmissions: 2 });
++});
++
++test('real guarded route ticket claims ordinary ownership and yields to human supersession', async () => {
++  await withRuntime(async ({ request, viewer, state, host }) => {
++    await host();
++    const response = await request('session-guard', undefined, { initialPolicy: 'vacant-only-v1' });
++    assert.equal(response.status, 201);
++    const ticket = (await response.json()).admission;
++    const guard = await viewer('session-guard', { mode: 'explicit', ticket: ticket.ticket, initialPolicy: null, viewerEpoch: 99 });
++    assert.equal(guard.data.viewerAdmission.mode, 'resume');
++    const blocked = await request('session-anotherguard', undefined, { initialPolicy: 'vacant-only-v1' });
++    assert.equal(blocked.status, 409); assert.equal((await blocked.json()).error, 'viewer-occupied');
++    const humanTicket = (await (await request('session-human')).json()).admission;
++    const human = await viewer('session-human', { mode: 'explicit', ticket: humanTicket.ticket });
++    assert.ok(human.data);
++    assert.ok((await viewer('session-guard', guard.data.viewerAdmission)).rejected);
++    assert.ok((await viewer('session-human', human.data.viewerAdmission)).data);
++    assert.equal(state.connections.viewers.size, 1);
++  });
++});
+diff --git a/signal-server/websocket/runtime-context.js b/signal-server/websocket/runtime-context.js
+index af1ca72..ca03447 100644
+--- a/signal-server/websocket/runtime-context.js
++++ b/signal-server/websocket/runtime-context.js
+@@ -102,26 +102,36 @@ function createRuntimeContext(options = {}) {
+       return true;
+     },
+     getProofViewerConsumer(admission = {}) {
+       cleanupExpiredProofAdmissions();
+       const token = typeof admission.token === 'string' ? admission.token : '';
+       const epoch = Number(admission.epoch);
+       const consumer = consumedProofViewers.get(token);
+       if (!consumer || consumer.epoch !== epoch || admission.realm !== consumer.realm) return null;
+       return { socketId: consumer.socketId };
+     },
++    // Historical name: every accepted ordinary admission, including a
++    // vacant-only initial admission, invalidates outstanding proof leases.
+     noteHumanViewerAdmission() {
+       viewerEpoch += 1;
+       proofAdmissions.clear();
+       consumedProofViewers.clear();
+       return viewerEpoch;
+     },
++    viewerAdmissionContext() {
++      return {
++        viewerEpoch,
++        occupied: connections.viewers.size > 0,
++        relayOccupied: connections.relayViewers.size > 0,
++        hostOnline: connections.host !== null,
++      };
++    },
+     viewerEpoch() {
+       return viewerEpoch;
+     },
+     getViewerSnapshot() {
+       return Array.from(connections.viewers.values()).map((socket) => ({
+         id: socket.id,
+         ip: socket.handshake?.address || 'unknown',
+         userAgent: socket.handshake?.headers?.['user-agent'] || 'unknown',
+       }));
+     },
+diff --git a/signal-server/websocket/runtime-context.test.js b/signal-server/websocket/runtime-context.test.js
+index 0e17364..5969b36 100644
+--- a/signal-server/websocket/runtime-context.test.js
++++ b/signal-server/websocket/runtime-context.test.js
+@@ -134,10 +134,24 @@ test('setupSignaling accepts isolated contexts without cross-instance viewers',
+ 
+ test('input frame capability accepts only known version and clears with Host', () => {
+   const context = createRuntimeContext();
+   assert.equal(context.getHostCapabilities().inputFrameCorrelationVersion, null);
+   assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: 1 }).inputFrameCorrelationVersion, 1);
+   assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: '1' }).inputFrameCorrelationVersion, null);
+   assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: 2 }).inputFrameCorrelationVersion, null);
+   context.setHostCapabilities({ inputFrameCorrelationVersion: 1 });
+   assert.equal(context.clearHostCapabilities().inputFrameCorrelationVersion, null);
+ });
++
++test('ordinary admission context snapshots include grace-retained occupancy and fresh server-only state', () => {
++  const runtime = createRuntimeContext();
++  const initial = runtime.viewerAdmissionContext();
++  assert.deepEqual(initial, { viewerEpoch: 0, occupied: false, relayOccupied: false, hostOnline: false });
++  initial.viewerEpoch = 99;
++  runtime.connections.host = { id: 'host' };
++  runtime.connections.viewers.set('grace', { _wrdDisconnected: true });
++  runtime.connections.relayViewers.set('relay', {});
++  runtime.noteHumanViewerAdmission();
++  assert.deepEqual(runtime.viewerAdmissionContext(), { viewerEpoch: 1, occupied: true, relayOccupied: true, hostOnline: true });
++  runtime.connections.viewers.clear(); runtime.connections.relayViewers.clear(); runtime.connections.host = null;
++  assert.deepEqual(runtime.viewerAdmissionContext(), { viewerEpoch: 1, occupied: false, relayOccupied: false, hostOnline: false });
++});
+diff --git a/signal-server/websocket/signaling.js b/signal-server/websocket/signaling.js
+index 3136c53..4b10b0a 100644
+--- a/signal-server/websocket/signaling.js
++++ b/signal-server/websocket/signaling.js
+@@ -1079,20 +1079,21 @@ function setupSignaling(io, options = {}) {
+         socket.disconnect(true);
+         return;
+       }
+       let humanAdmission = null;
+       if (!isProofViewer) {
+         const session = normalizeViewerSessionId(socket.handshake.auth?.viewerSessionId);
+         humanAdmission = instanceRuntime.viewerAdmission.admit({
+           subject: socket.user?.sub,
+           session,
+           admission: socket.handshake.auth?.viewerAdmission,
++          initialContext: instanceRuntime.viewerAdmissionContext(),
+           occupied: connections.viewers.size > 0,
+           sameSessionOccupancy: [...connections.viewers.values()].every(other =>
+             !other._wrdProofViewer && other._wrdViewerSessionId === session
+             && other.user?.sub === socket.user?.sub),
+         });
+         if (!humanAdmission.ok) {
+           socket.emit('viewer-admission-rejected', { reason: humanAdmission.reason });
+           socket.disconnect(true);
+           return;
+         }
+diff --git a/signal-server/websocket/viewer-admission.integration.test.js b/signal-server/websocket/viewer-admission.integration.test.js
+index cb3ac14..8f8ddff 100644
+--- a/signal-server/websocket/viewer-admission.integration.test.js
++++ b/signal-server/websocket/viewer-admission.integration.test.js
+@@ -23,26 +23,32 @@ function fixture(options = {}) {
+     const socket = new FakeSocket(id, 'viewer');
+     socket.handshake.auth.token = require('../lib/auth').signAccessToken('viewer', 'viewer-password-login');
+     socket.handshake.auth.viewerSessionId = session;
+     if (admission) socket.handshake.auth.viewerAdmission = admission;
+     io.connect(socket); return socket;
+   }
+   function manual(id, session) {
+     const ticket = runtime.viewerAdmission?.issue('viewer-password-login', session);
+     return viewer(id, session, ticket ? { mode: 'explicit', ticket: ticket.ticket } : undefined);
+   }
++  function guarded(id, session) {
++    const ticket = runtime.viewerAdmission.issue('viewer-password-login', session,
++      { initialPolicy: 'vacant-only-v1', context: runtime.viewerAdmissionContext() });
++    assert.ok(ticket.ticket, ticket.error);
++    return viewer(id, session, { mode: 'explicit', ticket: ticket.ticket });
++  }
+   function grant(socket) {
+     socket.trigger('control-acquire', { requestId: 'acquire' });
+     const event = host.sent.filter(e => e.event === 'control-transition').at(-1);
+     host.trigger('control-transition-ack', { leaseEpoch: event.data.leaseEpoch, status: 'applied' });
+   }
+-  return { runtime, lease, io, host, timers, viewer, manual, grant, advance: value => { now = value; } };
++  return { runtime, lease, io, host, timers, viewer, manual, guarded, grant, advance: value => { now = value; } };
+ }
+ for (const expired of [false, true]) {
+   test(`old disconnected page cannot supersede ACTIVE B ${expired ? 'after' : 'inside'} grace`, () => {
+     const h = fixture();
+     const a = h.manual('a', 'old-page-session'); a.disconnect();
+     if (expired) {
+       h.advance(8001);
+       h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
+     }
+     const b = h.manual('b', 'current-page-session'); h.grant(b);
+@@ -50,59 +56,67 @@ for (const expired of [false, true]) {
+     const a2 = h.viewer('a2', 'old-page-session');
+     assert.equal(b.disconnected, false);
+     assert.deepEqual([...h.runtime.connections.viewers.keys()], ['b']);
+     assert.deepEqual(h.lease.snapshot(), before);
+     assert.equal(h.host.sent.length, events, 'no producer/reset/host status side effect');
+     assert.equal(h.runtime.viewerEpoch(), epoch);
+     assert.equal(a2.disconnected, true);
+   });
+ }
+ function admissionOf(socket) { return socket.sent.find(e => e.event === 'connected')?.data.viewerAdmission; }
+-function expectRejectedWithoutMutation(h, connect) {
++function expectRejectedWithoutMutation(h, connect, proof = null) {
++  if (proof) assert.equal(h.runtime.hasProofAdmission(proof), true);
+   const viewers = [...h.runtime.connections.viewers];
+   const snapshot = h.lease.snapshot(), count = h.host.sent.length, epoch = h.runtime.viewerEpoch();
+   const rejected = connect();
+   assert.equal(rejected.disconnected, true);
+   assert.ok(rejected.sent.some(e => e.event === 'viewer-admission-rejected'));
+   assert.deepEqual([...h.runtime.connections.viewers], viewers);
+   assert.deepEqual(h.lease.snapshot(), snapshot);
+   assert.equal(h.host.sent.length, count);
+   assert.equal(h.runtime.viewerEpoch(), epoch);
++  if (proof) assert.equal(h.runtime.hasProofAdmission(proof), true, 'rejection must preserve the outstanding proof');
+ }
+ 
+-test('current owner resumes inside grace only after Host ACK, and after grace requires reset/regrant', () => {
+-  for (const expired of [false, true]) {
+-    const h = fixture();
+-    const a = h.manual('a', 'current-session'); h.grant(a);
+-    const identity = admissionOf(a); const prior = h.lease.snapshot(); a.disconnect();
+-    if (expired) {
+-      h.advance(8001); h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
++for (const guardedOwner of [false, true]) {
++  test(`${guardedOwner ? 'guarded' : 'human'} current owner resumes inside grace only after Host ACK, and after grace requires reset/regrant`, () => {
++    for (const expired of [false, true]) {
++      const h = fixture();
++      const a = h[guardedOwner ? 'guarded' : 'manual']('a', 'current-session'); h.grant(a);
++      const identity = admissionOf(a); const prior = h.lease.snapshot(); a.disconnect();
++      if (expired) {
++        h.advance(8001); h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
++      }
++      const a2 = h.viewer('a2', 'current-session', identity);
++      assert.equal(a2.disconnected, false);
++      assert.deepEqual([...h.runtime.connections.viewers.keys()], ['a2']);
++      if (!expired) {
++        const rebind = h.host.sent.find(e => e.event === 'viewer-session-rebind');
++        assert.ok(rebind); assert.equal(a2._wrdRebindPending, true);
++        assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
++        rebind.ack(null, { status: 'applied' });
++        assert.equal(h.lease.snapshot().leaseEpoch, prior.leaseEpoch);
++        assert.equal(a2._wrdRebindPending, false);
++      } else {
++        assert.equal(h.host.sent.some(e => e.event === 'viewer-session-rebind'), false);
++        assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
++        const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1);
++        a2.trigger('control-acquire', { requestId: 'before-reset-applied' });
++        assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
++        assert.equal(h.lease.snapshot().state, 'REVOKING');
++        h.host.trigger('control-transition-ack', { leaseEpoch: reset.data.leaseEpoch, status: 'applied' });
++        assert.equal(h.lease.snapshot().state, 'FREE');
++        h.grant(a2); assert.equal(h.lease.snapshot().state, 'ACTIVE');
++      }
+     }
+-    const a2 = h.viewer('a2', 'current-session', identity);
+-    assert.equal(a2.disconnected, false);
+-    assert.deepEqual([...h.runtime.connections.viewers.keys()], ['a2']);
+-    if (!expired) {
+-      const rebind = h.host.sent.find(e => e.event === 'viewer-session-rebind');
+-      assert.ok(rebind); assert.equal(a2._wrdRebindPending, true);
+-      assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
+-      rebind.ack(null, { status: 'applied' });
+-      assert.equal(h.lease.snapshot().leaseEpoch, prior.leaseEpoch);
+-      assert.equal(a2._wrdRebindPending, false);
+-    } else {
+-      assert.equal(h.host.sent.some(e => e.event === 'viewer-session-rebind'), false);
+-      assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
+-      const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1);
+-      h.host.trigger('control-transition-ack', { leaseEpoch: reset.data.leaseEpoch, status: 'applied' });
+-      h.grant(a2); assert.equal(h.lease.snapshot().state, 'ACTIVE');
+-    }
+-  }
+-});
++  });
++}
+ 
+ test('explicit B replaces A but cannot acquire before the reset barrier', () => {
+   const h = fixture(); const a = h.manual('a', 'session-alpha'); h.grant(a);
+   const b = h.manual('b', 'session-bravo');
+   assert.equal(a.disconnected, true);
+   assert.equal(h.lease.snapshot().state, 'REVOKING');
+   b.trigger('control-acquire', { requestId: 'early' });
+   assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
+   const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1);
+   h.host.trigger('control-transition-ack', { leaseEpoch: reset.data.leaseEpoch, status: 'applied' });
+@@ -194,10 +208,138 @@ test('rejected old resume preserves outstanding zero-Viewer proof and proof occu
+   const h = fixture(); const a = h.manual('a', 'session-alpha'); const identity = admissionOf(a); a.disconnect();
+   h.advance(8001); h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
+   const b = h.manual('b', 'session-bravo'); b.disconnect();
+   h.advance(16002); h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
+   const proof = h.runtime.issueProofAdmission();
+   expectRejectedWithoutMutation(h, () => h.viewer('old', 'session-alpha', identity));
+   assert.equal(h.runtime.hasProofAdmission(proof), true);
+   const p = new FakeSocket('proof', 'viewer'); p.handshake.auth.proofAdmission = proof; h.io.connect(p); p.disconnect();
+   expectRejectedWithoutMutation(h, () => h.viewer('old-b', 'session-bravo', admissionOf(b)));
+ });
++
++function guardedTicket(h, session = 'session-guard') {
++  const result = h.runtime.viewerAdmission.issue('viewer-password-login', session,
++    { initialPolicy: 'vacant-only-v1', context: h.runtime.viewerAdmissionContext() });
++  assert.ok(result.ticket, result.error);
++  return { mode: 'explicit', ticket: result.ticket };
++}
++function expireGrace(h, at) {
++  h.advance(at);
++  h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
++}
++function proofViewer(h, id, proof) {
++  const socket = new FakeSocket(id, 'viewer'); socket.handshake.auth.proofAdmission = proof;
++  h.io.connect(socket); return socket;
++}
++
++test('two guarded tickets race through real handlers; only the first can claim the vacant epoch', () => {
++  const h = fixture();
++  const first = guardedTicket(h, 'session-first');
++  const second = guardedTicket(h, 'session-second');
++  const a = h.viewer('first', 'session-first', first);
++  assert.equal(a.disconnected, false);
++  expectRejectedWithoutMutation(h, () => h.viewer('second', 'session-second', second));
++  a.disconnect(); expireGrace(h, 8001);
++  const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
++  expectRejectedWithoutMutation(h, () => h.viewer('second-vacant', 'session-second', second), proof);
++});
++
++test('guard rejected after human issue preserves outstanding proof and human Start', () => {
++  const h = fixture(); const guard = guardedTicket(h);
++  const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
++  const human = h.runtime.viewerAdmission.issue('viewer-password-login', 'session-human');
++  expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', guard), proof);
++  const accepted = h.viewer('human', 'session-human', { mode: 'explicit', ticket: human.ticket });
++  assert.equal(accepted.disconnected, false);
++  assert.equal(h.runtime.hasProofAdmission(proof), false);
++});
++
++for (const changed of ['host', 'relay', 'epoch']) {
++  test(`rejected guarded handler after ${changed} change preserves proof and can never grant`, () => {
++    const h = fixture(); const guard = guardedTicket(h);
++    if (changed === 'host') h.host.disconnect();
++    if (changed === 'relay') h.runtime.connections.relayViewers.set('relay', new FakeSocket('relay', 'relay-viewer'));
++    if (changed === 'epoch') h.runtime.noteHumanViewerAdmission();
++    const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
++    expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', guard), proof);
++  });
++}
++
++test('guarded issue and first consume both reject grace-retained occupancy', () => {
++  const h = fixture(); const guard = guardedTicket(h);
++  const first = h.guarded('first', 'session-first'); first.disconnect();
++  assert.equal(h.runtime.viewerAdmission.issue('viewer-password-login', 'session-newguard',
++    { initialPolicy: 'vacant-only-v1', context: h.runtime.viewerAdmissionContext() }).error, 'viewer-occupied');
++  expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', guard));
++});
++
++test('retained human after grace and TTL blocks guard; retained guard allows new initial admission', () => {
++  for (const human of [true, false]) {
++    const h = fixture({ viewerAdmissionTtlMs: 100 });
++    const owner = h[human ? 'manual' : 'guarded']('owner', 'session-owner');
++    const identity = admissionOf(owner); owner.disconnect(); expireGrace(h, 120001);
++    const result = h.runtime.viewerAdmission.issue('viewer-password-login', 'session-nextguard',
++      { initialPolicy: 'vacant-only-v1', context: h.runtime.viewerAdmissionContext() });
++    if (human) {
++      assert.equal(result.error, 'human-owner-retained');
++      assert.equal(h.viewer('owner-resume', 'session-owner', identity).disconnected, false);
++    } else {
++      assert.ok(result.ticket);
++      assert.equal(h.viewer('new-guard', 'session-nextguard', { mode: 'explicit', ticket: result.ticket }).disconnected, false);
++      expectRejectedWithoutMutation(h, () => h.viewer('old-guard', 'session-owner', identity));
++    }
++  }
++});
++
++test('guarded consumed lost-welcome retry stays current and loses permanently to admitted human', () => {
++  const h = fixture(); const ticket = guardedTicket(h);
++  const a = h.viewer('guard', 'session-guard', ticket); const identity = admissionOf(a); a.disconnect();
++  const retry = h.viewer('retry', 'session-guard', ticket);
++  assert.deepEqual(admissionOf(retry), identity);
++  const human = h.manual('human', 'session-human'); human.disconnect(); expireGrace(h, 120001);
++  const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
++  expectRejectedWithoutMutation(h, () => h.viewer('stale-ticket', 'session-guard', ticket), proof);
++  expectRejectedWithoutMutation(h, () => h.viewer('stale-resume', 'session-guard', identity), proof);
++});
++
++for (const first of ['proof', 'guard']) {
++  test(`${first}-first consumes real admission authority and rejects the competing handshake`, () => {
++    const h = fixture(); const ticket = guardedTicket(h); const proof = h.runtime.issueProofAdmission();
++    assert.equal(h.runtime.hasProofAdmission(proof), true, 'guard issuance must preserve proof');
++    if (first === 'proof') {
++      assert.equal(proofViewer(h, 'proof', proof).disconnected, false);
++      expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', ticket));
++    } else {
++      assert.equal(h.viewer('guard', 'session-guard', ticket).disconnected, false);
++      assert.equal(h.runtime.hasProofAdmission(proof), false);
++      const before = [...h.runtime.connections.viewers]; const epoch = h.runtime.viewerEpoch();
++      assert.equal(proofViewer(h, 'proof', proof).disconnected, true);
++      assert.deepEqual([...h.runtime.connections.viewers], before);
++      assert.equal(h.runtime.viewerEpoch(), epoch);
++    }
++  });
++}
++
++for (const changed of ['old-operation', 'host']) {
++  test(`guarded owner late rebind ACK after ${changed} change cannot grant`, () => {
++    const h = fixture(); const a = h.guarded('a', 'session-guard'); h.grant(a);
++    const identity = admissionOf(a); a.disconnect();
++    const b = h.viewer('b', 'session-guard', identity);
++    const old = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
++    assert.ok(old); assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
++    let current = b;
++    if (changed === 'old-operation') {
++      b.disconnect(); current = h.viewer('c', 'session-guard', identity);
++      assert.ok(h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1));
++    } else {
++      h.host.disconnect(); h.io.connect(new FakeSocket('replacement-host', 'host'));
++    }
++    old.ack(null, { status: 'applied' });
++    assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
++    assert.equal(current.sent.some(e => e.event === 'control-grant'), false);
++    if (changed === 'old-operation') {
++      const next = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
++      next.ack(null, { status: 'applied' });
++      assert.equal(current.sent.some(e => e.event === 'control-grant'), true);
++    }
++  });
++}

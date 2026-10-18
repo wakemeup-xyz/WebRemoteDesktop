@@ -1,0 +1,299 @@
+# Review package: 550ec9f..HEAD
+
+## Commits
+ad0b723 fix(recovery): correlate rebind evidence with server session
+
+## Files changed
+ scripts/ordinary_session_recovery.py               | 22 +++++-
+ scripts/test_ordinary_session_recovery.py          | 85 +++++++++++++++++++++-
+ signal-server/websocket/signaling.js               |  6 +-
+ .../websocket/viewer-admission.integration.test.js | 29 ++++++++
+ 4 files changed, 134 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/scripts/ordinary_session_recovery.py b/scripts/ordinary_session_recovery.py
+index 5006e9e..172c42a 100644
+--- a/scripts/ordinary_session_recovery.py
++++ b/scripts/ordinary_session_recovery.py
+@@ -223,48 +223,62 @@ class ServerRecoveryEvidence:
+             except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+                 if self._status == 'failed': raise
+                 self._fail('server-log-schema')
+         return [dict(e) for e in self._events[before:]]
+ 
+     def _select(self, value, identities):
+         if type(value) is not dict: self._fail('server-log-schema')
+         name = value.get('event'); correlation = value.get('correlation', {})
+         sockets = {v for v in (identities['socketId'], identities['previousSocketId']) if v is not None}
+         session = identities['sessionId']
++        rebind = name in ('viewer_rebind_confirmed', 'viewer_rebind_failed')
++        direct_rebind_match = False
++        if rebind:
++            try:
++                _keys(correlation, ('viewerId', 'previousViewerId', 'browserSessionId'))
++                if any(not _id(v) for v in correlation.values()): raise ValueError()
++            except ValueError: self._fail('server-log-schema')
++            # Server observation can precede the next browser snapshot. Retain
++            # only its direct stable session/known-previous link; never adopt
++            # the new socket into browser identities or match other event kinds.
++            direct_rebind_match = (session is not None
++                and correlation['browserSessionId'] == session
++                and correlation['previousViewerId'] in sockets)
+         if type(correlation) is dict and self._reset_epoch is not None:
+-            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets
++            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets and not direct_rebind_match
+                 or correlation.get('browserSessionId') is not None and correlation.get('browserSessionId') != session):
+                 self._fail('server-log-gap')
+         if name not in EVENTS: return
+         meta = value.get('meta')
+         host = name == 'signal_socket_disconnected'
+         if host:
+             if type(meta) is not dict or meta.get('role') not in ('host', 'viewer', 'relay-viewer'):
+                 self._fail('server-log-schema')
+             if meta['role'] != 'host': return
+         reset = name == 'control_reset_completed'
+-        if not host and not reset:
++        if rebind:
++            if not direct_rebind_match: return
++        elif not host and not reset:
+             if type(correlation) is not dict: self._fail('server-log-schema')
+             if not (correlation.get('viewerId') in sockets or session is not None and correlation.get('browserSessionId') == session): return
+             if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets
+                 or correlation.get('browserSessionId') is not None and correlation.get('browserSessionId') != session):
+                 return
+         try:
+             _keys(value, ('ts', 'level', 'domain', 'event', 'message', 'source', 'schemaVersion', 'correlation', 'meta', 'redactionVersion'))
+             if type(correlation) is not dict or not set(correlation) <= {'viewerId', 'previousViewerId', 'browserSessionId', 'connectionAttemptId'}: raise ValueError()
+             if any(not _id(v) for v in correlation.values()): raise ValueError()
+             if host or reset: _keys(correlation, ())
+             elif name in ('viewer_disconnect_grace_started', 'viewer_disconnect_grace_expired'):
+                 _keys(correlation, ('viewerId', 'browserSessionId'))
+             else:
+-                _keys(correlation, ('viewerId', 'previousViewerId'))
+-                if correlation['previousViewerId'] not in sockets: raise ValueError()
++                _keys(correlation, ('viewerId', 'previousViewerId', 'browserSessionId'))
+             if value['schemaVersion'] != 1 or type(value['schemaVersion']) is not int or type(value['redactionVersion']) is not int or value['redactionVersion'] != 1: raise ValueError()
+             _enum(value['level'], ('info',)); _enum(value['domain'], ('signaling',) if host else ('control',))
+             if type(value['message']) is not str or len(value['message']) > 256 or value['source'] != 'signal-server': raise ValueError()
+             if type(value['ts']) is not str or re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z', value['ts']) is None: raise ValueError()
+             timestamp = int(datetime.fromisoformat(value['ts'].replace('Z', '+00:00')).timestamp()*1000)
+             _int(timestamp, 9999999999999)
+             epoch = state = None
+             if name == 'viewer_disconnect_grace_started':
+                 _keys(meta, ('graceMs',)); _int(meta['graceMs'], 30000)
+             elif name == 'viewer_disconnect_grace_expired':
+diff --git a/scripts/test_ordinary_session_recovery.py b/scripts/test_ordinary_session_recovery.py
+index 7ac28f7..9252698 100644
+--- a/scripts/test_ordinary_session_recovery.py
++++ b/scripts/test_ordinary_session_recovery.py
+@@ -343,21 +343,21 @@ class MoreHttpTests(unittest.IsolatedAsyncioTestCase):
+         self.assertTrue(writer.closed); self.assertTrue(finished.is_set()); self.assertTrue(writer.waited)
+         self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])
+ 
+ 
+ class AdditionalLogTests(unittest.TestCase):
+     setUp = LogTests.setUp
+     append = LogTests.append
+     def test_confirmed_rebind_and_duplicate_reset_projection(self):
+         self.e.start()
+         rebind = event('viewer_rebind_confirmed', viewer='socket-new', meta={'leaseEpoch': 1})
+-        rebind['correlation'] = {'viewerId': 'socket-new', 'previousViewerId': 'socket-old'}
++        rebind['correlation'] = {'viewerId': 'socket-new', 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary'}
+         self.append(rebind)
+         self.assertEqual(self.e.read_tick(IDS)[0]['event'], 'rebind-confirmed')
+         self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': 2, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
+         reset = event('control_reset_completed', meta={'leaseEpoch': 2, 'status': 'applied', 'state': 'FREE'}); reset['correlation'] = {}
+         self.append(reset); self.append(reset)
+         self.assertEqual([e['event'] for e in self.e.read_tick(IDS)], ['grace-expired', 'reset-completed'])
+ 
+     def test_missing_epoch_and_null_expiry_state_fail_closed(self):
+         for bad in ({'leaseEpoch': None, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'},
+                     {'leaseEpoch': 2, 'state': None, 'reason': 'viewer-disconnect-timeout'}):
+@@ -490,10 +490,93 @@ class SettlingHttpOwnershipTests(unittest.IsolatedAsyncioTestCase):
+                         release_wrapper.set()
+                         first_result, = await asyncio.gather(first, return_exceptions=True)
+                 self.assertIsInstance(second_result, ValueError, f'first={first_result!r}; second={second_result!r}')
+                 self.assertEqual(str(second_result), 'host-observation-unavailable')
+                 if cancel_first: self.assertIsInstance(first_result, asyncio.CancelledError)
+                 else: self.assertEqual(first_result, {'hostOnline': True, 'hostId': 'host-canary'})
+                 self.assertEqual(len(calls), 1); self.assertEqual(len(owned_tasks), 1)
+                 self.assertTrue(all(w.closed and w.waited for w in writers))
+                 self.assertIsNone(recovery._status_owner)
+                 self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])
++
++
++def rebind_event(name='viewer_rebind_confirmed', **correlation_changes):
++    value = event(name, viewer='server-new-canary', meta={'leaseEpoch': 1} if name == 'viewer_rebind_confirmed' else {'reason': 'rebind-rejected'})
++    value['correlation'] = {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old',
++                            'browserSessionId': 'session-canary', **correlation_changes}
++    return value
++
++
++class DirectRebindCorrelationTests(unittest.TestCase):
++    setUp = LogTests.setUp
++    append = LogTests.append
++
++    def test_server_before_browser_rebind_retains_direct_session_hash_only(self):
++        self.e.start(); ids = dict(IDS, socketId='socket-old', previousSocketId=None)
++        self.append(event()); self.assertEqual(self.e.read_tick(ids)[0]['event'], 'grace-started')
++        self.append(rebind_event())
++        rows = self.e.read_tick(ids)
++        self.assertEqual(len(rows), 1)
++        self.assertEqual(rows[0]['event'], 'rebind-confirmed')
++        self.assertEqual(rows[0]['sessionHash'], hash_identity('session-canary', SALT))
++        self.assertEqual(rows[0]['viewerHash'], hash_identity('server-new-canary', SALT))
++        self.assertEqual(self.e.read_tick(ids), [])
++        # A direct rebind observation must not promote the new socket into the
++        # browser identity set or relax matching for a different event kind.
++        self.append(event(viewer='server-new-canary'))
++        self.assertEqual(self.e.read_tick(ids), [])
++        browser_ids = dict(IDS, socketId='server-new-canary', previousSocketId='socket-old')
++        self.append(event(viewer='server-new-canary'))
++        self.assertEqual(self.e.read_tick(browser_ids)[0]['event'], 'grace-started')
++        projection = json.dumps(self.e.snapshot())
++        for private in ('server-new-canary', 'socket-old', 'session-canary', str(self.path), 'https://url-canary', 'token-canary'):
++            self.assertNotIn(private, projection)
++
++    def test_known_current_rebind_projects_session_from_its_logged_field(self):
++        self.e.start(); self.append(rebind_event(viewerId='socket-new'))
++        rows = self.e.read_tick(IDS)
++        self.assertEqual(rows[0]['sessionHash'], hash_identity('session-canary', SALT))
++        self.assertEqual(rows[0]['viewerHash'], hash_identity('socket-new', SALT))
++
++    def test_failed_rebind_before_browser_has_direct_session_for_each_server_reason(self):
++        self.e.start()
++        for reason in ('rebind-cancelled', 'rebind-rejected', 'rebind-timeout'):
++            value = rebind_event('viewer_rebind_failed'); value['meta']['reason'] = reason
++            self.append(value)
++        rows = self.e.read_tick(dict(IDS, socketId='socket-old', previousSocketId=None))
++        self.assertEqual(len(rows), 3)
++        self.assertTrue(all(row['event'] == 'rebind-failed' and row['sessionHash'] == hash_identity('session-canary', SALT) for row in rows))
++        self.assertEqual(self.e.snapshot()['coverage'], 'complete')
++
++    def test_foreign_session_unknown_previous_or_unknown_stable_session_cannot_bind(self):
++        self.e.start()
++        for changes in ({'browserSessionId': 'foreign-session-canary'}, {'previousViewerId': 'unknown-previous-canary'},
++                        {'viewerId': 'socket-new', 'browserSessionId': 'foreign-session-canary'},
++                        {'viewerId': 'socket-new', 'previousViewerId': 'unknown-previous-canary'}):
++            self.append(rebind_event(**changes))
++        self.assertEqual(self.e.read_tick(IDS), [])
++        self.assertEqual(self.e.snapshot()['coverage'], 'complete')
++        fresh = ServerRecoveryEvidence(self.path, SALT); self.addCleanup(fresh.close); fresh.start()
++        self.append(rebind_event(viewerId='socket-new'))
++        self.assertEqual(fresh.read_tick(dict(IDS, sessionId=None)), [])
++
++    def test_missing_malformed_and_unknown_matching_rebind_correlation_fails_closed(self):
++        cases = [None, {}, {'viewerId': 'socket-new', 'previousViewerId': 'socket-old'},
++            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old'},
++            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old', 'browserSessionId': None},
++            {'viewerId': [], 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary'},
++            {'viewerId': 'server-new-canary', 'previousViewerId': [], 'browserSessionId': 'session-canary'},
++            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary', 'token': 'token-canary'},
++            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary', 'url': 'https://url-canary'}]
++        for name in ('viewer_rebind_confirmed', 'viewer_rebind_failed'):
++            for correlation in cases:
++                with self.subTest(name=name, correlation=correlation):
++                    self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++                    value = rebind_event(name)
++                    if correlation is None: value.pop('correlation')
++                    else: value['correlation'] = correlation
++                    self.append(value)
++                    with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(IDS)
++                    self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++                    projection = json.dumps(self.e.snapshot())
++                    for private in ('server-new-canary', 'session-canary', 'token-canary', 'https://url-canary'):
++                        self.assertNotIn(private, projection)
+diff --git a/signal-server/websocket/signaling.js b/signal-server/websocket/signaling.js
+index 93ca790..5951d90 100644
+--- a/signal-server/websocket/signaling.js
++++ b/signal-server/websocket/signaling.js
+@@ -518,40 +518,40 @@ function setupSignaling(io, options = {}) {
+         }
+         if (connections.host !== operation.host
+           || mediaActivityProgress.get(nextId) !== operation.attempt) {
+           // A cancelled migration must revoke its still-current authority before
+           // reopening the pending gate, even if a replacement Host reused its ID.
+           const reason = 'rebind-cancelled';
+           clearLegacyRelayCompanion(nextId, { stop: true });
+           const result = desktopLease.beginRelease({ viewerId: nextId, reason });
+           dispatchLeaseEffect(result, reason);
+           clearRebind();
+-          emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, reason });
++          emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
+           return;
+         }
+         if (ack?.status === 'applied') {
+           const renewed = withLeaseExpiry(() => desktopLease.heartbeat({ viewerId: nextId, ...activeLease }));
+           if (!renewed.ok) {
+             clearRebind();
+             return;
+           }
+           clearRebind();
+           sendGrant(nextId, activeLease);
+-          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, leaseEpoch: activeLease.leaseEpoch });
++          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, sessionId, leaseEpoch: activeLease.leaseEpoch });
+           return;
+         }
+         clearLegacyRelayCompanion(nextId, { stop: true });
+         clearRebind();
+         const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
+         const result = desktopLease.beginRelease({ viewerId: nextId, reason });
+         dispatchLeaseEffect(result, reason);
+-        emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, reason });
++        emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
+       };
+       // Socket.IO's timeout also removes its pending callback, so an old Host
+       // that never acknowledges cannot accumulate retained rebind closures.
+       operation.host.timeout(1500).emit('viewer-session-rebind', {
+         previousViewerId: previousId,
+         viewerId: nextId,
+         ...previousLease,
+         ...(priorProgress ? {
+           connectionAttemptId: priorProgress.connectionAttemptId,
+           connectionAttemptSequence: priorProgress.connectionAttemptSequence,
+diff --git a/signal-server/websocket/viewer-admission.integration.test.js b/signal-server/websocket/viewer-admission.integration.test.js
+index 3dfb5c0..e77c8c7 100644
+--- a/signal-server/websocket/viewer-admission.integration.test.js
++++ b/signal-server/websocket/viewer-admission.integration.test.js
+@@ -369,12 +369,41 @@ for (const throwing of [false, true]) {
+ test('rebind evidence requires applied Host ACK and contains current epoch; replaced grace callback is silent', () => {
+   const events = []; const h = fixture({ structuredLogger: { info: value => events.push(value) } });
+   const a = h.manual('before', 'same-session'); h.grant(a); const identity = admissionOf(a); a.disconnect();
+   const old = h.timers.find(t => t.ms === 8000 && !t.cancelled);
+   const next = h.viewer('after', 'same-session', identity);
+   old.fn(); assert.equal(events.some(e => e.event === 'viewer_disconnect_grace_expired'), false);
+   assert.equal(events.some(e => e.event === 'viewer_rebind_confirmed'), false);
+   h.host.sent.find(e => e.event === 'viewer-session-rebind').ack(null, { status: 'applied' });
+   const confirmed = events.filter(e => e.event === 'viewer_rebind_confirmed');
+   assert.equal(confirmed.length, 1); assert.equal(confirmed[0].meta.leaseEpoch, h.lease.snapshot().leaseEpoch);
++  assert.deepEqual(confirmed[0].correlation, { viewerId: 'after', previousViewerId: 'before', browserSessionId: 'same-session' });
+   assert.equal(next._wrdRebindPending, false);
+ });
++
++for (const outcome of ['rejected', 'timeout', 'cancelled']) {
++  test(`failed rebind ${outcome} observation carries the direct server session`, () => {
++    const events = []; const h = fixture({ structuredLogger: { info: value => events.push(value) } });
++    const a = h.manual('before-failure', 'failure-session'); h.grant(a);
++    const identity = admissionOf(a); a.disconnect();
++    const next = h.viewer('after-failure', 'failure-session', identity);
++    const rebind = h.host.sent.find(e => e.event === 'viewer-session-rebind');
++    assert.ok(rebind); assert.equal(next._wrdRebindPending, true);
++    assert.equal(events.some(e => e.event === 'viewer_rebind_failed'), false);
++    if (outcome === 'cancelled') {
++      // A same-ID replacement preserves the active lease, exercising the
++      // operation's Host-object identity check before its old ACK can grant.
++      h.io.connect(new FakeSocket('host', 'host'));
++      assert.equal(h.lease.snapshot().state, 'ACTIVE');
++      rebind.ack(null, { status: 'applied' });
++    } else {
++      rebind.ack(outcome === 'timeout' ? new Error('fixture timeout') : null, { status: 'rejected' });
++    }
++    const failed = events.filter(e => e.event === 'viewer_rebind_failed');
++    assert.equal(failed.length, 1);
++    assert.deepEqual(failed[0].correlation, { viewerId: 'after-failure', previousViewerId: 'before-failure', browserSessionId: 'failure-session' });
++    assert.equal(failed[0].meta.reason, `rebind-${outcome}`);
++    assert.equal(h.lease.snapshot().state, 'REVOKING');
++    assert.equal(next.sent.some(e => e.event === 'control-grant'), false);
++    assert.equal(next._wrdRebindPending, false);
++  });
++}

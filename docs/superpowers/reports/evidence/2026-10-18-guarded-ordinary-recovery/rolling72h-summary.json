@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "kind": "bounded-rolling-runtime-log-summary",
+  "sourceReportSha256": "f8d036181bf0eb0e46c8d5294ca473868100d6a84f6be142f0055d6dbeaccc5a",
+  "sourceDetailedSummarySha256": "c24b0cd75afde087c5de0e2e43271c23fb2b8a0d5b8fe6bfe9fe850f979c3fcc",
+  "window": {
+    "lowerInclusive": "2026-10-15T17:14:25.468476+08:00",
+    "upperExclusive": "2026-10-18T17:14:25.468476+08:00"
+  },
+  "caps": {
+    "perFileBytes": 67108864,
+    "totalBytes": 268435456,
+    "decompression": "none",
+    "actualBytesRead": 197109717,
+    "ancillaryReadUpperBoundBytes": 8388608,
+    "conservativeTotalUpperBoundBytes": 205498325
+  },
+  "files": [
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.3",
+      "snapshotBytes": 10484593,
+      "capped": false,
+      "firstInWindow": "2026-10-17T13:03:07.051000+08:00",
+      "lastInWindow": "2026-10-17T23:56:20.554000+08:00",
+      "sha256": "16bc0154f1f21bc3a032f0c6f0d9c86d27432fe1d0cf5389767f880915b2ceea"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.2",
+      "snapshotBytes": 10485726,
+      "capped": false,
+      "firstInWindow": "2026-10-17T23:56:26.065000+08:00",
+      "lastInWindow": "2026-10-18T06:17:52.248000+08:00",
+      "sha256": "e96edc5f57ada28ccaf7c4eb06d6de65ad83c136c769912a28c4932f00b488b6"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+      "snapshotBytes": 10485058,
+      "capped": false,
+      "firstInWindow": "2026-10-18T06:17:52.371000+08:00",
+      "lastInWindow": "2026-10-18T12:59:02.806000+08:00",
+      "sha256": "f0b10f8a840c26133e31c372b34aeea5e3c7e41b23bc379854a9623d2aa1e91c"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "snapshotBytes": 6552312,
+      "capped": false,
+      "firstInWindow": "2026-10-18T12:59:07.806000+08:00",
+      "lastInWindow": "2026-10-18T17:14:25.031000+08:00",
+      "sha256": "267a9e454fefba844d605379b02069af591723a49fb2c2ee15379c1ead21a460"
+    },
+    {
+      "path": "/tmp/signal-server.log",
+      "snapshotBytes": 3124413,
+      "capped": false,
+      "firstInWindow": "2026-10-15T17:34:25.052000+08:00",
+      "lastInWindow": "2026-10-18T17:14:14.835000+08:00",
+      "sha256": "ce7708437bef8a2b3cac09a775ab841060382b6fba53d1d8e13ec0a2d180b5fa"
+    },
+    {
+      "path": "/tmp/wrd-fixed-domain.log",
+      "snapshotBytes": 548908,
+      "capped": false,
+      "firstInWindow": "2026-10-15T23:23:12+08:00",
+      "lastInWindow": "2026-10-18T16:20:27+08:00",
+      "sha256": "10dc6d711dab44cbc147b7dc45ed4be1042bed5ca16cd1387e8883756a145256"
+    },
+    {
+      "path": "/tmp/wrd-fixed-watch.log",
+      "snapshotBytes": 1903458,
+      "capped": false,
+      "firstInWindow": "2026-10-15T17:15:24+08:00",
+      "lastInWindow": "2026-10-18T17:13:22+08:00",
+      "sha256": "5aed9645fbb51aee2ad8d8c71524a80b2c72e1dc068016c475fa6c48bd2eb1dc"
+    },
+    {
+      "path": "/tmp/wrd-fixed-watch-launch.log",
+      "snapshotBytes": 7144761,
+      "capped": false,
+      "firstInWindow": "2026-10-15T17:15:24+08:00",
+      "lastInWindow": "2026-10-18T17:13:22+08:00",
+      "sha256": "37a6db9b87d9ffbc58220d3ba9e999316c9adefa7f57584b6dcf20f0042bc8ae"
+    }
+  ],
+  "coverage": {
+    "hostRawPrefixMissingSeconds": 157721.582524,
+    "full72HourHostCoverage": false
+  },
+  "socketDisconnectRecords": {
+    "viewer": 86,
+    "host": 28,
+    "ownership": "mixed-versions-maintenance-probes-or-unknown-not-user-incident-count"
+  },
+  "runtimeSlices": {
+    "since032932": {
+      "rows": 8878,
+      "directMax": {
+        "time": "2026-10-18T13:13:32.699000+08:00",
+        "value": 883.333
+      },
+      "rollingMax": {
+        "time": "2026-10-18T13:13:32.699000+08:00",
+        "value": 883.333
+      },
+      "directAtLeast1s": 0,
+      "first": "2026-10-18T03:29:56.166000+08:00",
+      "last": "2026-10-18T17:14:25.031000+08:00",
+      "pcStates": {
+        "none": 6557,
+        "connecting": 3,
+        "connected": 2318
+      },
+      "captureSeqNonzero": 2321,
+      "inputCountNonzero": 0,
+      "relayTrue": 0,
+      "waitersNonzero": 0
+    },
+    "since143228": {
+      "rows": 1739,
+      "directMax": {
+        "time": "2026-10-18T14:41:05.558000+08:00",
+        "value": 554.212
+      },
+      "rollingMax": {
+        "time": "2026-10-18T14:36:48.996000+08:00",
+        "value": 690.282
+      },
+      "directAtLeast1s": 0,
+      "first": "2026-10-18T14:33:00.991000+08:00",
+      "last": "2026-10-18T17:14:25.031000+08:00",
+      "pcStates": {
+        "none": 1619,
+        "connected": 119,
+        "connecting": 1
+      },
+      "captureSeqNonzero": 120,
+      "inputCountNonzero": 0,
+      "relayTrue": 0,
+      "waitersNonzero": 0
+    },
+    "since150300": {
+      "rows": 1416,
+      "directMax": {
+        "time": "2026-10-18T16:25:48.453000+08:00",
+        "value": 415.563
+      },
+      "rollingMax": {
+        "time": "2026-10-18T16:26:39.202000+08:00",
+        "value": 468.805
+      },
+      "directAtLeast1s": 0,
+      "first": "2026-10-18T15:03:03.020000+08:00",
+      "last": "2026-10-18T17:14:25.031000+08:00",
+      "pcStates": {
+        "none": 1416
+      },
+      "captureSeqNonzero": 0,
+      "inputCountNonzero": 0,
+      "relayTrue": 0,
+      "waitersNonzero": 0
+    }
+  },
+  "diagnostics": {
+    "inventory": 3,
+    "excludedSidecars": 1,
+    "priorSummarySelected": 62,
+    "currentUniqueReceipts": 2,
+    "uniqueCombined": 64,
+    "first": "2026-10-15T17:34:47.523000+08:00",
+    "last": "2026-10-17T22:09:27.004000+08:00",
+    "reasons": {
+      "paint-pending-timeout": 19,
+      "input-ack-timeout": 23,
+      "pc-failed": 3,
+      "dc-error": 4,
+      "unspecified": 3,
+      "ice-disconnected": 4,
+      "dc-stuck": 8
+    }
+  },
+  "currentInputQualification": {
+    "inputAckRttMs": null,
+    "hostQueueMs": null,
+    "hostApplyMs": null,
+    "inputToPostApplyFrameMs": null,
+    "inputToVisibleEffectMs": null,
+    "physical": "NOT_RUN"
+  },
+  "limitations": [
+    "partial retained Host raw history",
+    "event records and overlapping summaries are not independent incidents",
+    "ownership unknown unless existing report establishes a specific authorized run",
+    "no new live health or unique initial WebSocket cause",
+    "current input ACK/queue/apply/applied-frame/causal-visible/physical measurements unavailable"
+  ]
+}

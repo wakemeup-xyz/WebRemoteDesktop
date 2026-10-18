@@ -1,0 +1,126 @@
+# Review package: 0133016..HEAD
+
+## Commits
+569b43c test(recovery): cover default runtime dependency precedence
+73d77d9 docs(recovery): distinguish runtime and adapter dependency gates
+
+## Files changed
+ .../2026-10-18-guarded-ordinary-recovery-plan.md   |  2 +-
+ .../2026-10-18-guarded-ordinary-recovery-design.md |  2 +-
+ scripts/test_ordinary_recovery_fault.py            | 34 ++++++++++++++++++++++
+ 3 files changed, 36 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md b/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md
+index 821ca54..9dd759a 100644
+--- a/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md
++++ b/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md
+@@ -299,21 +299,21 @@ while not coordinator.done():
+ Implement caps from global constraints and reserve manager stop. If manager exists but start failed, attempt the existing manager stop/exit fallback. Never attach to shared CDP browser. Preserve preclose first terminal event if final export loses it. No raw exceptions in results.
+ - [ ] Implement only the exact phase/status/reason schemas in Fixed runtime evidence contracts, including preflight. Import unchanged ContinuitySummary for baseline/no-fault continuity. Recovery classifier requires server event order/current identity and gates; sampled continuing media alone is insufficient. Store separate continuity/recovery outcomes and all three NOT_RUN labels. Every unexpected auth/owner/build/Host/extra-Start/API change terminates without request or reclaim.
+ - [ ] Add RED classifier table: within success, expiry before rebind, rebind timeout/rejected/stale, after success, missing reset ACK, changed generation, mismatched reset epoch, wrong grace class, sampling loss, retained first-close, 30 s recovered stability incomplete, server clock jump (unknown timing), 60 s observation budget expiration, human supersession and cleanup failure. Demonstrate unchanged baseline/continuity rejects first disconnect/identity change.
+ - [ ] Projected current matched rebind failures use recovery-gates-unmet, because the fixed event schema omits the raw reason. Test raw timeout/rejected/cancelled inputs projecting to the same generic result, stale/foreign failures remaining unmatched, and incomplete server/Host/owner coverage yielding INCOMPLETE rather than known FAIL. Do not add a hidden reason API, infer missing cause, or expand the output schema.
+ - [ ] Run `python3.11 -m unittest scripts.test_ordinary_session_recovery scripts.test_passive_session_soak`; run no browser. Root verifies unchanged strict helper/sampler/SUP hashes and commits `test(recovery): add guarded ordinary session qualification`.
+ 
+ ## Task 5: Separately reviewed native-direct and routed page-local stimuli
+ 
+ **Owned files:** Create `scripts/ordinary_recovery_fault.py`, `scripts/test_ordinary_recovery_fault.py`; modify `scripts/ordinary_session_recovery.py` only for adapter integration and fixed scope labels. No production method changes.
+ 
+-**Interfaces:** synchronous `BrowserLocalFault(*, scenario)` before browser creation, with scenario-specific public API capability validation after manifest validation; awaited `.install(page, origin, scenario=scenario)`, `.trigger_once(page)`, `.disarm()`; synchronous `.snapshot()`. Install must match the immutable constructor scenario. Scenario is within-grace/after-grace only, fixing native-direct/0 or playwright-routed/12. Missing module/capability yields fault-capability-unavailable/NOT_RUN before browser. Snapshot includes instrumentation and the exact fixed fields above. Baseline/continuity skip adapter import/construction and install no routes.
++**Interfaces:** synchronous `BrowserLocalFault(*, scenario)` before browser creation, with scenario-specific public API capability validation after manifest validation; awaited `.install(page, origin, scenario=scenario)`, `.trigger_once(page)`, `.disarm()`; synchronous `.snapshot()`. Install must match the immutable constructor scenario. Scenario is within-grace/after-grace only, fixing native-direct/0 or playwright-routed/12. Missing adapter module/public capability yields fault-capability-unavailable/NOT_RUN before browser. Main runtime dependencies, including default-manager async_playwright import, retain Task4's runtime-dependency-unavailable precedence; an injected manager skips only that main-manager import. Add a pure valid-manifest recovery run with manager_factory=None and denied Playwright import to lock this distinction, keeping the existing injected-manager missing-routing-capability case. Snapshot includes instrumentation and the exact fixed fields above. Baseline/continuity skip adapter import/construction and install no routes.
+ 
+ Read-only `failure_reason` is none initially, then sticky fault-attempt-cap or fault-handler-failed. It is directly owned private adapter evidence, with no snapshot/output expansion or inferred server cause. Caller finite-validates it (absent on existing test fakes defaults handler failure; malformed is schema-rejected), preserves the first reason and rejects failed adapter status at both ticks and final cleanup snapshot. Keep counters<=32 and failure sticky through disarm; cover late failure after browser close and earlier-failure preservation in pure tests.
+ 
+ - [ ] Record installed Playwright1.59.0 API and implementation facts from read-only source: routing replaces global WebSocket with a wrapper, its public close metadata may be synthetic, and forwarding affects stimulus timing. Required supported routing APIs are only a capability gate for after-grace. No private `_ws`/upstream access or CDP alternative.
+ - [ ] Write RED pure fake-page tests: baseline/continuity/within never call route or route_web_socket; within captures original constructor/prototype.close before app code and refuses changed references; current exact engine object only closes once via captured original close. Test wrong owner/auth/socket/path/transport/readyState and second trigger rejection without product-method invocation.
+ - [ ] Implement native-direct init closure: capture original constructor and prototype.close without replacing either; at trigger compare both still unchanged, require exact current object/expected path plus current owner/auth/gates, then invoke captured close.call(currentWs,1000,'wrd-local-recovery-check'). `instanceof` may validate against the captured original as one check but is never independent native provenance. Public trigger returns only fixed status. No HTTP/WebSocket routes exist on this fresh page/context/browser.
+ - [ ] Write RED fake-route tests for after-grace: exact owned origin/path/EIO4/transport predicate; open forwarding through supported connect_to_server without on_message; public current wrapper close explicitly labeled routed;12-second future-attempt block; no upstream for blocked WS; polling abort; combined32-attempt cap; monotonic deadline unchanged by retries; disarm and failure clear block. Test a wrapper that passes global instanceof but is not native: result must retain playwright-routed and cannot claim native-direct.
+ - [ ] Implement the supported routed branch under the complete Browser-local fault adapter contract above. Capture no Playwright-private native upstream. Apply routes before final navigation, so baseline and recovery share routed instrumentation. The independently owned fixed local status reader is unaffected by page Socket.IO routing and remains active during the block. Unknown alternate socket origin/transport fails closed.
+ - [ ] Integrate immutable qualificationEvidenceScope into summary, ordinaryRecovery and sample schemas, with nativeAfterGraceQualification NOT_RUN in the summary exactly as specified; test that after-grace PASS is ordinary-functional-playwright-routed-stimulus only, within-grace is ordinary-functional-native-direct-close, and both no-fault scenarios are native-passive-continuity. Any attempted promotion or instrumentation mismatch is schema-rejected, not silently normalized.
+ - [ ] Run only pure adapter/runner tests. Root separately reviews the fault capability, its narrowed evidence meaning and cleanup before committing `test(recovery): add explicit page-local recovery stimuli`. No live experiment is part of this source task.
+diff --git a/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md b/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md
+index 24497a4..7354455 100644
+--- a/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md
++++ b/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md
+@@ -159,21 +159,21 @@ Total artifact budget is 64 MiB per run, same row cap 32768, summary and lifecyc
+ ## Browser-local fault adapter and scope of evidence
+ 
+ Use two explicit instrumentation paths. `fault.instrumentation` is exactly none / native-direct / playwright-routed. Baseline and fresh10800 continuity use none, no HTTP/WebSocket routes and no fault adapter; within-grace uses native-direct with no HTTP/WebSocket routes anywhere on its fresh browser/context/page; after-grace uses playwright-routed from before final navigation, so its entire300-second baseline, close and reconnect use routed signaling. Never carry a page/context between these scenarios.
+ 
+ Static installed Playwright1.59.0 source confirms `route_web_socket` installs `webSocketMockSource`, captures its original native constructor privately and replaces global WebSocket with a wrapper. Public wrapper close can supply synthetic clean-close metadata; message forwarding can alter timings. `instanceof globalThis.WebSocket` does not establish native identity under that API. Accept the supported routing behavior explicitly; do not access private `_ws` or other Playwright internals and do not introduce an unreviewed CDP alternative.
+ 
+ **Native-direct within grace:** before any application script in the newly owned route-free page, the adapter's init closure captures the original WebSocket constructor and its original prototype.close reference without replacing either. The application and unchanged passive sampler do not replace them. The closure exposes only a runner-owned one-shot trigger and fixed status snapshot, not a product method or grant. At trigger, require current ordinary owner/auth/socket/host/path/readiness; exact `WebRTC.socket.io.engine.transport.ws` object; transport websocket; original constructor and close still identical to the page globals; instance of the captured original constructor; OPEN state; exact expected origin/socket.io path. Then call the captured original close with that exact current object once, code1000 and fixed reason wrd-local-recovery-check. This provenance plus unchanged constructor/close is the direct native operation claim; global instanceof alone is never the claim. Constructor/prototype change or ambiguous target stops NOT_RUN before fault. All subsequent Manager retries remain the product's normal uninstrumented requests. No routes are installed to achieve within-grace timing; actual server evidence decides whether it landed within grace.
+ 
+ **Playwright-routed after grace:** capability-check Page.route, Page.route_web_socket, WebSocketRoute.connect_to_server/close before browser creation. Install supported routes before final Viewer navigation only on this owned page for exact origin `/socket.io/`, EIO4 and known websocket/polling transport with bounded standard parameters. Other requests pass untouched. Block service workers in the owned context. In the open phase use connect_to_server with automatic message forwarding and no on_message inspection/rewrite. At the end of the300-second routed baseline, arm a12-second local monotonic block and call public close once on the exact current engine transport.ws **wrapper**, after the same current owner/auth/path checks. Call it routed public close, not native close; do not inspect its private upstream. Future matching polling requests abort; future matching WebSocket routes close without upstream connection. Deadline does not extend on retries; at12 seconds normal future routes pass through and product Manager retries automatically. Maximum32 blocked attempts total; overflow fails the run, clears the block and records a fixed reason. No request is held asleep.
+ 
+-Construct `BrowserLocalFault(*, scenario)` synchronously after manifest validation and before browser creation; the constructor fixes scenario and validates its scenario-specific public API capabilities through bounded local optional imports. Await `install(page, origin, scenario=scenario)`, `trigger_once(page)` and `disarm()`; `snapshot()` is synchronous. The install scenario must equal the constructor scenario. Scenario is within-grace/after-grace only and fixes instrumentation/blockSeconds respectively native-direct/0 and playwright-routed/12. Missing module or capability yields fault-capability-unavailable/NOT_RUN before browser creation. No-fault runs skip the adapter import and construction entirely. Capability checks are scenario-specific: lack of route_web_socket does not block route-free within-grace or no-fault runs. Unknown/unsupported transport/origin yields NOT_RUN without fallback. No Socket.IO Socket.disconnect/connect, Manager.close/open, Engine.close, product recovery call, admission request, timer/auth rewrite, global offline toggle or service/tunnel action.
++Construct `BrowserLocalFault(*, scenario)` synchronously after manifest validation and before browser creation; the constructor fixes scenario and validates its scenario-specific public API capabilities through bounded local optional imports. Await `install(page, origin, scenario=scenario)`, `trigger_once(page)` and `disarm()`; `snapshot()` is synchronous. The install scenario must equal the constructor scenario. Scenario is within-grace/after-grace only and fixes instrumentation/blockSeconds respectively native-direct/0 and playwright-routed/12. Missing adapter module or scenario-specific public capability yields fault-capability-unavailable/NOT_RUN before browser creation. Main runtime dependency absence (including the default manager's async_playwright import) retains Task4's runtime-dependency-unavailable precedence before the adapter gate; an injected manager skips that main-manager import but still needs the adapter's scenario-specific capabilities. No-fault runs skip the adapter import and construction entirely. Capability checks are scenario-specific: lack of route_web_socket does not block route-free within-grace or no-fault runs. Unknown/unsupported transport/origin yields NOT_RUN without fallback. No Socket.IO Socket.disconnect/connect, Manager.close/open, Engine.close, product recovery call, admission request, timer/auth rewrite, global offline toggle or service/tunnel action.
+ 
+ Disarm first during cleanup. Native-direct disarm retires its one-shot closure; no routes exist to remove. Routed disarm clears blocking and leaves supported WebSocket routes forwarding until this owned context closes; the API does not promise a symmetric unroute for its installed wrapper. HTTP unroute uses only the adapter's exact matcher/handler. In-flight handlers remain bounded/owned; failure or incomplete settlement prevents PASS. Close only the owned browser. Native-direct clean close and routed synthetic clean-close metadata both remain intentional stimuli and **neither reproduces natural WS1006**.
+ 
+ The adapter exposes read-only `failure_reason`: none initially, then sticky fault-attempt-cap or fault-handler-failed from its own directly observed asynchronous failures. The persisted snapshot stays unchanged. The caller validates this finite property when status is failed, including the final snapshot after cleanup; an absent property on an injected test fake defaults to fault-handler-failed, while malformed values are schema-rejected. Never infer a server rebind cause from this property. Disarm cannot erase failure, projected block counters cannot exceed32, and late handler/cap failure vetoes PASS while preserving any earlier terminal reason.
+ 
+ `qualificationEvidenceScope` is a mandatory fixed field in summary, ordinaryRecovery and every sample wrapper: native-passive-continuity / ordinary-functional-native-direct-close / ordinary-functional-playwright-routed-stimulus, selected respectively by baseline/continuity, within-grace, after-grace and immutable from preflight. An after-grace PASS qualifies real ordinary server/application admission, reset/regrant and fresh-media readiness **under the routed stimulus**; it does not qualify uninstrumented WebSocket performance, native after-grace network failure or natural1006 recovery. Persist `nativeAfterGraceQualification:'NOT_RUN'` for every scenario of this runner. A separately observed natural native after-grace event would require its own reviewed evidence record; this runner never silently promotes a routed PASS. Within-grace PASS covers ordinary recovery after the explicitly induced original-native close, not arbitrary natural outages. The clean no-route baseline/10800 continuity remains separate.
+ 
+ ## Exact runner result and phase schemas
+ 
+ All new output objects reject extra keys. Existing private sampler fields and `ContinuitySummary.result` retain their existing schema and validators; the wrapper below does not widen them. New unknown exception strings are mapped to `internal-error`, never copied into evidence. Counts reject bool, NaN and infinity. `seconds` means a finite number0..12000; nullable values stay null until observed. Hashes are null or exactly16 lowercase hex. Epochs/counts are integer0..999999999, server timestamps integer0..9999999999999.
+diff --git a/scripts/test_ordinary_recovery_fault.py b/scripts/test_ordinary_recovery_fault.py
+index 8185156..241c516 100644
+--- a/scripts/test_ordinary_recovery_fault.py
++++ b/scripts/test_ordinary_recovery_fault.py
+@@ -428,20 +428,54 @@ class FailureIntegrationTests(unittest.IsolatedAsyncioTestCase):
+         for reason in ('fault-attempt-cap','fault-handler-failed'):
+             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError,'^'+reason+'$'):
+                 runner._raise_fault_failure(types.SimpleNamespace(failure_reason=reason),value)
+         with self.assertRaisesRegex(ValueError,'^fault-handler-failed$'):
+             runner._raise_fault_failure(object(),value)
+         for reason in ('none','private-error-canary',None,[],True):
+             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError,'^schema-rejected$'):
+                 runner._raise_fault_failure(types.SimpleNamespace(failure_reason=reason),value)
+         self.assertEqual(set(value),set(runner.empty_fault('after-grace')))
+ 
++    async def test_default_manager_missing_playwright_is_runtime_dependency_before_adapter(self):
++        import builtins
++        from scripts.test_ordinary_session_recovery import RuntimeRunTests
++        RuntimeRunTests.setUp(self)
++        real_import=builtins.__import__
++        for scenario in ('within-grace','after-grace'):
++            with self.subTest(scenario=scenario):
++                self.args.scenario=scenario; self.args.output_dir=str(self.root/scenario)
++                manifest=json.loads(self.manifest.read_text()); manifest['scenario']=scenario
++                self.manifest.write_text(json.dumps(manifest))
++                self.args.runtime_manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest()
++                denied=[]
++                def deny_playwright(name,*args,**kwargs):
++                    if name=='playwright' or name.startswith('playwright.'):
++                        denied.append(name); raise ImportError('private-import-canary')
++                    return real_import(name,*args,**kwargs)
++                status=unittest.mock.AsyncMock(side_effect=AssertionError('status must not start'))
++                with patch('builtins.__import__',side_effect=deny_playwright), \
++                     patch.object(runner.OwnedBrowserLifecycle,'start',new_callable=unittest.mock.AsyncMock) as browser_start, \
++                     patch.object(runner,'_AdmissionObservation') as admission, \
++                     patch.object(runner,'_load_fault') as load_fault:
++                    result=await runner.run(self.args,manager_factory=None,status_reader=status)
++                self.assertEqual(result,1); self.assertEqual(denied,['playwright.async_api'])
++                browser_start.assert_not_called(); admission.assert_not_called()
++                status.assert_not_called(); load_fault.assert_not_called()
++                summary=json.loads((Path(self.args.output_dir)/'summary.json').read_text())
++                self.assertIsNotNone(summary['manifest'])
++                self.assertEqual(summary['ordinaryRecovery']['status'],'NOT_RUN')
++                self.assertEqual(summary['ordinaryRecovery']['reason'],'runtime-dependency-unavailable')
++                self.assertEqual(summary['failure'],dict(phase='preflight',reason='runtime-dependency-unavailable'))
++                self.assertEqual(summary['fault']['capability'],'not-checked')
++                self.assertEqual(summary['fault']['triggerCount'],0)
++                self.assertNotIn('private-import-canary',json.dumps(summary))
++
+     async def test_capability_unavailable_is_not_run_before_browser_factory(self):
+         from scripts.test_ordinary_session_recovery import RuntimeRunTests
+         RuntimeRunTests.setUp(self)
+         self.args.scenario='after-grace'; manifest=json.loads(self.manifest.read_text()); manifest['scenario']='after-grace'
+         self.manifest.write_text(json.dumps(manifest)); self.args.runtime_manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest()
+         calls=[]; route_free=type('RouteFreePage',(FakePage,),{'route_web_socket':None})
+         with fake_api(Page=route_free):
+             result=await runner.run(self.args,manager_factory=lambda:calls.append('factory'),status_reader=RuntimeRunTests.status.__get__(self))
+         self.assertEqual(result,1); self.assertEqual(calls,[])
+         summary=json.loads((Path(self.args.output_dir)/'summary.json').read_text())

@@ -1,0 +1,1021 @@
+# Review package: 7181b7f55beab8a419e92c8e4de52185fd194781..HEAD
+
+## Commits
+710cf04 test(recovery): observe exact server grace lifecycle
+
+## Files changed
+ scripts/ordinary_session_recovery.py               | 435 +++++++++++++++++++++
+ scripts/test_ordinary_session_recovery.py          | 429 ++++++++++++++++++++
+ signal-server/websocket/signaling.js               |  15 +-
+ .../websocket/viewer-admission.integration.test.js |  35 ++
+ 4 files changed, 912 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/scripts/ordinary_session_recovery.py b/scripts/ordinary_session_recovery.py
+new file mode 100644
+index 0000000..b50632e
+--- /dev/null
++++ b/scripts/ordinary_session_recovery.py
+@@ -0,0 +1,435 @@
++#!/usr/bin/env python3
++"""Bounded read-only recovery evidence primitives. No runtime/browser imports."""
++from __future__ import annotations
++
++import asyncio
++from datetime import datetime
++import hashlib
++import json
++import math
++import os
++import re
++import stat
++import time
++
++from scripts.passive_session_soak import (
++    CancellationCooperationError, compact, lifecycle_stage, validate_delta,
++    validate_gate_fields,
++)
++
++MAX_ROW_BYTES = 32768
++SCOPES = {'baseline': 'native-passive-continuity', 'continuity': 'native-passive-continuity',
++          'within-grace': 'ordinary-functional-native-direct-close',
++          'after-grace': 'ordinary-functional-playwright-routed-stimulus'}
++PHASES = ('preflight', 'startup', 'baseline', 'fault', 'recovering', 'recovered-stability', 'continuity', 'terminal')
++EVENTS = {'viewer_disconnect_grace_started': 'grace-started',
++          'viewer_disconnect_grace_expired': 'grace-expired',
++          'viewer_rebind_confirmed': 'rebind-confirmed', 'viewer_rebind_failed': 'rebind-failed',
++          'control_reset_completed': 'reset-completed', 'signal_socket_disconnected': 'host-disconnected'}
++
++
++def _keys(value, keys):
++    if type(value) is not dict or set(value) != set(keys): raise ValueError('schema-rejected')
++
++
++def _int(value, maximum=999999999, *, minimum=0, nullable=False):
++    if nullable and value is None: return
++    if type(value) is not int or not minimum <= value <= maximum: raise ValueError('schema-rejected')
++
++
++def _number(value, maximum=12000, *, nullable=False):
++    if nullable and value is None: return
++    if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum:
++        raise ValueError('schema-rejected')
++
++
++def _enum(value, allowed):
++    if type(value) is not str or value not in allowed: raise ValueError('schema-rejected')
++
++
++def _id(value):
++    if type(value) is not str or not 1 <= len(value) <= 128: return False
++    try: value.encode('utf-8')
++    except UnicodeError: return False
++    return True
++
++
++def _hash(value):
++    if value is not None and (type(value) is not str or re.fullmatch('[0-9a-f]{16}', value) is None):
++        raise ValueError('schema-rejected')
++
++
++def hash_identity(value, salt):
++    if not isinstance(value, str) or not 1 <= len(value) <= 128: return None
++    return hashlib.sha256(salt + value.encode('utf-8')).hexdigest()[:16]
++
++
++def _json(data):
++    def pairs(items):
++        value = {}
++        for key, item in items:
++            if key in value: raise ValueError('schema-rejected')
++            value[key] = item
++        return value
++    return json.loads(data.decode('utf-8'), object_pairs_hook=pairs,
++                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError('schema-rejected')))
++
++
++def validate_host_observation(value):
++    _keys(value, ('status', 'hostHash', 'coverage', 'samples', 'hostDisconnectObserved'))
++    _enum(value['status'], ('not-started', 'stable', 'unavailable', 'changed'))
++    _enum(value['coverage'], ('not-started', 'complete', 'incomplete'))
++    _hash(value['hostHash']); _int(value['samples'], 12000)
++    if type(value['hostDisconnectObserved']) is not bool: raise ValueError('schema-rejected')
++    if value['status'] == 'not-started' and (value['coverage'] != 'not-started' or value['samples'] or value['hostHash'] is not None or value['hostDisconnectObserved']):
++        raise ValueError('schema-rejected')
++    if value['status'] in ('unavailable', 'changed') and value['coverage'] != 'incomplete': raise ValueError('schema-rejected')
++    if value['status'] == 'stable' and (value['samples'] < 1): raise ValueError('schema-rejected')
++    if value['status'] == 'stable' and (value['coverage'] != 'complete' or value['hostDisconnectObserved'] or value['hostHash'] is None):
++        raise ValueError('schema-rejected')
++    return value
++
++
++class HostContinuityObserver:
++    def __init__(self, salt):
++        self._salt, self._initial, self._last = salt, None, None
++        self._status, self._coverage, self._samples = 'not-started', 'not-started', 0
++        self._disconnect = False
++        self.reason = 'none'
++
++    def _fail(self, reason, *, changed=False):
++        if self.reason == 'none': self.reason = reason
++        self._coverage = 'incomplete'
++        if changed or self._status != 'changed': self._status = 'changed' if changed else 'unavailable'
++
++    def observe_status(self, value, tick_ms):
++        try:
++            _number(tick_ms, 9999999999999)
++            if self._last is not None and not 0 <= tick_ms-self._last <= 1500: raise ValueError()
++        except ValueError:
++            self._fail('host-observation-gap'); return self.snapshot()
++        self._last = tick_ms
++        try:
++            _keys(value, ('hostOnline', 'hostId'))
++            if type(value['hostOnline']) is not bool: raise ValueError()
++            if not _id(value['hostId']) and not (value['hostOnline'] is False and value['hostId'] is None): raise ValueError()
++        except (ValueError, TypeError):
++            self._fail('host-observation-unavailable'); return self.snapshot()
++        if self._samples >= 12000:
++            self._fail('host-observation-gap'); return self.snapshot()
++        self._samples += 1
++        host_id = value['hostId']
++        if self._initial is not None and host_id is not None and host_id != self._initial:
++            self._fail('host-replaced', changed=True)
++        elif not value['hostOnline']:
++            self._fail('host-unavailable')
++        elif self._initial is None:
++            self._initial = host_id
++        if self._coverage != 'incomplete': self._status, self._coverage = 'stable', 'complete'
++        return self.snapshot()
++
++    def observe_host_disconnect(self):
++        self._disconnect = True; self._fail('host-disconnect-observed')
++        return self.snapshot()
++
++    def snapshot(self):
++        return validate_host_observation({'status': self._status, 'hostHash': hash_identity(self._initial, self._salt),
++            'coverage': self._coverage, 'samples': self._samples, 'hostDisconnectObserved': self._disconnect})
++
++
++def validate_server_event(row):
++    _keys(row, ('n', 'event', 'serverTimestampMs', 'viewerHash', 'sessionHash', 'leaseEpoch', 'state'))
++    _int(row['n'], 1024, minimum=1); _enum(row['event'], tuple(EVENTS.values()))
++    _int(row['serverTimestampMs'], 9999999999999); _hash(row['viewerHash']); _hash(row['sessionHash'])
++    _int(row['leaseEpoch'], nullable=True)
++    if row['state'] is not None: _enum(row['state'], ('FREE', 'GRANTING', 'ACTIVE', 'REVOKING'))
++    if row['event'] == 'host-disconnected' and any(row[k] is not None for k in ('viewerHash', 'sessionHash', 'leaseEpoch', 'state')):
++        raise ValueError('schema-rejected')
++    return row
++
++
++class ServerRecoveryEvidence:
++    def __init__(self, path, salt):
++        self._path, self._salt, self._fd = path, salt, None
++        self._device = self._inode = self._offset = None
++        self._partial = b''; self._events = []; self._last_time = None; self._reset_epoch = None
++        self._session = None; self._status, self._coverage = 'not-started', 'not-started'
++        self.reason = 'none'
++
++    def _fail(self, reason):
++        if self.reason == 'none': self.reason = reason
++        self._status, self._coverage = 'failed', 'incomplete'
++        self.close()
++        raise ValueError(self.reason) from None
++
++    def start(self):
++        if self._fd is not None or self._status == 'failed': self._fail('server-log-unavailable')
++        try:
++            fd = os.open(self._path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
++            try:
++                info = os.fstat(fd)
++                if not stat.S_ISREG(info.st_mode): raise OSError()
++                self._offset = os.lseek(fd, 0, os.SEEK_END)
++                self._device, self._inode = info.st_dev, info.st_ino
++            except BaseException: os.close(fd); raise
++            self._fd = fd
++        except OSError: self._fail('server-log-unavailable')
++        self._status, self._coverage = 'reading', 'complete'
++
++    def close(self):
++        if self._fd is not None:
++            os.close(self._fd); self._fd = None
++        if self._partial and self._status == 'reading':
++            self._coverage = 'incomplete'
++            if self.reason == 'none': self.reason = 'server-log-gap'
++        self._partial = b''
++        if self._status == 'reading': self._status = 'closed'
++
++    def snapshot(self):
++        return {'status': self._status, 'selectedEvents': [dict(e) for e in self._events],
++                'lastSequence': len(self._events), 'coverage': self._coverage}
++
++    def read_tick(self, identities):
++        if self._status != 'reading' or self._fd is None: self._fail('server-log-gap')
++        try:
++            _keys(identities, ('sessionId', 'socketId', 'previousSocketId'))
++            if any(v is not None and not _id(v) for v in identities.values()): raise ValueError()
++            session = identities['sessionId']
++            if self._session is not None and session != self._session: raise ValueError()
++            if session is not None: self._session = session
++        except ValueError: self._fail('server-log-schema')
++        try:
++            info = os.stat(self._path, follow_symlinks=False)
++            current = os.fstat(self._fd)
++            if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != (self._device, self._inode):
++                self._fail('server-log-identity-changed')
++            if current.st_size < self._offset: self._fail('server-log-gap')
++            unread = current.st_size-self._offset
++            if unread > 65536: self._fail('server-log-capacity')
++            data = os.read(self._fd, unread)
++            if len(data) != unread: self._fail('server-log-gap')
++            self._offset += len(data)
++        except OSError: self._fail('server-log-unavailable')
++        before = len(self._events)
++        # The aggregate is bounded by one tick plus the bounded partial line.
++        lines = (self._partial+data).split(b'\n')
++        self._partial = lines.pop()
++        if len(self._partial) > 16384: self._fail('server-log-capacity')
++        for line in lines:
++            if len(line)+1 > 16384: self._fail('server-log-capacity')
++            try: value = _json(line)
++            except (ValueError, UnicodeError, RecursionError): self._fail('server-log-schema')
++            try: self._select(value, identities)
++            except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
++                if self._status == 'failed': raise
++                self._fail('server-log-schema')
++        return [dict(e) for e in self._events[before:]]
++
++    def _select(self, value, identities):
++        if type(value) is not dict: self._fail('server-log-schema')
++        name = value.get('event'); correlation = value.get('correlation', {})
++        sockets = {v for v in (identities['socketId'], identities['previousSocketId']) if v is not None}
++        session = identities['sessionId']
++        if type(correlation) is dict and self._reset_epoch is not None:
++            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets
++                or correlation.get('browserSessionId') is not None and correlation.get('browserSessionId') != session):
++                self._fail('server-log-gap')
++        if name not in EVENTS: return
++        meta = value.get('meta')
++        host = name == 'signal_socket_disconnected'
++        if host:
++            if type(meta) is not dict or meta.get('role') not in ('host', 'viewer', 'relay-viewer'):
++                self._fail('server-log-schema')
++            if meta['role'] != 'host': return
++        reset = name == 'control_reset_completed'
++        if not host and not reset:
++            if type(correlation) is not dict: self._fail('server-log-schema')
++            if not (correlation.get('viewerId') in sockets or session is not None and correlation.get('browserSessionId') == session): return
++            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets
++                or correlation.get('browserSessionId') is not None and correlation.get('browserSessionId') != session):
++                return
++        try:
++            _keys(value, ('ts', 'level', 'domain', 'event', 'message', 'source', 'schemaVersion', 'correlation', 'meta', 'redactionVersion'))
++            if type(correlation) is not dict or not set(correlation) <= {'viewerId', 'previousViewerId', 'browserSessionId', 'connectionAttemptId'}: raise ValueError()
++            if any(not _id(v) for v in correlation.values()): raise ValueError()
++            if host or reset: _keys(correlation, ())
++            elif name in ('viewer_disconnect_grace_started', 'viewer_disconnect_grace_expired'):
++                _keys(correlation, ('viewerId', 'browserSessionId'))
++            else:
++                _keys(correlation, ('viewerId', 'previousViewerId'))
++                if correlation['previousViewerId'] not in sockets: raise ValueError()
++            if value['schemaVersion'] != 1 or type(value['schemaVersion']) is not int or type(value['redactionVersion']) is not int or value['redactionVersion'] != 1: raise ValueError()
++            _enum(value['level'], ('info',)); _enum(value['domain'], ('signaling',) if host else ('control',))
++            if type(value['message']) is not str or len(value['message']) > 256 or value['source'] != 'signal-server': raise ValueError()
++            if type(value['ts']) is not str or re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z', value['ts']) is None: raise ValueError()
++            timestamp = int(datetime.fromisoformat(value['ts'].replace('Z', '+00:00')).timestamp()*1000)
++            _int(timestamp, 9999999999999)
++            epoch = state = None
++            if name == 'viewer_disconnect_grace_started':
++                _keys(meta, ('graceMs',)); _int(meta['graceMs'], 30000)
++            elif name == 'viewer_disconnect_grace_expired':
++                _keys(meta, ('leaseEpoch', 'state', 'reason'))
++                _enum(meta['reason'], ('viewer-disconnect-timeout',)); epoch, state = meta['leaseEpoch'], meta['state']
++            elif name == 'viewer_rebind_confirmed':
++                _keys(meta, ('leaseEpoch',)); epoch = meta['leaseEpoch']
++            elif name == 'viewer_rebind_failed':
++                _keys(meta, ('reason',)); _enum(meta['reason'], ('rebind-timeout', 'rebind-rejected', 'rebind-cancelled'))
++            elif reset:
++                _keys(meta, ('leaseEpoch', 'status', 'state')); _enum(meta['status'], ('applied',)); _enum(meta['state'], ('FREE',))
++                epoch, state = meta['leaseEpoch'], meta['state']
++            else:
++                _keys(meta, ('role', 'reason'))
++                _enum(meta['reason'], ('ping timeout', 'transport close', 'transport error', 'server namespace disconnect', 'client namespace disconnect', 'server shutting down', 'parse error', 'forced close', 'forced server close', 'other'))
++            _int(epoch, nullable=name not in ('viewer_disconnect_grace_expired', 'viewer_rebind_confirmed', 'control_reset_completed'))
++            if name == 'viewer_disconnect_grace_expired' and state is None: raise ValueError()
++            if state is not None: _enum(state, ('FREE', 'GRANTING', 'ACTIVE', 'REVOKING'))
++        except (ValueError, TypeError, OverflowError): self._fail('server-log-schema')
++        if reset and (self._reset_epoch is None or epoch != self._reset_epoch): return
++        if self._last_time is not None and timestamp < self._last_time: self._fail('server-clock-regression')
++        if len(self._events) >= 1024: self._fail('server-log-capacity')
++        if host: self._reset_epoch = None
++        elif name == 'viewer_disconnect_grace_expired':
++            if self._reset_epoch is not None and self._reset_epoch != epoch: self._fail('server-log-gap')
++            self._reset_epoch = epoch
++        elif reset: self._reset_epoch = None
++        row = {'n': len(self._events)+1, 'event': EVENTS[name], 'serverTimestampMs': timestamp,
++               'viewerHash': None if host else hash_identity(correlation.get('viewerId'), self._salt),
++               'sessionHash': None if host else hash_identity(correlation.get('browserSessionId'), self._salt),
++               'leaseEpoch': epoch, 'state': state}
++        self._events.append(validate_server_event(row)); self._last_time = timestamp
++
++
++_status_owner = None
++
++
++async def read_local_host_status():
++    """One fixed loopback request, including owned cancellation and writer close."""
++    global _status_owner
++    if _status_owner is not None and not _status_owner.done():
++        raise ValueError('host-observation-unavailable')
++
++    async def request():
++        writer = None
++        deadline = time.monotonic()+.75
++        try:
++            reader, writer = await asyncio.open_connection('127.0.0.1', 8080)
++            writer.write(b'GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nConnection: close\r\nCache-Control: no-store\r\nAccept: application/json\r\n\r\n')
++            await writer.drain()
++            total = 0
++            async def line():
++                nonlocal total
++                # A byte-at-a-time read never buffers an unbounded header line.
++                data = bytearray()
++                while not data.endswith(b'\r\n'):
++                    part = await reader.readexactly(1); data.extend(part); total += 1
++                    if len(data) > 1024 or total > 8192: raise ValueError()
++                return bytes(data[:-2])
++            status_line = await line()
++            if re.fullmatch(rb'HTTP/1\.[01] 200(?: [\x20-\x7e]*)?', status_line) is None: raise ValueError()
++            headers = {}
++            for count in range(33):
++                data = await line()
++                if not data: break
++                if count == 32 or b':' not in data: raise ValueError()
++                name, value = data.split(b':', 1)
++                if re.fullmatch(rb'[!#$%&\'*+.^_`|~0-9A-Za-z-]+', name) is None: raise ValueError()
++                name = name.lower(); value = value.strip()
++                if name in headers or any(b < 32 or b > 126 for b in value): raise ValueError()
++                headers[name] = value
++            if b'transfer-encoding' in headers or headers.get(b'content-encoding', b'identity').lower() != b'identity': raise ValueError()
++            if headers.get(b'content-type', b'').split(b';', 1)[0].strip().lower() != b'application/json': raise ValueError()
++            length = headers.get(b'content-length', b'')
++            if re.fullmatch(rb'[0-9]{1,5}', length) is None or int(length) > 16384: raise ValueError()
++            value = _json(await reader.readexactly(int(length)))
++            if type(value) is not dict or 'hostId' not in value or type(value.get('hostOnline')) is not bool: raise ValueError()
++            host_id = value.get('hostId')
++            if not _id(host_id) and not (value['hostOnline'] is False and host_id is None): raise ValueError()
++            return {'hostOnline': value['hostOnline'], 'hostId': host_id}
++        finally:
++            if writer is not None:
++                writer.close()
++                # wait_closed is owned directly, never detached from this stage.
++                await asyncio.wait_for(writer.wait_closed(), max(0, deadline-time.monotonic()))
++    _status_owner = asyncio.create_task(request())
++    try:
++        return await lifecycle_stage(_status_owner, .75, settlement=.075)
++    except (asyncio.CancelledError, CancellationCooperationError): raise
++    except Exception: raise ValueError('host-observation-unavailable') from None
++    finally:
++        if _status_owner.done(): _status_owner = None
++
++
++_METRICS = ('inputAckRttMs', 'inputToPostApplyFrameMs', 'inputToVisibleEffectMs', 'hostQueueMs',
++    'hostApplyMs', 'hostAdapterAwaitMs', 'paintIntervalMs', 'freshFrameAgeMs', 'candidateRttMs',
++    'jitterBufferMs', 'decodeMs', 'encoderMs', 'relayFrameAckRttMs')
++_SAMPLE_KEYS = ('schemaVersion', 'browserNowMs', 'scopeStable', 'socketConnected', 'pcIdentity', 'pcState',
++    'transport', 'attemptHash', 'generation', 'leaseEpoch', 'mediaPhase', 'inputAllowed', 'inputGate',
++    'startupMarks', 'callbacks', 'lastFrameAtMs', 'frameAgeMs', 'maxFrameGapMs', 'width', 'height',
++    'relayFrameSeq', 'tunnelRelayActive', 'relayLoadCallbacks', 'lastRelayLoadAtMs', 'relayLoadAgeMs',
++    'maxRelayLoadGapMs', 'relayEvidenceKind', 'buildId', 'metrics', 'diagnostics')
++
++
++def _validate_private_sample(sample):
++    _keys(sample, _SAMPLE_KEYS)
++    if type(sample['schemaVersion']) is not int or sample['schemaVersion'] != 1: raise ValueError('schema-rejected')
++    for key in ('scopeStable', 'socketConnected', 'inputAllowed', 'tunnelRelayActive'):
++        if type(sample[key]) is not bool: raise ValueError('schema-rejected')
++    _number(sample['browserNowMs'], 9999999999999)
++    for key in ('pcIdentity', 'generation', 'leaseEpoch', 'callbacks', 'width', 'height', 'relayFrameSeq', 'relayLoadCallbacks'):
++        _int(sample[key], nullable=True)
++    for key in ('lastFrameAtMs', 'frameAgeMs', 'maxFrameGapMs', 'lastRelayLoadAtMs', 'relayLoadAgeMs', 'maxRelayLoadGapMs'):
++        _number(sample[key], 9999999999999, nullable=True)
++    _hash(sample['attemptHash'])
++    _enum(sample['pcState'], ('new', 'connecting', 'connected', 'disconnected', 'failed', 'closed', 'unknown'))
++    _enum(sample['mediaPhase'], ('active', 'paused', 'resuming', 'suspending', 'suspended', 'unknown'))
++    if sample['relayEvidenceKind'] != 'image-load-event-not-optical-presentation': raise ValueError('schema-rejected')
++    if sample['buildId'] is not None and (type(sample['buildId']) is not str or re.fullmatch('[0-9a-f]{16}', sample['buildId']) is None):
++        raise ValueError('schema-rejected')
++    validate_gate_fields(sample); validate_delta(sample['diagnostics'])
++    transport = sample['transport']
++    if type(transport) is not dict: raise ValueError('schema-rejected')
++    if set(transport) == {'status'}: _enum(transport['status'], ('unavailable', 'pending', 'scope-changed'))
++    else:
++        _keys(transport, ('status', 'pathIdentity', 'localType', 'remoteType', 'protocol', 'remoteProtocol', 'relayProtocol',
++            'rttMs', 'bytesReceived', 'framesDecoded', 'framesDropped', 'codec'))
++        _enum(transport['status'], ('observed', 'unavailable'))
++        if transport['pathIdentity'] is not None and (type(transport['pathIdentity']) is not str or re.fullmatch(r'path-[1-9][0-9]{0,3}', transport['pathIdentity']) is None or int(transport['pathIdentity'][5:]) > 1024):
++            raise ValueError('schema-rejected')
++        for key in ('localType', 'remoteType'): _enum(transport[key], ('host', 'srflx', 'prflx', 'relay', 'unknown'))
++        for key in ('protocol', 'remoteProtocol'): _enum(transport[key], ('udp', 'tcp', 'unknown'))
++        _enum(transport['relayProtocol'], ('udp', 'tcp', 'tls', 'unknown'))
++        _enum(transport['codec'], ('video/h264', 'video/vp8', 'video/vp9', 'video/av1', 'unknown'))
++        for key in ('rttMs', 'bytesReceived', 'framesDecoded', 'framesDropped'): _number(transport[key], 9999999999999, nullable=True)
++    _keys(sample['metrics'], _METRICS)
++    for metric in sample['metrics'].values():
++        if metric is None: continue
++        _keys(metric, ('available', 'count', 'last', 'p95', 'lastSampleAgeMs'))
++        if type(metric['available']) is not bool: raise ValueError('schema-rejected')
++        _int(metric['count'], nullable=True)
++        for key in ('last', 'p95', 'lastSampleAgeMs'): _number(metric[key], 9999999999999, nullable=True)
++
++
++def validate_recovery_row(value):
++    """Reject unknown fields before a new sample wrapper can reach evidence."""
++    try:
++        _keys(value, ('schemaVersion', 'scenario', 'elapsedSeconds', 'phase', 'qualificationEvidenceScope',
++                      'hostObservation', 'sample', 'identity', 'serverEvents'))
++        if type(value['schemaVersion']) is not int or value['schemaVersion'] != 1: raise ValueError()
++        _enum(value['scenario'], SCOPES); _enum(value['phase'], PHASES)
++        if value['qualificationEvidenceScope'] != SCOPES[value['scenario']]: raise ValueError()
++        if value['scenario'] in ('baseline', 'continuity') and value['phase'] in ('fault', 'recovering', 'recovered-stability'): raise ValueError()
++        _number(value['elapsedSeconds']); validate_host_observation(value['hostObservation'])
++        _keys(value['identity'], ('sessionHash', 'socketHash', 'admissionHash'))
++        for item in value['identity'].values(): _hash(item)
++        if value['sample'] is not None: _validate_private_sample(value['sample'])
++        events = value['serverEvents']
++        if type(events) is not list or len(events) > 1024: raise ValueError()
++        previous = 0
++        for row in events:
++            validate_server_event(row)
++            if row['n'] <= previous: raise ValueError()
++            previous = row['n']
++        if len(compact(value)) > MAX_ROW_BYTES: raise ValueError()
++    except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
++        raise ValueError('schema-rejected') from None
++    return value
+diff --git a/scripts/test_ordinary_session_recovery.py b/scripts/test_ordinary_session_recovery.py
+new file mode 100644
+index 0000000..fbe8e6b
+--- /dev/null
++++ b/scripts/test_ordinary_session_recovery.py
+@@ -0,0 +1,429 @@
++"""Pure bounded recovery evidence tests; no service or browser access."""
++import asyncio
++import hashlib
++import json
++import os
++from pathlib import Path
++import tempfile
++import unittest
++from unittest.mock import patch
++
++from scripts.ordinary_session_recovery import (
++    ServerRecoveryEvidence, HostContinuityObserver, hash_identity,
++    read_local_host_status, validate_recovery_row,
++)
++
++SALT = b'0123456789abcdef'
++IDS = {'sessionId': 'session-canary', 'socketId': 'socket-new', 'previousSocketId': 'socket-old'}
++
++
++def event(name='viewer_disconnect_grace_started', *, viewer='socket-old', session='session-canary', meta=None, ts='2026-10-18T01:00:00.000Z'):
++    return {'ts': ts, 'level': 'info', 'domain': 'control', 'event': name, 'message': name,
++            'source': 'signal-server', 'schemaVersion': 1, 'correlation': {'viewerId': viewer, 'browserSessionId': session},
++            'meta': meta if meta is not None else {'graceMs': 8000}, 'redactionVersion': 1}
++
++
++class LogTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
++        self.path = Path(self.temp.name)/'signal.jsonl'; self.path.write_bytes(b'')
++        self.e = ServerRecoveryEvidence(self.path, SALT); self.addCleanup(self.e.close)
++
++    def append(self, value):
++        with self.path.open('ab') as f: f.write(json.dumps(value).encode()+b'\n')
++
++    def test_current_eof_exact_matching_and_private_projection(self):
++        self.append(event()); self.e.start(); self.assertEqual(self.e.read_tick(IDS), [])
++        self.append(event(viewer='socket-old-suffix')); self.append(event(session='other'))
++        self.append(event()); rows = self.e.read_tick(IDS)
++        self.assertEqual(len(rows), 1); self.assertEqual(rows[0]['n'], 1)
++        self.assertEqual(rows[0]['viewerHash'], hashlib.sha256(SALT+b'socket-old').hexdigest()[:16])
++        encoded = json.dumps(self.e.snapshot())
++        for private in ('session-canary', 'socket-old', str(self.path), 'token-canary'): self.assertNotIn(private, encoded)
++        self.assertEqual(self.e.read_tick(IDS), [])
++
++    def test_reset_only_after_matching_expiry(self):
++        self.e.start()
++        reset = event('control_reset_completed', meta={'leaseEpoch': 2, 'status': 'applied', 'state': 'FREE'}); reset['correlation'] = {}
++        self.append(reset); self.assertEqual(self.e.read_tick(IDS), [])
++        self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': 2, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
++        self.append(reset); rows = self.e.read_tick(IDS)
++        self.assertEqual([r['event'] for r in rows], ['grace-expired', 'reset-completed'])
++        self.assertIsNone(rows[1]['viewerHash'])
++
++    def test_competing_admission_invalidates_reset_binding(self):
++        self.e.start()
++        self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': 2, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
++        self.append(event('viewer_connected', viewer='human', session='human-session', meta={}))
++        reset = event('control_reset_completed', meta={'leaseEpoch': 2, 'status': 'applied', 'state': 'FREE'}); reset['correlation'] = {}
++        self.append(reset)
++        with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.read_tick(IDS)
++        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++
++    def test_host_disconnect_role_and_sticky_alarm(self):
++        self.e.start(); h = event('signal_socket_disconnected', meta={'role': 'host', 'reason': 'transport close'})
++        h['domain'] = 'signaling'; h['correlation'] = {}; self.append(h)
++        rows = self.e.read_tick(IDS); self.assertEqual(rows[0]['event'], 'host-disconnected')
++        self.assertIsNone(rows[0]['leaseEpoch']); self.assertIsNone(rows[0]['viewerHash'])
++        o = HostContinuityObserver(SALT); o.observe_status({'hostOnline': True, 'hostId': 'host-canary'}, 0)
++        o.observe_host_disconnect(); value = o.observe_status({'hostOnline': True, 'hostId': 'host-canary'}, 1000)
++        self.assertEqual(value['status'], 'unavailable'); self.assertEqual(value['coverage'], 'incomplete')
++        self.assertTrue(value['hostDisconnectObserved'])
++
++    def test_malformed_unknown_and_clock_regression_fail_closed(self):
++        for change in ('extra', 'epoch', 'timestamp', 'role', 'json'):
++            with self.subTest(change=change):
++                self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++                e = event()
++                if change == 'extra': e['meta']['credential'] = 'token-canary'
++                if change == 'epoch': e = event('viewer_rebind_confirmed', meta={'leaseEpoch': True})
++                if change == 'timestamp': e['ts'] = 'URL-canary'
++                if change == 'role': e = event('signal_socket_disconnected', meta={})
++                if change == 'json':
++                    with self.path.open('ab') as f: f.write(b'{broken\n')
++                else: self.append(e)
++                with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(IDS)
++                self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++                self.assertEqual(self.e.snapshot()['status'], 'failed')
++        self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++        self.append(event()); self.e.read_tick(IDS); self.append(event(ts='2026-10-18T00:00:00.000Z'))
++        with self.assertRaisesRegex(ValueError, '^server-clock-regression$'): self.e.read_tick(IDS)
++
++    def test_rotation_truncation_symlink_and_missing(self):
++        for kind in ('rotation', 'truncate'):
++            with self.subTest(kind=kind):
++                self.e.close(); self.path.write_bytes(b'history\n'); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++                if kind == 'rotation': self.path.rename(self.path.with_suffix('.old')); self.path.write_bytes(b'')
++                else: self.path.write_bytes(b'')
++                with self.assertRaisesRegex(ValueError, '^server-log-(identity-changed|gap)$'): self.e.read_tick(IDS)
++        self.e.close(); self.path.unlink(); self.path.symlink_to(self.path.with_suffix('.old'))
++        self.e = ServerRecoveryEvidence(self.path, SALT)
++        with self.assertRaisesRegex(ValueError, '^server-log-unavailable$'): self.e.start()
++
++    def test_line_tick_event_caps_and_partial_lines(self):
++        for data in (b'x'*16385, b'x\n'*32769):
++            self.e.close(); self.path.unlink(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++            with self.path.open('ab') as f: f.write(data)
++            with self.assertRaisesRegex(ValueError, '^server-log-capacity$'): self.e.read_tick(IDS)
++            self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++        self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++        data = json.dumps(event()).encode(); self.path.write_bytes(data[:20]); self.assertEqual(self.e.read_tick(IDS), [])
++        with self.path.open('ab') as f: f.write(data[20:]+b'\n')
++        self.assertEqual(len(self.e.read_tick(IDS)), 1)
++        for _ in range(1023): self.append(event()); self.e.read_tick(IDS)
++        self.append(event())
++        with self.assertRaisesRegex(ValueError, '^server-log-capacity$'): self.e.read_tick(IDS)
++        self.assertEqual(len(self.e.snapshot()['selectedEvents']), 1024)
++
++
++class HostTests(unittest.TestCase):
++    def test_hash_and_stable_projection(self):
++        for v in (None, '', True, {}, 'x'*129): self.assertIsNone(hash_identity(v, SALT))
++        self.assertEqual(hash_identity('id', SALT), hashlib.sha256(SALT+b'id').hexdigest()[:16])
++        o = HostContinuityObserver(SALT)
++        self.assertEqual(o.snapshot()['status'], 'not-started')
++        for i in range(3): v = o.observe_status({'hostOnline': True, 'hostId': 'host-canary'}, i*1000)
++        self.assertEqual(v, {'status': 'stable', 'hostHash': hash_identity('host-canary', SALT), 'coverage': 'complete', 'samples': 3, 'hostDisconnectObserved': False})
++        self.assertNotIn('host-canary', json.dumps(v))
++
++    def test_changed_offline_invalid_gap_are_terminal(self):
++        for fault, reason in (({'hostOnline': False, 'hostId': 'other'}, 'host-replaced'), ({'hostOnline': False, 'hostId': 'id'}, 'host-unavailable'), (None, 'host-observation-unavailable')):
++            o = HostContinuityObserver(SALT); o.observe_status({'hostOnline': True, 'hostId': 'id'}, 0)
++            o.observe_status(fault, 1000); self.assertEqual(o.reason, reason)
++            final = o.observe_status({'hostOnline': True, 'hostId': 'id'}, 2000)
++            self.assertEqual(final['coverage'], 'incomplete'); self.assertNotEqual(final['status'], 'stable')
++        for tick in (1501, -1, True, float('nan')):
++            o = HostContinuityObserver(SALT); o.observe_status({'hostOnline': True, 'hostId': 'id'}, 0)
++            self.assertEqual(o.observe_status({'hostOnline': True, 'hostId': 'id'}, tick)['coverage'], 'incomplete')
++            self.assertEqual(o.reason, 'host-observation-gap')
++
++    def test_initial_offline_and_raw_schema(self):
++        for value in ({'hostOnline': False, 'hostId': None}, {'hostOnline': 1, 'hostId': 'id'}, {'hostOnline': True, 'hostId': 'x'*129}, {'hostOnline': True, 'hostId': 'id', 'secret': 'canary'}):
++            o = HostContinuityObserver(SALT); self.assertEqual(o.observe_status(value, 0)['coverage'], 'incomplete')
++
++
++class Writer:
++    def __init__(self, *, close_wait=None): self.data = b''; self.closed = False; self.close_wait = close_wait; self.waited = False
++    def write(self, data): self.data += data
++    async def drain(self): pass
++    def close(self): self.closed = True
++    async def wait_closed(self):
++        try:
++            if self.close_wait: await self.close_wait()
++        finally: self.waited = True
++
++
++def response(body=b'{"hostOnline":true,"hostId":"host-canary","unrelated":"discard-canary"}', *, headers=None, status=b'HTTP/1.1 200 OK'):
++    return status+b'\r\n'+(headers if headers is not None else b'Content-Type: application/json\r\nContent-Length: '+str(len(body)).encode())+b'\r\n\r\n'+body
++
++
++class HttpTests(unittest.IsolatedAsyncioTestCase):
++    async def call(self, data, writer=None):
++        reader = asyncio.StreamReader(); reader.feed_data(data); reader.feed_eof(); writer = writer or Writer()
++        calls = []
++        async def connect(*args, **kwargs): calls.append((args, kwargs)); return reader, writer
++        with patch('scripts.ordinary_session_recovery.asyncio.open_connection', connect):
++            value = await read_local_host_status()
++        return value, writer, calls
++
++    async def test_fixed_local_one_owned_request_no_proxy_or_credentials(self):
++        with patch.dict(os.environ, {'HTTP_PROXY': 'http://proxy-canary', 'HTTPS_PROXY': 'http://proxy-canary'}):
++            value, writer, calls = await self.call(response())
++        self.assertEqual(value, {'hostOnline': True, 'hostId': 'host-canary'})
++        self.assertEqual(calls, [(('127.0.0.1', 8080), {})]); self.assertTrue(writer.closed); self.assertTrue(writer.waited)
++        self.assertEqual(writer.data, b'GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nConnection: close\r\nCache-Control: no-store\r\nAccept: application/json\r\n\r\n')
++
++    async def test_http_json_framing_bounds_fail_fixed_private(self):
++        cases = [response(status=b'HTTP/1.1 302 Found'), response(headers=b'Content-Type: text/html\r\nContent-Length: 0'),
++            response(headers=b'Content-Type: application/json\r\nContent-Length: 0\r\nContent-Length: 0'),
++            response(headers=b'Content-Type: application/json\r\nContent-Length: 0\r\nTransfer-Encoding: chunked'),
++            response(headers=b'Content-Type: application/json\r\nContent-Length: 16385'), response(body=b'{bad-canary'),
++            response(body=b'{"hostOnline":true,"hostId":"id","hostId":"other"}'),
++            response(body=b'\xff'), response(body=b'{"hostOnline":false}'), response(body=b'{"hostOnline":1,"hostId":"id"}'),
++            response(headers=b'Content-Type: application/json\r\nContent-Length: 10\r\nContent-Encoding: gzip'),
++            response(headers=b'Content-Type: application/json\r\nContent-Length: 10000'),
++            response(headers=b'X: '+b'x'*1024), response(headers=b'\r\n'.join([b'X: a']*33)),
++            response(headers=b'\r\n'.join([b'X: '+b'x'*1000]*9))]
++        for case in cases:
++            with self.subTest(case=case[:40]):
++                writer = Writer()
++                with self.assertRaisesRegex(ValueError, '^host-observation-unavailable$'): await self.call(case, writer)
++                self.assertTrue(writer.closed)
++
++    async def test_timeout_cancel_and_writer_close_timeout_owned(self):
++        async def never(): await asyncio.Event().wait()
++        reader = asyncio.StreamReader(); writer = Writer()
++        async def connect(*args): return reader, writer
++        with patch('scripts.ordinary_session_recovery.asyncio.open_connection', connect):
++            started = asyncio.get_running_loop().time()
++            with self.assertRaisesRegex(ValueError, '^host-observation-unavailable$'): await read_local_host_status()
++            self.assertLess(asyncio.get_running_loop().time()-started, .9)
++        self.assertTrue(writer.closed); self.assertTrue(writer.waited)
++        writer = Writer(close_wait=never)
++        with self.assertRaisesRegex(ValueError, '^host-observation-unavailable$'): await self.call(response(), writer)
++        self.assertTrue(writer.closed); self.assertTrue(writer.waited)
++        writer = Writer(); entered = asyncio.Event()
++        async def cancellable(*args): entered.set(); return reader, writer
++        with patch('scripts.ordinary_session_recovery.asyncio.open_connection', cancellable):
++            task = asyncio.create_task(read_local_host_status()); await entered.wait(); await asyncio.sleep(0)
++            task.cancel()
++            with self.assertRaises(asyncio.CancelledError): await task
++        self.assertTrue(writer.closed); self.assertTrue(writer.waited)
++        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])
++
++
++def private_sample():
++    from scripts import passive_session_soak as old
++    from scripts import ordinary_session_recovery as recovery
++    sample = dict.fromkeys(recovery._SAMPLE_KEYS)
++    sample.update(schemaVersion=1, browserNowMs=0, scopeStable=True, socketConnected=True,
++        pcState='connected', mediaPhase='active', inputAllowed=False, tunnelRelayActive=False,
++        transport={'status': 'unavailable'}, buildId='0123456789abcdef',
++        relayEvidenceKind='image-load-event-not-optical-presentation',
++        inputGate={'status': 'unavailable', 'blockedReasons': [], **dict.fromkeys(old.GATE_BOOLEANS), **dict.fromkeys(old.GATE_ENUMS, 'unknown')},
++        startupMarks=dict.fromkeys(old.MARK_NAMES), metrics=dict.fromkeys(recovery._METRICS),
++        diagnostics={'schemaVersion': 1, 'events': [], 'cursor': 0, 'gap': 0, 'truncated': False,
++            'droppedEvents': 0, 'coverageStatus': 'partial', 'firstDisconnectEvent': None, 'cause': 'unknown'})
++    return sample
++
++
++def recovery_row():
++    return {'schemaVersion': 1, 'scenario': 'after-grace', 'elapsedSeconds': 1, 'phase': 'recovering',
++        'qualificationEvidenceScope': 'ordinary-functional-playwright-routed-stimulus',
++        'hostObservation': HostContinuityObserver(SALT).observe_status({'hostOnline': True, 'hostId': 'host-canary'}, 0),
++        'sample': private_sample(), 'identity': dict.fromkeys(('sessionHash', 'socketHash', 'admissionHash')),
++        'serverEvents': []}
++
++
++class SchemaTests(unittest.TestCase):
++    def test_exact_private_sample_and_scope(self):
++        row = recovery_row(); self.assertIs(validate_recovery_row(row), row)
++        row['sample'] = None; self.assertIs(validate_recovery_row(row), row)
++        for container, key, value in (
++            ('row', 'error', 'error-canary'), ('row', 'schemaVersion', True),
++            ('row', 'elapsedSeconds', float('nan')), ('row', 'phase', 'RUNNING'),
++            ('row', 'qualificationEvidenceScope', 'native-passive-continuity'),
++            ('sample', 'attempt', 'raw-id-canary'), ('sample', 'url', 'https://url-canary'),
++            ('sample', 'token', 'token-canary'), ('sample', 'generation', True),
++            ('sample', 'width', float('inf')), ('sample', 'buildId', 'x'*129),
++            ('identity', 'sessionHash', 'raw-id-canary'), ('identity', 'extra', 'credential-canary'),
++            ('hostObservation', 'hostHash', 'host-canary'), ('hostObservation', 'samples', True)):
++            with self.subTest(container=container, key=key):
++                row = recovery_row(); target = row if container == 'row' else row[container]; target[key] = value
++                with self.assertRaisesRegex(ValueError, '^schema-rejected$'): validate_recovery_row(row)
++        for section, key, value in (('metrics', 'secret', 'canary'), ('transport', 'url', 'https://canary'), ('diagnostics', 'error', 'canary'), ('inputGate', 'secret', 'canary')):
++            row = recovery_row(); row['sample'][section][key] = value
++            with self.assertRaisesRegex(ValueError, '^schema-rejected$'): validate_recovery_row(row)
++
++    def test_nested_transport_metrics_caps_and_event_sequence(self):
++        row = recovery_row()
++        row['sample']['transport'] = {'status': 'observed', 'pathIdentity': 'path-1', 'localType': 'host', 'remoteType': 'srflx',
++            'protocol': 'udp', 'remoteProtocol': 'udp', 'relayProtocol': 'unknown', 'rttMs': 1.5,
++            'bytesReceived': 1, 'framesDecoded': 1, 'framesDropped': 0, 'codec': 'video/h264'}
++        row['sample']['metrics']['decodeMs'] = {'available': True, 'count': 2, 'last': 1.5, 'p95': 2, 'lastSampleAgeMs': 0}
++        self.assertIs(validate_recovery_row(row), row)
++        row['sample']['transport']['pathIdentity'] = 'path-1025'
++        with self.assertRaises(ValueError): validate_recovery_row(row)
++        row = recovery_row(); projected = {'n': 1, 'event': 'host-disconnected', 'serverTimestampMs': 0,
++            'viewerHash': None, 'sessionHash': None, 'leaseEpoch': None, 'state': None}
++        row['serverEvents'] = [projected, dict(projected)]
++        with self.assertRaises(ValueError): validate_recovery_row(row)
++        row['serverEvents'] = [dict(projected, n=n) for n in range(1, 1025)]
++        with self.assertRaisesRegex(ValueError, '^schema-rejected$'): validate_recovery_row(row)
++
++    def test_unchanged_good_viewer_gates_do_not_clear_host_replacement_or_disconnect(self):
++        for disconnect in (False, True):
++            row = recovery_row()
++            row['sample'].update(inputAllowed=True, pcIdentity=1, generation=1, leaseEpoch=3,
++                attemptHash='0123456789abcdef', callbacks=20, frameAgeMs=10, maxFrameGapMs=20)
++            gate = row['sample']['inputGate']; gate.update(status='observed',
++                **dict.fromkeys(('allowed', 'inputActive', 'hasInputLease', 'viewportSupported', 'hasPaintedFrame',
++                    'currentAttemptReady', 'hasActiveControl', 'socketConnected'), True),
++                **dict.fromkeys(('manualDisconnect', 'superseded', 'mouseResetPending', 'draftComposing',
++                    'draftPending', 'draftUncertain', 'firstFrameTimerHandlePresent'), False),
++                uiPhase='connected', desiredMediaState='active', mediaRuntimePhase='active',
++                keyboardControllerState='READY', keyboardTransportState='ready', surfaceState='settled',
++                desktopWriteRecoveryState='reconciled', recoveryState='recovered')
++            before = json.dumps(row['sample'], sort_keys=True)
++            observer = HostContinuityObserver(SALT)
++            observer.observe_status({'hostOnline': True, 'hostId': 'host-canary'}, 0)
++            if disconnect: observer.observe_host_disconnect()
++            else: observer.observe_status({'hostOnline': False, 'hostId': 'replacement-canary'}, 1000)
++            row['hostObservation'] = observer.observe_status({'hostOnline': True, 'hostId': 'host-canary'}, 2000)
++            self.assertIs(validate_recovery_row(row), row)
++            self.assertEqual(json.dumps(row['sample'], sort_keys=True), before)
++            self.assertEqual(row['hostObservation']['coverage'], 'incomplete')
++            self.assertNotEqual(row['hostObservation']['status'], 'stable')
++            self.assertNotIn('canary', json.dumps(row))
++
++
++class MoreHttpTests(unittest.IsolatedAsyncioTestCase):
++    async def test_only_one_outstanding_request_and_cancel_before_open(self):
++        entered = asyncio.Event(); calls = []
++        async def connect(*args):
++            calls.append(args); entered.set(); await asyncio.Event().wait()
++        with patch('scripts.ordinary_session_recovery.asyncio.open_connection', connect):
++            task = asyncio.create_task(read_local_host_status()); await entered.wait()
++            with self.assertRaisesRegex(ValueError, '^host-observation-unavailable$'): await read_local_host_status()
++            self.assertEqual(len(calls), 1); task.cancel()
++            with self.assertRaises(asyncio.CancelledError): await task
++        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])
++
++    async def test_noncooperative_open_is_explicit_and_not_available_for_retry(self):
++        from scripts.passive_session_soak import CancellationCooperationError
++        release = asyncio.Event(); cancelled = asyncio.Event()
++        async def connect(*args):
++            while not release.is_set():
++                try: await release.wait()
++                except asyncio.CancelledError: cancelled.set()
++            raise OSError('private-error-canary')
++        with patch('scripts.ordinary_session_recovery.asyncio.open_connection', connect):
++            with self.assertRaisesRegex(CancellationCooperationError, '^cancellation-noncooperative$'):
++                await read_local_host_status()
++            self.assertTrue(cancelled.is_set())
++            with self.assertRaisesRegex(ValueError, '^host-observation-unavailable$'): await read_local_host_status()
++            # The fake is released explicitly; a real noncooperative backend is a
++            # hard gate failure, never an observation or successful cleanup.
++            from scripts import ordinary_session_recovery as recovery
++            release.set()
++            with self.assertRaises(OSError): await recovery._status_owner
++            recovery._status_owner = None
++
++    async def test_cancel_during_writer_close_is_owned(self):
++        entered = asyncio.Event(); finished = asyncio.Event()
++        async def closing():
++            entered.set()
++            try: await asyncio.Event().wait()
++            finally: finished.set()
++        reader = asyncio.StreamReader(); reader.feed_data(response()); reader.feed_eof(); writer = Writer(close_wait=closing)
++        async def connect(*args): return reader, writer
++        with patch('scripts.ordinary_session_recovery.asyncio.open_connection', connect):
++            task = asyncio.create_task(read_local_host_status()); await entered.wait(); task.cancel()
++            with self.assertRaises(asyncio.CancelledError): await task
++        self.assertTrue(writer.closed); self.assertTrue(finished.is_set()); self.assertTrue(writer.waited)
++        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])
++
++
++class AdditionalLogTests(unittest.TestCase):
++    setUp = LogTests.setUp
++    append = LogTests.append
++    def test_confirmed_rebind_and_duplicate_reset_projection(self):
++        self.e.start()
++        rebind = event('viewer_rebind_confirmed', viewer='socket-new', meta={'leaseEpoch': 1})
++        rebind['correlation'] = {'viewerId': 'socket-new', 'previousViewerId': 'socket-old'}
++        self.append(rebind)
++        self.assertEqual(self.e.read_tick(IDS)[0]['event'], 'rebind-confirmed')
++        self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': 2, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
++        reset = event('control_reset_completed', meta={'leaseEpoch': 2, 'status': 'applied', 'state': 'FREE'}); reset['correlation'] = {}
++        self.append(reset); self.append(reset)
++        self.assertEqual([e['event'] for e in self.e.read_tick(IDS)], ['grace-expired', 'reset-completed'])
++
++    def test_missing_epoch_and_null_expiry_state_fail_closed(self):
++        for bad in ({'leaseEpoch': None, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'},
++                    {'leaseEpoch': 2, 'state': None, 'reason': 'viewer-disconnect-timeout'}):
++            self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++            self.append(event('viewer_disconnect_grace_expired', meta=bad))
++            with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(IDS)
++
++    def test_partial_final_close_and_unknown_identity_keys_are_incomplete(self):
++        self.e.start(); self.path.write_bytes(b'{')
++        self.e.read_tick(IDS); self.e.close(); self.e.close()
++        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
++        self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++        with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(dict(IDS, token='canary'))
++
++    def test_host_disconnect_before_viewer_known_and_malformed_selected_envelope(self):
++        self.e.start(); h = event('signal_socket_disconnected', meta={'role': 'host', 'reason': 'other'})
++        h['domain'] = 'signaling'; h['correlation'] = {}; self.append(h)
++        rows = self.e.read_tick(dict.fromkeys(IDS)); self.assertEqual(rows[0]['event'], 'host-disconnected')
++        self.append(dict(event(), token='token-canary'))
++        with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(IDS)
++
++
++class MalformedLogTests(unittest.TestCase):
++    setUp = LogTests.setUp
++    append = LogTests.append
++
++    def test_malformed_selected_values_never_escape_fixed_schema_reason(self):
++        for key, value in (('event', []), ('correlation', {'viewerId': []}), ('correlation', {'viewerId': 'socket-old', 'browserSessionId': 'session-canary', 'credential': 'private-canary'})):
++            self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
++            bad = event(); bad[key] = value; self.append(bad)
++            with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(IDS)
++            self.assertNotIn('private-canary', json.dumps(self.e.snapshot()))
++
++
++class BoundariesTests(unittest.TestCase):
++    def test_observer_sample_cap_and_status_consistency(self):
++        observer = HostContinuityObserver(SALT)
++        for n in range(12000): observer.observe_status({'hostOnline': True, 'hostId': 'bounded'}, n*1000)
++        value = observer.observe_status({'hostOnline': True, 'hostId': 'bounded'}, 12000000)
++        self.assertEqual(value['samples'], 12000); self.assertEqual(value['coverage'], 'incomplete')
++        row = recovery_row(); row['hostObservation']['status'] = 'changed'
++        with self.assertRaisesRegex(ValueError, '^schema-rejected$'): validate_recovery_row(row)
++        observer = HostContinuityObserver(SALT)
++        value = observer.observe_status({'hostOnline': True, 'hostId': chr(0xd800)}, 0)
++        self.assertEqual(value['coverage'], 'incomplete'); self.assertIsNone(value['hostHash'])
++
++
++class HttpBoundaryTests(unittest.IsolatedAsyncioTestCase):
++    call = HttpTests.call
++    async def test_exact_body_cap_discards_unrelated_fields_and_rejects_surrogate_id(self):
++        prefix = b'{"hostOnline":true,"hostId":"id","padding":"'
++        body = prefix+b'x'*(16384-len(prefix)-2)+b'"}'
++        self.assertEqual(len(body), 16384)
++        value, _, _ = await self.call(response(body=body))
++        self.assertEqual(value, {'hostOnline': True, 'hostId': 'id'})
++        with self.assertRaisesRegex(ValueError, '^host-observation-unavailable$'):
++            await self.call(response(body=b'{"hostOnline":true,"hostId":"\\ud800"}'))
++
++
++class AmbiguousEpochTests(unittest.TestCase):
++    setUp = LogTests.setUp
++    append = LogTests.append
++
++    def test_two_different_pending_expiry_epochs_cannot_bind_reset(self):
++        self.e.start()
++        for epoch in (2, 3):
++            self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': epoch, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
++        with self.assertRaisesRegex(ValueError, '^server-log-gap$'): self.e.read_tick(IDS)
++        self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
+diff --git a/signal-server/websocket/signaling.js b/signal-server/websocket/signaling.js
+index 4b10b0a..93ca790 100644
+--- a/signal-server/websocket/signaling.js
++++ b/signal-server/websocket/signaling.js
+@@ -529,21 +529,21 @@ function setupSignaling(io, options = {}) {
+           return;
+         }
+         if (ack?.status === 'applied') {
+           const renewed = withLeaseExpiry(() => desktopLease.heartbeat({ viewerId: nextId, ...activeLease }));
+           if (!renewed.ok) {
+             clearRebind();
+             return;
+           }
+           clearRebind();
+           sendGrant(nextId, activeLease);
+-          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId });
++          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, leaseEpoch: activeLease.leaseEpoch });
+           return;
+         }
+         clearLegacyRelayCompanion(nextId, { stop: true });
+         clearRebind();
+         const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
+         const result = desktopLease.beginRelease({ viewerId: nextId, reason });
+         dispatchLeaseEffect(result, reason);
+         emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, reason });
+       };
+       // Socket.IO's timeout also removes its pending callback, so an old Host
+@@ -575,21 +575,32 @@ function setupSignaling(io, options = {}) {
+     const sessionId = socket?._wrdViewerSessionId;
+     if (!sessionId || viewerDisconnectGraceMs <= 0) return false;
+     if (connections.viewers.get(socket.id) !== socket) return false;
+     const existing = viewerSessionBindings.get(sessionId);
+     if (existing?.timer) clearTimeoutFn(existing.timer);
+     const timer = setTimeoutFn(() => {
+       const binding = viewerSessionBindings.get(sessionId);
+       if (!binding || binding.socket !== socket) return;
+       viewerSessionBindings.delete(sessionId);
+       socket._wrdViewerSessionTimer = null;
+-      removeDesktopViewer(socket, 'viewer-disconnect-timeout');
++      const removed = removeDesktopViewer(socket, 'viewer-disconnect-timeout');
++      // Observation follows the identity-checked authority operation. A sink
++      // failure must not change removal or the reset-only barrier.
++      if (removed) {
++        try {
++          const snapshot = desktopLease.snapshot();
++          emitControlEvent('viewer_disconnect_grace_expired', {
++            viewerId: socket.id, sessionId, reason: 'viewer-disconnect-timeout',
++            leaseEpoch: snapshot.leaseEpoch, state: snapshot.state,
++          });
++        } catch (_error) { /* best effort */ }
++      }
+     }, viewerDisconnectGraceMs);
+     timer?.unref?.();
+     viewerSessionBindings.set(sessionId, { socket, timer });
+     socket._wrdViewerSessionTimer = timer;
+     emitControlEvent('viewer_disconnect_grace_started', {
+       viewerId: socket.id,
+       sessionId,
+       graceMs: viewerDisconnectGraceMs,
+     });
+     return true;
+diff --git a/signal-server/websocket/viewer-admission.integration.test.js b/signal-server/websocket/viewer-admission.integration.test.js
+index 8f8ddff..3dfb5c0 100644
+--- a/signal-server/websocket/viewer-admission.integration.test.js
++++ b/signal-server/websocket/viewer-admission.integration.test.js
+@@ -8,20 +8,21 @@ const { createRuntimeContext } = require('./runtime-context');
+ const { DesktopControlLease } = require('../lib/desktop-control-lease');
+ const { FakeSocket, makeIo } = require('./signaling-test-fixture');
+ 
+ function fixture(options = {}) {
+   let now = 0;
+   const timers = [];
+   const runtime = createRuntimeContext({ now: () => now, ...options });
+   const lease = new DesktopControlLease({ now: () => now, makeLeaseId: () => require("node:crypto").randomUUID() });
+   const io = makeIo();
+   setupSignaling(io, { runtimeContext: runtime, desktopControlLease: lease, now: () => now,
++    structuredLogger: options.structuredLogger,
+     scheduler: { setInterval: () => ({ unref() {} }), setTimeout(fn, ms) {
+       const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer;
+     }, clearTimeout(timer) { if (timer) timer.cancelled = true; } } });
+   const host = new FakeSocket('host', 'host'); io.connect(host);
+   function viewer(id, session, admission) {
+     const socket = new FakeSocket(id, 'viewer');
+     socket.handshake.auth.token = require('../lib/auth').signAccessToken('viewer', 'viewer-password-login');
+     socket.handshake.auth.viewerSessionId = session;
+     if (admission) socket.handshake.auth.viewerAdmission = admission;
+     io.connect(socket); return socket;
+@@ -336,10 +337,44 @@ for (const changed of ['old-operation', 'host']) {
+     old.ack(null, { status: 'applied' });
+     assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
+     assert.equal(current.sent.some(e => e.event === 'control-grant'), false);
+     if (changed === 'old-operation') {
+       const next = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
+       next.ack(null, { status: 'applied' });
+       assert.equal(current.sent.some(e => e.event === 'control-grant'), true);
+     }
+   });
+ }
++
++for (const throwing of [false, true]) {
++  test(`grace expiry observes resulting epoch after identity-checked removal; logger throws=${throwing}`, () => {
++    const events = [];
++    const h = fixture({ structuredLogger: { info(value) {
++      if (value.event === 'viewer_disconnect_grace_expired') {
++        assert.equal(h.runtime.connections.viewers.has('expiry-owner'), false);
++        events.push(value);
++        if (throwing) throw new Error('fixture logger failure');
++      }
++    } } });
++    const a = h.manual('expiry-owner', 'expiry-session'); h.grant(a); a.disconnect();
++    const timer = h.timers.find(t => t.ms === 8000 && !t.cancelled);
++    assert.equal(timer.ms, 8000); h.advance(8001);
++    assert.doesNotThrow(() => timer.fn());
++    assert.equal(events.length, 1);
++    assert.deepEqual(events[0].correlation, { viewerId: 'expiry-owner', browserSessionId: 'expiry-session' });
++    assert.deepEqual(events[0].meta, { reason: 'viewer-disconnect-timeout', leaseEpoch: h.lease.snapshot().leaseEpoch, state: 'REVOKING' });
++    assert.deepEqual([...h.runtime.connections.viewers.keys()], []);
++    timer.fn(); assert.equal(events.length, 1, 'stale callback cannot repeat evidence');
++  });
++}
++test('rebind evidence requires applied Host ACK and contains current epoch; replaced grace callback is silent', () => {
++  const events = []; const h = fixture({ structuredLogger: { info: value => events.push(value) } });
++  const a = h.manual('before', 'same-session'); h.grant(a); const identity = admissionOf(a); a.disconnect();
++  const old = h.timers.find(t => t.ms === 8000 && !t.cancelled);
++  const next = h.viewer('after', 'same-session', identity);
++  old.fn(); assert.equal(events.some(e => e.event === 'viewer_disconnect_grace_expired'), false);
++  assert.equal(events.some(e => e.event === 'viewer_rebind_confirmed'), false);
++  h.host.sent.find(e => e.event === 'viewer-session-rebind').ack(null, { status: 'applied' });
++  const confirmed = events.filter(e => e.event === 'viewer_rebind_confirmed');
++  assert.equal(confirmed.length, 1); assert.equal(confirmed[0].meta.leaseEpoch, h.lease.snapshot().leaseEpoch);
++  assert.equal(next._wrdRebindPending, false);
++});
