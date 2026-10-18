@@ -466,6 +466,7 @@ const WebRTC = {
   _videoFrameSeq: 0,
   uiPhase: 'idle',
   hasPaintedFrame: false,
+  _firstFrameTimer: null,
   _paintDecodedBaseline: 0,
   _stallSince: null,
   _paintPending3sTimer: null,

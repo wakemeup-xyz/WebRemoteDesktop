@@ -82,6 +82,7 @@ function makeElement() {
     },
     listeners,
     addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener(type, handler) { if (listeners.get(type) === handler) listeners.delete(type); },
     removeAttribute(name) { attrs.delete(name); },
     setAttribute(name, value) { attrs.set(name, String(value)); },
     getAttribute(name) { return attrs.has(name) ? attrs.get(name) : null; },
@@ -5282,6 +5283,101 @@ function prepareOrdinaryRelay(WebRTC, producerId = 'fixture-producer') {
     state: 'active', applied: true, connectionAttemptId: pending.attempt }), true);
   return fields;
 }
+
+function firstFrameSamplerFixture() {
+  let timerId = 0;
+  const timers = new Map();
+  const fixture = loadWebRTC({
+    realInput: true,
+    performance: { now: () => 1000, timeOrigin: 1792208500000 },
+    Date: { now: () => 1792208501000 },
+    setTimeout(fn, delay) { timers.set(++timerId, { fn, delay }); return timerId; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  fixture.WebRTC.pc = { connectionState: 'new', getStats: async () => new Map() };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../scripts/passive_session_sampler.js'), 'utf8'), fixture.context);
+  const sampler = fixture.context.window.__wrdPassiveSampler;
+  return { ...fixture, sampler, timers,
+    cleanup() {
+      try {
+        sampler.stop();
+        fixture.WebRTC.clearFirstFrameDeadline();
+      } finally {
+        fixture.cleanup();
+        timers.clear();
+      }
+    },
+  };
+}
+
+test('explicit first-frame timer fresh source owns null and unchanged sampler observes false', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  assert.equal(Object.hasOwn(h.WebRTC, '_firstFrameTimer'), true);
+  assert.equal(h.WebRTC._firstFrameTimer, null);
+  const sample = await h.sampler.sample();
+  assert.equal(sample.inputGate.status, 'observed');
+  assert.equal(sample.inputGate.allowed, false);
+  assert.equal(sample.inputGate.firstFrameTimerHandlePresent, false);
+});
+
+test('explicit first-frame timer startup delegation preserves its separate media budget', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  const { WebRTC, timers } = h;
+  WebRTC.networkMode = 'auto';
+  const episode = WebRTC.beginStartupEpisode();
+  WebRTC.startupPending = () => true;
+  let budgetStarts = 0;
+  const startBudget = WebRTC.startStartupMediaBudget;
+  WebRTC.startStartupMediaBudget = function () {
+    budgetStarts += 1;
+    return startBudget.call(this);
+  };
+  const previousTimers = new Set(timers.keys());
+  WebRTC.beginFirstFrameDeadline('startup-attempt', 1234);
+  assert.equal(budgetStarts, 1);
+  assert.equal(episode.started, true);
+  assert.equal(episode.remaining, 72000);
+  assert.equal(episode.feedbackRemaining, 8000);
+  assert.equal(timers.get(episode.timer).delay, 8000);
+  assert.deepEqual([...timers.keys()].filter(id => !previousTimers.has(id)), [episode.timer]);
+  assert.equal(WebRTC._firstFrameTimer, null);
+  const sample = await h.sampler.sample();
+  assert.equal(sample.inputGate.status, 'observed');
+  assert.equal(sample.inputGate.firstFrameTimerHandlePresent, false);
+  assert.equal(episode.remaining, 72000);
+  assert.equal(episode.feedbackRemaining, 8000);
+});
+
+test('explicit first-frame timer real legacy arm and clear project true then false', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  const { WebRTC, timers } = h;
+  WebRTC.currentConnectionAttemptId = 'legacy-attempt';
+  WebRTC.beginFirstFrameDeadline('legacy-attempt', 4321);
+  const handle = WebRTC._firstFrameTimer;
+  assert.equal(timers.get(handle).delay, 4321);
+  const armed = await h.sampler.sample();
+  assert.equal(armed.inputGate.status, 'observed');
+  assert.equal(armed.inputGate.firstFrameTimerHandlePresent, true);
+  WebRTC.clearFirstFrameDeadline();
+  assert.equal(timers.has(handle), false);
+  assert.equal(WebRTC._firstFrameTimer, null);
+  const cleared = await h.sampler.sample();
+  assert.equal(cleared.inputGate.status, 'observed');
+  assert.equal(cleared.inputGate.firstFrameTimerHandlePresent, false);
+});
+
+test('explicit first-frame timer deleted source property remains unknown to unchanged sampler', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  delete h.WebRTC._firstFrameTimer;
+  assert.equal(Object.hasOwn(h.WebRTC, '_firstFrameTimer'), false);
+  const sample = await h.sampler.sample();
+  assert.equal(sample.inputGate.status, 'observed');
+  assert.equal(sample.inputGate.firstFrameTimerHandlePresent, null);
+});
 
 test('first-frame timeout exits connecting without reviving a stale attempt', () => {
   let timerCallback = null;
