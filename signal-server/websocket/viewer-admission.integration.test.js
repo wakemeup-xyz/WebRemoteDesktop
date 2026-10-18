@@ -376,5 +376,34 @@ test('rebind evidence requires applied Host ACK and contains current epoch; repl
   h.host.sent.find(e => e.event === 'viewer-session-rebind').ack(null, { status: 'applied' });
   const confirmed = events.filter(e => e.event === 'viewer_rebind_confirmed');
   assert.equal(confirmed.length, 1); assert.equal(confirmed[0].meta.leaseEpoch, h.lease.snapshot().leaseEpoch);
+  assert.deepEqual(confirmed[0].correlation, { viewerId: 'after', previousViewerId: 'before', browserSessionId: 'same-session' });
   assert.equal(next._wrdRebindPending, false);
 });
+
+for (const outcome of ['rejected', 'timeout', 'cancelled']) {
+  test(`failed rebind ${outcome} observation carries the direct server session`, () => {
+    const events = []; const h = fixture({ structuredLogger: { info: value => events.push(value) } });
+    const a = h.manual('before-failure', 'failure-session'); h.grant(a);
+    const identity = admissionOf(a); a.disconnect();
+    const next = h.viewer('after-failure', 'failure-session', identity);
+    const rebind = h.host.sent.find(e => e.event === 'viewer-session-rebind');
+    assert.ok(rebind); assert.equal(next._wrdRebindPending, true);
+    assert.equal(events.some(e => e.event === 'viewer_rebind_failed'), false);
+    if (outcome === 'cancelled') {
+      // A same-ID replacement preserves the active lease, exercising the
+      // operation's Host-object identity check before its old ACK can grant.
+      h.io.connect(new FakeSocket('host', 'host'));
+      assert.equal(h.lease.snapshot().state, 'ACTIVE');
+      rebind.ack(null, { status: 'applied' });
+    } else {
+      rebind.ack(outcome === 'timeout' ? new Error('fixture timeout') : null, { status: 'rejected' });
+    }
+    const failed = events.filter(e => e.event === 'viewer_rebind_failed');
+    assert.equal(failed.length, 1);
+    assert.deepEqual(failed[0].correlation, { viewerId: 'after-failure', previousViewerId: 'before-failure', browserSessionId: 'failure-session' });
+    assert.equal(failed[0].meta.reason, `rebind-${outcome}`);
+    assert.equal(h.lease.snapshot().state, 'REVOKING');
+    assert.equal(next.sent.some(e => e.event === 'control-grant'), false);
+    assert.equal(next._wrdRebindPending, false);
+  });
+}

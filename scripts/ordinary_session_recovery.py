@@ -230,8 +230,21 @@ class ServerRecoveryEvidence:
         name = value.get('event'); correlation = value.get('correlation', {})
         sockets = {v for v in (identities['socketId'], identities['previousSocketId']) if v is not None}
         session = identities['sessionId']
+        rebind = name in ('viewer_rebind_confirmed', 'viewer_rebind_failed')
+        direct_rebind_match = False
+        if rebind:
+            try:
+                _keys(correlation, ('viewerId', 'previousViewerId', 'browserSessionId'))
+                if any(not _id(v) for v in correlation.values()): raise ValueError()
+            except ValueError: self._fail('server-log-schema')
+            # Server observation can precede the next browser snapshot. Retain
+            # only its direct stable session/known-previous link; never adopt
+            # the new socket into browser identities or match other event kinds.
+            direct_rebind_match = (session is not None
+                and correlation['browserSessionId'] == session
+                and correlation['previousViewerId'] in sockets)
         if type(correlation) is dict and self._reset_epoch is not None:
-            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets
+            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets and not direct_rebind_match
                 or correlation.get('browserSessionId') is not None and correlation.get('browserSessionId') != session):
                 self._fail('server-log-gap')
         if name not in EVENTS: return
@@ -242,7 +255,9 @@ class ServerRecoveryEvidence:
                 self._fail('server-log-schema')
             if meta['role'] != 'host': return
         reset = name == 'control_reset_completed'
-        if not host and not reset:
+        if rebind:
+            if not direct_rebind_match: return
+        elif not host and not reset:
             if type(correlation) is not dict: self._fail('server-log-schema')
             if not (correlation.get('viewerId') in sockets or session is not None and correlation.get('browserSessionId') == session): return
             if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets
@@ -256,8 +271,7 @@ class ServerRecoveryEvidence:
             elif name in ('viewer_disconnect_grace_started', 'viewer_disconnect_grace_expired'):
                 _keys(correlation, ('viewerId', 'browserSessionId'))
             else:
-                _keys(correlation, ('viewerId', 'previousViewerId'))
-                if correlation['previousViewerId'] not in sockets: raise ValueError()
+                _keys(correlation, ('viewerId', 'previousViewerId', 'browserSessionId'))
             if value['schemaVersion'] != 1 or type(value['schemaVersion']) is not int or type(value['redactionVersion']) is not int or value['redactionVersion'] != 1: raise ValueError()
             _enum(value['level'], ('info',)); _enum(value['domain'], ('signaling',) if host else ('control',))
             if type(value['message']) is not str or len(value['message']) > 256 or value['source'] != 'signal-server': raise ValueError()

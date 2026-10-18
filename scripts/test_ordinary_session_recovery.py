@@ -350,7 +350,7 @@ class AdditionalLogTests(unittest.TestCase):
     def test_confirmed_rebind_and_duplicate_reset_projection(self):
         self.e.start()
         rebind = event('viewer_rebind_confirmed', viewer='socket-new', meta={'leaseEpoch': 1})
-        rebind['correlation'] = {'viewerId': 'socket-new', 'previousViewerId': 'socket-old'}
+        rebind['correlation'] = {'viewerId': 'socket-new', 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary'}
         self.append(rebind)
         self.assertEqual(self.e.read_tick(IDS)[0]['event'], 'rebind-confirmed')
         self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': 2, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
@@ -497,3 +497,86 @@ class SettlingHttpOwnershipTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(w.closed and w.waited for w in writers))
                 self.assertIsNone(recovery._status_owner)
                 self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()], [])
+
+
+def rebind_event(name='viewer_rebind_confirmed', **correlation_changes):
+    value = event(name, viewer='server-new-canary', meta={'leaseEpoch': 1} if name == 'viewer_rebind_confirmed' else {'reason': 'rebind-rejected'})
+    value['correlation'] = {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old',
+                            'browserSessionId': 'session-canary', **correlation_changes}
+    return value
+
+
+class DirectRebindCorrelationTests(unittest.TestCase):
+    setUp = LogTests.setUp
+    append = LogTests.append
+
+    def test_server_before_browser_rebind_retains_direct_session_hash_only(self):
+        self.e.start(); ids = dict(IDS, socketId='socket-old', previousSocketId=None)
+        self.append(event()); self.assertEqual(self.e.read_tick(ids)[0]['event'], 'grace-started')
+        self.append(rebind_event())
+        rows = self.e.read_tick(ids)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['event'], 'rebind-confirmed')
+        self.assertEqual(rows[0]['sessionHash'], hash_identity('session-canary', SALT))
+        self.assertEqual(rows[0]['viewerHash'], hash_identity('server-new-canary', SALT))
+        self.assertEqual(self.e.read_tick(ids), [])
+        # A direct rebind observation must not promote the new socket into the
+        # browser identity set or relax matching for a different event kind.
+        self.append(event(viewer='server-new-canary'))
+        self.assertEqual(self.e.read_tick(ids), [])
+        browser_ids = dict(IDS, socketId='server-new-canary', previousSocketId='socket-old')
+        self.append(event(viewer='server-new-canary'))
+        self.assertEqual(self.e.read_tick(browser_ids)[0]['event'], 'grace-started')
+        projection = json.dumps(self.e.snapshot())
+        for private in ('server-new-canary', 'socket-old', 'session-canary', str(self.path), 'https://url-canary', 'token-canary'):
+            self.assertNotIn(private, projection)
+
+    def test_known_current_rebind_projects_session_from_its_logged_field(self):
+        self.e.start(); self.append(rebind_event(viewerId='socket-new'))
+        rows = self.e.read_tick(IDS)
+        self.assertEqual(rows[0]['sessionHash'], hash_identity('session-canary', SALT))
+        self.assertEqual(rows[0]['viewerHash'], hash_identity('socket-new', SALT))
+
+    def test_failed_rebind_before_browser_has_direct_session_for_each_server_reason(self):
+        self.e.start()
+        for reason in ('rebind-cancelled', 'rebind-rejected', 'rebind-timeout'):
+            value = rebind_event('viewer_rebind_failed'); value['meta']['reason'] = reason
+            self.append(value)
+        rows = self.e.read_tick(dict(IDS, socketId='socket-old', previousSocketId=None))
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(row['event'] == 'rebind-failed' and row['sessionHash'] == hash_identity('session-canary', SALT) for row in rows))
+        self.assertEqual(self.e.snapshot()['coverage'], 'complete')
+
+    def test_foreign_session_unknown_previous_or_unknown_stable_session_cannot_bind(self):
+        self.e.start()
+        for changes in ({'browserSessionId': 'foreign-session-canary'}, {'previousViewerId': 'unknown-previous-canary'},
+                        {'viewerId': 'socket-new', 'browserSessionId': 'foreign-session-canary'},
+                        {'viewerId': 'socket-new', 'previousViewerId': 'unknown-previous-canary'}):
+            self.append(rebind_event(**changes))
+        self.assertEqual(self.e.read_tick(IDS), [])
+        self.assertEqual(self.e.snapshot()['coverage'], 'complete')
+        fresh = ServerRecoveryEvidence(self.path, SALT); self.addCleanup(fresh.close); fresh.start()
+        self.append(rebind_event(viewerId='socket-new'))
+        self.assertEqual(fresh.read_tick(dict(IDS, sessionId=None)), [])
+
+    def test_missing_malformed_and_unknown_matching_rebind_correlation_fails_closed(self):
+        cases = [None, {}, {'viewerId': 'socket-new', 'previousViewerId': 'socket-old'},
+            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old'},
+            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old', 'browserSessionId': None},
+            {'viewerId': [], 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary'},
+            {'viewerId': 'server-new-canary', 'previousViewerId': [], 'browserSessionId': 'session-canary'},
+            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary', 'token': 'token-canary'},
+            {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary', 'url': 'https://url-canary'}]
+        for name in ('viewer_rebind_confirmed', 'viewer_rebind_failed'):
+            for correlation in cases:
+                with self.subTest(name=name, correlation=correlation):
+                    self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
+                    value = rebind_event(name)
+                    if correlation is None: value.pop('correlation')
+                    else: value['correlation'] = correlation
+                    self.append(value)
+                    with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(IDS)
+                    self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
+                    projection = json.dumps(self.e.snapshot())
+                    for private in ('server-new-canary', 'session-canary', 'token-canary', 'https://url-canary'):
+                        self.assertNotIn(private, projection)

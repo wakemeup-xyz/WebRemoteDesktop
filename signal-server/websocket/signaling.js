@@ -525,7 +525,7 @@ function setupSignaling(io, options = {}) {
           const result = desktopLease.beginRelease({ viewerId: nextId, reason });
           dispatchLeaseEffect(result, reason);
           clearRebind();
-          emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, reason });
+          emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
           return;
         }
         if (ack?.status === 'applied') {
@@ -536,7 +536,7 @@ function setupSignaling(io, options = {}) {
           }
           clearRebind();
           sendGrant(nextId, activeLease);
-          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, leaseEpoch: activeLease.leaseEpoch });
+          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, sessionId, leaseEpoch: activeLease.leaseEpoch });
           return;
         }
         clearLegacyRelayCompanion(nextId, { stop: true });
@@ -544,7 +544,7 @@ function setupSignaling(io, options = {}) {
         const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
         const result = desktopLease.beginRelease({ viewerId: nextId, reason });
         dispatchLeaseEffect(result, reason);
-        emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, reason });
+        emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
       };
       // Socket.IO's timeout also removes its pending callback, so an old Host
       // that never acknowledges cannot accumulate retained rebind closures.
