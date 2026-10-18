@@ -1086,6 +1086,7 @@ function setupSignaling(io, options = {}) {
           subject: socket.user?.sub,
           session,
           admission: socket.handshake.auth?.viewerAdmission,
+          initialContext: instanceRuntime.viewerAdmissionContext(),
           occupied: connections.viewers.size > 0,
           sameSessionOccupancy: [...connections.viewers.values()].every(other =>
             !other._wrdProofViewer && other._wrdViewerSessionId === session

@@ -30,12 +30,18 @@ function fixture(options = {}) {
     const ticket = runtime.viewerAdmission?.issue('viewer-password-login', session);
     return viewer(id, session, ticket ? { mode: 'explicit', ticket: ticket.ticket } : undefined);
   }
+  function guarded(id, session) {
+    const ticket = runtime.viewerAdmission.issue('viewer-password-login', session,
+      { initialPolicy: 'vacant-only-v1', context: runtime.viewerAdmissionContext() });
+    assert.ok(ticket.ticket, ticket.error);
+    return viewer(id, session, { mode: 'explicit', ticket: ticket.ticket });
+  }
   function grant(socket) {
     socket.trigger('control-acquire', { requestId: 'acquire' });
     const event = host.sent.filter(e => e.event === 'control-transition').at(-1);
     host.trigger('control-transition-ack', { leaseEpoch: event.data.leaseEpoch, status: 'applied' });
   }
-  return { runtime, lease, io, host, timers, viewer, manual, grant, advance: value => { now = value; } };
+  return { runtime, lease, io, host, timers, viewer, manual, guarded, grant, advance: value => { now = value; } };
 }
 for (const expired of [false, true]) {
   test(`old disconnected page cannot supersede ACTIVE B ${expired ? 'after' : 'inside'} grace`, () => {
@@ -57,7 +63,8 @@ for (const expired of [false, true]) {
   });
 }
 function admissionOf(socket) { return socket.sent.find(e => e.event === 'connected')?.data.viewerAdmission; }
-function expectRejectedWithoutMutation(h, connect) {
+function expectRejectedWithoutMutation(h, connect, proof = null) {
+  if (proof) assert.equal(h.runtime.hasProofAdmission(proof), true);
   const viewers = [...h.runtime.connections.viewers];
   const snapshot = h.lease.snapshot(), count = h.host.sent.length, epoch = h.runtime.viewerEpoch();
   const rejected = connect();
@@ -67,35 +74,42 @@ function expectRejectedWithoutMutation(h, connect) {
   assert.deepEqual(h.lease.snapshot(), snapshot);
   assert.equal(h.host.sent.length, count);
   assert.equal(h.runtime.viewerEpoch(), epoch);
+  if (proof) assert.equal(h.runtime.hasProofAdmission(proof), true, 'rejection must preserve the outstanding proof');
 }
 
-test('current owner resumes inside grace only after Host ACK, and after grace requires reset/regrant', () => {
-  for (const expired of [false, true]) {
-    const h = fixture();
-    const a = h.manual('a', 'current-session'); h.grant(a);
-    const identity = admissionOf(a); const prior = h.lease.snapshot(); a.disconnect();
-    if (expired) {
-      h.advance(8001); h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
+for (const guardedOwner of [false, true]) {
+  test(`${guardedOwner ? 'guarded' : 'human'} current owner resumes inside grace only after Host ACK, and after grace requires reset/regrant`, () => {
+    for (const expired of [false, true]) {
+      const h = fixture();
+      const a = h[guardedOwner ? 'guarded' : 'manual']('a', 'current-session'); h.grant(a);
+      const identity = admissionOf(a); const prior = h.lease.snapshot(); a.disconnect();
+      if (expired) {
+        h.advance(8001); h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
+      }
+      const a2 = h.viewer('a2', 'current-session', identity);
+      assert.equal(a2.disconnected, false);
+      assert.deepEqual([...h.runtime.connections.viewers.keys()], ['a2']);
+      if (!expired) {
+        const rebind = h.host.sent.find(e => e.event === 'viewer-session-rebind');
+        assert.ok(rebind); assert.equal(a2._wrdRebindPending, true);
+        assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
+        rebind.ack(null, { status: 'applied' });
+        assert.equal(h.lease.snapshot().leaseEpoch, prior.leaseEpoch);
+        assert.equal(a2._wrdRebindPending, false);
+      } else {
+        assert.equal(h.host.sent.some(e => e.event === 'viewer-session-rebind'), false);
+        assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
+        const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1);
+        a2.trigger('control-acquire', { requestId: 'before-reset-applied' });
+        assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
+        assert.equal(h.lease.snapshot().state, 'REVOKING');
+        h.host.trigger('control-transition-ack', { leaseEpoch: reset.data.leaseEpoch, status: 'applied' });
+        assert.equal(h.lease.snapshot().state, 'FREE');
+        h.grant(a2); assert.equal(h.lease.snapshot().state, 'ACTIVE');
+      }
     }
-    const a2 = h.viewer('a2', 'current-session', identity);
-    assert.equal(a2.disconnected, false);
-    assert.deepEqual([...h.runtime.connections.viewers.keys()], ['a2']);
-    if (!expired) {
-      const rebind = h.host.sent.find(e => e.event === 'viewer-session-rebind');
-      assert.ok(rebind); assert.equal(a2._wrdRebindPending, true);
-      assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
-      rebind.ack(null, { status: 'applied' });
-      assert.equal(h.lease.snapshot().leaseEpoch, prior.leaseEpoch);
-      assert.equal(a2._wrdRebindPending, false);
-    } else {
-      assert.equal(h.host.sent.some(e => e.event === 'viewer-session-rebind'), false);
-      assert.equal(a2.sent.some(e => e.event === 'control-grant'), false);
-      const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1);
-      h.host.trigger('control-transition-ack', { leaseEpoch: reset.data.leaseEpoch, status: 'applied' });
-      h.grant(a2); assert.equal(h.lease.snapshot().state, 'ACTIVE');
-    }
-  }
-});
+  });
+}
 
 test('explicit B replaces A but cannot acquire before the reset barrier', () => {
   const h = fixture(); const a = h.manual('a', 'session-alpha'); h.grant(a);
@@ -201,3 +215,131 @@ test('rejected old resume preserves outstanding zero-Viewer proof and proof occu
   const p = new FakeSocket('proof', 'viewer'); p.handshake.auth.proofAdmission = proof; h.io.connect(p); p.disconnect();
   expectRejectedWithoutMutation(h, () => h.viewer('old-b', 'session-bravo', admissionOf(b)));
 });
+
+function guardedTicket(h, session = 'session-guard') {
+  const result = h.runtime.viewerAdmission.issue('viewer-password-login', session,
+    { initialPolicy: 'vacant-only-v1', context: h.runtime.viewerAdmissionContext() });
+  assert.ok(result.ticket, result.error);
+  return { mode: 'explicit', ticket: result.ticket };
+}
+function expireGrace(h, at) {
+  h.advance(at);
+  h.timers.filter(t => t.ms === 8000 && !t.cancelled).forEach(t => t.fn());
+}
+function proofViewer(h, id, proof) {
+  const socket = new FakeSocket(id, 'viewer'); socket.handshake.auth.proofAdmission = proof;
+  h.io.connect(socket); return socket;
+}
+
+test('two guarded tickets race through real handlers; only the first can claim the vacant epoch', () => {
+  const h = fixture();
+  const first = guardedTicket(h, 'session-first');
+  const second = guardedTicket(h, 'session-second');
+  const a = h.viewer('first', 'session-first', first);
+  assert.equal(a.disconnected, false);
+  expectRejectedWithoutMutation(h, () => h.viewer('second', 'session-second', second));
+  a.disconnect(); expireGrace(h, 8001);
+  const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
+  expectRejectedWithoutMutation(h, () => h.viewer('second-vacant', 'session-second', second), proof);
+});
+
+test('guard rejected after human issue preserves outstanding proof and human Start', () => {
+  const h = fixture(); const guard = guardedTicket(h);
+  const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
+  const human = h.runtime.viewerAdmission.issue('viewer-password-login', 'session-human');
+  expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', guard), proof);
+  const accepted = h.viewer('human', 'session-human', { mode: 'explicit', ticket: human.ticket });
+  assert.equal(accepted.disconnected, false);
+  assert.equal(h.runtime.hasProofAdmission(proof), false);
+});
+
+for (const changed of ['host', 'relay', 'epoch']) {
+  test(`rejected guarded handler after ${changed} change preserves proof and can never grant`, () => {
+    const h = fixture(); const guard = guardedTicket(h);
+    if (changed === 'host') h.host.disconnect();
+    if (changed === 'relay') h.runtime.connections.relayViewers.set('relay', new FakeSocket('relay', 'relay-viewer'));
+    if (changed === 'epoch') h.runtime.noteHumanViewerAdmission();
+    const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
+    expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', guard), proof);
+  });
+}
+
+test('guarded issue and first consume both reject grace-retained occupancy', () => {
+  const h = fixture(); const guard = guardedTicket(h);
+  const first = h.guarded('first', 'session-first'); first.disconnect();
+  assert.equal(h.runtime.viewerAdmission.issue('viewer-password-login', 'session-newguard',
+    { initialPolicy: 'vacant-only-v1', context: h.runtime.viewerAdmissionContext() }).error, 'viewer-occupied');
+  expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', guard));
+});
+
+test('retained human after grace and TTL blocks guard; retained guard allows new initial admission', () => {
+  for (const human of [true, false]) {
+    const h = fixture({ viewerAdmissionTtlMs: 100 });
+    const owner = h[human ? 'manual' : 'guarded']('owner', 'session-owner');
+    const identity = admissionOf(owner); owner.disconnect(); expireGrace(h, 120001);
+    const result = h.runtime.viewerAdmission.issue('viewer-password-login', 'session-nextguard',
+      { initialPolicy: 'vacant-only-v1', context: h.runtime.viewerAdmissionContext() });
+    if (human) {
+      assert.equal(result.error, 'human-owner-retained');
+      assert.equal(h.viewer('owner-resume', 'session-owner', identity).disconnected, false);
+    } else {
+      assert.ok(result.ticket);
+      assert.equal(h.viewer('new-guard', 'session-nextguard', { mode: 'explicit', ticket: result.ticket }).disconnected, false);
+      expectRejectedWithoutMutation(h, () => h.viewer('old-guard', 'session-owner', identity));
+    }
+  }
+});
+
+test('guarded consumed lost-welcome retry stays current and loses permanently to admitted human', () => {
+  const h = fixture(); const ticket = guardedTicket(h);
+  const a = h.viewer('guard', 'session-guard', ticket); const identity = admissionOf(a); a.disconnect();
+  const retry = h.viewer('retry', 'session-guard', ticket);
+  assert.deepEqual(admissionOf(retry), identity);
+  const human = h.manual('human', 'session-human'); human.disconnect(); expireGrace(h, 120001);
+  const proof = h.runtime.issueProofAdmission(); assert.ok(proof);
+  expectRejectedWithoutMutation(h, () => h.viewer('stale-ticket', 'session-guard', ticket), proof);
+  expectRejectedWithoutMutation(h, () => h.viewer('stale-resume', 'session-guard', identity), proof);
+});
+
+for (const first of ['proof', 'guard']) {
+  test(`${first}-first consumes real admission authority and rejects the competing handshake`, () => {
+    const h = fixture(); const ticket = guardedTicket(h); const proof = h.runtime.issueProofAdmission();
+    assert.equal(h.runtime.hasProofAdmission(proof), true, 'guard issuance must preserve proof');
+    if (first === 'proof') {
+      assert.equal(proofViewer(h, 'proof', proof).disconnected, false);
+      expectRejectedWithoutMutation(h, () => h.viewer('guard', 'session-guard', ticket));
+    } else {
+      assert.equal(h.viewer('guard', 'session-guard', ticket).disconnected, false);
+      assert.equal(h.runtime.hasProofAdmission(proof), false);
+      const before = [...h.runtime.connections.viewers]; const epoch = h.runtime.viewerEpoch();
+      assert.equal(proofViewer(h, 'proof', proof).disconnected, true);
+      assert.deepEqual([...h.runtime.connections.viewers], before);
+      assert.equal(h.runtime.viewerEpoch(), epoch);
+    }
+  });
+}
+
+for (const changed of ['old-operation', 'host']) {
+  test(`guarded owner late rebind ACK after ${changed} change cannot grant`, () => {
+    const h = fixture(); const a = h.guarded('a', 'session-guard'); h.grant(a);
+    const identity = admissionOf(a); a.disconnect();
+    const b = h.viewer('b', 'session-guard', identity);
+    const old = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
+    assert.ok(old); assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
+    let current = b;
+    if (changed === 'old-operation') {
+      b.disconnect(); current = h.viewer('c', 'session-guard', identity);
+      assert.ok(h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1));
+    } else {
+      h.host.disconnect(); h.io.connect(new FakeSocket('replacement-host', 'host'));
+    }
+    old.ack(null, { status: 'applied' });
+    assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
+    assert.equal(current.sent.some(e => e.event === 'control-grant'), false);
+    if (changed === 'old-operation') {
+      const next = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
+      next.ack(null, { status: 'applied' });
+      assert.equal(current.sent.some(e => e.event === 'control-grant'), true);
+    }
+  });
+}

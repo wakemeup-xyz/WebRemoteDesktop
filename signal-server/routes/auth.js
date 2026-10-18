@@ -99,8 +99,20 @@ function createAuthRouter(options = {}) {
     if (decoded.role !== 'viewer') return res.status(403).json({ error: 'Viewer role required' });
     const runtime = options.runtimeContext;
     if (!runtime || runtime.requiresViewerProof()) return res.status(403).json({ error: 'Explicit admission unavailable' });
-    const admission = runtime.viewerAdmission.issue(decoded.sub, req.body?.viewerSessionId);
-    if (admission.error) return res.status(admission.error === 'admission-capacity' ? 429 : 400).json({ error: admission.error });
+    const hasInitialPolicy = Object.prototype.hasOwnProperty.call(req.body || {}, 'initialPolicy');
+    if (hasInitialPolicy && req.body.initialPolicy !== 'vacant-only-v1') {
+      return res.status(400).json({ error: 'invalid-initial-policy' });
+    }
+    const admission = runtime.viewerAdmission.issue(decoded.sub, req.body?.viewerSessionId,
+      hasInitialPolicy ? { initialPolicy: req.body.initialPolicy, context: runtime.viewerAdmissionContext?.() } : {});
+    if (admission.error) {
+      const statuses = {
+        'invalid-session': 400, 'invalid-initial-policy': 400, 'admission-capacity': 429,
+        'viewer-occupied': 409, 'relay-occupied': 409, 'host-unavailable': 409,
+        'human-intent-pending': 409, 'human-owner-retained': 409,
+      };
+      return res.status(statuses[admission.error] || 503).json({ error: admission.error });
+    }
     return res.status(201).json({ admission });
   });
 

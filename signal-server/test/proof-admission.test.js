@@ -108,3 +108,24 @@ test('proof route limiters count only authenticated exact leases and isolate eac
     await lab.close();
   }
 });
+
+test('proof-only routes refuse guarded ordinary admission without consuming the outstanding proof', async () => {
+  const lab = await createLabRuntime({ allowSourceFallback: true });
+  try {
+    const token = await viewerToken(lab.origin, lab.credentials.viewerPassword);
+    const auth = { Authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const proof = await issueProof(lab.origin, auth);
+    const response = await fetch(`${lab.origin}/api/auth/viewer-admission`, {
+      method: 'POST', headers: auth,
+      body: JSON.stringify({ viewerSessionId: 'session-guard', initialPolicy: 'vacant-only-v1' }),
+    });
+    assert.equal(response.status, 403);
+    const status = await fetch(`${lab.origin}/api/proof-admission/status`, {
+      method: 'POST', headers: auth, body: JSON.stringify(proof),
+    });
+    assert.equal(status.status, 200);
+    assert.equal((await status.json()).active, true);
+  } finally {
+    await lab.close();
+  }
+});

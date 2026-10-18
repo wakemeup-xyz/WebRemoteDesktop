@@ -109,11 +109,21 @@ function createRuntimeContext(options = {}) {
       if (!consumer || consumer.epoch !== epoch || admission.realm !== consumer.realm) return null;
       return { socketId: consumer.socketId };
     },
+    // Historical name: every accepted ordinary admission, including a
+    // vacant-only initial admission, invalidates outstanding proof leases.
     noteHumanViewerAdmission() {
       viewerEpoch += 1;
       proofAdmissions.clear();
       consumedProofViewers.clear();
       return viewerEpoch;
+    },
+    viewerAdmissionContext() {
+      return {
+        viewerEpoch,
+        occupied: connections.viewers.size > 0,
+        relayOccupied: connections.relayViewers.size > 0,
+        hostOnline: connections.host !== null,
+      };
     },
     viewerEpoch() {
       return viewerEpoch;
