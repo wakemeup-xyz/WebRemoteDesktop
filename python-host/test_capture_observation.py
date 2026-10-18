@@ -531,9 +531,14 @@ class CaptureLoopTest(unittest.TestCase):
         self.assertEqual(snapshot(track._capture_observation, clock.now)['completed'], 1)
 
     def run_cadence_loop(self, grabs, *, oversleep_ns=0, config_ns=0, observer=None,
-                         fail_grab_at=None, fail_publish_at=None, suspend_at=None, profile_at=None, fps=20, fail_trace_at=None):
-        clock = SimpleNamespace(now=0, sleeps=[], calls=0, lock_calls=0, config_calls=0)
-        cadence = observer if observer is not None else CaptureCadenceObserver()
+                         fail_grab_at=None, fail_publish_at=None, suspend_at=None, profile_at=None, fps=20, fail_trace_at=None, cadence_start_cost_ns=0):
+        clock = SimpleNamespace(now=0, cpu=0, sleeps=[], calls=0, lock_calls=0, config_calls=0)
+        class CostedCadence(CaptureCadenceObserver):
+            def start(self, *args, **kwargs):
+                clock.now += cadence_start_cost_ns
+                clock.cpu += cadence_start_cost_ns
+                return super().start(*args, **kwargs)
+        cadence = observer if observer is not None else CostedCadence()
         track = SimpleNamespace(_capture_running=True, _suspended=False, _target_fps=fps,
             _capture_strategy=None, _activity_condition=Guard(), _target_lock=Guard(),
             _capture_lock=Guard(), _capture_observation=CaptureObservation(),
@@ -559,6 +564,7 @@ class CaptureLoopTest(unittest.TestCase):
         def grab(_):
             clock.calls += 1
             clock.now += grabs[clock.calls - 1]
+            clock.cpu += grabs[clock.calls - 1]
             if clock.calls == len(grabs):
                 track._capture_running = False
             if clock.calls == suspend_at:
@@ -575,9 +581,39 @@ class CaptureLoopTest(unittest.TestCase):
             clock.now += int(delay * 1_000_000_000) + (oversleep_ns if delay != .005 else 0)
         track.sct = SimpleNamespace(grab=grab)
         loop = method('ScreenCaptureTrack', '_capture_loop', time=SimpleNamespace(
-            monotonic_ns=lambda: clock.now, thread_time_ns=lambda: 0, sleep=sleep))
+            monotonic_ns=lambda: clock.now, thread_time_ns=lambda: clock.cpu, sleep=sleep))
         loop(track)
         return track, clock, cadence.snapshot(clock.now) if isinstance(cadence, CaptureCadenceObserver) else None
+
+    def test_cadence_bookkeeping_cpu_is_outside_paired_native_grab_measurement(self):
+        track, clock, result = self.run_cadence_loop([10_000_000] * 2,
+            cadence_start_cost_ns=7_000_000)
+        grab = snapshot(track._capture_observation, clock.now)
+        self.assertEqual((grab['lastDurationMs'], grab['lastThreadCpuMs'], grab['lastNonCpuMs']),
+                         (10, 10, 0))
+        self.assertEqual((grab['maxDurationMs'], grab['maxDurationThreadCpuMs'],
+                          grab['maxDurationNonCpuMs']), (10, 10, 0))
+        self.assertEqual(result['intervalCount'], 1)
+        self.assertEqual(result['lastInterval'], dict(intervalMs=50, grabMs=10,
+            postGrabMs=7, pacingActualMs=33, otherMs=0, minIntervalMs=50,
+            pacingRequestedMs=33, pacingExcessMs=0, publishLockWaitMs=0, publishCriticalMs=0))
+        self.assertEqual(result['invalidTiming'], 0)
+        self.assertEqual(clock.sleeps, [.033, .033])
+
+    def test_deferred_cadence_start_closes_previous_cycle_before_failed_grab_break(self):
+        track, clock, result = self.run_cadence_loop([10_000_000] * 3,
+            cadence_start_cost_ns=7_000_000, fail_grab_at=2)
+        self.assertEqual(result['intervalCount'], 1)
+        self.assertEqual(result['lastInterval']['grabMs'], 10)
+        self.assertEqual(result['lastInterval']['postGrabMs'], 7)
+        self.assertEqual(result['lastInterval']['intervalMs'], 50)
+        self.assertEqual(result['error'], 1)
+        self.assertEqual(result['invalidTiming'], 0)
+        self.assertEqual(clock.sleeps, [.033, .005, .033])
+        grab = snapshot(track._capture_observation, clock.now)
+        self.assertEqual((grab['completed'], grab['failed']), (2, 1))
+        self.assertEqual((grab['lastDurationMs'], grab['lastThreadCpuMs'], grab['lastNonCpuMs']),
+                         (10, 10, 0))
 
     def test_real_loop_closed_cycles_oversleep_and_lock_subsets(self):
         track, clock, result = self.run_cadence_loop([10_000_000] * 3,

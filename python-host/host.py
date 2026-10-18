@@ -1481,31 +1481,40 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 target_generation = getattr(self, '_target_generation', 0)
             capture_generation = getattr(self, '_capture_generation', 0)
             _min_interval = 1.0 / self.capture_fps_for_target(target_fps, capture_strategy=self._capture_strategy)
-            grab_started_ns = time.monotonic_ns()
             grab_completed = False
+            captured = False
+            publish_wait_started_ns = publish_entered_ns = publish_exited_ns = None
+            # Mark the phase before the original wall/CPU grab bracket. Cycle
+            # aggregation is deferred until that bracket has finished, so its
+            # CPU belongs to postGrab rather than grab/non-CPU time.
+            phase('grab')
+            grab_started_ns = time.monotonic_ns()
             try:
                 # Gate again immediately before MSS grab.
                 if self._suspended or not self._capture_running:
                     observe(cadence, 'break_continuity', 'suspended' if self._suspended else 'stopped')
                     continue
-                observe(cadence, 'start', grab_started_ns,
-                    capture_generation=capture_generation, target_generation=target_generation,
-                    min_interval_ns=int(_min_interval * 1_000_000_000))
                 cpu_started_ns = current_thread_cpu_ns()
                 observe(self._capture_observation, 'begin', grab_started_ns, thread_cpu_ns=cpu_started_ns)
                 try:
                     shot = self.sct.grab(self.monitor)
                 except Exception:
                     cpu_finished_ns = current_thread_cpu_ns()
-                    observe(self._capture_observation, 'finish', time.monotonic_ns(), succeeded=False,
+                    grab_finished_ns = time.monotonic_ns()
+                    observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=False,
                             thread_cpu_ns=cpu_finished_ns)
+                    observe(cadence, 'start', grab_started_ns,
+                        capture_generation=capture_generation, target_generation=target_generation,
+                        min_interval_ns=int(_min_interval * 1_000_000_000))
                     raise
                 cpu_finished_ns = current_thread_cpu_ns()
                 grab_finished_ns = time.monotonic_ns()
                 grab_completed = True
                 observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=True,
                         thread_cpu_ns=cpu_finished_ns)
-                captured = False
+                observe(cadence, 'start', grab_started_ns,
+                    capture_generation=capture_generation, target_generation=target_generation,
+                    min_interval_ns=int(_min_interval * 1_000_000_000))
                 phase('publish')
                 publish_wait_started_ns = cadence_now()
                 with self._capture_lock:
