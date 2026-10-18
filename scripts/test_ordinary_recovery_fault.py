@@ -435,6 +435,40 @@ class FailureIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 runner._raise_fault_failure(types.SimpleNamespace(failure_reason=reason),value)
         self.assertEqual(set(value),set(runner.empty_fault('after-grace')))
 
+    async def test_default_manager_missing_playwright_is_runtime_dependency_before_adapter(self):
+        import builtins
+        from scripts.test_ordinary_session_recovery import RuntimeRunTests
+        RuntimeRunTests.setUp(self)
+        real_import=builtins.__import__
+        for scenario in ('within-grace','after-grace'):
+            with self.subTest(scenario=scenario):
+                self.args.scenario=scenario; self.args.output_dir=str(self.root/scenario)
+                manifest=json.loads(self.manifest.read_text()); manifest['scenario']=scenario
+                self.manifest.write_text(json.dumps(manifest))
+                self.args.runtime_manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest()
+                denied=[]
+                def deny_playwright(name,*args,**kwargs):
+                    if name=='playwright' or name.startswith('playwright.'):
+                        denied.append(name); raise ImportError('private-import-canary')
+                    return real_import(name,*args,**kwargs)
+                status=unittest.mock.AsyncMock(side_effect=AssertionError('status must not start'))
+                with patch('builtins.__import__',side_effect=deny_playwright), \
+                     patch.object(runner.OwnedBrowserLifecycle,'start',new_callable=unittest.mock.AsyncMock) as browser_start, \
+                     patch.object(runner,'_AdmissionObservation') as admission, \
+                     patch.object(runner,'_load_fault') as load_fault:
+                    result=await runner.run(self.args,manager_factory=None,status_reader=status)
+                self.assertEqual(result,1); self.assertEqual(denied,['playwright.async_api'])
+                browser_start.assert_not_called(); admission.assert_not_called()
+                status.assert_not_called(); load_fault.assert_not_called()
+                summary=json.loads((Path(self.args.output_dir)/'summary.json').read_text())
+                self.assertIsNotNone(summary['manifest'])
+                self.assertEqual(summary['ordinaryRecovery']['status'],'NOT_RUN')
+                self.assertEqual(summary['ordinaryRecovery']['reason'],'runtime-dependency-unavailable')
+                self.assertEqual(summary['failure'],dict(phase='preflight',reason='runtime-dependency-unavailable'))
+                self.assertEqual(summary['fault']['capability'],'not-checked')
+                self.assertEqual(summary['fault']['triggerCount'],0)
+                self.assertNotIn('private-import-canary',json.dumps(summary))
+
     async def test_capability_unavailable_is_not_run_before_browser_factory(self):
         from scripts.test_ordinary_session_recovery import RuntimeRunTests
         RuntimeRunTests.setUp(self)
