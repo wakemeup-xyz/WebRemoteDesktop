@@ -48,6 +48,8 @@ root 报告本轮全新 baseline PASS；within-grace 在 5.999977s 恢复并稳�
 
 Node VM 必须执行真实 `freezeControl`、`refresh`、`handleControlGrant`、`beginConnectionAttempt`、`createPeerConnection`、`bindPeerCallbacks`、`createOffer`、stats/rVFC 与 Input 门禁。只模拟浏览器/网络平台边界（PC、DOM、video、时钟、socket），不得用 stub 替换上述产品方法后宣称覆盖恢复链。
 
+fixture 必须在同一 VM 加载真实 `media-activity-controller.js` 与 `media-activity-runtime.js`，通过 `initializeMediaActivity()` 建立并断言两个实例存在。generation 0 的正常初始 active 路径本来不要求 resume ACK；因此主恢复回归必须在基线用真实 `setMediaActivityReason('manual-pause', true/false)` 建立正 generation 的 active intent，经实际发出的 request 与匹配 `handleMediaActivityAck()`、真实 rVFC 完成恢复。changed grant 后再次验证当前 request 的 applied ACK 与当前 scope 的 fresh resume frame，不能利用 absent runtime 的默认放行获得 GREEN。覆盖 ACK→frame 与 frame→ACK 两序：前者 ACK 后仍关闭，后者 frame 后仍关闭；只有同一 request baseline 内两证据齐全才允许媒体 runtime active，旧 scope ACK/frame 不能补齐。键盘/鼠标 reset ACK 是另一个独立必测门禁，不被媒体 ACK/frame 替代。
+
 最小回归矩阵：
 
 | 场景 | 必须观测的结果 |
@@ -70,5 +72,7 @@ Node VM 必须执行真实 `freezeControl`、`refresh`、`handleControlGrant`、
 ## 自审记录与未决边界
 
 2026-10-19 文档自审：已核对需求与源码；推荐方案覆盖无租约 peer 的明确路径；排除对 owner guard、性能档位、runner 判据和运维权限的修改；已区分静态可达缺陷与现场因果推断；已给出回归矩阵和独立运行阶段。未执行测试、build、服务或网络操作。
+
+2026-10-19 独立设计/计划 review 的 Important 修订：原 fixture 装载描述允许缺少媒体 runtime，从而不能证明契约 6。现已将真实 controller/runtime 初始化、正 generation intent、匹配 applied ACK 与 fresh resume frame 两序及旧 scope 拒绝列为强制要求；此为文档修订，尚待 root 窄复审，不表示测试已运行或实现已批准。
 
 无需用户补充信息即可实施这一有界修复。独立 reviewer 需裁决：最小退休条件能否覆盖实际 VM 的全部事件次序；现有 retirement 是否留下仍可生效的 producer；是否真的需要上述有限诊断。若发现更广的新缺陷，先报告并扩展受审设计，不借本任务重构生命周期或放宽验收。

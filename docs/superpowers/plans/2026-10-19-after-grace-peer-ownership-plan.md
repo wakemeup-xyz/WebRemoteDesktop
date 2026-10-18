@@ -35,7 +35,7 @@
 **Interfaces:**
 - Consumes: 真实 `WebRTC.freezeControl(reason)`、`refresh({reason})`、`handleControlGrant({controller, leaseId, leaseEpoch})`，现有 PC/DOM/socket 平台接口。
 - Produces: 同一公开接口；changed lease 后 `WebRTC.pc` 为新 peer，`_peerCallbackOwner` 与当前 `pc/currentConnectionAttemptId/connectionAttemptSequence` 一致；旧 owner 失效。
-- 不新增产品 helper/API。测试 helper 命名为 `afterGracePeerFixture()`，返回 `{h, w, input, video, peers, emitted, frames, timers, settle, connect, paint}`；helper 只组装平台边界与真实产品状态转换。
+- 不新增产品 helper/API。测试 helper 命名为 `afterGracePeerFixture()`，返回 `{h, w, input, video, peers, emitted, frames, timers, settle, connect, paint, mediaRequest, ackMedia}`；helper 只组装平台边界与真实产品状态转换。
 
 - [ ] **Step 1：核对执行边界和既有修改。**
 
@@ -50,7 +50,35 @@ git rev-parse HEAD
 
 - [ ] **Step 2：增加浏览器边界 fixture 与第一条 RED。**
 
-在 `webrtc.test.js` 复用 `loadWebRTC({realInput:true, ...})`，不要沿用把 `createOffer()` 替换为空函数的简化 continuity fixture。用 map 保存 fake timeout/interval 和 video rVFC；时钟为可推进 monotonic 数值；DOM 使用 `makeElement` 并补 `document.hidden=false`、`querySelectorAll`、window 监听接口。mock socket `emit` 保存事件，`connected=true`。VM 加载真实 `webrtc-stats.js`（参考 continuity 中 `retainedStartupPeerFixture`）。PC fake 实现以下浏览器接口，全部只记录平台行为：
+在 `webrtc.test.js` 复用 `loadWebRTC({realInput:true, ...})`，不要沿用把 `createOffer()` 替换为空函数的简化 continuity fixture。用 map 保存 fake timeout/interval 和 video rVFC；时钟为可推进 monotonic 数值；DOM 使用 `makeElement` 并补 `document.hidden=false`、`querySelectorAll`、window 监听接口。mock socket `emit(event,payload)` 保存 `{event,payload}`，`connected=true`。VM 加载真实 `webrtc-stats.js`（参考 continuity 中 `retainedStartupPeerFixture`），并且必须按以下代码加载真实媒体 controller/runtime、初始化实例；`loadWebRTC()` 自身不加载这两个模块。这里采用现有 `webrtc.test.js` 的 `initial visible attempt binds active media without requiring a resume request` 装载方式：controller 导出到 VM window，runtime 导出到 VM globalThis。
+
+```javascript
+for (const filename of ['media-activity-controller.js', 'media-activity-runtime.js']) {
+  vm.runInContext(fs.readFileSync(path.join(__dirname, filename), 'utf8'), h.context);
+}
+h.context.MediaActivityController = h.context.MediaActivityController || h.context.window.MediaActivityController;
+h.context.MediaActivityRuntime = h.context.MediaActivityRuntime || h.context.window.MediaActivityRuntime;
+assert.ok(h.context.MediaActivityController);
+assert.ok(h.context.MediaActivityRuntime);
+w.initializeMediaActivity();
+assert.ok(w.mediaActivityController, 'real controller is required');
+assert.ok(w.mediaActivityRuntime, 'absent runtime must not silently allow input');
+const mediaRequest = (state = 'active') => {
+  const entry = [...emitted].reverse().find(({ event, payload }) =>
+    event === 'media-activity-change' && payload.state === state
+    && payload.connectionAttemptId === w.currentConnectionAttemptId
+    && payload.generation === w._mediaIntent?.generation);
+  assert.ok(entry, 'real current-scope media request must have been emitted');
+  assert.ok(entry.payload.generation > 0);
+  return entry.payload;
+};
+const ackMedia = request => w.handleMediaActivityAck({
+  state: request.state, generation: request.generation,
+  connectionAttemptId: request.connectionAttemptId, applied: true,
+});
+```
+
+不得给 `mediaActivityRuntime`、`getMediaAppliedPhase()` 或 `canEnableDesktopInput()` 填 permissive stub。PC fake 实现以下浏览器接口，全部只记录平台行为：
 
 ```javascript
 class RecoveryPeer {
@@ -78,13 +106,31 @@ class RecoveryPeer {
 
 fixture 的 `settle = startupJoinFlush`；video 设宽高 1280×720、初始 `readyState=0`，`play()` 记录调用并返回可控 Promise，rVFC 将 callback 存入 `frames` 并返回单调 id。`connect(peer,stream)` 调用真实绑定的 `peer.ontrack({track:{kind:'video'},streams:[stream]})`，设置平台 connection/ICE state 为 connected，再调用真实 `onconnectionstatechange`；stream 具有 `getTracks:()=>[]`。`paint()` 只调用当前存于 `frames` 的 rVFC，不直接赋值产品 painted/ready/input。
 
-初始化顺序：`beginStartupEpisode()` → `startStartupMediaBudget()` → `beginConnectionAttempt('viewer-open')` → 真实 grant（fixture lease epoch 7）→ settle → 当前 peer answer/connection/track → current frame。经真实 `checkStartupEpisode({painted:true})` 确认 episode complete，断言真实 Input gate 可用；若媒体 runtime 需要 ACK，使用它现有的真实匹配 ACK 入口，不能替换 `canEnableDesktopInput()` 或手写 ready。加载/组装 fixture 的平台字段缺失必须先修好，才能记录 RED。
+初始化顺序：`initializeMediaActivity()` → `beginStartupEpisode()` → `startStartupMediaBudget()` → `beginConnectionAttempt('viewer-open')` → 真实 grant（fixture lease epoch 7）→ settle → 当前 peer answer/connection/track。初始 generation 0 active 本来无须 resume ACK，不能将它误认为已测试恢复 ACK；因此必须继续用以下真实理由转换建立正 generation 的 active intent，而不是直接赋值 `_mediaIntent` 或 runtime phase：
+
+```javascript
+w.setMediaActivityReason('manual-pause', true);
+ackMedia(mediaRequest('suspended'));
+assert.equal(w.getMediaAppliedPhase(), 'suspended');
+w.setMediaActivityReason('manual-pause', false);
+assert.equal(w.getMediaAppliedPhase(), 'resuming');
+assert.equal(input.getEffectiveInputGate().allowed, false);
+ackMedia(mediaRequest());
+assert.equal(w.mediaActivityRuntime.snapshot().lastAck.applied, true);
+assert.equal(w.getMediaAppliedPhase(), 'resuming');
+assert.equal(input.getEffectiveInputGate().allowed, false);
+paint();
+assert.equal(w.getMediaAppliedPhase(), 'active');
+assert.equal(w.canEnableDesktopInput(), true);
+```
+
+经真实 `checkStartupEpisode({painted:true})` 确认 episode complete。若实际初始化/暂停产生键鼠 reset 请求，逐项通过真实 ACK 入口确认后才断言真实 Input gate 可用；不得清空 pending、直接设置 ready/active 或跳过已生成的 reset。匹配媒体 ACK 是本主 fixture 必经步骤，不再是条件选项。加载/组装 fixture 的平台字段缺失必须先修好，才能记录 RED。
 
 第一条测试核心必须是以下实际路径与断言（变量来自上面的 helper）：
 
 ```javascript
 test('after-grace ownership: changed grant retires unleased refreshed peer', async () => {
-  const { w, input, video, peers, settle, connect, paint } = await afterGracePeerFixture();
+  const { w, input, video, peers, settle, connect, paint, mediaRequest, ackMedia } = await afterGracePeerFixture();
   w.freezeControl('signal-disconnect');
   await w.refresh({ reason: 'signal-reconnected' });
   const orphan = w.pc, owner = w._peerCallbackOwner;
@@ -106,15 +152,27 @@ test('after-grace ownership: changed grant retires unleased refreshed peer', asy
   oldTrack({ track: { kind: 'video' }, streams: [{ getTracks: () => [] }] });
   oldConnected();
   assert.equal(video.srcObject, stream);
+  assert.ok(w.mediaActivityController); assert.ok(w.mediaActivityRuntime);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(w.canEnableDesktopInput(), false);
+  const request = mediaRequest();
+  ackMedia(request);
+  const applied = w.mediaActivityRuntime.snapshot().lastAck;
+  assert.equal(applied.applied, true);
+  assert.equal(applied.connectionAttemptId, request.connectionAttemptId);
+  assert.equal(applied.generation, request.generation);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(w.canEnableDesktopInput(), false, 'applied ACK alone is not a fresh frame');
   assert.equal(input.getEffectiveInputGate().allowed, false);
   paint();
   assert.equal(w.isCurrentAttemptMediaReady(), true);
-  assert.equal(input.getEffectiveInputGate().allowed, true);
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+  assert.equal(w.canEnableDesktopInput(), true);
   assert.equal(peers.filter(peer => peer.connectionState !== 'closed').length, 1);
 });
 ```
 
-真实 Input 若仍有 reset barrier，先断言 input=false，逐项送匹配的真实 applied ACK 并记录最后开放条件，不把新 frame 当 ACK。测试不得调用 `markMediaAttemptReady()` 来代替 frame；play 调用计数须另外断言新 stream 恰好发生有效 play。
+上述主断言证明实际 media runtime 的 ACK→frame 门禁；测试结束前还必须检查真实 Input：若仍有 reset barrier，断言 input=false，逐项送实际请求匹配的真实 applied ACK（沿既有 `acceptKeyboardAck` / `acceptMouseAck` 或所属 transport 的 `acceptObservedInputAck` 入口），两类 reset 均确认后断言 `input.getEffectiveInputGate().allowed === true`；若本 changed lease 场景没有残留 reset，则直接断言最终 true，并在 within-grace 场景强制覆盖两个真实 reset 逐项 ACK。媒体 ACK、fresh frame 都不得代替 reset ACK。测试不得调用 `markMediaAttemptReady()` / `noteMediaRenderedFrame()` 来代替保存的真实 rVFC；play 调用计数须另外断言新 stream 恰好发生有效 play。
 
 - [ ] **Step 3：执行并保存预期 RED。**
 
@@ -144,6 +202,8 @@ if (differentPeerLease || unleasedPeerChangesAttempt) {
 | 测试名后缀 | 具体驱动与断言 |
 |---|---|
 | `pending startup preserves allowance` | 首次不 paint；记录 episode、remaining、feedbackRemaining；freeze/refresh/grant；episode 相同且余额不增，最终 peer owner 当前 |
+| `current frame waits for matching media ACK` | 从实际 current request baseline 起先调用当前 rVFC：paint/current-attempt 可变 true，但 runtime 仍 resuming 且 Input=false；送旧 attempt/generation ACK 后仍关闭；再送当前匹配 ACK，允许真实 early-frame replay 使 runtime active。不得强制要求 ACK 后再来第二帧，也不得接受旧 baseline 的 early frame |
+| `old media proof cannot complete new request` | 保存退休前的 request ACK 和 rVFC；新 grant/connect 后调用旧 ACK/旧 frame，runtime 仍 resuming/Input=false；当前 ACK 仅取得 applied，必须再有当前 baseline 的真实 rVFC 才 active。两种顺序与 ACK 前后门禁均有断言 |
 | `connected and track before changed grant` | 无租约 peer 的 track/connection 在 grant 前运行，保存 hooks/frame/stats；新 grant 后旧流不能被视作新 frame，新 peer 仍需自己的 track/frame |
 | `retired producers cannot revive` | 保存旧 track/connection/ICE、DC open/close/message、watchdog callback、stats onSample/onError、rVFC、metadata/playing、8s fallback、play resolve/reject；退休后逐个执行。每次断言新 pc/srcObject、paint/gate、sampler/frame owner 与 timers 不被旧 producer 改变；promise 日志本身不算控制效果 |
 | `duplicate grant preserves healthy peer` | 当前已 connected/painted peer 重复原 lease grant；peer/attempt/sequence/active producer 不变，无额外 peer/健康 peer offer；原 frame gate 保持 |
@@ -187,4 +247,5 @@ root 先按 Step 7 的精确文件规则创建候选 commit 和 immutable review
 ## 文档自审与执行记录
 
 - 2026-10-19：设计与计划自审完成。方案已比较；实现只改既有分支；矩阵覆盖新 attempt、旧 producer、same lease、首 grant；计划保留独立 task/final review 和后续部署/全新资格分层。未实施、未运行测试/build、未操作服务/网络/浏览器/native，未变更 index/HEAD。
+- 2026-10-19：按独立设计/计划 review 的 Important 修正文档：强制同 VM 装载并初始化真实媒体 controller/runtime；通过真实 manual-pause 理由转换建立正 generation intent，匹配实际 emitted request 的 `handleMediaActivityAck()`，覆盖 ACK→frame、frame→ACK 与旧 scope 拒绝；独立保留双 reset ACK。仅静态核对现有装载测试与源码 API，未执行 VM 测试；修订等待 root 窄复审，不表示实现准入。
 - 执行状态：Task 1、Final review 与 Root 后续阶段均未执行。本条作为当前事实基线；执行者随后追加真实时间、commit、RED/GREEN 和 review 证据，不提前勾选。
