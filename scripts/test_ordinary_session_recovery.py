@@ -1391,7 +1391,11 @@ class NativeStartupPage(RuntimePage):
             sample['attempt']='attempt-canary'
             # Keep several post-Start samples unready to distinguish startup
             # elapsed time from the unchanged 300-second qualified duration.
-            if self.samples<5: sample.update(frameAgeMs=None,inputAllowed=False)
+            if self.samples<5:
+                sample.update(callbacks=0,frameAgeMs=None,maxFrameGapMs=0,inputAllowed=False)
+                sample['inputGate'].update(allowed=False,hasPaintedFrame=False,currentAttemptReady=False,
+                    uiPhase='media-pending',firstFrameTimerHandlePresent=True,recoveryState='idle',
+                    blockedReasons=['media-not-ready-for-attempt'])
             if (self.later_absent and self.samples>=10) or (self.final_absent and 'finalize' in script):
                 sample['attempt']=self.initial_attempt
         self.produced.append((sample,dict(sample)))
@@ -1416,6 +1420,9 @@ class NativeStartupBoundaryTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(runner,'time',SimpleNamespace(monotonic=lambda:clock[0],time=original_time.time)), patch.object(runner,'asyncio',proxy):
             result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
         rows=[json.loads(line) for line in (Path(self.args.output_dir)/'samples.jsonl').read_text().splitlines()]
+        for row in rows:
+            if row['sample'] is not None:
+                self.assertIs(row['sample']['inputAllowed'],row['sample']['inputGate']['allowed'] is True)
         for original,snapshot in page.produced: self.assertEqual(original,snapshot)
         output=''.join(path.read_text() for path in Path(self.args.output_dir).iterdir())
         for private in ('password-canary','session-canary','socket-canary','admission-canary','attempt-canary','host-canary',str(self.log)):
