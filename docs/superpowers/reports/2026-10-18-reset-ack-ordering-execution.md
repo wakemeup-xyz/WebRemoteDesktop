@@ -10,6 +10,8 @@ Viewer修复3046fdd已提交并独立审查PASS：只改requestControl、quiesce
 
 两个真实决策RED均复现：普通current-owner在grace/reset完成后的实际connected→FREE序列发出0次acquire（应1次）；四种旧timer顺序在原12000ms期限没有重建当前socket。新case保留实际freeze结果，不沿用旧fixture强设FREE；普通代次来自真实内存server welcome，未伪造权限。最终18项聚焦和392项相关VM/内存handler测试通过（25.424700s、exit0，均reaped）；既有config500/DC/supersession故障fixture日志如实保留，没有Node Warning或未处理错误。具体setup失误与有效RED分别列出，不相加重叠运行计数。[Viewer实施与独立review](evidence/2026-10-18-reset-ack-ordering/task-2-review.md)。
 
-本轮Task1/2源码任务及独立review已完成，最终整个38bfd基线增量review尚待进行；当前服务仍运行旧源码，不能宣称这些修复已经改善生产。后续独立guarded ordinary规格实现更严格的首次测试入场，随后一次组合加载Host/Signal/Viewer并验证真实普通恢复。保持原长测失败、原维护failed-or-indeterminate及完整进程树UNKNOWN。
+本轮Task1/2源码任务及独立review已完成，最终整个38bfd..e393699基线增量Astra review已PASS（15条路径、canonical包154470B，SHAe4aa008f0ba809769913ca55e38c631401572871d190790ea3a285dea6e33601）；当前服务仍运行旧源码，不能宣称这些修复已经改善生产。后续独立guarded ordinary规格实现更严格的首次测试入场，随后一次组合加载Host/Signal/Viewer并验证真实普通恢复。保持原长测失败、原维护failed-or-indeterminate及完整进程树UNKNOWN。
 
 业务原生输入、应用后帧、可见/物理效果仍NOT_RUN；不将源码测试、媒体推进或瞬时健康当用户全流程验收。两项Viewer源码缺陷可能解释普通用户持久输入中断/重连失效，但不能唯一解释longA最初WS1006。日志和测试范围独立记录；服务、tunnel与原有修改均未因本轮源码任务改变。
+
+最终[整体源码review](evidence/2026-10-18-reset-ack-ordering/final-source-review.md)已归档；本计划仅源码交付完成，运行没有加载。交接给独立guarded普通准入/恢复计划，保留全部未验收状态。
