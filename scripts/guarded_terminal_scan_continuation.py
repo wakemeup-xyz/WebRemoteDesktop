@@ -420,6 +420,26 @@ RESULT_KEYS = ('schemaVersion','kind','classification','sequenceId','attemptId',
                'errorClass','automaticNextRun','policy','startupAdmission')
 
 
+STARTED_KEYS = ('schemaVersion','kind','attemptSHA256','sequenceId','attemptId','runNonce','rootDecision','admission','oneUse')
+
+
+def _validate_legacy_marker(value, attempt, runtime_sha):
+    """Pure validation shared by final-source and historical predecessor checks."""
+    exact(value, ('attemptSHA256','sequenceId','attemptId','productTIP','toolTIP','priorFailureSHA256','sourceTIP',
+                  'viewerSourceTIP','failedHistory','runtimeManifestSHA256','scenario','epoch','outputDirectory','oneUse'))
+    need(value['productTIP'] == PINS['productTIP'] and value['toolTIP'] == PINS['deployedToolTIP']
+         and value['sourceTIP'] == PINS['sourceTIP'] and value['viewerSourceTIP'] == PINS['viewerSourceTIP']
+         and value['failedHistory'] == FAILURES[:3] and value['priorFailureSHA256'] == FAILURES[2], 'legacy marker source/history')
+    for key in ('attemptId','sequenceId','scenario'):
+        need(value[key] == attempt[key], 'legacy marker ownership/scenario')
+    need(value['attemptSHA256'] == attempt['legacyAttempt']['sha256'] and value['oneUse'] is True
+         and value['runtimeManifestSHA256'] == runtime_sha, 'legacy marker binding')
+    number(value['epoch'])
+    output = Path(value['outputDirectory'])
+    need(output.parent == Path(attempt['legacyAttempt']['path']).parent
+         and output.name.startswith('ordinary-'+attempt['scenario']+'-'), 'legacy output marker location')
+
+
 def _validate_predecessors(attempt, history, observation, legacy_reference, count):
     """Bounded walk to the new baseline; no stale admission is replayed."""
     ref = attempt['previousResult']; used = {attempt[key] for key in ('sequenceId','attemptId','runNonce')}
@@ -442,7 +462,13 @@ def _validate_predecessors(attempt, history, observation, legacy_reference, coun
         need(Path(ref['path']) == folder/'r5-result.json', 'outer predecessor location')
         prior_attempt = read_ref({'path':str(folder/'r5-attempt.json'),'sha256':previous['attemptSHA256']}, observation.read_record)
         exact(prior_attempt, ATTEMPT_KEYS)
+        need(type(prior_attempt['schemaVersion']) is int and prior_attempt['schemaVersion'] == 1
+             and prior_attempt['kind'] == 'r5-terminal-scan-attempt'
+             and prior_attempt['scenario'] == SCENARIOS[index], 'predecessor attempt kind/version/scenario')
         started = read_ref({'path':str(folder/'r5-started.json'),'sha256':previous['startedSHA256']}, observation.read_record)
+        exact(started, STARTED_KEYS)
+        need(type(started['schemaVersion']) is int and started['schemaVersion'] == 1
+             and started['kind'] == 'r5-terminal-scan-started', 'predecessor started kind/version')
         for key in ('sequenceId','attemptId','runNonce'):
             need(previous[key] == prior_attempt[key] == started[key], 'predecessor one-use identities')
         need(started['oneUse'] is True and started['attemptSHA256'] == previous['attemptSHA256']
@@ -477,7 +503,19 @@ def _validate_predecessors(attempt, history, observation, legacy_reference, coun
              and validate_terminal_coverage(legacy['owned'],legacy['processDiagnostics']['worker'],proof) == previous['coverageAssessment'],
              'predecessor proof/assessment binding')
         observation.legacy.validate_owned_coverage(legacy['sampleOwned'])
+        legacy_folder = R4/('sequence-'+attempt['sequenceId'])/'attempts'/previous['attemptId']
+        need(Path(prior_attempt['legacyAttempt']['path']) == legacy_folder/'attempt.json'
+             and Path(legacy_reference['path']) == legacy_folder/'qualification-result.json', 'predecessor legacy record locations')
         legacy_attempt = read_ref(prior_attempt['legacyAttempt'], observation.read_record)
+        for key in ('sequenceId','attemptId','runNonce','scenario'):
+            need(legacy_attempt[key] == prior_attempt[key], 'predecessor legacy attempt binding')
+        marker_data, marker_mode = observation.io.read_file(str(legacy_folder/'qualification-started.json'), 32768)
+        need(marker_mode == 0o600, 'predecessor legacy marker mode')
+        legacy_marker = loads(marker_data)
+        _validate_legacy_marker(legacy_marker, prior_attempt, legacy_attempt['runtimeManifestSHA256'])
+        need(legacy_marker['scenario'] == previous['scenario'] == legacy['scenario'] == decision['scenario'] == SCENARIOS[index]
+             and legacy_marker['runtimeManifestSHA256'] == legacy['runtimeManifestSHA256']
+             and legacy_marker['epoch'] >= previous['startupAdmission']['checkedAt']['wall'], 'predecessor five-record scenario/marker binding')
         legacy_decision = read_ref(legacy_attempt['decision'], observation.read_record)
         ref = prior_attempt['previousResult']; legacy_reference = legacy_decision['previousResult']
     need(ref is None and legacy_reference is None, 'predecessor baseline termination')
@@ -523,19 +561,9 @@ def bind_main(loaded, attempt, context, history, *, io, wall, monotonic):
             marker_data, marker_mode = io.read_file(str(marker), 32768)
             need(marker_mode == 0o600, 'legacy marker mode')
             value = loads(marker_data)
-            exact(value, ('attemptSHA256','sequenceId','attemptId','productTIP','toolTIP','priorFailureSHA256','sourceTIP',
-                          'viewerSourceTIP','failedHistory','runtimeManifestSHA256','scenario','epoch','outputDirectory','oneUse'))
-            need(value['productTIP'] == PINS['productTIP'] and value['toolTIP'] == PINS['deployedToolTIP']
-                 and value['sourceTIP'] == PINS['sourceTIP'] and value['viewerSourceTIP'] == PINS['viewerSourceTIP']
-                 and value['failedHistory'] == FAILURES[:3] and value['priorFailureSHA256'] == FAILURES[2], 'final marker source/history')
-            for key in ('attemptId','sequenceId','scenario'):
-                need(value[key] == attempt[key], 'final marker ownership')
+            _validate_legacy_marker(value, attempt, context[3]['runtimeManifestSHA256'])
             _clock_window(state['admission']['checkedAt'], point(wall, monotonic), maximum=float('inf'))
-            need(value['attemptSHA256'] == attempt['legacyAttempt']['sha256'] and value['oneUse'] is True
-                 and value['runtimeManifestSHA256'] == context[3]['runtimeManifestSHA256'], 'final marker binding')
-            number(value['epoch']); need(value['epoch'] >= state['admission']['checkedAt']['wall'], 'final marker predates startup')
-            output = Path(value['outputDirectory'])
-            need(output.parent == Path(context[0]) and output.name.startswith('ordinary-'+attempt['scenario']+'-'), 'main output marker location')
+            need(value['epoch'] >= state['admission']['checkedAt']['wall'], 'final marker predates startup')
             state['sourceCalls'] = 2
         else:
             need(False, 'unexpected source validation order')
@@ -700,8 +728,26 @@ class ProductionIO:
             except psutil.NoSuchProcess as error:
                 need(error.pid == identity['pid'], 'unknown absent PID'); row['outcome'] = 'gone'
             else:
-                row['birth'] = process.create_time(); row['status'] = process.status(); row['birthAgain'] = process.create_time()
-                row['outcome'] = 'zombie' if row['birth'] == identity['birth'] else 'stable-nonmatching'
+                try:
+                    row['birth'] = process.create_time(); row['status'] = process.status()
+                    # Each public Process caches create_time. Resolve the same PID
+                    # once more for an independent birth observation, never retry.
+                    verification = psutil.Process(identity['pid'])
+                    need(verification is not process, 'independent known identity handle required')
+                    row['birthAgain'] = verification.create_time()
+                    number(row['birth'], True); number(row['birthAgain'], True)
+                    need(row['birth'] == row['birthAgain'], 'known identity birth changed')
+                    if row['birth'] == identity['birth']:
+                        need(row['status'] == 'zombie', 'known identity still alive or unknown')
+                        row['outcome'] = 'zombie'
+                    else:
+                        need(row['status'] in ('running','sleeping','disk-sleep','stopped','tracing-stop','zombie',
+                                              'idle','locked','waiting','waking','wake-kill','parked'), 'unknown process status')
+                        row['outcome'] = 'stable-nonmatching'
+                except Exception:
+                    # A second resolve/read failure is not initial absence. Keep
+                    # partial observations but never grant gone/reused admission.
+                    row['outcome'] = 'unknown'
             row['finished'] = point(wall,monotonic); rows.append(row)
         current = legacy.service_set()  # original listener command retains timeout=5
         idle = legacy.health(require_idle=True)

@@ -642,5 +642,144 @@ class SequenceAndIOTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):clock()
 
 
+class ReviewFixTests(unittest.TestCase):
+    def cached_observation(self, *, birth=20., status='sleeping', mutate_to=None, second_error=None,
+                           same_handle=False, second_birth_error=None):
+        backend={'birth':birth}; calls=[]; reads=[]; handles=[]
+        class CachedProcess:
+            def __init__(self,pid):self.pid=pid;self.cached=None
+            def create_time(self):
+                calls.append(('birth',self.pid,len(handles)))
+                if len(handles)==2 and self is handles[1] and second_birth_error is not None:raise second_birth_error
+                if self.cached is None:
+                    self.cached=backend['birth'];reads.append(self.cached)
+                return self.cached
+            def status(self):
+                calls.append(('status',self.pid))
+                if mutate_to is not None:backend['birth']=mutate_to
+                return status
+        def factory(pid):
+            calls.append(('resolve',pid))
+            if handles and second_error is not None:raise second_error
+            handle=handles[0] if handles and same_handle else CachedProcess(pid)
+            handles.append(handle);return handle
+        known=[{'pid':123,'birth':10.,'parent':None,'firstObservedEpoch':1.,'lastObservedEpoch':2.,'sources':[]}]
+        services={'fixture':True}
+        legacy=types.SimpleNamespace(service_set=lambda:services,health=lambda **kw:{'viewerCount':0,'relayViewerCount':0})
+        with patch.dict(sys.modules,{'psutil':types.SimpleNamespace(Process=factory,NoSuchProcess=NoSuchProcess)}):
+            value=r5.ProductionIO().observe_known(known,services,legacy,lambda:100.,lambda:100.)
+        return value,known,services,calls,reads,backend
+    def test_cached_same_handle_birth_cannot_prove_stability(self):
+        value,known,services,calls,reads,backend=self.cached_observation(mutate_to=30.)
+        with self.assertRaises(RuntimeError):
+            r5._check_observation(value,known,services,value['started'],lambda:100.,lambda:100.)
+        self.assertEqual(value['identities'][0]['outcome'],'unknown')
+        self.assertEqual(reads,[20.,30.]);self.assertEqual(backend['birth'],30.)
+        self.assertEqual([call for call in calls if call[0]=='resolve'],[('resolve',123),('resolve',123)])
+    def test_fresh_present_handles_preserve_stable_zombie_and_reused(self):
+        for birth,status,outcome in ((10.,'zombie','zombie'),(20.,'sleeping','stable-nonmatching')):
+            with self.subTest(outcome=outcome):
+                value,known,services,calls,reads,_=self.cached_observation(birth=birth,status=status)
+                r5._check_observation(value,known,services,value['started'],lambda:100.,lambda:100.)
+                self.assertEqual(value['identities'][0]['outcome'],outcome)
+                self.assertEqual(reads,[birth,birth])
+                self.assertEqual([call[0] for call in calls],['resolve','birth','status','resolve','birth'])
+                self.assertTrue(all(call[1]==123 for call in calls))
+    def test_second_handle_same_object_errors_and_unknown_never_become_gone_or_reused(self):
+        variants=[{'same_handle':True},{'status':'unknown'},{'birth':10.,'status':'running'}]
+        errors=(NoSuchProcess(123),AccessDenied(),OSError(),RuntimeError('fixture'),AttributeError('fixture'))
+        variants += [{'second_error':error} for error in errors]
+        variants += [{'second_birth_error':error} for error in errors]
+        variants += [{'mutate_to':value} for value in (float('nan'),float('inf'),True,-1.)]
+        for variant in variants:
+            with self.subTest(variant=variant):
+                value,known,services,calls,_,_=self.cached_observation(**variant)
+                self.assertEqual(value['identities'][0]['outcome'],'unknown')
+                with self.assertRaises(RuntimeError):
+                    r5._check_observation(value,known,services,value['started'],lambda:100.,lambda:100.)
+                self.assertEqual(sum(call[0]=='resolve' for call in calls),2)
+                self.assertLessEqual(sum(call[0]=='birth' for call in calls),2)
+                self.assertEqual(sum(call[0]=='status' for call in calls),1)
+                self.assertTrue(all(call[1]==123 for call in calls))
+    def resealed_predecessor(self, target, change):
+        c=R5Case();result=c.run(loaded=actual_main_fixture(c))
+        self.assertEqual(result['classification'],'observed-qualification-completed')
+        folder=c.path.parent;legacy_folder=c.folder
+        prior=r5.loads(c.io.files[str(c.path)][0])
+        decision_path=prior['rootDecision']['path'];decision=r5.loads(c.io.read_record(prior['rootDecision']))
+        started=r5.loads(c.io.files[str(folder/'r5-started.json')][0])
+        legacy=r5.loads(c.io.files[str(legacy_folder/'qualification-result.json')][0])
+        marker=r5.loads(c.io.files[str(legacy_folder/'qualification-started.json')][0])
+        records={'outer-result':result,'prior-attempt':prior,'root-decision':decision,
+                 'outer-started':started,'legacy-result':legacy,'legacy-marker':marker}
+        value=records[target]
+        if change=='scenario':value['scenario']='continuity'
+        elif change=='kind':value['kind']='wrong-kind'
+        elif change=='version':value['schemaVersion']=2
+        elif change=='bool-version':value['schemaVersion']=True
+        elif change=='missing':value.pop('scenario' if target=='legacy-marker' else 'schemaVersion')
+        elif change=='extra':value['extra']='not-authorized'
+        elif change=='oneUse':value['oneUse']=False
+        else:raise AssertionError('fixture change')
+        decision_ref=c.io.put(decision_path,decision);prior['rootDecision']=decision_ref
+        attempt_ref=c.io.put(c.path,prior)
+        started.update(attemptSHA256=attempt_ref['sha256'],rootDecision=decision_ref)
+        started['admission']['decisionSHA256']=decision_ref['sha256']
+        started_ref=c.io.put(folder/'r5-started.json',started)
+        result.update(attemptSHA256=attempt_ref['sha256'],startedSHA256=started_ref['sha256'],rootDecision=decision_ref)
+        result['startupAdmission']['decisionSHA256']=decision_ref['sha256']
+        result['legacyResult']=c.io.put(legacy_folder/'qualification-result.json',legacy)
+        c.io.put(legacy_folder/'qualification-started.json',marker)
+        result_ref=c.io.put(folder/'r5-result.json',result)
+        # Deliberately resealed malformed authorization must fail semantic gates,
+        # not merely digest checks. Every rewritten reference is independently read.
+        for ref in (decision_ref,attempt_ref,started_ref,result_ref,result['legacyResult']):
+            self.assertIsInstance(r5.read_ref(ref,c.io.read_record),dict)
+        return c,advance_case(c,'within-grace')
+    def test_each_predecessor_scenario_record_must_equal_expected_previous(self):
+        for target in ('outer-result','legacy-result','prior-attempt','root-decision','legacy-marker'):
+            with self.subTest(target=target):
+                c,next_case=self.resealed_predecessor(target,'scenario');writes=len(c.io.operational_writes)
+                with self.assertRaises(RuntimeError) as error:next_case.run(check_only=True)
+                self.assertNotIn('SHA drift',str(error.exception))
+                self.assertEqual(len(c.io.popen_calls),1);self.assertEqual(len(c.io.operational_writes),writes)
+    def test_predecessor_outer_inputs_and_started_require_exact_kind_version_schema(self):
+        for target in ('prior-attempt','outer-started','root-decision'):
+            for change in ('kind','version','bool-version','missing','extra'):
+                with self.subTest(target=target,change=change):
+                    c,next_case=self.resealed_predecessor(target,change);writes=len(c.io.operational_writes)
+                    with self.assertRaises(RuntimeError) as error:next_case.run(check_only=True)
+                    self.assertNotIn('SHA drift',str(error.exception))
+                    self.assertEqual(len(c.io.popen_calls),1);self.assertEqual(len(c.io.operational_writes),writes)
+    def test_predecessor_legacy_marker_exact_schema_mode_and_presence_required(self):
+        for change in ('missing','extra','oneUse','mode','absent'):
+            with self.subTest(change=change):
+                if change in ('mode','absent'):
+                    c=R5Case();c.run(loaded=actual_main_fixture(c));next_case=advance_case(c,'within-grace')
+                    path=str(c.folder/'qualification-started.json')
+                    if change=='mode':c.io.files[path]=(c.io.files[path][0],0o644)
+                    else:c.io.files.pop(path)
+                else:c,next_case=self.resealed_predecessor('legacy-marker',change)
+                writes=len(c.io.operational_writes)
+                with self.assertRaises((RuntimeError,FileNotFoundError)):next_case.run(check_only=True)
+                self.assertEqual(len(c.io.popen_calls),1);self.assertEqual(len(c.io.operational_writes),writes)
+    def test_resealed_baseline_result_cannot_use_continuity_attempt_decision(self):
+        c=R5Case();result=c.run(loaded=actual_main_fixture(c))
+        self.assertEqual(result['classification'],'observed-qualification-completed')
+        folder=c.path.parent
+        prior=r5.loads(c.io.files[str(c.path)][0]);decision=r5.loads(c.io.read_record(prior['rootDecision']))
+        decision['scenario']='continuity';new_decision=c.io.put(prior['rootDecision']['path'],decision)
+        prior['scenario']='continuity';prior['rootDecision']=new_decision;new_attempt=c.io.put(c.path,prior)
+        started=r5.loads(c.io.files[str(folder/'r5-started.json')][0])
+        started['attemptSHA256']=new_attempt['sha256'];started['rootDecision']=new_decision
+        started['admission']['decisionSHA256']=new_decision['sha256'];new_started=c.io.put(folder/'r5-started.json',started)
+        result['attemptSHA256']=new_attempt['sha256'];result['startedSHA256']=new_started['sha256']
+        result['rootDecision']=new_decision;result['startupAdmission']['decisionSHA256']=new_decision['sha256']
+        c.io.put(folder/'r5-result.json',result)
+        next_case=advance_case(c,'within-grace');writes=len(c.io.operational_writes)
+        with self.assertRaises(RuntimeError):next_case.run(check_only=True)
+        self.assertEqual(len(c.io.popen_calls),1);self.assertEqual(len(c.io.operational_writes),writes)
+
+
 if __name__ == '__main__':
     unittest.main()
