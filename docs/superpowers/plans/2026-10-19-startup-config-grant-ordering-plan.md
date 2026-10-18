@@ -24,7 +24,7 @@
 
 **Interfaces:** consume startViewer/init/applyBootstrapSnapshot, _deferPeerUntilConfig, startupAllowed, actual Input.setControlLease gate, current controlState, createPeerConnection/createOffer and ownsOffer fences. Produce one narrow WebRTC reconciliation method called from configured init and valid grant. It returns without media effects unless configuration and current control/Input eligibility hold. Method naming may follow current code, but report its exact API and why duplicate suppression preserves recovery. No generic framework or new authority owner.
 
-- [ ] Step1: Read spec plus characterization/review and actual Input gate/offer ownership code. Extend existing fixture with real bootstrap controller and fake deferred fetch/RTC transitions. Reuse helpers and actual production bodies; suppress only automatic DOM boot through readyState=loading. Add desired-invariant regression and ready-config control, including real Input fresh lease path.
+- [x] Step1: Read spec plus characterization/review and actual Input gate/offer ownership code. Extend existing fixture with real bootstrap controller and fake deferred fetch/RTC transitions. Reuse helpers and actual production bodies; suppress only automatic DOM boot through readyState=loading. Add desired-invariant regression and ready-config control, including real Input fresh lease path.
 
 ```javascript
 assert.equal(peers.length, 0); // after real early grant, before config settles
@@ -39,8 +39,8 @@ assert.equal(peers[0].remoteDescriptionApplications, 1);
 
 Fixture names are local test helpers, not product methods. They must delegate to actual bootstrap resolution/socket listener and report scalar state only.
 
-- [ ] Step2: Run new focused tests RED against unchanged production, retain exact command/count/exit/log. Fixture failures are separate. Do not accept old characterization exit0 as this RED.
-- [ ] Step3: Implement the narrow join. Shared reconciliation preserves existing media tail and checks current configuration deferral, episode, control and Input eligibility; init resumes a valid early grant without a second grant. Add actual media-entry deferral fence so other callbacks cannot create a pre-config peer/offer. Suppress matching duplicate initial offers using existing peer SDP/signaling/ownership where possible; do not globally block later createOffer calls.
+- [x] Step2: Run new focused tests RED against unchanged production, retain exact command/count/exit/log. Fixture failures are separate. Do not accept old characterization exit0 as this RED.
+- [x] Step3: Implement the narrow join. Shared reconciliation preserves existing media tail and checks current configuration deferral, episode, control and Input eligibility; init resumes a valid early grant without a second grant. Add actual media-entry deferral fence so other callbacks cannot create a pre-config peer/offer. Suppress matching duplicate initial offers using existing peer SDP/signaling/ownership where possible; do not globally block later createOffer calls.
 
 ```javascript
 // Required earliest reconciliation predicates, before any media side effect:
@@ -50,8 +50,8 @@ if (!this.startupAllowed() || this._deferPeerUntilConfig || !this.hasActiveContr
 
 Spec invariants bind the implementation: if literal sharing would bypass Input or suppress recovery, keep the public contracts and use the smallest explicit private identity check. Document that choice in the task report; do not add a generic cache/router.
 
-- [ ] Step4: Add GREEN matrix: both arrival orders; duplicate grants during/after initial offer; old async offer cancelled by new owner; cancelled/superseded/auth-changed pending config; Input false/reacquire gate and no-control; tunnel path; completed-session regrant/refresh compatibility. Preserve real ownership and no fake frames/gate success.
-- [ ] Step5: Run focused GREEN then affected suites once:
+- [x] Step4: Add GREEN matrix: both arrival orders; duplicate grants during/after initial offer; old async offer cancelled by new owner; cancelled/superseded/auth-changed pending config; Input false/reacquire gate and no-control; tunnel path; completed-session regrant/refresh compatibility. Preserve real ownership and no fake frames/gate success.
+- [x] Step5: Run focused GREEN then affected suites once:
 
 ```bash
 /Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node --test web-client/js/webrtc.test.js web-client/js/input.test.js web-client/js/input-recovery.test.js web-client/js/bootstrap-controller.test.js scripts/passive-session-sampler.test.js

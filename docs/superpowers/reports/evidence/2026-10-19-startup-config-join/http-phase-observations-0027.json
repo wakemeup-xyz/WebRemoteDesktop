@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "scope": "bounded-read-only-HTTP-phase-observations-not-connection-acceptance",
+  "atUTC": "2026-10-18T16:27:36Z",
+  "probes": [
+    {
+      "route": "environment-default",
+      "curlExit": 28,
+      "httpStatus": null,
+      "totalSeconds": 3.001921,
+      "connectBudgetSeconds": 3,
+      "maxSeconds": 8,
+      "phaseTiming": null,
+      "classification": "connect-phase-timeout-cause-unknown"
+    },
+    {
+      "route": "direct",
+      "curlExit": 0,
+      "httpStatus": 200,
+      "proxyConnectStatus": null,
+      "dnsSeconds": 1.199969,
+      "tcpSeconds": 1.36093,
+      "tlsSeconds": 1.542612,
+      "firstByteSeconds": 2.29102,
+      "totalSeconds": 2.291813,
+      "connectBudgetSeconds": 4,
+      "maxSeconds": 10
+    },
+    {
+      "route": "environment-default",
+      "curlExit": 0,
+      "httpStatus": 200,
+      "proxyConnectStatus": 200,
+      "dnsSeconds": 0.000589,
+      "tcpSeconds": 0.00124,
+      "tlsSeconds": 1.792129,
+      "firstByteSeconds": 2.956094,
+      "totalSeconds": 2.956727,
+      "connectBudgetSeconds": 6,
+      "maxSeconds": 12
+    },
+    {
+      "route": "local-origin",
+      "curlExit": 0,
+      "httpStatus": 200,
+      "totalSeconds": 0.018443,
+      "connectBudgetSeconds": 1,
+      "maxSeconds": 3
+    }
+  ],
+  "limits": [
+    "each separate observation retained; later success does not replace timeout",
+    "cumulative curl TLS timing includes proxy CONNECT and TLS for default route",
+    "no unique proxy/DNS/Cloudflare/user-path cause established",
+    "HTTP200 not HTML/core/auth/Host/media/input/visible acceptance"
+  ],
+  "runtimeChanges": false,
+  "tunnelWatchActions": false
+}

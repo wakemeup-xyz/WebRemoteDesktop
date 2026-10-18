@@ -1,0 +1,607 @@
+{
+  "schemaVersion": 2,
+  "window": {
+    "upperUtc": "2026-10-18T15:47:01+00:00",
+    "lowerUtc": "2026-10-15T15:47:01+00:00",
+    "upperCst": "2026-10-18T23:47:01+08:00",
+    "lowerCst": "2026-10-15T23:47:01+08:00"
+  },
+  "supersedesMethodOnly": "v1 physical timestamp-line analysis; v1 preserved",
+  "files": [
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 45696663,
+      "sizeAtOpen": 7039495,
+      "prefixCap": 7039495,
+      "sha256": "847c571eb70808ea2f09c16e0e2bdaa9eec51417e55bef69f0f1214005e2d5f5",
+      "truncated": false,
+      "timestampedLines": 3744,
+      "unparsedLines": 0,
+      "inWindowLines": 3722,
+      "actualMinCst": "2026-10-18T19:40:49.521000+08:00",
+      "actualMaxCst": "2026-10-18T23:48:57.498000+08:00",
+      "prefixVerified": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+      "status": "read",
+      "device": 16777220,
+      "inode": 45148030,
+      "sizeAtOpen": 10484296,
+      "prefixCap": 10484296,
+      "sha256": "a1aa7285868f184e287a7792763609e34f358c2ab53ac94a60448684331e21f5",
+      "truncated": false,
+      "timestampedLines": 6410,
+      "unparsedLines": 0,
+      "inWindowLines": 6410,
+      "actualMinCst": "2026-10-18T12:59:07.806000+08:00",
+      "actualMaxCst": "2026-10-18T19:40:43.521000+08:00",
+      "prefixVerified": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.2",
+      "status": "read",
+      "device": 16777220,
+      "inode": 44252455,
+      "sizeAtOpen": 10485058,
+      "prefixCap": 10485058,
+      "sha256": "f0b10f8a840c26133e31c372b34aeea5e3c7e41b23bc379854a9623d2aa1e91c",
+      "truncated": false,
+      "timestampedLines": 21262,
+      "unparsedLines": 0,
+      "inWindowLines": 21262,
+      "actualMinCst": "2026-10-18T06:17:52.371000+08:00",
+      "actualMaxCst": "2026-10-18T12:59:02.806000+08:00",
+      "prefixVerified": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.3",
+      "status": "read",
+      "device": 16777220,
+      "inode": 43654875,
+      "sizeAtOpen": 10485726,
+      "prefixCap": 10485726,
+      "sha256": "e96edc5f57ada28ccaf7c4eb06d6de65ad83c136c769912a28c4932f00b488b6",
+      "truncated": false,
+      "timestampedLines": 24327,
+      "unparsedLines": 0,
+      "inWindowLines": 24327,
+      "actualMinCst": "2026-10-17T23:56:26.065000+08:00",
+      "actualMaxCst": "2026-10-18T06:17:52.248000+08:00",
+      "prefixVerified": true
+    },
+    {
+      "path": "/tmp/signal-server.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31830923,
+      "sizeAtOpen": 3539237,
+      "prefixCap": 3539237,
+      "sha256": "d09da8a4e8961d36f44215da71fd14c7952eecab8201f63c02bba31b9801b709",
+      "truncated": false,
+      "timestampedLines": 9967,
+      "unparsedLines": 129430,
+      "inWindowLines": 8342,
+      "actualMinCst": "2026-10-03T11:57:16.202000+08:00",
+      "actualMaxCst": "2026-10-18T23:48:03.139000+08:00",
+      "prefixVerified": true
+    },
+    {
+      "path": "/tmp/signal-server.log.1",
+      "status": "missing",
+      "errno": 2
+    },
+    {
+      "path": "/tmp/signal-server.log.2",
+      "status": "missing",
+      "errno": 2
+    },
+    {
+      "path": "/tmp/signal-server.log.3",
+      "status": "missing",
+      "errno": 2
+    },
+    {
+      "path": "/tmp/wrd-fixed-domain.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31832550,
+      "sizeAtOpen": 549007,
+      "prefixCap": 549007,
+      "sha256": "4a092f0c7c7a878fa3a5735cb2c73508c76a126967523728584701ac940ed01f",
+      "truncated": false,
+      "timestampedLines": 4303,
+      "unparsedLines": 0,
+      "inWindowLines": 406,
+      "actualMinCst": "2026-10-02T20:15:23+08:00",
+      "actualMaxCst": "2026-10-18T19:44:29+08:00",
+      "prefixVerified": true
+    },
+    {
+      "path": "/tmp/wrd-fixed-watch.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31249506,
+      "sizeAtOpen": 1933362,
+      "prefixCap": 1933362,
+      "sha256": "c38fd14f5f962d18af1b8ef5677406f57d70a49668ccf530b9255ad9b67e75f8",
+      "truncated": false,
+      "timestampedLines": 23170,
+      "unparsedLines": 0,
+      "inWindowLines": 3923,
+      "actualMinCst": "2026-10-01T15:48:19+08:00",
+      "actualMaxCst": "2026-10-18T23:48:20+08:00",
+      "prefixVerified": true
+    },
+    {
+      "path": "/tmp/wrd-fixed-watch-launch.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31248998,
+      "sizeAtOpen": 7285245,
+      "prefixCap": 7285245,
+      "sha256": "499d937060dfb115dbc86e1261f5ee5a754697cba0276c9dacfcca152303abde",
+      "truncated": false,
+      "timestampedLines": 23730,
+      "unparsedLines": 23189,
+      "inWindowLines": 3963,
+      "actualMinCst": "2026-10-01T15:48:19+08:00",
+      "actualMaxCst": "2026-10-18T23:48:20+08:00",
+      "prefixVerified": true
+    }
+  ],
+  "readPolicy": {
+    "O_NOFOLLOW": true,
+    "regularOnly": true,
+    "phaseBytes": 51801426,
+    "phaseLimit": 62914560,
+    "perFileLimit": 67108864,
+    "authorPriorBytes": 155359406,
+    "reviewPriorBytes": 72904863,
+    "combinedPriorAndThisPhaseBytes": 280065695,
+    "combinedNewLimitBytes": 402653184,
+    "originalPrefixReused": true
+  },
+  "framing": {
+    "knownRepresentations": [
+      "timestamp-plain: leading optional [ plus timestamp; subsequent lines until next known record",
+      "timestamp-inline-json: timestamp-framed block with complete JSON tail containing event",
+      "node-inspect: unindented standalone { through unindented standalone }; top-level two-space ts/event/level fields"
+    ],
+    "authoritativeTimestamp": "Node top-level ts; timestamp log outer leading timestamp otherwise; timezone-less treated CST",
+    "dedup": "same representation plus SHA256 of complete raw record bytes; across sources exact only; no logical incident merge",
+    "unknownFragments": {
+      "/tmp/signal-server.log:orphan-physical-lines": 3908,
+      "/tmp/wrd-fixed-watch-launch.log:orphan-physical-lines": 1
+    },
+    "preWindowRecordCounts": {
+      "timestamp-inline-json": 15464,
+      "timestamp-plain": 91482,
+      "node-inspect": 5328
+    },
+    "uniqueWindowRecordsByRepresentation": {
+      "timestamp-inline-json": 15442,
+      "timestamp-plain": 48505,
+      "node-inspect": 3703
+    },
+    "exactDuplicateWindowRecordsByRepresentation": {
+      "timestamp-plain": 66,
+      "node-inspect": 3
+    }
+  },
+  "selectors": {
+    "mode": "case insensitive re.search over complete record, at most once per selector per record",
+    "regex": {
+      "disconnect": "\\bdisconnect(?:ed|ion)?\\b|(?:^|_)disconnect(?:ed)?(?:_|$)",
+      "reset": "\\breset\\b|(?:^|_)reset(?:_|$)",
+      "diagnostic": "diagnostic",
+      "maintenanceVersion": "\\brestart\\b|\\bstarting\\b|\\bstartup\\b|\\blistening\\b|build_?id|source_?commit",
+      "unauthorized": "\\bunauthorized\\b",
+      "tunnelNotFound": "\\btunnel not found\\b",
+      "error1033": "\\b(?:error|code)\\s+1033\\b",
+      "badGateway502": "\\b502 bad gateway\\b",
+      "connectionRefused": "\\bconnection refused\\b",
+      "transportClose": "\\btransport close\\b",
+      "pingTimeout": "\\bping timeout\\b",
+      "resetTimeout": "\\breset[ _-]timeout\\b",
+      "resetFailed": "\\breset[ _-]failed\\b",
+      "resetRejected": "\\breset[ _-]rejected\\b",
+      "resetBlocked": "\\breset[ _-]blocked\\b|\\bmouse-reset-pending\\b",
+      "health": "\\bhealth\\b",
+      "origin": "\\borigin\\b",
+      "dns": "\\bdns\\b",
+      "registeredTunnel": "\\bregistered tunnel connection\\b"
+    },
+    "notCovered": [
+      "Unknown/orphan/truncated record fragments",
+      "Other log grammars or differently named events/fields",
+      "User/probe/maintenance attribution",
+      "HTTP status interpretation absent explicit supporting context",
+      "Logical incident correlation across plain/structured mirrors",
+      "Diagnostic inventory and retention verification"
+    ]
+  },
+  "aggregates": {
+    "disconnect": {
+      "timestamp-inline-json": {
+        "matchingRecords": 16,
+        "latestCst": "2026-10-18T23:09:03.108000+08:00"
+      },
+      "timestamp-plain": {
+        "matchingRecords": 45,
+        "latestCst": "2026-10-18T23:09:00.673000+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 505,
+        "latestCst": "2026-10-18T23:24:08.321000+08:00"
+      }
+    },
+    "reset": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 2,
+        "latestCst": "2026-10-17T07:34:22+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 497,
+        "latestCst": "2026-10-18T23:24:08.384000+08:00"
+      }
+    },
+    "diagnostic": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 2781,
+        "latestCst": "2026-10-18T23:24:04.167000+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 1876,
+        "latestCst": "2026-10-18T23:46:03.115000+08:00"
+      }
+    },
+    "maintenanceVersion": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 19,
+        "latestCst": "2026-10-18T19:23:25.462000+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "unauthorized": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 7,
+        "latestCst": "2026-10-17T03:31:17.082000+08:00"
+      }
+    },
+    "tunnelNotFound": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "error1033": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "badGateway502": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "connectionRefused": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 51,
+        "latestCst": "2026-10-18T23:09:01.999000+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "transportClose": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 41,
+        "latestCst": "2026-10-18T23:24:00.317000+08:00"
+      }
+    },
+    "pingTimeout": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 64,
+        "latestCst": "2026-10-18T00:04:08.169000+08:00"
+      }
+    },
+    "resetTimeout": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "resetFailed": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "resetRejected": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "resetBlocked": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "node-inspect": {
+        "matchingRecords": 8,
+        "latestCst": "2026-10-17T13:24:59.086000+08:00"
+      }
+    },
+    "health": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 2,
+        "latestCst": "2026-10-16T19:44:24+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "origin": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 26,
+        "latestCst": "2026-10-17T13:45:10+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 1542,
+        "latestCst": "2026-10-18T23:46:03.115000+08:00"
+      }
+    },
+    "dns": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 12,
+        "latestCst": "2026-10-18T12:56:05+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    },
+    "registeredTunnel": {
+      "timestamp-inline-json": {
+        "matchingRecords": 0,
+        "latestCst": null
+      },
+      "timestamp-plain": {
+        "matchingRecords": 41,
+        "latestCst": "2026-10-18T16:20:27+08:00"
+      },
+      "node-inspect": {
+        "matchingRecords": 0,
+        "latestCst": null
+      }
+    }
+  },
+  "eventCountsByRepresentation": {
+    "timestamp-inline-json:host_event_loop_lag": 15393,
+    "timestamp-inline-json:start": 18,
+    "timestamp-inline-json:terminal": 18,
+    "timestamp-inline-json:host_session_presentation": 13,
+    "node-inspect:viewer_bootstrap_served": 141,
+    "node-inspect:unknown": 2,
+    "node-inspect:signal_input_relayed": 347,
+    "node-inspect:connection_attempt_bound": 385,
+    "node-inspect:media_activity_requested": 109,
+    "node-inspect:diagnostic_uploaded": 334,
+    "node-inspect:control_transition_failed_closed": 255,
+    "node-inspect:signal_input_rejected": 14,
+    "node-inspect:control_reset_retry": 123,
+    "node-inspect:control_reset_blocked": 8,
+    "node-inspect:viewer_disconnect_grace_started": 288,
+    "node-inspect:viewer_reconnected": 10,
+    "node-inspect:viewer_rebind_confirmed": 8,
+    "node-inspect:signal_input_aggregate": 6,
+    "node-inspect:viewer_rebind_failed": 2,
+    "node-inspect:signal_socket_disconnected": 116,
+    "node-inspect:entry_window": 1542,
+    "node-inspect:control_reset_completed": 11,
+    "node-inspect:viewer_disconnect_grace_expired": 2
+  },
+  "eventLatestCstByRepresentation": {
+    "timestamp-inline-json:host_event_loop_lag": "2026-10-18T23:46:55.518000+08:00",
+    "timestamp-inline-json:start": "2026-10-18T23:24:08.322000+08:00",
+    "timestamp-inline-json:terminal": "2026-10-18T23:24:08.383000+08:00",
+    "timestamp-inline-json:host_session_presentation": "2026-10-18T23:18:57.593000+08:00",
+    "node-inspect:viewer_bootstrap_served": "2026-10-18T23:18:50.906000+08:00",
+    "node-inspect:unknown": "2026-10-16T01:33:16.817000+08:00",
+    "node-inspect:signal_input_relayed": "2026-10-17T13:24:14.429000+08:00",
+    "node-inspect:connection_attempt_bound": "2026-10-18T23:18:57.464000+08:00",
+    "node-inspect:media_activity_requested": "2026-10-17T10:48:12.983000+08:00",
+    "node-inspect:diagnostic_uploaded": "2026-10-17T22:09:27.826000+08:00",
+    "node-inspect:control_transition_failed_closed": "2026-10-18T23:24:08.321000+08:00",
+    "node-inspect:signal_input_rejected": "2026-10-18T00:04:08.716000+08:00",
+    "node-inspect:control_reset_retry": "2026-10-18T15:01:24.856000+08:00",
+    "node-inspect:control_reset_blocked": "2026-10-17T13:24:59.086000+08:00",
+    "node-inspect:viewer_disconnect_grace_started": "2026-10-18T23:24:00.319000+08:00",
+    "node-inspect:viewer_reconnected": "2026-10-17T03:27:54.180000+08:00",
+    "node-inspect:viewer_rebind_confirmed": "2026-10-17T03:27:54.228000+08:00",
+    "node-inspect:signal_input_aggregate": "2026-10-17T03:30:04.881000+08:00",
+    "node-inspect:viewer_rebind_failed": "2026-10-17T03:00:06.584000+08:00",
+    "node-inspect:signal_socket_disconnected": "2026-10-18T23:24:00.317000+08:00",
+    "node-inspect:entry_window": "2026-10-18T23:46:03.115000+08:00",
+    "node-inspect:control_reset_completed": "2026-10-18T23:24:08.384000+08:00",
+    "node-inspect:viewer_disconnect_grace_expired": "2026-10-18T23:24:08.321000+08:00"
+  },
+  "severityRecordCountsByRepresentation": {
+    "timestamp-inline-json:info": 8318,
+    "timestamp-inline-json:warning": 7124,
+    "timestamp-plain:info": 40145,
+    "timestamp-plain:warning": 89,
+    "timestamp-plain:error": 34,
+    "node-inspect:info": 3703,
+    "timestamp-plain:unknown": 8237
+  },
+  "dailyRecordCountsByRepresentation": {
+    "timestamp-inline-json:2026-10-18": 15403,
+    "timestamp-plain:2026-10-18": 42874,
+    "timestamp-inline-json:2026-10-17": 39,
+    "timestamp-plain:2026-10-17": 2760,
+    "node-inspect:2026-10-16": 310,
+    "node-inspect:2026-10-17": 1863,
+    "node-inspect:2026-10-18": 1530,
+    "timestamp-plain:2026-10-16": 2847,
+    "timestamp-plain:2026-10-15": 24
+  },
+  "lag": {
+    "inlineStructuredWindows": 15393,
+    "windowMaxGe1000Records": 187,
+    "currentGe1000Records": 13,
+    "maxCurrentMs": 7641.923,
+    "maxWindowMs": 7641.923,
+    "latestCurrentGe1000Cst": "2026-10-18T02:48:48.872000+08:00",
+    "latestWindowGe1000Cst": "2026-10-18T03:29:31.434000+08:00"
+  },
+  "coverageAssessment": {
+    "host72hComplete": false,
+    "hostEarliestRetainedCst": "2026-10-17T23:56:26.065+08:00",
+    "hostEarlierWindowMissing": true,
+    "signalRotationsMissing": [
+      1,
+      2,
+      3
+    ],
+    "timestampFreeLinesNotAttributed": true,
+    "diagnosticInventory": "NOT_RUN",
+    "diagnosticRetentionVerified": false,
+    "historicalReportCountsReused": false,
+    "sourcePrefixFrozenOnEachRead": true,
+    "upperExclusion": "Timestamped records beyond upper excluded despite later snapshot bytes."
+  },
+  "r5Actual": {
+    "classification": "FAILED",
+    "reason": "cleanup-incomplete",
+    "viewerBuild": "bb581651b422e400",
+    "passiveBaselineSamples": 301,
+    "startupSamples": 13,
+    "businessInputs": "NOT_RUN",
+    "sixInputMetrics": "null / NOT_RUN",
+    "passiveMedia": "progress-observed",
+    "qualificationPass": false
+  },
+  "provenance": {
+    "command": "python3 /tmp/wrd-rolling72h-parser-v2.py",
+    "parserSha256": "f5cf60da046d4a512a43a22e34c676c47f82de5ebe164259f6cb9b4d076c6cba",
+    "v1JsonSha256": "857a699c99f8625765cca9e13e8a2729049f1d50f839974f20a2373c75b8a41f",
+    "executionLogSha256": "2daa4b65b52024e967d79ac11d808d5d569cd62c71c8bd7f3a20cd1843bb9f11",
+    "actualCommand": "python3 /tmp/wrd-rolling72h-parser-v2.py > /tmp/wrd-rolling72h-parser-v2-execution.log"
+  }
+}
