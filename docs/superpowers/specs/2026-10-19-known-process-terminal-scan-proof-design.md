@@ -89,13 +89,15 @@ R4 `sequence()` 要求 folder.parent==R，并严格校验三条 failedHistory；
 
 loader 必须在任何 R4 导入前验证 package manifest、所需 transitive import 文件 SHA/mode/regular-file/no-symlink 边界和 SUP/module35 pins；不能只校验三个入口。仅执行定义的导入路径，不运行 `__main__`。对 bare imports 使用受控临时 import 环境，拒绝已缓存的同名外来模块，核对 `__file__` 与 hash closure，结束后恢复 sys.path/sys.modules；不得在共享已加载 R4 module 上 monkeypatch。fixture 必须检验同名污染和 closure 漂移失败。如果不能做到独立受控加载，停止集成，不退化成复制包或宽泛 AST 改写。
 
-新调用命名空间仅绑定三个窄接口：`instrument_registry`（worker 用新 producer，sample 保持原实现）、`validate_owned_coverage`（worker 新 consumer，sample 保持原严格规则），以及 `current_gate`。前两项实现覆盖策略；第三项只追加准入：**先无条件调用真实原 current_gate(args, expected)，成功后再复核 R5 exact known-list 和 root decision freshness≤60 秒**，并检查 wall/monotonic 不倒退。任何一项失败向上传播，禁止替换、跳过或弱化原 gate。每次原 main 调用 current_gate 都执行这条顺序，尤其最后一次成功后 main 原样进行 source_pins、创建 legacy marker 和 worker，不另插延迟流程；外层提前检查不能替代此处紧邻准入。
+新调用命名空间仅绑定三个窄接口：`instrument_registry`（worker 用新 producer，sample 保持原实现）、`validate_owned_coverage`（worker 新 consumer，sample 保持原严格规则），以及 `source_pins`。前两项实现覆盖策略；第三项只追加启动准入：**每次先无条件调用真实原 source_pins(args, m)，在 main 启动前的首次调用成功后，再复核 R5 exact known-list 和 root decision freshness≤60 秒**，并检查 wall/monotonic 不倒退。任何一项失败向上传播，禁止替换、跳过或弱化原 source 验证。`current_gate` 完全保持原函数引用和 main 原有两次调用；它后面仍有可能耗时的 source_pins/attempt_context，所以不能在 current_gate 返回时提前完成最终 freshness 检查。
+
+只用每次新命名空间内部的首次 source_pins 状态和原 legacy `qualification-started.json` 的一用一次生命周期，区分启动与 final：首次调用必须处在该 attempt 未写 legacy marker 的启动位置，完成 source 验证和 fresh 检查后才记为已检查；随后 final 调用必须匹配该次 main 写出的 marker/attempt 绑定，仍无条件执行原 source 验证，但不要求已消费的启动 decision 在 300/10800 秒后仍≤60 秒。未知次序、额外调用或 marker 归属不明均拒绝；不得接受 caller 提供的布尔值跳过启动检查。预存在的旧 legacy marker 仍由原 main consumed check 拒绝，R5 outer marker/ID 也保持独占。启动 source_pins hook 成功后按原 main 的 tempdir→legacy marker→worker 次序继续，不插入额外等待；外层提前检查不能替代此处准入。
 
 所有其他 main/Rows/registration/worker loop/cleanup/validation stages 使用原函数定义。sample 可通过真实纯 legacy coverage validator 对同一个 sample ownership 作两参数校验；先确认它无副作用且两参数对称，不能用伪造 clean worker 填位。若接口不同，采用等价只读委托并写下 review 证据，禁止放宽 sample。
 
 outer entry 先调用真实 R4 `attempt_context(args, admission=True)`，再校验 R5 history/admission。正常 run 在调用 main 前消费一个 exclusive one-use R5 marker，再执行 main；check-only 不进入 main 的运行/写入路径、不消费任何 marker。它不替换原 attempt_context 的结果或跳过 run 中的重复检查。新 proof/assessment 与原 main 产生的**新** legacy result 分开落盘，用 SHA 强绑定；原 result 的 raw 字段保留。outer R5 result 明示 prospective policy、生效代码/依赖 SHA、legacy result SHA、proof SHA、完整新 history、validation 与 classification；缺少 outer result、任一失败或 legacy 非成功时，R5 不成功。后续情景必须同时检查同序列的 legacy 和 R5 predecessor，不能只凭 legacy classification 前进。
 
-`--check-only` 是独立真实只读集成入口：执行真实 R4 完整 gate（含 attempt_context/ready_context/current_gate 路径）及 R5 history/known-list/freshness/source pins，对当前 FS、metadata、Git、known process、HTTP 做原有有界只读检查。它不启动 worker/browser/sample，不修改服务、不写 operational marker/result，不生成 qualification 或消费 one-use；仅 stdout 输出 ≤32768 UTF-8 bytes 的脱敏诊断，root 可另存真实输出。失败返回非零；成功只表示当时只读集成通过。
+`--check-only` 是独立真实只读集成入口：执行真实 R4 完整 gate（含 attempt_context/ready_context 路径），独立调用真实 current_gate 和真实 source_pins，**最后**追加 R5 exact known-list/root decision≤60 秒与时钟检查；不借用 main 的首次/final hook 状态。它对当前 FS、metadata、Git、known process、HTTP 做原有有界只读检查，不调用 main、不启动 worker/browser/sample、不修改服务、不写 operational marker/result、不生成 qualification 或消费 one-use；仅 stdout 输出 ≤32768 UTF-8 bytes 的脱敏诊断，root 可另存真实输出。失败返回非零；成功只表示当时只读集成通过。
 
 ### 四次失败、reload 与已知身份
 
@@ -122,7 +124,7 @@ root 新 decision/sequence/attempt/runNonce 必须排除所有历史标识，包
 
 ### 运行与变更边界
 
-文档/两个实现任务不 copy/build/reload、不启动浏览器/worker/sample、不网络或进程查询、不重启服务。root 在代码、纯测试与 fresh most-capable 全分支 review 完成后，必须先独立执行上述真实 `--check-only` 才可决定 run；该阶段允许正常 Git/known-process/HTTP 只读检查，禁止任何运行/服务 mutation。只读成功后 root 另建 fresh run decision，实际 run 重跑全部原 gate 和 R5 gate；check-only 不是 runtime qualification，也不豁免 60 秒 TTL 或最后一次 current_gate 的再检查。每个 scenario 保留独立 root decision、一用一次、fresh strict idle；不自动 retry/next/clear。baseline/within-grace/after-grace/continuity 的预算分别 **300/390/390/10800 秒**，原 worker deadline=duration+128 及 cleanup 上限不变；within/after 的**整个恢复场景**禁止 Host sample。质量、FPS、codec、network、grace、deadline、阈值不变。
+文档/两个实现任务不 copy/build/reload、不启动浏览器/worker/sample、不网络或进程查询、不重启服务。root 在代码、纯测试与 fresh most-capable 全分支 review 完成后，必须先独立执行上述真实 `--check-only` 才可决定 run；该阶段允许正常 Git/known-process/HTTP 只读检查，禁止任何运行/服务 mutation。只读成功后 root 另建 fresh run decision，实际 run 重跑全部原 gate 和 R5 gate；check-only 不是 runtime qualification，也不豁免 60 秒 TTL 或启动 source_pins 返回后的 fresh 检查。每个 scenario 保留独立 root decision、一用一次、fresh strict idle；不自动 retry/next/clear。baseline/within-grace/after-grace/continuity 的预算分别 **300/390/390/10800 秒**，原 worker deadline=duration+128 及 cleanup 上限不变；within/after 的**整个恢复场景**禁止 Host sample。质量、FPS、codec、network、grace、deadline、阈值不变。
 
 部署 pins 保留：source=`41c7b0998859a7e9d088cefcc0f3a1eeab190684`；Viewer=`fefc555aea9640b563bfd22f5b36b6b8ca6365ec`；tools=`2822441791b59a021556c7e4eb24715df9d5b277`；backend=`dfb15434e79da90b803b763c533836e16c080c71`；module35 原字节。旧 source worktree `/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop` 的 HEAD held41 不动；primary `/Users/macstudio1/AI/Claude/WebRemoteDesktop` 的 HEAD/index/4 份既有 dirty docs 和 1016 known-map 不动。source/assets/modes/component/service/preserved/tunnel/watcher/quick-file 全部原门槛保留。
 
@@ -132,7 +134,7 @@ root 新 decision/sequence/attempt/runNonce 必须排除所有历史标识，包
 
 两个任务分别 RED→GREEN、root systematic review、独立 commit；最终新鲜、最强可用 reviewer 审全分支。只运行新增、具有实际方法与 IO fake 的 fixture 测试，不重跑既有已过 561/166/19 套件。不以把 operational core 改成成功 stub 的测试声称全链路成功。
 
-Task 1 要覆盖 actual Registry AST + actual module35 + producer/consumer，包括正常调用 parity、原异常对象、raw gap 不变、absent/zombie 正例、persistent reused/unknown/alive/错误操作/metadata/时钟/overflow/孤立或缺失 proof 反例与下游拒绝。Task 2 用实际新增方法 + IO fakes 覆盖 history/known union/schema/loader/producer-consumer/main wiring，检验三接口次序和 check-only 无写入/无启动。允许明确的外部 legacy-gate 边界 fake；增加静态/函数 identity 断言，确保生产 wrapper 持有并调用真实 attempt_context/ready_context/current_gate，及可独立验证的真实局部入口负例。
+Task 1 要覆盖 actual Registry AST + actual module35 + producer/consumer，包括正常调用 parity、原异常对象、raw gap 不变、absent/zombie 正例、persistent reused/unknown/alive/错误操作/metadata/时钟/overflow/孤立或缺失 proof 反例与下游拒绝。Task 2 用实际新增方法 + IO fakes 覆盖 history/known union/schema/loader/producer-consumer/main wiring，检验三接口次序和 check-only 无写入/无启动。允许明确的外部 legacy-gate 边界 fake；增加静态/函数 identity 断言，确保 attempt_context/ready_context/current_gate 完全原引用、source_pins hook 每次先调用原定义，及可独立验证的真实局部入口负例。必测 current_gate 时新鲜但 source_pins 完成后过期拒绝，以及 final source 验证保留而不再次要求启动 decision 年轻；未知调用次序/任意跳过标志均拒绝。
 
 不要求重建旧 84 receipt、1016 FS/source-Git 历史的完整成功 fixture；未覆盖的 actual R4 完整成功链标为 **NOT_CLOSED**，不得以 fake 成功代替真实准入。全分支 review 后由 root 的真实只读 check-only 补上当前组合检查；其输出与 fixture 证据分开记录。
 

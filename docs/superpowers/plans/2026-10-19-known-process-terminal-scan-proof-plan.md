@@ -4,7 +4,7 @@
 
 **Goal:** 对未来已登记父进程的直接 children NoSuchProcess 产生即时终态证明，并以严格独立 consumer 接纳完整对应的局部竞态；保留所有原始 gap、旧 FAIL 与最终 exited/no-signals 门槛。
 
-**Architecture:** Task 1 是只读证明 producer + pure consumer；Task 2 是版本化 R5 outer continuation，固定依赖原 sealed R4 定义，绑定两个覆盖策略接口和一个仅追加准入的 current_gate 接口，并在原三历史契约之外绑定第四失败、reload/readiness 与 fresh known-quiescence。原 SUP/module35/R4 文件和部署源码不变。
+**Architecture:** Task 1 是只读证明 producer + pure consumer；Task 2 是版本化 R5 outer continuation，固定依赖原 sealed R4 定义，绑定两个覆盖策略接口和一个仅追加启动准入的 source_pins 接口，并在原三历史契约之外绑定第四失败、reload/readiness 与 fresh known-quiescence。current_gate/attempt_context/ready_context 完全原引用；原 SUP/module35/R4 文件和部署源码不变。
 
 **Tech Stack:** Python 3、unittest、stdlib ast/importlib/hashlib/json/pathlib、注入 psutil-compatible IO/clock fakes、真实不变 Registry 与 module35/R4 definitions。
 
@@ -108,9 +108,10 @@ def test_reused_does_not_bypass_final_exited(self):
 - [ ] 从 pinned ownership records 推导 exact PID/birth union，核对预期 21+7+6=34，同时比较完整集合与 provenance、拒绝冲突，不能仅 count=34。加载完整旧 sequence/attempt/nonce deny-set；不得把 `0acf96f1...` 等前缀当完整 ID。
 - [ ] 实现 exact outer schema 与准入：root decision 强绑定新 legacy sequence/attempt/nonce、fourth immediatePriorFailure、baseline previousResult=null、已部署 pins、新 supervisorSourceTIP/源 SHA、dependency seal、fresh strict-idle 与 known-quiescence。原 attempt_context(args, admission=True) 的真实返回须再次对应 outer 所绑定值。
 - [ ] 保持 60s freshness、wall/monotonic 不倒退、lsof 5s 上限、viewer=relay=0、紧邻运行的同一 known-list 再核查。对 gone/zombie/stable-nonmatching birth 只证明旧身份静默；same-birth alive/unknown 拒绝。service identities 是独立保护活性，不是 quiescence 目标。
-- [ ] 实现 main 的三接口绑定：worker instrument_registry→Task 1，sample→original；validate_owned_coverage→worker strict new consumer + sample original strict consumer；current_gate→先无条件调用真实原 current_gate(args, expected)，成功后追加 exact known-list/root decision≤60s、无时钟倒退检查。前两项改变覆盖策略，第三项只追加准入，不替换/弱化原 gate。最后一次 current_gate 成功后 main 按原次序 source_pins、marker、worker，不插入额外等待。测试调用次序、原 gate 失败传播及“前次新鲜、最后一次过期”拒绝。其余函数/validation stages/deadlines 不变；sample 委托用实际纯 consumer 检验，不伪造 ownership。
+- [ ] 实现 main 的三接口绑定：worker instrument_registry→Task 1，sample→original；validate_owned_coverage→worker strict new consumer + sample original strict consumer；source_pins→每次先无条件调用真实原 source_pins(args, m)，仅在 main 启动前首次调用成功后追加 exact known-list/root decision≤60s、无时钟倒退检查。前两项改变覆盖策略，第三项只追加启动准入；current_gate 完全原引用、保持原两次调用，不增加第四 hook。启动 source_pins 返回后 main 按原 tempdir→legacy marker→worker 次序，不插入额外等待。其余函数/validation stages/deadlines 不变；sample 委托用实际纯 consumer 检验，不伪造 ownership。
+- [ ] 仅使用新命名空间首次 source_pins 内部状态和该次原 legacy qualification-started marker/attempt 绑定区分 startup/final：首次处于 marker 尚未创建的启动位置；fresh 检查成功后记为已检查；final 必须匹配该次 main marker，仍执行原 source 验证，但不要求已消费启动 decision 在300/10800s后≤60s。未知次序/额外调用/marker 归属不明拒绝，不给 caller 布尔开关跳过 startup。预存在 legacy marker 仍由原 main consumed check 拒绝，outer marker/ID 独占不变。测试“current_gate 时新鲜、source_pins 后过期”拒绝、“final source 验证保留但不要求启动 decision 年轻”及原 source 失败传播。
 - [ ] 在通过全部 admission 后 exclusive 创建 outer one-use started marker，调用真实 legacy main；捕获 producer snapshots、consumer assessments 并写 bounded 新 outer result，SHA 绑定新 legacy result、proof、R5 history/code pins。legacy raw `owned.coverage`、`processDiagnostics`、`observedUnexpectedCoverage` 全保留。任何未完成/错误/结果缺失均失败，禁止自动 retry/next/clear。
-- [ ] 实现 check_only=True/CLI --check-only 分支：执行真实 R4 完整只读 gate、R5 history/known-list/freshness/source pins，对当前 FS/metadata/Git/known-process/HTTP 使用原有有界检查；不进入 main 运行/写入路径、不启动 worker/browser/sample、不修改服务、不写 operational marker/result、不消费 one-use，仅 stdout 输出≤32768 UTF-8 bytes 的脱敏诊断。失败非零，成功只标只读集成通过。fixture 断言写入/启动调用账本为空；真实组合检查由 root review 后执行。
+- [ ] 实现 check_only=True/CLI --check-only 分支：执行真实 R4 完整只读 gate 与 R5 history；独立调用真实 current_gate、真实 source_pins，最后追加 exact known-list/root decision≤60s 和时钟检查，不借用 main 的首次/final hook 状态。对当前 FS/metadata/Git/known-process/HTTP 使用原有有界检查；不调用 main、不启动 worker/browser/sample、不修改服务、不写 operational marker/result、不消费 one-use，仅 stdout 输出≤32768 UTF-8 bytes 的脱敏诊断。失败非零，成功只标只读集成通过。fixture 断言调用次序及写入/启动账本为空；真实组合检查由 root review 后执行。
 - [ ] 后续场景验证同序列 legacy **及** R5 predecessor，保留独立 root decision。整个 within/after 恢复场景无 sample；baseline/within/after/continuity=300/390/390/10800，worker deadline=duration+128、cleanup 原值不动；不改变 quality/FPS/codec/network/grace/阈值。
 - [ ] 将下面有真实新增下游拒绝的 fixture 例子具体化。fixture 写新增 schema 所需 pinned JSON 并运行新增 actual validators；显式 legacy-gate 边界 fake 只服务 wiring 测试，不能据此宣布完整 R4 链成功。断言 Popen/写入账本与 original gate 函数 identity：
 
@@ -159,7 +160,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s scripts -p 'test_te
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s scripts -p 'test_guarded_terminal_scan_continuation.py' -v
 ```
 
-- [ ] root systematic review Task 2：检查 loader/import closure、无旧目录修改、双层历史不混写、actual attempt_context/ready_context/current_gate 引用与调用次序、known union 精确性、最后一次 current_gate 的 one-use/TTL/strict idle 前置边界、proof到最终record链、check-only 无写入/无启动，以及 fixture 范围/NOT_CLOSED 是否诚实。修复 review findings 后重跑受影响新增测试。
+- [ ] root systematic review Task 2：检查 loader/import closure、无旧目录修改、双层历史不混写、actual attempt_context/ready_context/current_gate 完全原引用、source_pins 每次原调用与 startup/final 区分、known union 精确性、启动 source_pins 返回后的 one-use/TTL/strict idle 前置边界、proof到最终record链、check-only 最后追加 fresh 检查且无写入/无启动，以及 fixture 范围/NOT_CLOSED 是否诚实。修复 review findings 后重跑受影响新增测试。
 - [ ] root 只提交这两个集成/测试文件；建议 commit `feat(qualification): bind terminal scan proof to guarded R5 continuation`。新 supervisorSourceTIP 从此实现分支实际 Git 版本绑定，不伪装成 deployedToolTIP282。
 - [ ] root 安排新鲜、最强可用 agent 审全分支：bugs、architecture、docs sync、producer/consumer与运行准入组合；没有 reviewer 结论前不得实际运行。review 记录应按仓库 reports 约定版本化；本计划编写阶段不伪造该记录。
 
@@ -167,7 +168,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s scripts -p 'test_gu
 
 运行操作不是上述两任务的默认验收。root 完成代码/fixture/全分支 review 后，建立所需新 R5 private root 与显式 decision；可调用原 R4 prepare 工具在原 R 下创建新 legacy dirs，不能继续第四失败的 sequence。然后必须独立执行 CLI `--check-only`，用真实 R4 完整 gate 检查当前 FS/metadata/Git/known-process/HTTP；不 worker/browser/sample/service mutation、不消费 marker、不写 operational result，只有有界 stdout 诊断，root 可另存实际输出。该步骤补充完整旧链在 fixture 中 NOT_CLOSED 的真实组合检查。
 
-check-only 通过后，root 另建 fresh run decision，再决定实际 run；实际 run 重跑全部原 gate、R5 gate，以及 main 最后一次 current_gate 的 exact known-list/root decision≤60s 检查。只读 preflight 不是 runtime qualification，也不豁免 TTL。额外 outer binding 保留四失败、reload/readiness、exact union 和 code pins；新 baseline 从头开始。每个场景只运行一次，下一场景重新 root 决策与 fresh strict-idle。旧 readiness 只证明历史已加载上下文，不能替代 fresh admission。
+check-only 通过后，root 另建 fresh run decision，再决定实际 run；实际 run 重跑全部原 gate、R5 gate，以及 main 启动 source_pins 完成后的 exact known-list/root decision≤60s 检查。final source_pins 仍验证原 source，但不重新限制已消费启动 decision 的年龄。只读 preflight 不是 runtime qualification，也不豁免启动 TTL。额外 outer binding 保留四失败、reload/readiness、exact union 和 code pins；新 baseline 从头开始。每个场景只运行一次，下一场景重新 root 决策与 fresh strict-idle。旧 readiness 只证明历史已加载上下文，不能替代 fresh admission。
 
 旧 source held41、Viewer fefc555、tools2822441、backenddfb154、module35、primary 1016 known-map 与四 dirty docs 不变；不再 sourcecopy/build/restart。任何实际操作都必须保留 5s lsof、60s freshness、300/390/390/10800 和原 grace/deadline，整个 recovery 无 sample。Host/tunnel/watcher 不动，不能用历史 RuntimeError 推断 grace 原因。
 
