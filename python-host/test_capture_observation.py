@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
+from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
+
 from runtime_observability import (
     CaptureObservation, RuntimeObservability, unavailable_capture_observation,
 )
@@ -117,11 +119,12 @@ class CaptureObservationTest(unittest.TestCase):
         result = snapshot(CaptureObservation())
         missing = unavailable_capture_observation()
         self.assertEqual(set(result), KEYS)
-        self.assertEqual(set(missing), KEYS)
+        self.assertEqual(set(missing), KEYS | {'cadence'})
         self.assertEqual(result['scope'], 'track-lifetime')
         self.assertEqual(result['state'], 'starting')
         self.assertEqual([result[key] for key in ('attempted', 'completed', 'failed')], [0, 0, 0])
         self.assertEqual(missing['state'], 'unavailable')
+        self.assertEqual(missing['cadence'], unavailable_capture_cadence())
         self.assertFalse(missing['clipped'])
         self.assertTrue(all(missing[key] is None for key in KEYS - {'scope', 'state', 'clipped'}))
         missing['attempted'] = 99
@@ -479,6 +482,171 @@ class CaptureLoopTest(unittest.TestCase):
         self.assertEqual(result['attempted'], 1)
         self.assertEqual(result['completed'], 1)
 
+    def test_immediate_thread_start_publishes_and_keeps_trace_count(self):
+        clock = SimpleNamespace(now=0, sleeps=[])
+        track_holder = []
+        class ImmediateThread:
+            ident = 1
+            def __init__(self, *, target, daemon):
+                self.target = target
+                track_holder.append(target.__self__)
+            def start(self):
+                self.target()
+        def sleep(delay):
+            clock.sleeps.append(delay)
+            clock.now += int(delay * 1_000_000_000)
+        def grab(_):
+            clock.now = 10_000_000
+            track_holder[0]._capture_running = False
+            return 'pixels'
+        tree = ast.parse(Path(__file__).with_name('host.py').read_text())
+        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ScreenCaptureTrack')
+        names = {'__init__', '_capture_loop', '_increment_trace_interval'}
+        selected = ast.ClassDef(name='ScreenCaptureTrack', bases=[ast.Name(id='VideoStreamTrack', ctx=ast.Load())],
+            keywords=[], body=[n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in names], decorator_list=[])
+        namespace = dict(VideoStreamTrack=type('Base', (), {}), CaptureExperiment=type('Experiment', (), {}),
+            MSS=lambda: SimpleNamespace(monitors=[], grab=grab),
+            select_capture_monitor=lambda *a, **k: {}, get_screeninfo_monitors=lambda: [],
+            RtpFrameClock=lambda: None, HAS_CV2=False,
+            threading=SimpleNamespace(Lock=Guard, Condition=Guard, Thread=ImmediateThread),
+            ThreadPoolExecutor=lambda **k: None, CaptureObservation=CaptureObservation,
+            time=SimpleNamespace(monotonic=lambda: 0, monotonic_ns=lambda: clock.now,
+                thread_time_ns=lambda: 0, process_time_ns=lambda: 0, time=lambda: 0, sleep=sleep),
+            logger=SimpleNamespace(info=lambda *a, **k: None))
+        # The optional pure cadence class exists only after its capability is implemented.
+        try:
+            from capture_cadence import CaptureCadenceObserver
+            namespace['CaptureCadenceObserver'] = CaptureCadenceObserver
+        except ImportError:
+            pass
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[selected], type_ignores=[])),
+            '<AST immediate capture>', 'exec'), namespace)
+        cls = namespace['ScreenCaptureTrack']
+        cls.capture_fps_for_target = staticmethod(lambda fps, **k: fps)
+        track = cls(frame_trace_context=object())
+        self.assertEqual(track._capture_seq, 1)
+        self.assertEqual(track._activity_condition.notifications, 1)
+        self.assertEqual(track._trace_interval['captures'], 1)
+        self.assertEqual(clock.sleeps, [.04])
+        self.assertEqual(snapshot(track._capture_observation, clock.now)['completed'], 1)
+
+    def run_cadence_loop(self, grabs, *, oversleep_ns=0, config_ns=0, observer=None,
+                         fail_grab_at=None, fail_publish_at=None, suspend_at=None, profile_at=None, fps=20, fail_trace_at=None):
+        clock = SimpleNamespace(now=0, sleeps=[], calls=0, lock_calls=0, config_calls=0)
+        cadence = observer if observer is not None else CaptureCadenceObserver()
+        track = SimpleNamespace(_capture_running=True, _suspended=False, _target_fps=fps,
+            _capture_strategy=None, _activity_condition=Guard(), _target_lock=Guard(),
+            _capture_lock=Guard(), _capture_observation=CaptureObservation(),
+            _capture_cadence=cadence, _capture_generation=0, _target_generation=0,
+            monitor=None, _capture_buffer=None, _capture_seq=0, _capture_bounds_ns={},
+            _frame_trace_context=None, capture_fps_for_target=lambda fps, **k: fps)
+        def target_config():
+            clock.config_calls += 1
+            if clock.config_calls > 1:
+                clock.now += config_ns
+        track._target_lock.enter = target_config
+        if fail_trace_at is not None:
+            track._frame_trace_context = object()
+            def trace(**kwargs):
+                if clock.calls == fail_trace_at:
+                    raise RuntimeError('trace-canary')
+            track._increment_trace_interval = trace
+        def publish():
+            clock.lock_calls += 1
+            if clock.lock_calls == fail_publish_at:
+                raise RuntimeError('publication-canary')
+        track._capture_lock.enter = publish
+        def grab(_):
+            clock.calls += 1
+            clock.now += grabs[clock.calls - 1]
+            if clock.calls == len(grabs):
+                track._capture_running = False
+            if clock.calls == suspend_at:
+                # A full pause/resume crossing must break cadence even if the
+                # next admitted grab sees active state again.
+                track._capture_generation += 2
+            if clock.calls == profile_at:
+                track._target_generation += 1
+            if clock.calls == fail_grab_at:
+                raise RuntimeError('grab-canary')
+            return 'pixels'
+        def sleep(delay):
+            clock.sleeps.append(delay)
+            clock.now += int(delay * 1_000_000_000) + (oversleep_ns if delay != .005 else 0)
+        track.sct = SimpleNamespace(grab=grab)
+        loop = method('ScreenCaptureTrack', '_capture_loop', time=SimpleNamespace(
+            monotonic_ns=lambda: clock.now, thread_time_ns=lambda: 0, sleep=sleep))
+        loop(track)
+        return track, clock, cadence.snapshot(clock.now) if isinstance(cadence, CaptureCadenceObserver) else None
+
+    def test_real_loop_closed_cycles_oversleep_and_lock_subsets(self):
+        track, clock, result = self.run_cadence_loop([10_000_000] * 3,
+            oversleep_ns=5_000_000, config_ns=5_000_000)
+        self.assertEqual(clock.sleeps, [.04] * 3)
+        self.assertEqual(result['intervalCount'], 2)
+        self.assertEqual(result['lastInterval'], dict(intervalMs=60, grabMs=10,
+            postGrabMs=0, pacingActualMs=45, otherMs=5, minIntervalMs=50,
+            pacingRequestedMs=40, pacingExcessMs=5, publishLockWaitMs=0, publishCriticalMs=0))
+        self.assertEqual(result['published'], 3)
+        self.assertEqual(track._capture_seq, 3)
+        self.assertEqual(track._activity_condition.notifications, 3)
+
+    def test_real_loop_slow_grab_and_exact_1ms_keep_original_no_sleep(self):
+        for duration, fps in ((60_000_000, 20), (0, 1000)):
+            with self.subTest(duration=duration, fps=fps):
+                _, clock, result = self.run_cadence_loop([duration] * 2, fps=fps)
+                self.assertEqual(clock.sleeps, [])
+                self.assertEqual(result['intervalCount'], 1)
+                pair = result['lastInterval']
+                self.assertEqual(pair['grabMs'], duration / 1_000_000)
+                self.assertEqual(pair['pacingActualMs'], 0)
+                self.assertEqual(pair['pacingRequestedMs'], 0)
+                self.assertEqual(pair['pacingExcessMs'], 0)
+
+    def test_original_float_subtraction_near_1ms_is_preserved(self):
+        _, clock, result = self.run_cadence_loop([49_000_000] * 2)
+        self.assertEqual(clock.sleeps, [0.05 - 0.049] * 2)
+        self.assertGreater(clock.sleeps[0], .001)
+        self.assertEqual(result['lastInterval']['pacingRequestedMs'], 1)
+
+    def test_real_loop_retry_error_and_publish_error_exclude_intervals(self):
+        for option, expected_completed, expected_failed in (
+                ('fail_grab_at', 2, 1), ('fail_publish_at', 3, 0)):
+            with self.subTest(option=option):
+                track, clock, result = self.run_cadence_loop([10_000_000] * 3, **{option: 1})
+                self.assertEqual(clock.sleeps, [.005, .04, .04])
+                self.assertEqual(result['intervalCount'], 1)
+                self.assertEqual(result['error'], 1)
+                self.assertEqual(result['published'], 2)
+                grabs = snapshot(track._capture_observation, clock.now)
+                self.assertEqual((grabs['completed'], grabs['failed']), (expected_completed, expected_failed))
+
+    def test_trace_failure_after_publication_keeps_actual_published_count(self):
+        track, clock, result = self.run_cadence_loop([10_000_000] * 3, fail_trace_at=1)
+        self.assertEqual(clock.sleeps, [.005, .04, .04])
+        self.assertEqual(track._capture_seq, 3)
+        self.assertEqual(result['published'], 3)
+        self.assertEqual(result['error'], 1)
+        self.assertEqual(result['intervalCount'], 1)
+        self.assertEqual(snapshot(track._capture_observation, clock.now)['completed'], 3)
+
+    def test_real_loop_pause_resume_and_profile_generation_changes_break_pairs(self):
+        for option in ('suspend_at', 'profile_at'):
+            with self.subTest(option=option):
+                _, clock, result = self.run_cadence_loop([10_000_000] * 3, **{option: 1})
+                self.assertEqual(clock.sleeps, [.04] * 3)
+                self.assertEqual(result['intervalCount'], 1)
+                self.assertEqual(result['discontinuous'], 2)  # Generation mismatch plus final stop.
+
+    def test_observation_failures_cannot_add_error_retry_or_block_publication(self):
+        class Broken:
+            def __getattr__(self, name):
+                raise RuntimeError('observer-canary')
+        track, clock, _ = self.run_cadence_loop([10_000_000] * 2, observer=Broken())
+        self.assertEqual(track._capture_seq, 2)
+        self.assertEqual(track._activity_condition.notifications, 2)
+        self.assertEqual(clock.sleeps, [.04, .04])
+
     def test_observer_initialized_before_thread_creation_and_start(self):
         tree = ast.parse(Path(__file__).with_name('host.py').read_text())
         cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'ScreenCaptureTrack')
@@ -492,18 +660,43 @@ class CaptureAdapterTest(unittest.TestCase):
     def test_track_adapter_only_reads_flags_and_never_resets(self):
         calls = []
         reader = method('ScreenCaptureTrack', 'capture_observation_snapshot',
-            unavailable_capture_observation=unavailable_capture_observation)
+            unavailable_capture_observation=unavailable_capture_observation,
+            unavailable_capture_cadence=unavailable_capture_cadence)
         self.assertEqual(reader(SimpleNamespace(), 0), unavailable_capture_observation())
         thread = SimpleNamespace(ident=None, is_alive=lambda: False)
         track = SimpleNamespace(_capture_observation=SimpleNamespace(snapshot=lambda *a, **k: calls.append((a, k)) or {}),
             _capture_running=True, _suspended=False, _capture_thread=thread)
-        self.assertEqual(reader(track, 0), {})
+        self.assertEqual(reader(track, 0), {'cadence': unavailable_capture_cadence()})
         self.assertEqual(calls, [((0,), dict(running=True, suspended=False, thread_alive=False, thread_started=False))])
         thread.ident = 12345
         thread.is_alive = lambda: True
         reader(track, 1)
         self.assertTrue(calls[-1][1]['thread_started'])
         self.assertNotIn('12345', repr(calls))
+
+    def test_track_adapter_cadence_is_selected_once_or_unavailable(self):
+        reader = method('ScreenCaptureTrack', 'capture_observation_snapshot',
+            unavailable_capture_observation=unavailable_capture_observation,
+            unavailable_capture_cadence=unavailable_capture_cadence)
+        calls = []
+        cadence = CaptureCadenceObserver()
+        class Selected:
+            _capture_observation = CaptureObservation()
+            _capture_running = True
+            _suspended = False
+            _capture_thread = None
+            @property
+            def _capture_cadence(self):
+                calls.append('selected')
+                return cadence
+        result = reader(Selected(), 0)
+        self.assertEqual(calls, ['selected'])
+        self.assertEqual(result['cadence']['intervalCount'], 0)
+        result['cadence']['stages']['grab']['count'] = 99
+        self.assertEqual(reader(Selected(), 0)['cadence']['stages']['grab']['count'], 0)
+        failing = SimpleNamespace(_capture_observation=CaptureObservation(),
+            _capture_cadence=SimpleNamespace(snapshot=lambda _: (_ for _ in ()).throw(ValueError('canary'))))
+        self.assertEqual(reader(failing, 0)['cadence'], unavailable_capture_cadence())
 
     def test_context_current_track_once_missing_legacy_throw_and_replacement(self):
         context = method('WebRemoteHost', 'build_event_loop_lag_context',

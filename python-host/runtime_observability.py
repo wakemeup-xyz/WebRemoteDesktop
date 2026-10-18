@@ -10,6 +10,8 @@ import threading
 import time
 from typing import NamedTuple
 
+from capture_cadence import unavailable_capture_cadence
+
 QUEUE_NAMES = frozenset(('inputReliable', 'inputUnordered', 'relayFrames'))
 QUEUE_FIELDS = ('pendingCount', 'pendingBytes', 'inFlightCount', 'droppedCount', 'frozen')
 RELAY_STAGE_FIELDS = ('processorActive', 'deliveryPending', 'pendingAgeMs', 'processorAgeMs',
@@ -45,7 +47,7 @@ def unavailable_capture_observation():
             'lastDurationMs': None, 'maxDurationMs': None,
             'lastThreadCpuMs': None, 'lastNonCpuMs': None,
             'maxDurationThreadCpuMs': None, 'maxDurationNonCpuMs': None,
-            'clipped': False}
+            'clipped': False, 'cadence': unavailable_capture_cadence()}
 
 
 class _CaptureState(NamedTuple):

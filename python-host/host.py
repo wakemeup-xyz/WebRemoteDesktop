@@ -66,6 +66,7 @@ from observability import (
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 from capture_experiment import CaptureExperiment
+from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
 from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
 from relay_frame_worker import RelayFrameWorker
 from runtime_observability import (
@@ -1393,8 +1394,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._suspended = False
         self._capture_generation = 0
         self._capture_observation = CaptureObservation()
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._capture_thread.start()
+        self._capture_cadence = CaptureCadenceObserver()
 
         # Cache last processed frame for reuse when capture starves
         self._last_img = None
@@ -1418,6 +1418,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "cpuStartedNs": time.process_time_ns(),
         }
         self._trace_interval_lock = threading.Lock()
+        self._host_ref = None
+        # Every field visible to a fast worker exists before Thread.start().
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread.start()
 
         logger.info(
             "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s",
@@ -1427,11 +1431,35 @@ class ScreenCaptureTrack(VideoStreamTrack):
             max_height,
             HAS_CV2,
         )
-        self._host_ref = None
 
     def _capture_loop(self):
-        """Continuously capture screenshots in background thread.
-        Capture pacing follows the current media profile to avoid wasted work."""
+        """Continuously capture screenshots with unchanged media-profile pacing."""
+        cadence = getattr(self, '_capture_cadence', None)
+
+        def observe(observer, name, *args, **kwargs):
+            # Only instrumentation is fail-open; native/business exceptions keep
+            # their original behavior, including the existing 5ms error retry.
+            try:
+                if observer is not None:
+                    return getattr(observer, name)(*args, **kwargs)
+            except Exception:
+                pass
+
+        def cadence_now():
+            if cadence is not None:
+                try:
+                    return time.monotonic_ns()
+                except Exception:
+                    return None
+            return None
+
+        def phase(name):
+            if cadence is not None:
+                observe(cadence, 'phase', name, cadence_now())
+
+        def difference(end, start):
+            return end - start if type(end) is int and type(start) is int else None
+
         def current_thread_cpu_ns():
             try:
                 return time.thread_time_ns()
@@ -1439,35 +1467,51 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 return None
 
         while self._capture_running:
+            phase('activity-gate')
             with self._activity_condition:
                 while self._capture_running and self._suspended:
+                    observe(cadence, 'break_continuity', 'suspended')
+                    phase('suspended')
                     self._activity_condition.wait(timeout=0.2)
                 if not self._capture_running:
                     break
+            phase('target-config')
             with self._target_lock:
                 target_fps = self._target_fps
+                target_generation = getattr(self, '_target_generation', 0)
+            capture_generation = getattr(self, '_capture_generation', 0)
             _min_interval = 1.0 / self.capture_fps_for_target(target_fps, capture_strategy=self._capture_strategy)
             grab_started_ns = time.monotonic_ns()
+            grab_completed = False
             try:
                 # Gate again immediately before MSS grab.
                 if self._suspended or not self._capture_running:
+                    observe(cadence, 'break_continuity', 'suspended' if self._suspended else 'stopped')
                     continue
+                observe(cadence, 'start', grab_started_ns,
+                    capture_generation=capture_generation, target_generation=target_generation,
+                    min_interval_ns=int(_min_interval * 1_000_000_000))
                 cpu_started_ns = current_thread_cpu_ns()
-                self._capture_observation.begin(grab_started_ns, thread_cpu_ns=cpu_started_ns)
+                observe(self._capture_observation, 'begin', grab_started_ns, thread_cpu_ns=cpu_started_ns)
                 try:
                     shot = self.sct.grab(self.monitor)
                 except Exception:
                     cpu_finished_ns = current_thread_cpu_ns()
-                    self._capture_observation.finish(time.monotonic_ns(), succeeded=False,
-                                                     thread_cpu_ns=cpu_finished_ns)
+                    observe(self._capture_observation, 'finish', time.monotonic_ns(), succeeded=False,
+                            thread_cpu_ns=cpu_finished_ns)
                     raise
                 cpu_finished_ns = current_thread_cpu_ns()
                 grab_finished_ns = time.monotonic_ns()
-                self._capture_observation.finish(grab_finished_ns, succeeded=True,
-                                                 thread_cpu_ns=cpu_finished_ns)
+                grab_completed = True
+                observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=True,
+                        thread_cpu_ns=cpu_finished_ns)
                 captured = False
+                phase('publish')
+                publish_wait_started_ns = cadence_now()
                 with self._capture_lock:
+                    publish_entered_ns = cadence_now()
                     if self._suspended:
+                        observe(cadence, 'break_continuity', 'discarded')
                         continue
                     self._capture_buffer = shot
                     self._capture_seq += 1
@@ -1475,17 +1519,45 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     captured = True
                     while len(self._capture_bounds_ns) > 2048:
                         self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
+                    publish_exited_ns = cadence_now()
+                phase('post-publish')
                 if captured and self._frame_trace_context is not None:
                     self._increment_trace_interval(captures=1)
                 with self._activity_condition:
                     self._activity_condition.notify_all()
             except Exception:
+                if cadence is not None and grab_completed and captured:
+                    # Publication already happened even if trace/notification
+                    # failed. Count its outcome, then break before any interval
+                    # can be admitted across the existing error retry.
+                    failed_post_ns = cadence_now()
+                    observe(cadence, 'finish', grab_finished_ns=grab_finished_ns,
+                        post_grab_finished_ns=failed_post_ns, sleep_started_ns=failed_post_ns,
+                        sleep_finished_ns=failed_post_ns, sleep_requested_ns=0,
+                        publish_lock_wait_ns=difference(publish_entered_ns, publish_wait_started_ns),
+                        publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=True)
+                observe(cadence, 'break_continuity', 'publish-error' if grab_completed else 'error')
+                phase('error')
                 time.sleep(0.005)
                 continue
-            elapsed = (time.monotonic_ns() - grab_started_ns) / 1_000_000_000
+            # This is the original elapsed endpoint and >1ms pacing policy.
+            post_grab_finished_ns = time.monotonic_ns()
+            elapsed = (post_grab_finished_ns - grab_started_ns) / 1_000_000_000
             sleep_time = max(0.0, _min_interval - elapsed)
+            phase('pacing')
+            sleep_started_ns = cadence_now()
             if sleep_time > 0.001:
                 time.sleep(sleep_time)
+            sleep_finished_ns = cadence_now() if sleep_time > 0.001 else sleep_started_ns
+            if cadence is not None:
+                observe(cadence, 'finish', grab_finished_ns=grab_finished_ns,
+                    post_grab_finished_ns=post_grab_finished_ns,
+                    sleep_started_ns=sleep_started_ns, sleep_finished_ns=sleep_finished_ns,
+                    sleep_requested_ns=int(sleep_time * 1_000_000_000) if sleep_time > 0.001 else 0,
+                    publish_lock_wait_ns=difference(publish_entered_ns, publish_wait_started_ns),
+                    publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=captured)
+        observe(cadence, 'break_continuity', 'stopped')
+        phase('stopped')
 
     def set_suspended(self, suspended):
         """Gate MSS capture/conversion. Returns capture_seq baseline at transition."""
@@ -1566,8 +1638,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
         suspended = bool(getattr(self, '_suspended', False))
         thread_alive = bool(thread is not None and thread.is_alive())
         thread_started = thread is not None and thread.ident is not None
-        return observation.snapshot(now_ns, running=running, suspended=suspended,
-                                    thread_alive=thread_alive, thread_started=thread_started)
+        result = observation.snapshot(now_ns, running=running, suspended=suspended,
+                                      thread_alive=thread_alive, thread_started=thread_started)
+        cadence = getattr(self, '_capture_cadence', None)
+        try:
+            result['cadence'] = cadence.snapshot(now_ns) if cadence is not None else unavailable_capture_cadence()
+        except Exception:
+            result['cadence'] = unavailable_capture_cadence()
+        return result
 
     def resource_snapshot(self) -> dict:
         """Return bounded lifecycle counters for disconnect/reconnect audits."""
@@ -2210,8 +2288,8 @@ class WebRemoteHost:
         """Create a bounded Relay capture pipeline.
 
         Capturing twice as fast as the negotiated media rate wasted work while
-        the encoder was CPU-bound.  One capture per output plus a single frame
-        of headroom keeps the latest-frame semantics without starving encode.
+        the encoder was CPU-bound. The current 1x strategy requests one capture
+        per negotiated output interval; it adds no extra capture headroom.
         """
         return ScreenCaptureTrack(target_fps=self.media_profile["target_fps"],
                                   max_width=self.media_profile["width"], max_height=self.media_profile["height"],
