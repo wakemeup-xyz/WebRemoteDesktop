@@ -68,6 +68,7 @@ from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSe
 from capture_experiment import CaptureExperiment
 from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
 from capture_resource_owner import CaptureResourceOwner
+from peer_cleanup_observation import PeerCleanupObservation, SEQUENCE_CAP, peer_cleanup_json
 from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
 from relay_frame_worker import RelayFrameWorker
 from runtime_observability import (
@@ -3503,79 +3504,138 @@ class WebRemoteHost:
             if isinstance(closing_binding, dict) else None
         )
 
-        if not preserve_authority:
-            self._advance_authority()
-            self._active_input_binding = None
-        # Remove ownership synchronously. A second cleanup must never await or
-        # clear these detached objects on behalf of a newer grant.
-        self.pc = None
-        if getattr(self, "_input_datachannel", None) is closing_channel:
-            self._input_datachannel = None
-        if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
-            self._input_move_datachannel = None
-        if getattr(self, "screen_track", None) is closing_track:
-            self.screen_track = None
-        if getattr(self, "video_sender", None) is closing_sender:
-            self.video_sender = None
-        media_sender = getattr(self, "media_sender", None)
-        if media_sender is not None and getattr(media_sender, "sender", None) is closing_sender:
-            self.media_sender = None
-            if callable(getattr(media_sender, "invalidate", None)):
-                media_sender.invalidate()
-        capture_adapter = getattr(self, "capture_adapter", None)
-        if capture_adapter is not None and getattr(capture_adapter, "track", None) is closing_track:
-            self.capture_adapter = None
-        if closing_track is not None and hasattr(closing_track, "set_suspended"):
-            closing_track.set_suspended(True)
-        self.pending_candidates = []
-        if reset_offer_state:
-            self.current_viewer_id = None
-            self._offer_epoch = 0
-        authority = self._capture_authority()
-        if reset_input:
-            await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
+        # Sequence and old-object presence belong to this invocation, before awaits.
+        sequence = getattr(self, '_peer_cleanup_sequence', 0)
+        if type(sequence) is not int or sequence < 0:
+            sequence = 0
+        self._peer_cleanup_sequence = min(sequence + 1, SEQUENCE_CAP)
 
-        if closing_pc:
-            logger.info("Closing peer connection reason=%s", reason)
-            await closing_pc.close()
-        if closing_track:
-            await closing_track.shutdown()
-        owns_peer = self._authority_matches(authority) and self.pc is None
-        if getattr(self, "screen_track", None) is closing_track:
-            self.screen_track = None
-        if getattr(self, "video_sender", None) is closing_sender:
-            self.video_sender = None
-        media_sender = getattr(self, "media_sender", None)
-        if media_sender is not None and closing_sender is not None:
-            bound_sender = getattr(media_sender, "sender", None)
-            if bound_sender is closing_sender:
-                invalidate = getattr(media_sender, "invalidate", None)
-                if callable(invalidate):
-                    invalidate()
-        if getattr(self, "capture_adapter", None) is not None and closing_track is not None:
-            if getattr(self.capture_adapter, "track", None) is closing_track:
+        def observe(read):
+            try:
+                return read()
+            except BaseException:
+                # A diagnostic getter cannot replace an in-flight business error.
+                return None
+
+        def emit(cleanup_record):
+            try:
+                logger.info('WRD_PEER_CLEANUP %s', peer_cleanup_json(cleanup_record))
+            except BaseException:
+                # Only diagnostic emission fails open; business errors still propagate.
+                pass
+
+        record = PeerCleanupObservation(self._peer_cleanup_sequence, reason,
+            peer_present=closing_pc is not None, track_present=closing_track is not None,
+            sender_present=closing_sender is not None, now_ns=observe(time.monotonic_ns))
+        emit(record.start_record())
+        outcome, active_stage, authority = 'failed', None, None
+        try:
+            if not preserve_authority:
+                self._advance_authority()
+                self._active_input_binding = None
+            # Remove ownership synchronously. A second cleanup must never await or
+            # clear these detached objects on behalf of a newer grant.
+            self.pc = None
+            if getattr(self, "_input_datachannel", None) is closing_channel:
+                self._input_datachannel = None
+            if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
+                self._input_move_datachannel = None
+            if getattr(self, "screen_track", None) is closing_track:
+                self.screen_track = None
+            if getattr(self, "video_sender", None) is closing_sender:
+                self.video_sender = None
+            media_sender = getattr(self, "media_sender", None)
+            if media_sender is not None and getattr(media_sender, "sender", None) is closing_sender:
+                self.media_sender = None
+                if callable(getattr(media_sender, "invalidate", None)):
+                    media_sender.invalidate()
+            capture_adapter = getattr(self, "capture_adapter", None)
+            if capture_adapter is not None and getattr(capture_adapter, "track", None) is closing_track:
                 self.capture_adapter = None
-
-        # Drop recovery and trace references after the owner closes.  Keeping
-        # these objects alive across a new offer retains old generation state
-        # and makes task/resource leaks look like a control failure.
-        if owns_peer:
-            self._keyframe_recovery_state = {}
-            self._frame_trace_context = None
-            coordinator = getattr(self, "_media_apply_coordinator", None)
-            if coordinator is not None:
-                coordinator.cancel_pending()
-            logger.info(
-                "WRD_MEDIA_RESOURCES reason=%s peerClosed=%s senderReleased=%s track=%s tasks=%s",
-                reason,
-                bool(closing_pc),
-                bool(closing_sender),
-                closing_track.resource_snapshot() if closing_track and hasattr(closing_track, "resource_snapshot") else None,
-                len(getattr(self, "_input_lifecycle_tasks", ()) or ()),
-            )
-
-        if getattr(self, "pending_candidates", None) is closing_candidates:
+            if closing_track is not None and hasattr(closing_track, "set_suspended"):
+                closing_track.set_suspended(True)
             self.pending_candidates = []
+            if reset_offer_state:
+                self.current_viewer_id = None
+                self._offer_epoch = 0
+            authority = self._capture_authority()
+            if reset_input:
+                record.stage('resetInput', 'running')
+                active_stage = 'resetInput'
+                reset_result = await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
+                reset_status = reset_result.get('status') if type(reset_result) is dict else None
+                record.stage('resetInput', 'returned', reset_status)
+                active_stage = None
+            else:
+                record.stage('resetInput', 'not-requested')
+
+            if closing_pc:
+                record.stage('peerClose', 'running')
+                active_stage = 'peerClose'
+                await closing_pc.close()
+                record.stage('peerClose', 'returned')
+                active_stage = None
+            if closing_track:
+                record.stage('trackShutdown', 'running')
+                active_stage = 'trackShutdown'
+                await closing_track.shutdown()
+                record.stage('trackShutdown', 'returned')
+                active_stage = None
+            owns_peer = self._authority_matches(authority) and self.pc is None
+            if getattr(self, "screen_track", None) is closing_track:
+                self.screen_track = None
+            if getattr(self, "video_sender", None) is closing_sender:
+                self.video_sender = None
+            media_sender = getattr(self, "media_sender", None)
+            if media_sender is not None and closing_sender is not None:
+                bound_sender = getattr(media_sender, "sender", None)
+                if bound_sender is closing_sender:
+                    invalidate = getattr(media_sender, "invalidate", None)
+                    if callable(invalidate):
+                        invalidate()
+            if getattr(self, "capture_adapter", None) is not None and closing_track is not None:
+                if getattr(self.capture_adapter, "track", None) is closing_track:
+                    self.capture_adapter = None
+
+            # Drop recovery and trace references after the owner closes.  Keeping
+            # these objects alive across a new offer retains old generation state
+            # and makes task/resource leaks look like a control failure.
+            if owns_peer:
+                self._keyframe_recovery_state = {}
+                self._frame_trace_context = None
+                coordinator = getattr(self, "_media_apply_coordinator", None)
+                if coordinator is not None:
+                    coordinator.cancel_pending()
+
+            if getattr(self, "pending_candidates", None) is closing_candidates:
+                self.pending_candidates = []
+            outcome = 'returned'
+        except asyncio.CancelledError:
+            outcome = 'cancelled'
+            if active_stage is not None:
+                record.stage(active_stage, 'cancelled')
+            raise
+        except BaseException:
+            if active_stage is not None:
+                record.stage(active_stage, 'failed')
+            raise
+        finally:
+            # Read detached objects only. A newer authority cannot suppress this record.
+            peer_state = observe(lambda: getattr(closing_pc, 'connectionState', None))
+            track_facts = observe(lambda: closing_track.resource_snapshot())
+            if type(track_facts) is not dict:
+                track_facts = {}
+            observations = {
+                'peerConnectionClosed': peer_state == 'closed' if type(peer_state) is str else None,
+                'captureThreadAlive': track_facts.get('captureThreadAlive'),
+                'captureCloseState': track_facts.get('captureCloseState'),
+                'captureShutdownJoin': track_facts.get('captureShutdownJoin'),
+                'executorShutdownRequested': track_facts.get('executorShutdownRequested'),
+                'authorityCurrent': observe(lambda: self._authority_matches(authority))
+                    if authority is not None else None,
+                'currentPeerPresent': observe(lambda: self.pc is not None),
+            }
+            emit(record.terminal(outcome, observe(time.monotonic_ns), observations))
 
 
     async def on_offer(self, data):
