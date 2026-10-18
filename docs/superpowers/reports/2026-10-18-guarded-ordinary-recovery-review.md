@@ -1,6 +1,6 @@
 # Guarded ordinary recovery：源码与回归记录
 
-2026-10-18；Task 6 初次交接。核对源码 HEAD `c78a26ef53472c7d1328d475fe878e4dc377709c`，目录 `/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop`。**组合源码门禁未通过：本次 Node 回归 608 项中 24 失败；Python 160 项通过。** 新增 source/工具尚未部署；实际恢复和新三小时连续性均 `NOT_RUN`。
+2026-10-18；Task 6 初次回归基线 `c78a26ef53472c7d1328d475fe878e4dc377709c`，fixture修正更新至 `c10f0aa`，目录 `/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop`。**计划内源码回归已按分次调用通过：初次608项保留584通过/24失败；修正后的WebRTC307项通过，Python160项通过，root最终loopback API/proof8项通过。** 初次调用中其余301项通过，未重新执行608项，不能写成一次新的608/608 PASS。Task6独立审查、whole-increment review及后续root集成/运行门禁仍待完成。新增source/工具尚未部署；实际恢复和新三小时连续性均 `NOT_RUN`。
 
 ## 范围、前提与证据位置
 
@@ -39,15 +39,29 @@ WRD_TEST_NODE=/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node /usr/b
 
 Python 实际160项对应79个 ordinary runner、26个 adapter、55个 passive helper 测试方法；这里只按这次日志总数报告，不将27个 VM场景或前序多轮重复执行再计为新增 tests。本次 Python 输出无 warning/slow-task diagnostic；此前带 diagnostic 的历史 GREEN 仍然保留。Node 有既有 fake handler/业务诊断输出和24个失败，不能称 pristine/PASS。原始测试日志仅在私有 task 目录，未复制到版本化报告。
 
-## 必须修正的组合回归 finding
+## 初次组合回归 finding 与后续修正
 
-**F1：既有 `webrtc.test.js` VM 缺少新 selector 解析器的浏览器全局依赖，24项失败。**
+**F1（现已 addressed）：既有 `webrtc.test.js` VM 缺少新 selector 解析器的浏览器全局依赖，初次24项失败。**
 
 只读定位：`web-client/js/webrtc.test.js:93` 的 `loadWebRTC` 在 `:114` 构造 sandbox，列举 AbortController/timers 等但没有 `URLSearchParams`，`:154` 的 location 只有 origin；`:201` 直接求值完整 `webrtc.js`。这不是方法抽取遗漏。产品 `web-client/js/webrtc.js:2864` 的 `readInitialAdmissionPolicy` 使用全局 `new URLSearchParams(window.location.search)`，`:2871` 将不可读情况转成 `invalid-initial-policy`，`:2875` 在请求前调用它。因此这个 VM 在尚未 fetch/创建 socket 前失败，后续断言表现为0请求、缺少 socket/延迟回调或未清 superseded 状态。`admissionViewerFixture` (`webrtc.test.js:6870`) 复用该 loader且未补依赖。已通过的 `auth-start-integration.test.js:36` fixture 则明确提供 `URLSearchParams`。仅缺少 `.search` 不是决定性原因，因为标准 constructor 接受 undefined 得到空查询。
 
 失败均来自 `web-client/js/webrtc.test.js`：reclaim/Start warmup（5200、5215）、admission/proof/auth/bootstrap（6909、6936、6961、6974、6990、7000两项、7030、7053两项、7092）、signaling-session（7943、7972、7990两项）以及 startup/reclaim ownership（8003、8024、8044、8057、8074、8090两项）。日志保存每个实际 test 名、断言和堆栈。此静态定位支持 fixture omission，未建立真实浏览器产品缺陷；仍需原实现范围独占修正和限定 WebRTC suite 的真实 GREEN，不能以解释替代门禁。
 
-已向 root 报告；本 worker 未改 unowned fixture/source，未重新运行 Node。root 将交回原 Task2 owner或限定实现者修正该单一路径，再做相应 review和受影响测试。本报告保持这次初始 FAIL，不覆盖它。
+初次交接时已向root报告；本worker未改unowned fixture/source或重跑Node。随后原Task2 owner在独占单一路径授权内完成 `c10f0aa`：只在 `web-client/js/webrtc.test.js:119` 向VM提供实际标准 `URLSearchParams`，未加解析器/准入stub、放松断言或修改产品。私有 `task-2-fixture-fix-review.md` 独立复审为spec/quality Approved、F1 addressed、无findings；完整产品/增量review仍单独待办。以下追加GREEN不覆盖初次FAIL。
+
+```bash
+/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node --test web-client/js/webrtc.test.js > .superpowers/sdd/2026-10-18-guarded-ordinary-recovery-plan/task-2-fixture-fix-node.log 2>&1
+```
+
+该修正后仅调用一次受影响的完整WebRTC suite：exit0、307/307 pass、0 fail/cancelled/skipped/todo、29775.633427ms。日志保留普通产品诊断输出，复审的有界failure/warning/error-marker扫描零命中。原先其他11个文件合计301项已通过；它们没有因这次fixture单行修正重跑。分次结果覆盖计划范围，不能称为一次新的608项全通过。
+
+root随后单独运行最终8项API/proof检查，精确命令如下（private result记录argv，日志由root捕获）：
+
+```bash
+/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node --test --test-concurrency=1 signal-server/test/viewer-admission-api.test.js signal-server/test/proof-admission.test.js
+```
+
+私有 `task-6-root-api.log` 与 `task-6-root-api-result.json`：exit0、8/8 pass、0 fail/cancelled/skipped/todo、Node33343.015324ms、wall34.53632996487431s；日志1980 bytes，SHA256 `0df94ccbfc75f23925c19f70f934bff2ad08b930c502d3708850b0dfd7ad3784`。这是既有隔离ephemeral-loopback API测试，不是生产可达/运行资格化。此窄文档更新未运行任何测试。
 
 ## 源码合同映射与文档自查
 
@@ -57,7 +71,7 @@ Python 实际160项对应79个 ordinary runner、26个 adapter、55个 passive h
 | 后续人工容量优先、有效 consumed evidence 不驱逐 | admission `:55`、`:63`；`viewer-admission.test.js:153`、`:174` | 先验证和有效容量计算，成功时仅撤未消费 guard；失败不修改 fence/记录；consumed 当前代次不重铸 |
 | proof 双向交错、拒绝零副作用 | runtime-context `:114`、`:120`；signaling `:1096` 至 claim；handler `:66`、`:234`、`:246`、`:257`、`:305` | 同步 snapshot→验票→epoch/map claim；无 await/I/O；拒绝保留map/lease/Host events/epoch/proof，guard issue本身不消费 proof |
 | 同一真实 handler 的 within/after-grace | handler `:81` 对 human/guard分别循环 grace内外；`:323` 旧操作/current Host ACK拒绝 | 本次该回归通过；Host applied前无grant、过grace先reset/FREE再新grant；offline ACK是fake边界，不是native验收 |
-| selector/auth/episode/普通resume边界 | `webrtc.js:2864`；`auth-start-integration.test.js:346`及 input-recovery尾部guard用例 | 受限值及 proof冲突、迟到响应、拒绝与草稿门禁已覆盖；F1仍阻止组合门禁关闭 |
+| selector/auth/episode/普通resume边界 | `webrtc.js:2864`；`auth-start-integration.test.js:346`及 input-recovery尾部guard用例 | 受限值及 proof冲突、迟到响应、拒绝与草稿门禁已覆盖；F1已由实际平台global修正并经307项GREEN及独立复审关闭；独立最终门禁仍待办 |
 | 单例HTTP/日志/浏览器清理 ownership | runner `:162` one-shot cursor、`:327`和`:330` local task identity、`:587` OwnedBrowserLifecycle；对应 runner ownership/cancellation/final-export测试 | wrapper settlement前不换owner；无catch-up并行请求；一份cleanup deadline，browser/manager独立尝试，不将API完成说成进程退出 |
 | 不提升native/routed范围和最终PASS | fault `:124`、`:150`、`:203`、`:239`；runner `:1048`、`:1063`、最终snapshot检查；adapter/runner scope和late-failure测试 | constructor scenario固定；native direct与routed public wrapper明确；失败sticky，after-grace绝不变native资格 |
 | 输出隐私、有界、缺测诚实 | runner `:441`、`:536`、`:852`、`:1063` exact-key validators；salted identities、固定error/schema/privacy-canary测试 | 不保存原始ID/token/ticket/password/input/URL或异常内容；manifest仅投影，Host/Signal源码注明root-attested；缺测保持null/NOT_RUN |
@@ -76,14 +90,16 @@ Python 实际160项对应79个 ordinary runner、26个 adapter、55个 passive h
 
 | 后续门禁 | 本次状态 / 责任 |
 |---|---|
-| F1单一路径fixture correction、限定WebRTC GREEN与review | **PENDING；root重新分配** |
-| 最终 `signal-server/test/viewer-admission-api.test.js`、`signal-server/test/proof-admission.test.js` ephemeral-loopback检查 | **PENDING；root alone**；旧Task1 API evidence不冒充本次final run |
+| F1单一路径fixture correction、限定WebRTC GREEN与review | **DONE**；`c10f0aa`，307/307，独立spec/quality Approved；初次FAIL保留 |
+| 最终 `signal-server/test/viewer-admission-api.test.js`、`signal-server/test/proof-admission.test.js` ephemeral-loopback检查 | **PASS；root单独执行8/8**；非生产检查，确切命令/日志见上文 |
 | 当前CLI/schema/count/startup与已批准purecollector的实际连接 | **PENDING；root**；[pure-integration-r2](evidence/2026-10-18-guarded-ordinary-recovery/pure-integration-r2-review.md)是静态批准、NOT_EXECUTED |
-| 最有能力reviewer的whole-increment source/tool-boundary review、最终文档核对与提交 | **PENDING；root**；此文是worker自查，不替代独立final review |
+| Task6独立审查、最有能力reviewer的whole-increment source/tool-boundary review、最终文档核对与提交 | **PENDING；root**；此文是worker自查，不替代独立final review |
 | combined部署/实际source+assets、健康/Host/tunnel保持、密码私下回报 | **NOT_RUN；root operations**；[ops-r6](evidence/2026-10-18-guarded-ordinary-recovery/ops-r6-review.md)静态Approved不等于已执行 |
 | baseline300、native-direct within-grace、playwright-routed after-grace、fresh route-free10800 continuity | **NOT_RUN**；依次完整清理，终止失败/人工到达后不自动继续 |
 | native after-grace、真实business input、visible effect、physical | **NOT_RUN**；本runner不会提升这些标签 |
 
 本次文档自查：相对链接全部有效、C5 scoped `git diff --check` exit0、staged paths为空。四份预存dirty文档、strict helper、sampler的前后SHA256及node_modules symlink一致；检查记录留在私有task目录。仅两份指定文档发生新的版本化路径变化。
 
-本次Task6 worker工作已交接，组合source gate仍因F1及后续root门禁待定。后续实际操作另建execution报告；任何后续GREEN应追加其确切修正revision/命令/结果，保留本次FAIL与历史运行限制。
+root另已完整读取 `/tmp/wrd-final-source-operations-contract-audit-20261018.md`（SHA256 `9dcf035047bb8c6cd7d4bd19c2ad7fbbfdcdb1131f69d8416b0979bc572f514d`），实际source↔R6静态合同audit未发现不兼容；该结果仍不执行purecollector或实际启动/运行检查。
+
+本次Task6窄文档更新已交接：F1及分次源码回归关闭，独立Task6/whole-increment review、purecollector实际连接和live门禁仍待root完成。后续实际操作另建execution报告；初次FAIL与历史运行限制继续保留。
