@@ -580,3 +580,707 @@ class DirectRebindCorrelationTests(unittest.TestCase):
                     projection = json.dumps(self.e.snapshot())
                     for private in ('server-new-canary', 'session-canary', 'token-canary', 'https://url-canary'):
                         self.assertNotIn(private, projection)
+
+# Task 4 tests exercise only owned fakes and temporary private artifacts.
+from scripts import ordinary_session_recovery as runner
+from types import SimpleNamespace
+
+
+def valid_manifest(log, now=1000000):
+    info = log.stat()
+    return dict(schemaVersion=1, runNonce='1'*32, createdAtEpochMs=now,
+        validUntilEpochMs=now+12000000, scenario='baseline', mode='stun',
+        originSource='formal-configured', originEvidenceSha256='2'*64,
+        originSha256=hashlib.sha256(b'https://example.invalid').hexdigest(),
+        deploymentEvidence={'kind':'root-verified-local-deployment','sha256':'3'*64},
+        signal={'sourceCommit':'4'*40,'sourceTreeSha256':'5'*64},
+        host={'sourceCommit':'6'*40,'sourceTreeSha256':'7'*64},
+        viewer={'sourceCommit':'8'*40,'buildId':'0123456789abcdef'},
+        signalLog={'path':str(log),'device':info.st_dev,'inode':info.st_ino})
+
+
+class ManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.log = Path(self.temp.name)/'signal.jsonl'; self.log.write_bytes(b'')
+        self.path = Path(self.temp.name)/'manifest.json'; self.value = valid_manifest(self.log)
+        self.save()
+
+    def save(self, raw=None):
+        data = json.dumps(self.value).encode() if raw is None else raw
+        self.path.write_bytes(data); self.path.chmod(0o600)
+        self.sha = hashlib.sha256(data).hexdigest()
+
+    def read(self, **changes):
+        options = dict(origin='https://example.invalid', scenario='baseline', mode='stun', now_epoch_ms=1000000)
+        options.update(changes)
+        return runner.read_runtime_manifest(self.path, self.sha, **options)
+
+    def test_exact_pin_root_attestation_and_mutation(self):
+        manifest = self.read()
+        self.assertEqual(manifest['viewer']['buildId'], '0123456789abcdef')
+        self.assertEqual(manifest.projection()['sourceEvidence'], 'root-attested')
+        self.assertNotIn(str(self.log), json.dumps(manifest.projection()))
+        self.path.write_bytes(self.path.read_bytes()+b' ')
+        with self.assertRaisesRegex(ValueError, '^runtime-manifest-changed$'): manifest.recheck(1000001)
+
+    def test_invalid_schema_bytes_and_pin(self):
+        for field, value in [('schemaVersion',True),('createdAtEpochMs',float('inf')),('secret','canary'),
+                             ('originSha256','X'*64),('runNonce','x'*32)]:
+            with self.subTest(field=field):
+                self.value = valid_manifest(self.log); self.value[field] = value; self.save()
+                with self.assertRaisesRegex(ValueError, '^runtime-manifest-invalid$'): self.read()
+        for raw in (b'{"schemaVersion":1,"schemaVersion":1}', b'x'*16385, b'\xff'):
+            self.save(raw)
+            with self.assertRaisesRegex(ValueError, '^runtime-manifest-invalid$'): self.read()
+        self.value = valid_manifest(self.log); self.save(); self.sha = 'f'*64
+        with self.assertRaisesRegex(ValueError, '^runtime-manifest-pin-mismatch$'): self.read()
+
+    def test_time_cli_owner_permissions_and_file_identity(self):
+        for opts in ({'now_epoch_ms':999999},{'now_epoch_ms':1900001}, {'scenario':'continuity'},
+                     {'mode':'relay'},{'origin':'https://other.invalid'},{'origin':'https://example.invalid/path'}):
+            with self.subTest(opts=opts), self.assertRaises(ValueError): self.read(**opts)
+        self.value['validUntilEpochMs'] = 1100000; self.save()
+        with self.assertRaisesRegex(ValueError, '^runtime-manifest-stale$'): self.read()
+        self.value = valid_manifest(self.log); self.save(); self.path.chmod(0o644)
+        with self.assertRaises(ValueError): self.read()
+        self.path.chmod(0o600)
+        with patch.object(runner.os,'getuid',return_value=os.getuid()+1), self.assertRaises(ValueError): self.read()
+        self.path.rename(self.path.with_suffix('.real')); self.path.symlink_to(self.path.with_suffix('.real'))
+        with self.assertRaises(ValueError): self.read()
+        self.path.unlink(); self.path.mkdir()
+        with self.assertRaises(ValueError): self.read()
+
+    def test_log_identity_and_poststart_inode_substitution(self):
+        self.value['signalLog']['inode'] += 1; self.save()
+        with self.assertRaisesRegex(ValueError, '^server-log-identity-changed$'): self.read()
+        self.value = valid_manifest(self.log); self.save(); manifest = self.read()
+        data = self.path.read_bytes(); self.path.rename(self.path.with_suffix('.old')); self.save(data)
+        with self.assertRaisesRegex(ValueError, '^runtime-manifest-changed$'): manifest.recheck(1000001)
+
+
+def ready_sample(count=10, epoch=3):
+    value = private_sample()
+    value.update(inputAllowed=True, pcIdentity=1, generation=1, leaseEpoch=epoch,
+        attemptHash='a'*16, callbacks=count, frameAgeMs=10, maxFrameGapMs=20)
+    value['transport'] = dict(status='observed',pathIdentity='path-1',localType='host',remoteType='srflx',
+        protocol='udp',remoteProtocol='udp',relayProtocol='unknown',rttMs=1,bytesReceived=2000000000,
+        framesDecoded=count,framesDropped=0,codec='video/h264')
+    value['inputGate'].update(status='observed',
+        **dict.fromkeys(('allowed','inputActive','hasInputLease','viewportSupported','hasPaintedFrame',
+            'currentAttemptReady','hasActiveControl','socketConnected'),True),
+        **dict.fromkeys(('manualDisconnect','superseded','mouseResetPending','draftComposing','draftPending',
+            'draftUncertain','firstFrameTimerHandlePresent'),False),uiPhase='connected',desiredMediaState='active',
+        mediaRuntimePhase='active',keyboardControllerState='READY',keyboardTransportState='ready',
+        surfaceState='settled',desktopWriteRecoveryState='reconciled',recoveryState='recovered')
+    return value
+
+
+def model_row(model, at, *, sample=None, events=(), socket='b'*16):
+    return dict(schemaVersion=1,scenario=model.scenario,elapsedSeconds=at,phase=model.phase,
+        qualificationEvidenceScope=runner.SCOPES[model.scenario],hostObservation=recovery_row()['hostObservation'],
+        sample=ready_sample(10+int(at)) if sample is None else sample,
+        identity=dict(sessionHash='c'*16,socketHash=socket,admissionHash='d'*16),serverEvents=list(events))
+
+
+class ClassifierTests(unittest.TestCase):
+    def model(self, scenario='within-grace'):
+        m = runner.OrdinaryRecoverySummary(scenario,'stun'); m.transition('startup')
+        m.startup = dict(runner.VERIFIED_STARTUP); m.expected_build = '0123456789abcdef'
+        m.server_coverage = 'complete'
+        for n in range(302): m.observe(model_row(m,n))
+        self.assertTrue(m.baseline_ready)
+        return m
+
+    def events(self, after=False):
+        def e(n,name,epoch=None,viewer=None,session=None,state=None):
+            return dict(n=n,event=name,serverTimestampMs=1000+n,viewerHash=viewer,sessionHash=session,
+                        leaseEpoch=epoch,state=state)
+        start = e(1,'grace-started',viewer='b'*16,session='c'*16)
+        if not after: return [start,e(2,'rebind-confirmed',3,viewer='e'*16,session='c'*16)]
+        return [start,e(2,'grace-expired',4,viewer='b'*16,session='c'*16,state='REVOKING'),
+                e(3,'reset-completed',4,state='FREE')]
+
+    def test_fractional_counters_rejected_large_bytes_accepted(self):
+        row = recovery_row(); row['sample'] = ready_sample()
+        validate_recovery_row(row)
+        for key in ('bytesReceived','framesDecoded','framesDropped'):
+            row['sample'] = ready_sample(); row['sample']['transport'][key] = 1.5
+            with self.assertRaises(ValueError): validate_recovery_row(row)
+
+    def test_within_and_after_require_order_then_stability_and_cleanup(self):
+        for scenario in ('within-grace','after-grace'):
+            m = self.model(scenario); m.observe(model_row(m,302)); m.confirm_fault(302); self.assertEqual(m.phase,'fault'); m.transition('recovering')
+            after = scenario == 'after-grace'
+            m.observe(model_row(m,303,events=self.events(after),socket='e'*16,sample=ready_sample(400,5 if after else 3)))
+            self.assertEqual(m.phase,'recovered-stability')
+            for n in range(304,334): m.observe(model_row(m,n,socket='e'*16,sample=ready_sample(100+n,5 if after else 3)))
+            self.assertEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'PASS')
+            incomplete = m.result(cleanup_complete=False)
+            self.assertEqual(incomplete['ordinaryRecovery']['status'],'INCOMPLETE')
+            self.assertEqual(incomplete['ordinaryRecovery']['reason'],'cleanup-incomplete')
+            self.assertEqual(incomplete['continuity']['status'],'INCOMPLETE')
+
+    def test_wrong_class_missing_reset_host_change_and_owner_never_pass(self):
+        for kind in ('wrong','reset','host','disconnect','owner','stale','clock','gap','human'):
+            with self.subTest(kind=kind):
+                m = self.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+                row = model_row(m,303,events=self.events(kind in ('wrong','reset')),socket='e'*16)
+                if kind == 'reset': row['serverEvents'][-1]['leaseEpoch'] = 8
+                if kind == 'host': row['hostObservation'].update(status='changed',coverage='incomplete')
+                if kind == 'disconnect': row['hostObservation'].update(status='unavailable',coverage='incomplete',hostDisconnectObserved=True)
+                if kind == 'owner': row['identity']['admissionHash'] = 'f'*16
+                if kind == 'stale': row['serverEvents'][1]['viewerHash'] = 'f'*16
+                if kind == 'clock': row['serverEvents'][1]['serverTimestampMs'] = 999
+                if kind == 'gap': row['sample'] = None
+                if kind == 'human': row['sample']['inputGate']['superseded'] = True
+                m.observe(row)
+                if m.phase != 'terminal': m.expire(363)
+                result = m.result(cleanup_complete=True)
+                self.assertNotEqual(result['ordinaryRecovery']['status'],'PASS')
+                self.assertIsNotNone(result['failure'])
+
+    def test_phase_graph_first_failure_and_baseline_disconnect(self):
+        m = runner.OrdinaryRecoverySummary('baseline','stun')
+        with self.assertRaises(ValueError): m.transition('fault')
+        m.transition('startup'); m.startup = dict(runner.VERIFIED_STARTUP); m.expected_build = '0'*16
+        m.observe(model_row(m,0)); m.fail('cleanup-incomplete')
+        self.assertEqual(m.result(cleanup_complete=False)['failure']['reason'],'deployment-build-mismatch')
+        self.assertEqual(m.result(cleanup_complete=False)['ordinaryRecovery']['reason'],'scenario-not-requested')
+        m = self.model('baseline'); row = model_row(m,302); row['sample']['socketConnected'] = False
+        m.observe(row); self.assertEqual(m.failure['reason'],'baseline-failed')
+
+
+class FakeManager:
+    def __init__(self, fail=None):
+        self.fail=fail; self.calls=[]; self.chromium=self
+    async def start(self):
+        self.calls.append('start')
+        if self.fail=='start': raise RuntimeError('secret')
+        return self
+    async def launch(self, **kwargs):
+        self.calls.append(('launch',kwargs))
+        if self.fail=='launch': raise RuntimeError('secret')
+        return self
+    async def new_context(self, **kwargs):
+        self.calls.append(('context',kwargs))
+        if self.fail=='context': raise RuntimeError('secret')
+        return self
+    async def new_page(self):
+        self.calls.append('page')
+        if self.fail=='page': raise RuntimeError('secret')
+        return self
+    async def close(self):
+        self.calls.append('close')
+        if self.fail=='close': raise RuntimeError('secret')
+    async def stop(self): self.calls.append('stop')
+
+
+class LifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_factory_and_all_partial_start_failures_owned(self):
+        for stage in ('factory','start','launch','context','page'):
+            manager=FakeManager(stage); life=runner.OwnedBrowserLifecycle()
+            def factory():
+                if stage=='factory': raise RuntimeError('secret')
+                return manager
+            with self.assertRaises(RuntimeError): await life.start(factory)
+            await life.cleanup(lambda: asyncio.sleep(0,result=runner.empty_diagnostic()))
+            self.assertEqual('stop' in manager.calls, stage!='factory')
+            self.assertEqual(life.snapshot()['ownedProcessExitEvidence'],'not-observed')
+
+    async def test_close_failure_export_timeout_and_independent_stop(self):
+        for kind in ('close','export'):
+            manager=FakeManager(kind); life=runner.OwnedBrowserLifecycle(limits={'export':.04,'cleanup':.2,'managerStop':.04,'browserClose':.06})
+            await life.start(lambda:manager)
+            async def export():
+                if kind=='export': await asyncio.sleep(5)
+                return runner.empty_diagnostic()
+            await life.cleanup(export)
+            self.assertIn('stop',manager.calls)
+            self.assertEqual(life.snapshot()['cleanupStatus'],'incomplete')
+            self.assertNotIn('secret',json.dumps(life.record()))
+
+    async def test_success_status_and_disarm_before_export(self):
+        manager=FakeManager(); life=runner.OwnedBrowserLifecycle(); await life.start(lambda:manager)
+        order=[]
+        async def disarm(): order.append('disarm')
+        async def export(): order.append('export'); return runner.empty_diagnostic()
+        life.disarm=disarm; await life.cleanup(export)
+        self.assertEqual(order,['disarm','export'])
+        self.assertEqual(life.record()['python']['browserClose']['status'],'closed')
+        self.assertEqual(life.record()['python']['managerStop']['status'],'ok')
+        self.assertEqual(life.snapshot()['cleanupStatus'],'api-finished-exit-unknown')
+
+
+def ui_state(**changes):
+    return dict(shellAvailable=True,clientAvailable=True,marksAvailable=True,coreInstalled=True,
+        authVerified=True,authCaptured=True,authCurrent=True,ownerCurrent=True,selectorValid=True,proofPresent=False,
+        queuedStart=False,socketPresent=False,pcPresent=False,attemptPresent=False,
+        htmlShellMarks=1,coreInteractiveMarks=1,startClickMarks=0,
+        sessionId=None,socketId=None,admissionId=None,networkMode='stun',**changes)
+
+
+class FakePage:
+    def __init__(self, states=None, kind=None):
+        self.url='https://example.invalid/viewer.html?wrdAdmission=vacant-only-v1'
+        self.states=states or [ui_state()]; self.kind=kind; self.listeners={}; self.clicks=0; self.checks=0
+    def on(self,name,fn): self.listeners.setdefault(name,[]).append(fn)
+    def remove_listener(self,name,fn): self.listeners[name].remove(fn)
+    def emit(self,name,value):
+        for fn in self.listeners.get(name,[]): fn(value)
+    def locator(self,selector): return self
+    async def evaluate(self,script):
+        value=dict(self.states.pop(0) if len(self.states)>1 else self.states[0])
+        if self.clicks:
+            value['startClickMarks']=2 if self.kind=='double-start' else 1
+            if self.kind=='selector-after': value['selectorValid']=False
+        return value
+    async def is_visible(self): return self.kind!='hidden'
+    async def is_enabled(self):
+        self.checks+=1
+        if self.kind=='auth-change' and self.checks==2: self.states[-1]['authCurrent']=False
+        return True
+    async def click(self,**kwargs):
+        self.clicks+=1
+        request=SimpleNamespace(url='https://example.invalid/api/auth/viewer-admission',method='POST',
+            post_data=json.dumps({'viewerSessionId':'raw-session-canary','initialPolicy':'vacant-only-v1'}))
+        self.emit('request',request)
+        if self.kind=='double-api': self.emit('request',request)
+        self.emit('response',SimpleNamespace(url=request.url,status=201))
+
+
+class GuardedUiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_click_waits_for_delayed_core_and_auth(self):
+        first=ui_state(); first.update(coreInstalled=False,authVerified=False,authCaptured=False,authCurrent=False)
+        page=FakePage([first,ui_state()])
+        value=await runner.start_guarded_via_ui(page,timeout_s=.4)
+        self.assertEqual(value,runner.VERIFIED_STARTUP); self.assertEqual(page.clicks,1)
+        self.assertNotIn('canary',json.dumps(value))
+
+    async def test_stale_work_selector_proof_auth_and_duplicate_observations(self):
+        cases=[('socketPresent',True),('pcPresent',True),('attemptPresent',True),('queuedStart',True),
+               ('selectorValid',False),('proofPresent',True),('htmlShellMarks',2),('coreInteractiveMarks',2)]
+        for field,value in cases:
+            state=ui_state(); state[field]=value; page=FakePage([state])
+            with self.subTest(field=field), self.assertRaises((ValueError,RuntimeError)):
+                await runner.start_guarded_via_ui(page,timeout_s=.05)
+            self.assertEqual(page.clicks,0)
+        for kind in ('auth-change','selector-after','double-start','double-api','hidden'):
+            page=FakePage(kind=kind)
+            with self.subTest(kind=kind), self.assertRaises((ValueError,RuntimeError)):
+                await runner.start_guarded_via_ui(page,timeout_s=.06)
+            self.assertLessEqual(page.clicks,1)
+
+    async def test_wrong_url_rejected_before_click_and_unknown_state_private(self):
+        page=FakePage(); page.url='https://example.invalid/viewer.html'
+        with self.assertRaisesRegex(ValueError,'selector-invalid'): await runner.start_guarded_via_ui(page)
+        self.assertEqual(page.clicks,0)
+        state=ui_state(); state['token']='token-canary'; page=FakePage([state])
+        with self.assertRaisesRegex(ValueError,'schema-rejected'): await runner.start_guarded_via_ui(page)
+
+
+class OwnedObservationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pair_concurrent_failure_settles_other_and_no_default_reader(self):
+        entered=asyncio.Event(); cancelled=asyncio.Event()
+        async def page():
+            entered.set()
+            try: await asyncio.Event().wait()
+            finally: cancelled.set()
+        async def status():
+            await entered.wait(); raise ValueError('host-observation-unavailable')
+        with patch.object(runner,'read_local_host_status',side_effect=AssertionError('must inject')):
+            with self.assertRaises(ValueError): await runner._observation_pair(page,status)
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],[])
+
+    async def test_start_observations_continue_until_ui_finishes_and_settle_on_failure(self):
+        ticks=[]; stopped=asyncio.Event()
+        async def action():
+            try: await asyncio.sleep(.045); return 'verified'
+            finally: stopped.set()
+        async def tick(): ticks.append(1)
+        result=await runner._observe_start(action(),tick,interval=.01)
+        self.assertEqual(result,'verified'); self.assertGreaterEqual(len(ticks),3); self.assertTrue(stopped.is_set())
+        stopped.clear(); entered=asyncio.Event()
+        async def pending():
+            entered.set()
+            try: await asyncio.Event().wait()
+            finally: stopped.set()
+        async def failure():
+            await entered.wait(); raise ValueError('host-replaced')
+        with self.assertRaisesRegex(ValueError,'host-replaced'): await runner._observe_start(pending(),failure,interval=.01)
+        self.assertTrue(stopped.is_set())
+
+
+class RunPreflightTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_manifest_persists_preflight_without_optional_imports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            args=SimpleNamespace(origin='https://example.invalid',scenario='within-grace',mode='stun',
+                runtime_manifest=str(Path(folder)/'missing'),runtime_manifest_sha256='a'*64,
+                output_dir=str(Path(folder)/'out'),runtime_config=str(Path(folder)/'env'))
+            import builtins
+            real=builtins.__import__; seen=[]
+            def restricted(name,*a,**kw):
+                if name in ('dotenv','playwright.async_api'): seen.append(name); raise AssertionError('optional-import')
+                return real(name,*a,**kw)
+            with patch('builtins.__import__',restricted): result=await runner.run(args,manager_factory=lambda:None,status_reader=lambda:None)
+            self.assertEqual(result,1); self.assertEqual(seen,[])
+            value=json.loads((Path(args.output_dir)/'summary.json').read_text())
+            self.assertEqual(value['failure'],{'phase':'preflight','reason':'runtime-manifest-unavailable'})
+            self.assertIsNone(value['manifest']); self.assertEqual(value['ordinaryRecovery']['status'],'NOT_RUN')
+
+
+class RecoveryBoundaryTests(unittest.TestCase):
+    def test_lifetime_gap_does_not_erase_recovery_but_current_stall_or_no_progress_does(self):
+        helper=ClassifierTests()
+        for case in ('fresh','stale','no-progress','regressed'):
+            m=helper.model('after-grace'); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+            for n in range(303,334):
+                count=400+n if case!='no-progress' else 703
+                if case=='regressed' and n==308: count=1
+                sample=ready_sample(count,5); sample['maxFrameGapMs']=13000
+                if case=='stale' and n==308: sample['frameAgeMs']=5000
+                m.observe(model_row(m,n,sample=sample,socket='e'*16,events=helper.events(True) if n==303 else []))
+                if m.phase=='terminal': break
+            result=m.result(cleanup_complete=True)
+            self.assertEqual(result['ordinaryRecovery']['status']=='PASS',case=='fresh')
+            self.assertEqual(result['continuity']['status'],'INCOMPLETE')
+
+    def test_recovered_stability_not_finished_and_missing_reset_deadline(self):
+        h=ClassifierTests(); m=h.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+        m.observe(model_row(m,303,socket='e'*16,events=h.events(),sample=ready_sample(500)))
+        self.assertEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'INCOMPLETE')
+        m=h.model('after-grace'); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+        m.observe(model_row(m,303,events=h.events(True)[:2],sample=ready_sample(500,5)))
+        m.expire(362)
+        self.assertEqual(m.failure['reason'],'reset-unconfirmed')
+        self.assertEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'INCOMPLETE')
+
+    def test_actual_reader_failure_causes_share_generic_matched_outcome(self):
+        h=ClassifierTests()
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'signal.jsonl'; path.write_bytes(b'')
+            for cause in ('rebind-timeout','rebind-rejected','rebind-cancelled'):
+                for coverage in ('complete','incomplete'):
+                    with self.subTest(cause=cause,coverage=coverage):
+                        e=ServerRecoveryEvidence(path,SALT); e.start()
+                        start=event(); failed=rebind_event('viewer_rebind_failed',viewerId='socket-new'); failed['meta']['reason']=cause
+                        with path.open('ab') as f:
+                            for raw in (start,failed): f.write(json.dumps(raw).encode()+b'\n')
+                        events=e.read_tick(IDS); e.close()
+                        m=h.model(); m.identity=dict(sessionHash=hash_identity('session-canary',SALT),socketHash=hash_identity('socket-old',SALT),admissionHash='d'*16)
+                        m.confirm_fault(301); m.transition('recovering'); m.server_coverage=coverage
+                        row=model_row(m,302,events=events,socket=hash_identity('socket-new',SALT)); row['identity']['sessionHash']=m.identity['sessionHash']
+                        m.observe(row); result=m.result(cleanup_complete=True)
+                        self.assertEqual(result['ordinaryRecovery']['reason'],'recovery-gates-unmet')
+                        self.assertEqual(result['ordinaryRecovery']['status'],'FAIL' if coverage=='complete' else 'INCOMPLETE')
+                        self.assertNotIn(cause,json.dumps(result))
+
+    def test_foreign_failure_never_binds_current_reducer(self):
+        h=ClassifierTests(); m=h.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+        events=h.events(); events[1].update(event='rebind-failed',sessionHash='f'*16,leaseEpoch=None)
+        m.observe(model_row(m,303,events=events,socket='e'*16))
+        self.assertIsNone(m.failure); self.assertEqual(m.classification,'unclassified')
+
+    def test_first_disconnect_terminal_even_if_current_sample_looks_ready(self):
+        h=ClassifierTests(); m=h.model('baseline'); row=model_row(m,302)
+        row['sample']['diagnostics']['firstDisconnectEvent']={'t':10,'n':1,'k':'sd','o':'s1','c':True,'r':'transport-close'}
+        m.observe(row); self.assertEqual(m.failure['reason'],'baseline-failed')
+
+
+class RuntimePage(FakePage):
+    def __init__(self,kind=None):
+        super().__init__(kind=kind); self.navigation=[]; self.selected=None; self.samples=0; self.installations=[]
+        self.login_entered=asyncio.Event()
+    def set_default_timeout(self,value): pass
+    async def add_init_script(self,value): self.installations.append('mode')
+    async def goto(self,url,**kwargs):
+        self.url=url; self.navigation.append(url); return SimpleNamespace(status=200)
+    def locator(self,selector): self.selected=selector; return self
+    async def fill(self,value): pass
+    async def click(self,**kwargs):
+        if self.selected!='#startBtn':
+            self.url='https://example.invalid/viewer.html'; return
+        return await super().click(**kwargs)
+    async def wait_for_url(self,*a,**kw):
+        self.login_entered.set()
+        if self.kind=='login-wait': await asyncio.Event().wait()
+    async def evaluate(self,script):
+        if script==runner.OBSERVATION_INSTALL: self.installations.append('observation'); return None
+        if script==runner.OBSERVE_UI: return await super().evaluate(script)
+        if 'window.__wrdPassiveSampler.sample()' in script:
+            self.samples+=1
+            if self.samples>=3 and 'finalize' not in script: raise ValueError('human-priority')
+            state=ui_state(); state['startClickMarks']=int(self.clicks>0)
+            state.update(sessionId='session-canary',socketId='socket-canary',admissionId='admission-canary')
+            sample=ready_sample(10+self.samples); sample.pop('attemptHash'); sample['attempt']='attempt-canary'
+            value=dict(state=state,sample=sample)
+            if 'finalize' in script: value['diagnostic']=runner.empty_diagnostic()
+            return value
+        self.installations.append('sampler'); return None
+
+
+class RuntimeManager(FakeManager):
+    def __init__(self,page): super().__init__(); self.page=page
+    async def new_page(self): self.calls.append('page'); return self.page
+
+
+class RuntimeRunTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup); self.root=Path(self.temp.name)
+        self.log=self.root/'signal.jsonl'; self.log.write_bytes(b'')
+        value=valid_manifest(self.log,round(runner.time.time()*1000)); self.manifest=self.root/'manifest.json'
+        self.manifest.write_text(json.dumps(value)); self.manifest.chmod(0o600)
+        self.args=SimpleNamespace(origin='https://example.invalid',scenario='baseline',mode='stun',runtime_manifest=self.manifest,
+            runtime_manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest(),output_dir=str(self.root/'out'),runtime_config=self.root/'env')
+        self.patch=patch.dict('sys.modules',{'dotenv':SimpleNamespace(dotenv_values=lambda _: {'VIEWER_ACCESS_PASSWORD':'password-canary'})})
+        self.patch.start(); self.addCleanup(self.patch.stop)
+    async def status(self): return dict(hostOnline=True,hostId='host-canary')
+    def summary(self): return json.loads((Path(self.args.output_dir)/'summary.json').read_text())
+
+    async def test_login_redirect_final_guarded_navigation_one_start_and_private_terminal_evidence(self):
+        page=RuntimePage(); manager=RuntimeManager(page)
+        result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
+        self.assertEqual(result,1); self.assertEqual(page.clicks,1)
+        self.assertEqual(page.navigation,['https://example.invalid','https://example.invalid/viewer.html?wrdAdmission=vacant-only-v1'])
+        self.assertEqual(page.installations,['mode','observation','sampler'])
+        self.assertEqual(self.summary()['failure']['reason'],'human-priority')
+        self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
+        output=''.join(p.read_text() for p in Path(self.args.output_dir).iterdir())
+        for private in ('password-canary','session-canary','socket-canary','attempt-canary','host-canary',str(self.log)):
+            self.assertNotIn(private,output)
+        for path in Path(self.args.output_dir).iterdir(): self.assertEqual(path.stat().st_mode&0o777,0o600)
+
+    async def test_initial_write_failure_never_constructs_manager(self):
+        calls=[]
+        with patch.object(runner.passive,'atomic_evidence',side_effect=OSError('secret-error')):
+            result=await runner.run(self.args,manager_factory=lambda:calls.append(1),status_reader=self.status)
+        self.assertEqual(result,1); self.assertEqual(calls,[])
+
+    async def test_final_write_failure_still_closes_and_stops(self):
+        page=RuntimePage(); manager=RuntimeManager(page); original=runner.passive.atomic_evidence
+        def write(path,value,**kw):
+            if not kw.get('initial'): raise OSError('secret-write')
+            return original(path,value,**kw)
+        with patch.object(runner.passive,'atomic_evidence',write):
+            result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
+        self.assertEqual(result,1); self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
+
+    async def test_repeated_cancel_keeps_one_cleanup_coordinator_and_original_deadline(self):
+        page=RuntimePage('login-wait'); manager=RuntimeManager(page); entered=asyncio.Event()
+        async def close():
+            manager.calls.append('close'); entered.set(); await asyncio.sleep(.03)
+        manager.close=close
+        task=asyncio.create_task(runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status,
+            limits={'cleanup':.3,'export':.05,'browserClose':.1,'managerStop':.1}))
+        await page.login_entered.wait(); task.cancel(); await entered.wait()
+        for _ in range(3): task.cancel(); await asyncio.sleep(.005)
+        self.assertEqual(await task,1); self.assertEqual(manager.calls.count('close'),1); self.assertEqual(manager.calls.count('stop'),1)
+        self.assertEqual(self.summary()['failure']['reason'],'cancelled')
+        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],[])
+
+    async def test_final_status_host_change_cannot_be_cleared_by_ready_viewer(self):
+        page=RuntimePage(); manager=RuntimeManager(page); calls=0
+        async def status():
+            nonlocal calls
+            calls+=1; return dict(hostOnline=True,hostId='replacement' if calls>=4 else 'host-canary')
+        await runner.run(self.args,manager_factory=lambda:manager,status_reader=status)
+        self.assertEqual(self.summary()['hostObservation']['status'],'changed')
+        self.assertEqual(self.summary()['ordinaryRecovery']['status'],'NOT_RUN')
+
+    async def test_dependency_absence_and_absent_fault_adapter_before_manager(self):
+        import builtins
+        real=builtins.__import__; calls=[]
+        def no_dotenv(name,*a,**kw):
+            if name=='dotenv': raise ImportError()
+            return real(name,*a,**kw)
+        with patch('builtins.__import__',no_dotenv):
+            self.assertEqual(await runner.run(self.args,manager_factory=lambda:calls.append(1),status_reader=self.status),1)
+        self.assertEqual(calls,[]); self.assertEqual(self.summary()['failure']['reason'],'runtime-dependency-unavailable')
+
+
+class TerminalSafetyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_close_retained_when_export_mutates_last_delta(self):
+        life=runner.OwnedBrowserLifecycle(); await life.start(lambda:FakeManager())
+        first={'t':10,'n':1,'k':'sd','o':'s1','c':True,'r':'transport-close'}
+        life.diagnostic['attribution']=dict(firstDisconnectEvent=first,cause='unknown')
+        async def export():
+            life.diagnostic=runner.empty_diagnostic()
+            return runner.empty_diagnostic()
+        await life.cleanup(export)
+        self.assertEqual(life.record()['diagnostics']['attribution']['firstDisconnectEvent'],first)
+
+    async def test_noncooperative_browser_close_remains_incomplete_and_manager_stops(self):
+        manager=FakeManager(); released=asyncio.Event(); task_ref=[]
+        async def close():
+            task_ref.append(asyncio.current_task())
+            while not released.is_set():
+                try: await released.wait()
+                except asyncio.CancelledError: pass
+        manager.close=close
+        life=runner.OwnedBrowserLifecycle(limits={'cleanup':.2,'browserClose':.04,'managerStop':.05,'export':.03})
+        await life.start(lambda:manager)
+        await life.cleanup(lambda:asyncio.sleep(0,result=runner.empty_diagnostic()))
+        self.assertEqual(life.python['browserClose']['status'],'noncooperative')
+        self.assertIn('stop',manager.calls); self.assertEqual(life.snapshot()['cleanupStatus'],'incomplete')
+        released.set(); await task_ref[0]
+
+    async def test_status_timeout_is_host_unavailable_and_other_child_settles(self):
+        async def page(): await asyncio.Event().wait()
+        async def status(): raise TimeoutError()
+        with self.assertRaisesRegex(ValueError,'host-observation-unavailable'):
+            await runner._observation_pair(page,status)
+
+    def test_late_expiry_and_recovered_path_change_prevent_pass(self):
+        helper=ClassifierTests()
+        for kind in ('expiry','path'):
+            m=helper.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+            m.observe(model_row(m,303,sample=ready_sample(500),socket='e'*16,events=helper.events()))
+            row=model_row(m,304,sample=ready_sample(501),socket='e'*16)
+            if kind=='expiry':
+                event=helper.events(True)[1]; event['n']=3; row['serverEvents']=[event]
+            else: row['sample']['transport']['pathIdentity']='path-2'
+            m.observe(row)
+            self.assertIsNotNone(m.failure)
+            self.assertNotEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'PASS')
+
+    def test_exact_summary_rejects_unknown_private_fields_and_impossible_pass(self):
+        m=runner.OrdinaryRecoverySummary('baseline','stun'); original=m.result(cleanup_complete=False)
+        self.assertIs(runner.validate_summary(original),original)
+        for container,key,value in (('root','url','https://canary'),('fault','error','error-canary'),
+                                   ('lifecycle','token','token-canary'),('ordinaryRecovery','status','PASS')):
+            item=json.loads(json.dumps(original)); target=item if container=='root' else item[container]; target[key]=value
+            with self.subTest(container=container), self.assertRaises(ValueError): runner.validate_summary(item)
+
+
+class AdditionalOwnershipTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sync_start_and_manager_exit_fallback(self):
+        calls=[]
+        class Browser:
+            def new_context(self,**kwargs):
+                calls.append(kwargs); return self
+            def new_page(self): return self
+            async def close(self): calls.append('closed')
+        class Playwright:
+            def __init__(self): self.chromium=self
+            def launch(self,**kw): return Browser()
+        class Manager:
+            def __aenter__(self): return Playwright()
+            async def __aexit__(self,*args): calls.append(('exit',args))
+        life=runner.OwnedBrowserLifecycle(); await life.start(Manager)
+        await life.cleanup(lambda:asyncio.sleep(0,result=runner.empty_diagnostic()))
+        self.assertIn({'service_workers':'block'},calls); self.assertIn(('exit',(None,None,None)),calls)
+        self.assertEqual(life.snapshot()['cleanupStatus'],'api-finished-exit-unknown')
+
+    async def test_partial_final_export_cancels_status_inside_same_deadline(self):
+        stopped=asyncio.Event(); started=asyncio.Event()
+        async def status():
+            started.set()
+            try: await asyncio.Event().wait()
+            finally: stopped.set()
+        async def page(): await started.wait(); return runner.empty_diagnostic()
+        with self.assertRaises(TimeoutError):
+            await runner.lifecycle_stage(runner._observation_pair(page,status),.12,settlement=.08)
+        self.assertTrue(stopped.is_set())
+        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],[])
+
+    async def test_status_gap_in_startup_stops_owned_ui_and_never_restarts(self):
+        entered=asyncio.Event(); stopped=asyncio.Event(); calls=[]; observer=HostContinuityObserver(SALT)
+        observer.observe_status(dict(hostOnline=True,hostId='host-canary'),0)
+        async def action():
+            calls.append('action'); entered.set()
+            try: await asyncio.Event().wait()
+            finally: stopped.set()
+        async def tick():
+            await entered.wait(); observer.observe_status(dict(hostOnline=True,hostId='host-canary'),1600)
+            raise ValueError(observer.reason)
+        with self.assertRaisesRegex(ValueError,'host-observation-gap'):
+            await runner._observe_start(action(),tick,interval=.01)
+        self.assertTrue(stopped.is_set()); self.assertEqual(calls,['action'])
+        self.assertEqual(observer.snapshot()['coverage'],'incomplete')
+
+
+class MoreRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    setUp=RuntimeRunTests.setUp
+    status=RuntimeRunTests.status
+    summary=RuntimeRunTests.summary
+    async def test_manifest_changed_during_ui_final_export_preserves_first_failure(self):
+        page=RuntimePage(); manager=RuntimeManager(page)
+        async def status():
+            self.manifest.write_bytes(self.manifest.read_bytes()+b' ')
+            return await self.status()
+        await runner.run(self.args,manager_factory=lambda:manager,status_reader=status)
+        value=self.summary()
+        self.assertEqual(value['failure']['reason'],'human-priority')
+        self.assertEqual(value['lifecycle']['cleanupStatus'],'incomplete')
+        self.assertNotIn(str(self.manifest),json.dumps(value))
+
+    async def test_fault_module_absence_before_factory_and_no_fault_does_not_import(self):
+        self.args.scenario='within-grace'
+        value=json.loads(self.manifest.read_text()); value['scenario']='within-grace'; self.manifest.write_text(json.dumps(value))
+        self.args.runtime_manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest(); calls=[]
+        with patch.dict('sys.modules',{'scripts.ordinary_recovery_fault':None}):
+            result=await runner.run(self.args,manager_factory=lambda:calls.append(1),status_reader=self.status)
+        self.assertEqual(result,1); self.assertEqual(calls,[])
+        self.assertEqual(self.summary()['ordinaryRecovery']['status'],'NOT_RUN')
+        self.assertEqual(self.summary()['failure']['reason'],'fault-capability-unavailable')
+
+
+class CliTests(unittest.TestCase):
+    def test_direct_help_and_invalid_manifest_need_no_runtime(self):
+        import subprocess
+        executable='/Users/macstudio1/.homebrew/opt/python@3.11/bin/python3.11'
+        script=str(Path(runner.__file__).resolve())
+        help_result=subprocess.run([executable,script,'--help'],capture_output=True,text=True)
+        self.assertEqual(help_result.returncode,0); self.assertIn('--runtime-manifest',help_result.stdout)
+        with tempfile.TemporaryDirectory() as folder:
+            result=subprocess.run([executable,script,'--origin','https://example.invalid','--mode','stun','--scenario','baseline',
+                '--runtime-manifest',str(Path(folder)/'missing'),'--runtime-manifest-sha256','a'*64,
+                '--output-dir',str(Path(folder)/'out')],capture_output=True,text=True)
+            self.assertEqual(result.returncode,1); self.assertEqual(result.stderr,'')
+            summary=json.loads((Path(folder)/'out'/'summary.json').read_text())
+            self.assertEqual(summary['failure']['reason'],'runtime-manifest-unavailable')
+
+
+class FinalCoverageTests(unittest.IsolatedAsyncioTestCase):
+    setUp=RuntimeRunTests.setUp
+    status=RuntimeRunTests.status
+    summary=RuntimeRunTests.summary
+
+    async def test_wrong_loaded_build_stops_before_start(self):
+        page=RuntimePage(); evaluate=page.evaluate
+        async def changed(script):
+            result=await evaluate(script)
+            if type(result) is dict and 'sample' in result: result['sample']['buildId']='f'*16
+            return result
+        page.evaluate=changed; manager=RuntimeManager(page)
+        self.assertEqual(await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status),1)
+        self.assertEqual(page.clicks,0); self.assertEqual(self.summary()['failure']['reason'],'deployment-build-mismatch')
+
+    async def test_log_alarm_still_drained_when_page_sample_fails(self):
+        page=RuntimePage(); manager=RuntimeManager(page); count=0
+        async def status():
+            nonlocal count
+            count+=1
+            if count==3:
+                raw=event('signal_socket_disconnected',meta={'role':'host','reason':'transport close'})
+                raw['domain']='signaling'; raw['correlation']={}
+                with self.log.open('ab') as f: f.write(json.dumps(raw).encode()+b'\n')
+            return await self.status()
+        await runner.run(self.args,manager_factory=lambda:manager,status_reader=status)
+        self.assertTrue(self.summary()['hostObservation']['hostDisconnectObserved'])
+        self.assertEqual(self.summary()['failure']['reason'],'human-priority')
+
+    def test_after_grace_host_replacement_or_disconnect_remains_incomplete_with_good_final_gates(self):
+        h=ClassifierTests()
+        for kind in ('replacement','disconnect'):
+            m=h.model('after-grace'); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+            observer=HostContinuityObserver(SALT); observer.observe_status(dict(hostOnline=True,hostId='original'),0)
+            if kind=='replacement': observer.observe_status(dict(hostOnline=True,hostId='replacement'),1000)
+            else: observer.observe_host_disconnect()
+            host=observer.observe_status(dict(hostOnline=True,hostId='original'),2000)
+            row=model_row(m,303,socket='e'*16,sample=ready_sample(500,5),events=h.events(True)); row['hostObservation']=host
+            m.observe(row); result=m.result(cleanup_complete=True)
+            self.assertEqual(result['ordinaryRecovery']['status'],'INCOMPLETE')
+            self.assertEqual(result['hostObservation']['coverage'],'incomplete')
+            self.assertTrue(row['sample']['inputAllowed']); self.assertEqual(row['identity']['admissionHash'],'d'*16)
