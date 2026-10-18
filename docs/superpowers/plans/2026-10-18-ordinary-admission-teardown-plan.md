@@ -57,7 +57,7 @@ if self.detach_admission is not None:
 ```
 
 Retain commands, exit codes, counts, logs and elapsed times. Verify no raw error strings/schema fields, no changed admission authority, no duplicated cleanup or duration relaxation.
-- [ ] Step5: Worker writes report and exact file list; root reviews diff, stages only the two source/test paths and commits. Task review must independently approve spec and code quality from a diff package. Then dispatch final increment review on the most capable model; resolve findings before new operational context.
+- [x] Step5: Worker writes report and exact file list; root reviews diff, stages only the two source/test paths and commits. Task review must independently approve spec and code quality from a diff package. Then dispatch final increment review on the most capable model; resolve findings before new operational context.
 
 ## Follow-up execution
 

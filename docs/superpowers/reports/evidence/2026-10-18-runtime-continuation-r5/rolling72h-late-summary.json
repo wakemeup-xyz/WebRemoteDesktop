@@ -1,0 +1,557 @@
+{
+  "schemaVersion": 1,
+  "window": {
+    "upperUtc": "2026-10-18T15:47:01+00:00",
+    "lowerUtc": "2026-10-15T15:47:01+00:00",
+    "upperCst": "2026-10-18T23:47:01+08:00",
+    "lowerCst": "2026-10-15T23:47:01+08:00"
+  },
+  "readPolicy": {
+    "noFollow": true,
+    "regularOnly": true,
+    "maxBytesPerFile": 67108864,
+    "maxTotalBytes": 268435456,
+    "actualTotalBytes": 155359406,
+    "repeatReads": 2,
+    "actualTotalBytesAllReads": 155359406,
+    "latestPassBytes": 51801426
+  },
+  "files": [
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 45696663,
+      "sizeAtOpen": 7039495,
+      "prefixCap": 7039495,
+      "sha256": "847c571eb70808ea2f09c16e0e2bdaa9eec51417e55bef69f0f1214005e2d5f5",
+      "truncated": false,
+      "timestampedLines": 3744,
+      "unparsedLines": 0,
+      "inWindowLines": 3722,
+      "actualMinCst": "2026-10-18T19:40:49.521000+08:00",
+      "actualMaxCst": "2026-10-18T23:48:57.498000+08:00"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+      "status": "read",
+      "device": 16777220,
+      "inode": 45148030,
+      "sizeAtOpen": 10484296,
+      "prefixCap": 10484296,
+      "sha256": "a1aa7285868f184e287a7792763609e34f358c2ab53ac94a60448684331e21f5",
+      "truncated": false,
+      "timestampedLines": 6410,
+      "unparsedLines": 0,
+      "inWindowLines": 6410,
+      "actualMinCst": "2026-10-18T12:59:07.806000+08:00",
+      "actualMaxCst": "2026-10-18T19:40:43.521000+08:00"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.2",
+      "status": "read",
+      "device": 16777220,
+      "inode": 44252455,
+      "sizeAtOpen": 10485058,
+      "prefixCap": 10485058,
+      "sha256": "f0b10f8a840c26133e31c372b34aeea5e3c7e41b23bc379854a9623d2aa1e91c",
+      "truncated": false,
+      "timestampedLines": 21262,
+      "unparsedLines": 0,
+      "inWindowLines": 21262,
+      "actualMinCst": "2026-10-18T06:17:52.371000+08:00",
+      "actualMaxCst": "2026-10-18T12:59:02.806000+08:00"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.3",
+      "status": "read",
+      "device": 16777220,
+      "inode": 43654875,
+      "sizeAtOpen": 10485726,
+      "prefixCap": 10485726,
+      "sha256": "e96edc5f57ada28ccaf7c4eb06d6de65ad83c136c769912a28c4932f00b488b6",
+      "truncated": false,
+      "timestampedLines": 24327,
+      "unparsedLines": 0,
+      "inWindowLines": 24327,
+      "actualMinCst": "2026-10-17T23:56:26.065000+08:00",
+      "actualMaxCst": "2026-10-18T06:17:52.248000+08:00"
+    },
+    {
+      "path": "/tmp/signal-server.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31830923,
+      "sizeAtOpen": 3539237,
+      "prefixCap": 3539237,
+      "sha256": "d09da8a4e8961d36f44215da71fd14c7952eecab8201f63c02bba31b9801b709",
+      "truncated": false,
+      "timestampedLines": 9967,
+      "unparsedLines": 129430,
+      "inWindowLines": 8342,
+      "actualMinCst": "2026-10-03T11:57:16.202000+08:00",
+      "actualMaxCst": "2026-10-18T23:48:03.139000+08:00"
+    },
+    {
+      "path": "/tmp/signal-server.log.1",
+      "status": "missing",
+      "errno": 2
+    },
+    {
+      "path": "/tmp/signal-server.log.2",
+      "status": "missing",
+      "errno": 2
+    },
+    {
+      "path": "/tmp/signal-server.log.3",
+      "status": "missing",
+      "errno": 2
+    },
+    {
+      "path": "/tmp/wrd-fixed-domain.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31832550,
+      "sizeAtOpen": 549007,
+      "prefixCap": 549007,
+      "sha256": "4a092f0c7c7a878fa3a5735cb2c73508c76a126967523728584701ac940ed01f",
+      "truncated": false,
+      "timestampedLines": 4303,
+      "unparsedLines": 0,
+      "inWindowLines": 406,
+      "actualMinCst": "2026-10-02T20:15:23+08:00",
+      "actualMaxCst": "2026-10-18T19:44:29+08:00"
+    },
+    {
+      "path": "/tmp/wrd-fixed-watch.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31249506,
+      "sizeAtOpen": 1933362,
+      "prefixCap": 1933362,
+      "sha256": "c38fd14f5f962d18af1b8ef5677406f57d70a49668ccf530b9255ad9b67e75f8",
+      "truncated": false,
+      "timestampedLines": 23170,
+      "unparsedLines": 0,
+      "inWindowLines": 3923,
+      "actualMinCst": "2026-10-01T15:48:19+08:00",
+      "actualMaxCst": "2026-10-18T23:48:20+08:00"
+    },
+    {
+      "path": "/tmp/wrd-fixed-watch-launch.log",
+      "status": "read",
+      "device": 16777220,
+      "inode": 31248998,
+      "sizeAtOpen": 7285245,
+      "prefixCap": 7285245,
+      "sha256": "499d937060dfb115dbc86e1261f5ee5a754697cba0276c9dacfcca152303abde",
+      "truncated": false,
+      "timestampedLines": 23730,
+      "unparsedLines": 23189,
+      "inWindowLines": 3963,
+      "actualMinCst": "2026-10-01T15:48:19+08:00",
+      "actualMaxCst": "2026-10-18T23:48:20+08:00"
+    }
+  ],
+  "exactDuplicateRecordsExcluded": 5586,
+  "uniqueTimestampedWindowRecords": 66769,
+  "dailyRecordCounts": {
+    "2026-10-18": 61360,
+    "2026-10-17": 3586,
+    "2026-10-16": 1811,
+    "2026-10-15": 12
+  },
+  "severityRecordCounts": {
+    "INFO": 48463,
+    "WARNING": 7213,
+    "ERROR": 34
+  },
+  "mentionRecordCounts": {
+    "diagnostic_mentions": 2781,
+    "disconnect_mentions": 61,
+    "maintenance_or_version_mentions": 14,
+    "host_lag_window_max_ge_1000ms": 187,
+    "tunnel_mentions": 32
+  },
+  "latestMentionCst": {
+    "diagnostic_mentions": "2026-10-18T23:24:04.167000+08:00",
+    "disconnect_mentions": "2026-10-18T23:09:03.108000+08:00",
+    "maintenance_or_version_mentions": "2026-10-18T19:23:25.462000+08:00",
+    "host_lag_window_max_ge_1000ms": "2026-10-18T03:29:31.434000+08:00",
+    "tunnel_mentions": "2026-10-17T13:12:19+08:00"
+  },
+  "structuredEventRecordCounts": {
+    "host_event_loop_lag": 15393,
+    "start": 18,
+    "terminal": 18,
+    "host_session_presentation": 13
+  },
+  "lag": {
+    "structuredWindows": 15393,
+    "maxReportedWindowMaxMs": 7641.923,
+    "maxReportedCurrentLagMs": 7641.923,
+    "plainLagMentionsNotAdded": 0,
+    "coverageFirstCst": "2026-10-17T23:56:26.065000+08:00",
+    "coverageLastCst": "2026-10-18T23:46:55.518000+08:00",
+    "latestGe1sWindows": [
+      {
+        "atCst": "2026-10-18T03:26:24.429000+08:00",
+        "maxLagMs": 1283.441,
+        "currentLagMs": 0.501,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:26:29.430000+08:00",
+        "maxLagMs": 1283.441,
+        "currentLagMs": 1.838,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:26:35.430000+08:00",
+        "maxLagMs": 1283.441,
+        "currentLagMs": 1.062,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:26:41.431000+08:00",
+        "maxLagMs": 1283.441,
+        "currentLagMs": 1.832,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:26:46.525000+08:00",
+        "maxLagMs": 1283.441,
+        "currentLagMs": 93.5,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:26:52.430000+08:00",
+        "maxLagMs": 1283.441,
+        "currentLagMs": 0.824,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:29:03.761000+08:00",
+        "maxLagMs": 1564.905,
+        "currentLagMs": 38.081,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:29:09.432000+08:00",
+        "maxLagMs": 1564.905,
+        "currentLagMs": 0.447,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:29:14.434000+08:00",
+        "maxLagMs": 1564.905,
+        "currentLagMs": 1.741,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:29:19.434000+08:00",
+        "maxLagMs": 1564.905,
+        "currentLagMs": 2.239,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:29:25.433000+08:00",
+        "maxLagMs": 1564.905,
+        "currentLagMs": 1.613,
+        "missedSampleCount": 1
+      },
+      {
+        "atCst": "2026-10-18T03:29:31.434000+08:00",
+        "maxLagMs": 1564.905,
+        "currentLagMs": 1.551,
+        "missedSampleCount": 1
+      }
+    ],
+    "currentLagGe1sRecords": 13,
+    "latestCurrentGe1sCst": "2026-10-18T02:48:48.872000+08:00"
+  },
+  "limitations": [
+    "Mention counts are not incident counts or SLA denominators.",
+    "Plain/structured representations may describe the same fact and are not added as incidents.",
+    "Only exact full-record duplicates removed; logical equivalence not inferred.",
+    "Timestamp-free continuation lines excluded; capped partial final lines excluded.",
+    "Missing rotations/reloads/truncation leave gaps that historical reports cannot fill.",
+    "Probe and user events coexist; no attribution as user failure.",
+    "No credentials/config/network/process/browser/native/test/source actions."
+  ],
+  "r5Actual": {
+    "classification": "FAILED",
+    "reason": "cleanup-incomplete",
+    "viewerBuild": "bb581651b422e400",
+    "passiveBaselineSamples": 301,
+    "startupSamples": 13,
+    "businessInputs": "NOT_RUN",
+    "sixInputMetrics": "null / NOT_RUN",
+    "passiveMedia": "progress-observed",
+    "qualificationPass": false
+  },
+  "latestSafeKeywordRecords": {
+    "disconnect_mentions": [
+      {
+        "atCst": "2026-10-18T15:01:23.865000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "cleanup",
+          "viewer"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T15:01:23.867000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "reset",
+          "cleanup",
+          "viewer",
+          "terminal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T19:23:17.756000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "signal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T19:23:17.761000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "disconnect",
+          "cleanup",
+          "signal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T19:23:17.776000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "disconnect",
+          "reset",
+          "cleanup",
+          "terminal",
+          "signal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T19:23:25.507000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "cleanup",
+          "viewer"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T19:23:25.510000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "reset",
+          "cleanup",
+          "viewer",
+          "terminal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T23:09:00.673000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "signal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T23:09:00.673000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "keywords": [
+          "disconnect",
+          "cleanup",
+          "signal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T23:09:00.675000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "keywords": [
+          "disconnect",
+          "reset",
+          "cleanup",
+          "terminal",
+          "signal"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T23:09:03.107000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "cleanup",
+          "viewer"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T23:09:03.108000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+        "keywords": [
+          "disconnect",
+          "disconnected",
+          "reset",
+          "cleanup",
+          "viewer",
+          "terminal"
+        ]
+      }
+    ],
+    "reset_block_mentions": [],
+    "entry_error_mentions": [],
+    "maintenance_or_version_mentions": [
+      {
+        "atCst": "2026-10-16T19:37:48+08:00",
+        "source": "/tmp/wrd-fixed-domain.log",
+        "keywords": [
+          "listening"
+        ]
+      },
+      {
+        "atCst": "2026-10-16T19:37:48+08:00",
+        "source": "/tmp/wrd-fixed-domain.log",
+        "keywords": [
+          "starting"
+        ]
+      },
+      {
+        "atCst": "2026-10-16T19:43:16+08:00",
+        "source": "/tmp/wrd-fixed-watch.log",
+        "keywords": [
+          "restart"
+        ]
+      },
+      {
+        "atCst": "2026-10-16T19:44:24+08:00",
+        "source": "/tmp/wrd-fixed-watch.log",
+        "keywords": [
+          "restart"
+        ]
+      },
+      {
+        "atCst": "2026-10-16T19:44:28+08:00",
+        "source": "/tmp/wrd-fixed-domain.log",
+        "keywords": [
+          "starting"
+        ]
+      },
+      {
+        "atCst": "2026-10-16T19:44:28+08:00",
+        "source": "/tmp/wrd-fixed-domain.log",
+        "keywords": [
+          "listening"
+        ]
+      },
+      {
+        "atCst": "2026-10-16T19:44:28+08:00",
+        "source": "/tmp/wrd-fixed-domain.log",
+        "keywords": [
+          "starting"
+        ]
+      },
+      {
+        "atCst": "2026-10-16T19:44:57+08:00",
+        "source": "/tmp/wrd-fixed-watch.log",
+        "keywords": [
+          "restart"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T02:44:36.326000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.3",
+        "keywords": [
+          "starting",
+          "host"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T03:29:50.863000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.3",
+        "keywords": [
+          "starting",
+          "host"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T14:32:55.859000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "starting",
+          "host"
+        ]
+      },
+      {
+        "atCst": "2026-10-18T19:23:25.462000+08:00",
+        "source": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+        "keywords": [
+          "starting",
+          "host"
+        ]
+      }
+    ]
+  },
+  "disconnectTaxonomy": {
+    "client namespace disconnect": 0,
+    "server namespace disconnect": 0,
+    "transport close": 0,
+    "ping timeout": 0,
+    "signal disconnected": 0,
+    "viewer disconnected": 0
+  },
+  "resetTaxonomy": {
+    "reset": 20,
+    "reset rejected": 0,
+    "reset timeout": 0,
+    "reset failed": 0,
+    "blocked": 0,
+    "pending": 15408
+  },
+  "entryLayerTaxonomy": {
+    "unauthorized": 0,
+    "tunnel not found": 0,
+    "error 1033": 0,
+    "code 1033": 0,
+    "502 bad gateway": 0,
+    "connection refused": 51,
+    "health": 3828,
+    "origin": 3967,
+    "dns": 12,
+    "registered tunnel connection": 41
+  },
+  "coverageAssessment": {
+    "host72hComplete": false,
+    "hostEarliestRetainedCst": "2026-10-17T23:56:26.065+08:00",
+    "hostEarlierWindowMissing": true,
+    "signalRotationsMissing": [
+      1,
+      2,
+      3
+    ],
+    "timestampFreeLinesNotAttributed": true,
+    "diagnosticInventory": "NOT_RUN",
+    "diagnosticRetentionVerified": false,
+    "historicalReportCountsReused": false,
+    "sourcePrefixFrozenOnEachRead": true,
+    "upperExclusion": "Timestamped records beyond upper excluded despite later snapshot bytes."
+  }
+}

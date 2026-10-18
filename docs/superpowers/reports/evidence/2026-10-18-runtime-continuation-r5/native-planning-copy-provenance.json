@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "scope": "reviewed-private-v3-to-repository-planning-copy-only",
+  "originalDesignSHA256": "19fd4ed9c9981caf7fc72c94c9714e090fec52d40d9373a8bfde1056fda41e84",
+  "originalPlanSHA256": "64b5318b573c2618a2efdaeaee34bb8bf77dfe76c2a2d6b5a6467e72be414e20",
+  "transformations": [
+    "add repository checkpoint and historical-provenance note",
+    "update nontechnical draft review status to scoped Approved",
+    "plan spec link now repository-relative path",
+    "link scoped review; technical contract unchanged"
+  ],
+  "copies": {
+    "docs/superpowers/specs/2026-10-18-native-latency-collector-design.md": "9bf1ead3249dcbf7f7e6399438fc97639f1d2f8ad9d04c31d89b9615b8ee2a57",
+    "docs/superpowers/plans/2026-10-18-native-latency-collector-plan.md": "fe0e6a895a96b4d5419ed55131a5935a7a859ad2d40e6c657f01216277d9c4e2"
+  },
+  "implemented": false,
+  "runtime": "NOT_RUN"
+}
