@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "scope": "bounded-availability-readonly",
+  "startedEpoch": 1792350968.418916,
+  "routes": {
+    "local-health": {
+      "httpStatus": 200,
+      "elapsedMs": 16.7911509051919,
+      "summary": {
+        "status": "ok"
+      }
+    },
+    "local-status": {
+      "httpStatus": 200,
+      "elapsedMs": 12.469183187931776,
+      "summary": {
+        "status": "ok",
+        "hostOnline": true,
+        "viewerCount": 0,
+        "relayViewerCount": 0
+      }
+    },
+    "formal-health": {
+      "httpStatus": null,
+      "elapsedMs": 1970.8699281327426,
+      "errorType": "HTTPError"
+    }
+  },
+  "knownIdentities": {
+    "signal": {
+      "pid": 33179,
+      "birthEpoch": 1792348311.587397,
+      "expectedBirthMatches": true,
+      "status": "running"
+    },
+    "host": {
+      "pid": 36877,
+      "birthEpoch": 1792322600.528357,
+      "expectedBirthMatches": true,
+      "status": "running"
+    },
+    "tunnel": {
+      "pid": 84671,
+      "birthEpoch": 1792151067.803588,
+      "expectedBirthMatches": true,
+      "status": "running"
+    },
+    "watcher": {
+      "pid": 897,
+      "birthEpoch": 1790840870.948583,
+      "expectedBirthMatches": true,
+      "status": "running"
+    }
+  },
+  "safeUrlFileExists": false,
+  "completedEpoch": 1792350970.412053
+}

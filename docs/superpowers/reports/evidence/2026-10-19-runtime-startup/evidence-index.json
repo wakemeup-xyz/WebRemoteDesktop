@@ -547,7 +547,52 @@
       "sha256": "7dbaa6b107666a921731968b9d2131bfb803b8ac10daa8693f5c7772d747bc7b",
       "bytes": 1277,
       "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-AVAILABILITY-0256.json"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-20261019.md": {
+      "sha256": "67674a2a654cfeae5c91c5de0f25349edf9e859a80ad3870c9043aa138d8acf4",
+      "bytes": 4593,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-20261019.md"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-20261019.json": {
+      "sha256": "f054178bfdb57d89578b352ab4ec73587ceaabf27f1acaca65ab9f9d2317cfe4",
+      "bytes": 7720,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-20261019.json"
+    },
+    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0319.json": {
+      "sha256": "488cfbe5a3375c426a2347c4ff414eb1fc8eeca803f84031a497f68bea911207",
+      "bytes": 1288,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0319.json"
+    },
+    "root/TERMINAL-PROOF-FORMAL-ENTRY-FOLLOWUP-0320.json": {
+      "sha256": "05c3540ca0597220dfd2b31f6ba1190df811fac2be18dcfe44c8862752aeb780",
+      "bytes": 988,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-FORMAL-ENTRY-FOLLOWUP-0320.json"
+    },
+    "diagnostics/wrd-formal-403-readonly-diagnosis-20261019.md": {
+      "sha256": "9db0411060ec23c0e2c6c93a6a8902085f68980b9d44a893090f8e3b579b3071",
+      "bytes": 2553,
+      "originalPath": "/tmp/wrd-formal-403-readonly-diagnosis-20261019.md"
+    },
+    "diagnostics/wrd-formal-403-readonly-diagnosis-20261019.json": {
+      "sha256": "68886ccf9aad2d155c691e29d920abec962016ff66176541c70e0e4cc5700b91",
+      "bytes": 6635,
+      "originalPath": "/tmp/wrd-formal-403-readonly-diagnosis-20261019.json"
+    },
+    "terminal-proof-task1/task-1-report.md": {
+      "sha256": "ed62b5ee8cd16af6e3c3fc964653fe545f755a126e6cb77334cff1894105c040",
+      "bytes": 9780,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-report.md"
+    },
+    "terminal-proof-task1/task-1-review.md": {
+      "sha256": "e4c517590560e91355a8f92d5eb6a56b62b10fde7e47158c6ff4c77529721d21",
+      "bytes": 6156,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-review.md"
+    },
+    "terminal-proof-task1/task-1-fix-1-review.md": {
+      "sha256": "a54c8e986a414af2aa5ee2ba29437dfadd014dc3a9541af6179fb6e9bc153307",
+      "bytes": 2168,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-fix-1-review.md"
     }
   },
-  "totalBytes": 1271207
+  "totalBytes": 1313088
 }

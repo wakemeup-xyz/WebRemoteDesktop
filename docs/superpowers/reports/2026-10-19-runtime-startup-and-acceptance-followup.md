@@ -41,3 +41,17 @@ R4F1源复制结果 `4eb2f339…` 为 source-applied。重载 helper 退出0、1
 后续设计为精确、有界的前瞻终态证明及独立消费者，保留原始gap，只接受逐条证明完整的注册身份退出竞态；其余未知/权限错误/不同操作仍拒绝。完整进程树保持UNKNOWN，PID reused不绕过原最终all-exited要求。见同日 `known-process-terminal-scan-proof` spec和plan。代码及review完成后，创建全新序列和实际基线，逐项验证宽限内外恢复及三小时连续性；每项需要新严格空闲检查，不自动推进失败场景。pacing及原生输入诊断当前无合格前置基线。
 
 完整SHA、实际结果与失败提取版本见 [证据索引](evidence/2026-10-19-runtime-startup/evidence-index.json)。密码只从运行配置在聊天报告，不写入版本化正文。
+
+## 补充复查：源码边界与公网403
+
+Host lag observer 的六文件有限静态 review 未确认可重复秒级阻塞的确定 bug。首次 Thread.start、producer 侧 redact/JSON/format 和短锁确有同步边界，但耗时未测；资源命令在私有 loop、writer I/O 在锁外。受审源码尚未加载到旧 live Host，因此这些结果不能作为本次6条秒级 lag 的根因。当前源码 percentile 位于 eventLoop.p95，不能据此反填日志顶层 p95LagMs。详情及文件 SHA 已归档。
+
+03:16:08.419–03:16:10.412 CST 的独立检查取得本地 health/status200，16.791/12.469ms，Host在线、Viewer0/relay0；四个受保护服务身份均匹配原 birth，safe URL 文件不存在。但同一窗口公网健康请求为 HTTPError（首次摘要未保存错误状态码）。03:16:38.228–03:16:40.600 CST 的有界补查确认公网 `/health` 与 `/` 均403、server=cloudflare、响应前缀17字节、约2162/2362ms。此时不能宣布公网可用；server header 不能独自区分边缘策略、客户端请求条件或源站路径。02:56的200不覆盖该新异常，未因403重启或重建任何服务/tunnel。后续精确错误码与请求条件检查单独记录。
+
+终态扫描证明 Task1 代码提交 f5b932e，43项纯夹具测试通过（5.221秒），独立 review 尚未完成。这是验收工具的前瞻修正；不更改旧失败、不提供新的控制稳定性或公网可用性通过结论。
+
+03:19:15.587–03:19:16.620 CST 的四请求只读对照进一步取得：公网 health 默认 Python-urllib UA403/edgeCode1010；同路径改用常见浏览器 UA 后200，公网入口用该UA也200；本地 health 默认UA200。对应耗时724.616/1023.364/1019.847/5.817ms。三次公网请求均显式direct/no-proxy且不跟随重定向，同窗口路径/UA对照支持请求条件关联；不证明具体UA/IP规则或真实浏览器连接可用。此前root请求未单独记录代理条件，不能将跨窗口观测说成只改变UA。403事实保持保留，尚未据此改CF策略或服务/tunnel。
+
+Cloudflare [1010官方说明](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/)将其解释为按浏览器签名拒绝访问；[BIC官方说明](https://developers.cloudflare.com/waf/tools/browser-integrity-check/)列出非标准/缺失UA可能被挑战。该通用含义与本轮对照一致，但没有CF规则/源站链日志，不能据此确认本域名的具体配置。今后的诊断应单列HTTP状态、body错误码、请求UA与代理条件，避免将自动探针403计为服务离线；真实浏览器/媒体/输入仍需独立验收。本轮没有关闭或修改任何安全功能。
+
+Task1独立review发现exact ownership五字段schema未严格拒绝额外字段。修正312a163新增严格键集合，实际行为RED后2项定向测试GREEN（0.089秒），独立窄复审确认全部finding已解决、无新Critical/Important。Task1至此通过代码review；Task2集成、全分支review、真实只读check-only及新runtime资格尚未运行。原43项完整fixture结果来自修正前f5b932e，修正后只运行覆盖该差异的2项测试，不伪称整套重跑。

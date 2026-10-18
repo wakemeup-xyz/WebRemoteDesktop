@@ -1,0 +1,39 @@
+{
+  "scope": "bounded-formal-entry-readonly-diagnostic",
+  "startedEpoch": 1792350998.227606,
+  "completedEpoch": 1792351000.599846,
+  "routes": {
+    "/health": {
+      "httpStatus": 403,
+      "elapsedMs": 2162.0636070147157,
+      "headers": {
+        "server": "cloudflare",
+        "cf-ray": "a4c9e0f709a2ad59-LAX",
+        "content-type": "text/plain; charset=UTF-8"
+      },
+      "bodyPrefixBytes": 17,
+      "bodyFlags": {
+        "cloudflare": false,
+        "tunnelError1033": false,
+        "badGateway": false,
+        "rateLimited": false
+      }
+    },
+    "/": {
+      "httpStatus": 403,
+      "elapsedMs": 2361.7679851595312,
+      "headers": {
+        "server": "cloudflare",
+        "cf-ray": "a4c9e0f84dc8db6e-LAX",
+        "content-type": "text/plain; charset=UTF-8"
+      },
+      "bodyPrefixBytes": 17,
+      "bodyFlags": {
+        "cloudflare": false,
+        "tunnelError1033": false,
+        "badGateway": false,
+        "rateLimited": false
+      }
+    }
+  }
+}
