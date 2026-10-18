@@ -1348,6 +1348,8 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
                 result=dict(state=state,sample=sample)
                 if 'finalize' in script:
                     self.subscription_manager.order.append('final-export')
+                    if self.change in ('detach-log-gap','log-gap'):
+                        self.log.write_bytes(b'{')
                     if self.change=='export-failure': raise RuntimeError('export-canary')
                     self.final_before=json.loads((Path(self.output)/'samples.jsonl').read_text().splitlines()[-1])
                     if self.change=='lease': sample['leaseEpoch']+=1
@@ -1361,10 +1363,11 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
 
         original_sleep=asyncio.sleep
         original_time=runner.time
-        for change in ('unchanged','lease','path','counter','pc','attempt','generation','detach-failure','export-failure'):
+        for change in ('unchanged','lease','path','counter','pc','attempt','generation','detach-failure','export-failure','detach-log-gap','log-gap'):
             with self.subTest(change=change):
                 self.args.output_dir=str(self.root/change)
-                page=QualifiedPage(change); page.kind='detach-failure' if change=='detach-failure' else None; page.output=self.args.output_dir; manager=RuntimeManager(page)
+                self.log.write_bytes(b'')
+                page=QualifiedPage(change); page.log=self.log; page.kind='detach-failure' if change in ('detach-failure','detach-log-gap') else None; page.output=self.args.output_dir; manager=RuntimeManager(page)
                 clock=[0.125]
                 async def sleep(delay):
                     clock[0]+=delay
@@ -1391,16 +1394,21 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(result,1)
                     self.assertNotEqual(summary['continuity']['status'],'PASS')
-                    if change not in ('detach-failure','export-failure'):
+                    if change not in ('detach-failure','export-failure','detach-log-gap','log-gap'):
                         self.assertEqual(summary['failure'],{'phase':'baseline','reason':'baseline-failed'})
-                    if change=='detach-failure':
+                    if change in ('detach-failure','detach-log-gap'):
                         self.assertEqual(summary['failure']['reason'],'cleanup-incomplete')
                         self.assertEqual(summary['lifecycle']['captureStatus'],'ok')
+                    if change=='log-gap':
+                        self.assertEqual(summary['failure']['reason'],'server-log-gap')
+                        self.assertEqual(summary['lifecycle']['captureStatus'],'ok')
+                    if change in ('detach-log-gap','log-gap'):
+                        self.assertEqual(summary['ordinaryRecovery']['serverCoverage'],'incomplete')
                     if change=='export-failure':
                         self.assertEqual(summary['lifecycle']['captureStatus'],'error')
                 order=manager.order
                 self.assertLess(order.index('final-export'),order.index('detach-request'))
-                if change!='detach-failure': self.assertLess(order.index('detach-response'),order.index('browser-close'))
+                if change not in ('detach-failure','detach-log-gap'): self.assertLess(order.index('detach-response'),order.index('browser-close'))
                 self.assertLess(order.index('detach-request'),order.index('browser-close'))
                 self.assertLess(order.index('browser-close'),order.index('manager-stop'))
                 self.assertEqual(order.count('detach-request'),1)

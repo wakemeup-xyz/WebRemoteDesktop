@@ -597,7 +597,7 @@ class OwnedBrowserLifecycle:
         self.python = dict(failureDetectedMs=None,failureWallEpochMs=None,cleanupStatus='not-started',
             **{k:dict(startedMs=None,finishedMs=None,status='not-created' if k=='browserClose' else 'not-started')
                for k in ('managerStart','managerLaunch','managerStop','browserClose')})
-        self._cleaned = False
+        self._cleaned = False; self._admission_detach_failed = False
 
     async def _tracked(self,key,operation,cap):
         record = self.python[key]; record['startedMs'] = passive.monotonic_ms()
@@ -651,7 +651,8 @@ class OwnedBrowserLifecycle:
             try:
                 await lifecycle_stage(_await(self.detach_admission()),remaining('export'),
                     settlement=min(.075,remaining('export')/4))
-            except BaseException: failed=True
+            except BaseException:
+                failed=True; self._admission_detach_failed=True
         for key, owned, operation in (
             ('browserClose',self.browser,lambda:self.browser.close()),
             ('managerStop',self.manager,lambda:self.playwright.stop() if self.playwright is not None and hasattr(self.playwright,'stop')
@@ -1378,6 +1379,7 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
             except BaseException: break
         try: coordinator.result()
         except BaseException: life.python['cleanupStatus']='incomplete'
+        if life._admission_detach_failed: fail(ValueError('cleanup-incomplete'))
         if log is not None:
             try: log.close()
             except OSError:
