@@ -1101,7 +1101,7 @@ def validate_summary(value):
     if r['status']=='PASS':
         expected='within-grace-rebind' if value['scenario']=='within-grace' else 'after-grace-reset'
         host=value['hostObservation']
-        if (failure is not None or r['reason']!='none' or r['classification']!=expected or r['serverCoverage']!='complete'
+        if (failure is not None or value['fault']['status']=='failed' or r['reason']!='none' or r['classification']!=expected or r['serverCoverage']!='complete'
             or r['recoverySeconds'] is None or r['recoverySeconds']>60 or r['recoveredStableSeconds']<30
             or lifecycle['cleanupStatus']!='api-finished-exit-unknown' or lifecycle['captureStatus']!='ok' or lifecycle['writeStatus']!='ok'
             or host['status']!='stable' or host['coverage']!='complete' or host['hostDisconnectObserved']): raise ValueError('schema-rejected')
@@ -1120,6 +1120,14 @@ def validate_summary(value):
         elif item!=expected: raise ValueError('schema-rejected')
     if len(compact(value))>MAX_ROW_BYTES: raise ValueError('evidence-budget-exceeded')
     return value
+
+
+def _raise_fault_failure(fault, snapshot):
+    if snapshot['status'] != 'failed': return
+    # This is directly owned adapter evidence, never inferred server causality.
+    reason = getattr(fault, 'failure_reason', 'fault-handler-failed')
+    _enum(reason, ('fault-attempt-cap', 'fault-handler-failed'))
+    raise ValueError(reason)
 
 
 def _load_fault(scenario):
@@ -1204,7 +1212,7 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
             identity=check_state(result['state'])
             if fault is not None:
                 model.fault=validate_fault(fault.snapshot(),args.scenario)
-                if model.fault['status']=='failed': raise ValueError('fault-handler-failed')
+                _raise_fault_failure(fault,model.fault)
             raw=result['sample']
             try:
                 _keys(raw,(*[k for k in _SAMPLE_KEYS if k!='attemptHash'],'attempt'))
@@ -1369,8 +1377,10 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
             model.server_coverage=log.snapshot()['coverage']
             if log.reason!='none': fail(ValueError(log.reason))
         if fault is not None:
-            try: model.fault=validate_fault(fault.snapshot(),args.scenario)
-            except ValueError: fail(ValueError('schema-rejected'))
+            try:
+                model.fault=validate_fault(fault.snapshot(),args.scenario)
+                _raise_fault_failure(fault,model.fault)
+            except ValueError as exc: fail(exc)
         model.lifecycle=life.snapshot(); model.host=host.snapshot()
         if life.python['cleanupStatus']!='api-finished-exit-unknown' and model.failure is None: fail(ValueError('cleanup-incomplete'))
         if model.phase!='terminal': model.transition('terminal')
