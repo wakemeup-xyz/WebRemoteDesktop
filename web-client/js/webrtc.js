@@ -2594,7 +2594,10 @@ const WebRTC = {
     this._deferPeerUntilConfig = false;
     this.createSignalingSocket(!reuseSocket);
     this.bindControlLifecycle();
-    if (this.networkMode !== 'tunnel') this.createPeerConnection();
+    if (this.networkMode !== 'tunnel') {
+      this.createPeerConnection();
+      this.reconcileConfiguredControlMedia();
+    }
   },
 
   applyBootstrapSnapshot(snapshot = null) {
@@ -4221,17 +4224,42 @@ const WebRTC = {
       if (this.getMediaActivitySnapshot().state === 'active') this.startTunnelRelay();
       this.replayMediaActivityIntent('control-regrant');
     } else {
-      const pcState = this.pc?.connectionState;
-      const dcOpen = this.inputChannel?.readyState === 'open';
-      const live = pcState === 'connected' && (dcOpen || this._refreshing);
-      if (!live) {
-        if (!this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) {
-          this.createPeerConnection();
-        }
-        this.createOffer();
-      }
+      this.reconcileConfiguredControlMedia();
       this.replayMediaActivityIntent('control-regrant');
     }
+  },
+
+  reconcileConfiguredControlMedia() {
+    if (!this.startupAllowed() || this._deferPeerUntilConfig || !this.hasActiveControl()
+      || this.networkMode === 'tunnel') return false;
+    // WebRTC ACTIVE precedes Input's acceptance. Read its existing authority and
+    // recovery state; replaying setControlLease here could clear safety state.
+    if (typeof Input !== 'undefined') {
+      const lease = this.controlState.lease;
+      if (Input._recoveryControlReacquireRequired
+        || Input.keyboardTransport?.getSnapshot?.().state === 'reacquire-required'
+        || Input.activeControlLease?.leaseId !== lease.leaseId
+        || Input.activeControlLease?.leaseEpoch !== lease.leaseEpoch) {
+        this.requestControlRecovery(Input._recoveryCycle?.generation);
+        return false;
+      }
+    }
+    const pcState = this.pc?.connectionState;
+    const live = pcState === 'connected' && (this.inputChannel?.readyState === 'open' || this._refreshing);
+    if (live) return false;
+    if (!this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) this.createPeerConnection();
+    // A pending matching local offer already joins these two prerequisites.
+    // Stable/completed peers remain eligible for ordinary regrant recovery.
+    const peer = this.pc;
+    if (peer?.signalingState === 'have-local-offer' && peer.localDescription?.type === 'offer'
+      && peer._wrdEmittedOffer?.socket === this.socket
+      && peer._wrdEmittedOffer?.attemptId === this.currentConnectionAttemptId
+      && peer._wrdEmittedOffer?.attemptSequence === (Number(this.connectionAttemptSequence) || 1)
+      && peer._wrdConnectionAttemptId === this.currentConnectionAttemptId
+      && peer._wrdControlLease?.leaseId === this.controlState.lease.leaseId
+      && peer._wrdControlLease?.leaseEpoch === this.controlState.lease.leaseEpoch) return false;
+    this.createOffer();
+    return true;
   },
 
   freezeControl(reason, reset = true) {
@@ -4582,7 +4610,7 @@ const WebRTC = {
   },
 
   createPeerConnection() {
-    if (!this.startupAllowed()) return;
+    if (!this.startupAllowed() || this._deferPeerUntilConfig) return;
     this.cancelDataChannelWatchdog();
     this.clearRefreshDcWaitTimer();
     if (this.networkMode === 'tunnel') {
@@ -5575,7 +5603,7 @@ if (this.tunnelLastObjectUrl) {
   },
   
   async createOffer() {
-    if (!this.startupAllowed()) return;
+    if (!this.startupAllowed() || this._deferPeerUntilConfig) return;
     console.log('[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s',
       this.networkMode, !!this.pc, this.offerInProgress);
     if (!this.hasActiveControl()) {
@@ -5650,6 +5678,7 @@ if (this.tunnelLastObjectUrl) {
         width: session.width,
         height: session.height,
       });
+      if (ownsOffer()) peer._wrdEmittedOffer = { socket, attemptId, attemptSequence };
       console.log('Offer sent (epoch=%d attempt=%s)', epoch, this.currentConnectionAttemptId);
     } catch (err) {
       if (!ownsOffer()) return;

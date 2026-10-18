@@ -811,7 +811,7 @@ test('viewer waits for an active control lease before starting an offer and rout
     Input: {
       init() {},
       setActive() {},
-      setControlLease() {},
+      setControlLease(lease) { this.activeControlLease = lease; return true; },
       acceptKeyboardAck() { order.push('transport'); return { status: 'applied' }; },
       acceptMouseAck() { order.push('mouse'); },
     },
@@ -4933,7 +4933,7 @@ test('control grant honors the media input gate before a fresh frame', () => {
 test('control grant does not createOffer when PC and DC are already live', () => {
   const { WebRTC, context } = loadWebRTC();
   let offers = 0;
-  context.Input = { init() {}, setControlLease() {}, setActive() {} };
+  context.Input = { init() {}, setControlLease(lease) { this.activeControlLease = lease; return true; }, setActive() {} };
   WebRTC.startControlHeartbeat = () => {};
   WebRTC.updateControlUI = () => {};
   WebRTC.createOffer = () => { offers += 1; };
@@ -4951,7 +4951,7 @@ test('control grant does not createOffer when PC and DC are already live', () =>
 test('control grant still creates offer when PC is missing', () => {
   const { WebRTC, context } = loadWebRTC();
   let offers = 0;
-  context.Input = { init() {}, setControlLease() {}, setActive() {} };
+  context.Input = { init() {}, setControlLease(lease) { this.activeControlLease = lease; return true; }, setActive() {} };
   WebRTC.startControlHeartbeat = () => {};
   WebRTC.updateControlUI = () => {};
   WebRTC.createOffer = () => { offers += 1; };
@@ -8226,3 +8226,118 @@ test('review I1: current reclaim admission rejection retains terminal failure au
   assert.equal(h.WebRTC._startupEpisode.reason, 'bootstrap-failure');
   assert.equal(h.WebRTC.uiPhase, 'disconnected');
 });
+
+const startupJoinFlush = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(); };
+function startupJoinDeferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+async function startupJoinScenario(delayed, outcome = 'normal') {
+  const events = [], peers = [], sockets = [], requests = [], errors = [], warnings = [];
+  let clock = 0;
+  const bootstrap = startupJoinDeferred();
+  class FakePeer {
+    constructor(config) { this.ordinal = peers.length + 1; this.config = config; this.connectionState = 'new'; this.iceConnectionState = 'new'; this.iceGatheringState = 'complete'; this.signalingState = 'stable'; this.transceivers = []; this.remoteDescriptions = 0; peers.push(this); events.push(['pc-created', this.ordinal]); }
+    createDataChannel() { return { readyState: 'connecting', bufferedAmount: 0, send() {}, close() {} }; }
+    getTransceivers() { return this.transceivers; }
+    addTransceiver() { const t = { receiver: { track: { kind: 'video' } }, setCodecPreferences() {} }; this.transceivers.push(t); return t; }
+    async createOffer() { events.push(['platform-createOffer', this.ordinal]); return { type: 'offer', sdp: 'offline-fixture-sdp' }; }
+    async setLocalDescription(value) { this.localDescription = value; this.signalingState = 'have-local-offer'; events.push(['platform-local-description', this.ordinal]); }
+    async setRemoteDescription(value) { this.remoteDescription = value; this.remoteDescriptions++; this.signalingState = 'stable'; events.push(['platform-remote-description', this.ordinal]); }
+    close() { this.connectionState = 'closed'; this.signalingState = 'closed'; events.push(['pc-closed', this.ordinal]); }
+    addEventListener() {} removeEventListener() {}
+  }
+  const quiet = { log() {}, warn(...args) { warnings.push(String(args[0])); }, error(...args) { errors.push(String(args[0])); } };
+  const elements = new Map();
+  const h = loadWebRTC({
+    realInput: true,
+    window: { location: { origin: 'http://offline.invalid' }, addEventListener() {}, removeEventListener() {} },
+    document: { readyState: 'loading', hidden: false, querySelectorAll: () => [], body: makeElement(), addEventListener() {}, querySelector: () => null, getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); } },
+    console: quiet,
+    setTimeout() { return 0; }, clearTimeout() {}, setInterval() { return 0; }, clearInterval() {},
+    performance: { now: () => clock },
+    Auth: { whenReady: async () => true, getToken: () => 'offline-token', getGeneration: () => 1, isVerified: () => true, isLoggedIn: () => true, logout() { throw Error('unexpected logout'); } },
+    sessionStorage: { getItem() { return null; }, setItem() {} },
+    fetch: async (url) => { requests.push(url.endsWith('/api/auth/viewer-admission') ? 'admission' : 'unexpected'); return { ok: true, status: 201, json: async () => ({ admission: { ticket: 'offline-ticket' } }) }; },
+    RTCPeerConnection: FakePeer,
+    io(_base, options) {
+      const handlers = new Map();
+      const socket = { connected: false, auth: options.auth, emitted: [],
+        on(event, fn) { handlers.set(event, fn); },
+        emit(event, data) { this.emitted.push({ event, data }); events.push(['socket-emit', event]); },
+        disconnect() { this.connected = false; },
+        trigger(event, data) { return handlers.get(event)?.(data); },
+        io: { opts: options, engine: { readyState: 'open', transport: { name: 'websocket' } }, _readyState: 'open', on() {}, reconnection() {} }
+      }; sockets.push(socket); return socket;
+    }
+  });
+  const W = h.WebRTC;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'bootstrap-controller.js'), 'utf8'), h.context);
+  const controller = h.context.createViewerBootstrap({ getScope: () => 1, now: () => clock,
+    setTimer: () => 0, clearTimer() {}, fetchSnapshot: () => bootstrap.promise });
+  const config = { schemaVersion: 1, host: { online: true, capabilities: {} }, webrtc: { iceServers: [{ urls: ['stun:offline.invalid'] }], turnConfigured: false } };
+  // Observe real calls without replacing their bodies or mutating product state.
+  const protectedMethods = ['startViewer', 'requestExplicitViewerAdmission', 'createSignalingSocket', 'init', 'handleControlGrant', 'createPeerConnection', 'createOffer'];
+  for (const name of protectedMethods) { const original = W[name]; W[name] = function(...args) { events.push(['real-method', name]); return original.apply(this, args); }; }
+  if (!delayed) { bootstrap.resolve(config); await controller.load({ mode: W.networkMode, turnServerId: W.selectedTurnServerId || '' }); }
+  const pending = W.startViewer(controller);
+  await startupJoinFlush();
+  assert.equal(sockets.length, 1, 'ordinary admission should create exactly one socket');
+  const socket = sockets[0];
+  if (!delayed) await pending;
+  socket.connected = true;
+  await socket.trigger('connect');
+  socket.trigger('connected', { hostOnline: true, hostCapabilities: {}, viewerAdmission: { mode: 'resume', generation: 'offline-generation' } });
+  assert(socket.emitted.some(e => e.event === 'control-acquire'), 'welcome must actually request control');
+  const grant = { controller: true, leaseId: 'offline-lease-00000001', leaseEpoch: 1 };
+  if (outcome !== 'no-control') {
+    socket.trigger('control-grant', grant);
+    socket.trigger('control-grant', grant); // duplicate while the offer is in flight
+  }
+  await startupJoinFlush();
+  if (outcome === 'input-unavailable') {
+    const input = h.context.__Input;
+    assert.equal(input.keyboardTransport.acceptAck({ schemaVersion: 2, leaseEpoch: 1, status: 'invalid-input' }).status, 'reacquire-required');
+    socket.trigger('control-grant', grant); // real setControlLease must reject this lease
+    assert.equal(input._recoveryControlReacquireRequired, true);
+  }
+  if (outcome === 'cancel') W.retireStartupEpisode('startup-cancelled', { cleanup: true });
+  if (outcome === 'supersede') socket.trigger('viewer-superseded', {});
+  if (outcome === 'auth-change') h.context.Auth.getToken = () => 'changed-token';
+  const before = { pcs: peers.length, offers: socket.emitted.filter(e => e.event === 'offer').length, deferred: W._deferPeerUntilConfig, currentPc: W.pc?.ordinal, pcSignaling: W.pc?.signalingState, configServerEntries: W.pc?.config?.iceServers?.length, attemptSequence: W.connectionAttemptSequence };
+  if (delayed) { clock = 900; bootstrap.resolve(config); await pending; await startupJoinFlush(); }
+  const after = { pcs: peers.length, offers: socket.emitted.filter(e => e.event === 'offer').length, currentPc: W.pc?.ordinal, pcSignaling: W.pc?.signalingState, oldClosed: peers.length > 1 ? peers[0].connectionState === 'closed' : null, gateAllowed: W.canEnableDesktopInput(), episodeState: W._startupEpisode?.state, configServerEntries: W.pc?.config?.iceServers?.length, attemptSequence: W.connectionAttemptSequence };
+  if (outcome !== 'normal') {
+    assert.equal(socket.emitted.filter(e => e.event === 'offer').length, 0);
+    if (['cancel', 'supersede', 'auth-change'].includes(outcome)) assert.equal(peers.length, 0);
+    h.cleanup(); return;
+  }
+  socket.trigger('control-grant', grant); // duplicate after createOffer's lock clears
+  await startupJoinFlush();
+  assert.equal(socket.emitted.filter(e => e.event === 'offer').length, 1);
+  await socket.trigger('answer', { answer: { type: 'answer', sdp: 'offline-fixture-answer' } });
+  await startupJoinFlush();
+  const result = { scenario: delayed ? 'delayed-bootstrap-fast-grant' : 'ready-bootstrap-control', before, after,
+    answersApplied: peers.map(p => p.remoteDescriptions), requests, errors, warnings, events };
+  assert.deepEqual(requests, ['admission']);
+  assert.deepEqual(errors, []);
+  if (delayed) {
+    assert.equal(before.pcs, 0, 'deferred configuration must fence peer creation');
+    assert.equal(before.offers, 0, 'deferred configuration must fence offers');
+  }
+  assert.equal(after.pcs, 1);
+  assert.equal(after.offers, 1);
+  assert.equal(peers[0].remoteDescriptions, 1);
+  assert.equal(h.context.__Input.activeControlLease.leaseEpoch, 1);
+  assert.equal(h.context.__Input._recoveryControlReacquireRequired, false);
+  // Stable completed peers can still renegotiate on a later regrant.
+  socket.trigger('control-grant', grant);
+  await startupJoinFlush();
+  assert.equal(socket.emitted.filter(e => e.event === 'offer').length, 2);
+  h.cleanup();
+  return result;
+}
+
+test('startup config join: delayed configuration and early real Input grant', async () => { await startupJoinScenario(true); });
+test('startup config join: ready configuration and late real Input grant', async () => { await startupJoinScenario(false); });
+
+for (const outcome of ['input-unavailable', 'no-control', 'cancel', 'supersede', 'auth-change']) {
+  test(`startup config join: delayed config preserves ${outcome}`, async () => { await startupJoinScenario(true, outcome); });
+}
