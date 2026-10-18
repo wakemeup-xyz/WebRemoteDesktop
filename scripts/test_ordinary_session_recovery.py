@@ -753,7 +753,7 @@ class ClassifierTests(unittest.TestCase):
 
 class FakeManager:
     def __init__(self, fail=None):
-        self.fail=fail; self.calls=[]; self.chromium=self
+        self.fail=fail; self.calls=[]; self.chromium=self; self.stopped=False; self.order=[]
     async def start(self):
         self.calls.append('start')
         if self.fail=='start': raise RuntimeError('secret')
@@ -771,9 +771,10 @@ class FakeManager:
         if self.fail=='page': raise RuntimeError('secret')
         return self
     async def close(self):
-        self.calls.append('close')
+        self.calls.append('close'); self.order.append('browser-close')
         if self.fail=='close': raise RuntimeError('secret')
-    async def stop(self): self.calls.append('stop')
+    async def stop(self):
+        self.calls.append('stop'); self.order.append('manager-stop'); self.stopped=True
 
 
 class LifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -811,6 +812,27 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(life.record()['python']['managerStop']['status'],'ok')
         self.assertEqual(life.snapshot()['cleanupStatus'],'api-finished-exit-unknown')
 
+    async def test_async_detach_timeout_keeps_budget_and_independent_close_stop(self):
+        manager=FakeManager('close'); life=runner.OwnedBrowserLifecycle(
+            limits={'cleanup':.2,'export':.03,'browserClose':.04,'managerStop':.05})
+        await life.start(lambda:manager)
+        calls=[]
+        async def detach():
+            calls.append('detach')
+            await asyncio.Event().wait()
+        life.detach_admission=detach
+        started=asyncio.get_running_loop().time()
+        await life.cleanup(lambda:asyncio.sleep(0,result=runner.empty_diagnostic()))
+        await life.cleanup(lambda:asyncio.sleep(0,result=runner.empty_diagnostic()))
+        self.assertLess(asyncio.get_running_loop().time()-started,.2)
+        self.assertEqual(calls,['detach'])
+        self.assertEqual(manager.calls.count('close'),1); self.assertEqual(manager.calls.count('stop'),1)
+        self.assertEqual(life.snapshot()['captureStatus'],'ok')
+        self.assertEqual(life.snapshot()['cleanupStatus'],'incomplete')
+        self.assertEqual(life.caps['cleanup'],.2)
+        self.assertEqual(runner.OwnedBrowserLifecycle().caps,
+            dict(managerStart=10,managerLaunch=15,export=1,browserClose=5,managerStop=3,cleanup=8))
+
 
 def ui_state(**changes):
     return dict(shellAvailable=True,clientAvailable=True,marksAvailable=True,coreInstalled=True,
@@ -825,7 +847,13 @@ class FakePage:
         self.url='https://example.invalid/viewer.html?wrdAdmission=vacant-only-v1'
         self.states=states or [ui_state()]; self.kind=kind; self.listeners={}; self.clicks=0; self.checks=0
     def on(self,name,fn): self.listeners.setdefault(name,[]).append(fn)
-    def remove_listener(self,name,fn): self.listeners[name].remove(fn)
+    def remove_listener(self,name,fn):
+        manager=getattr(self,'subscription_manager',None)
+        if manager is not None:
+            if manager.stopped: raise RuntimeError('stopped-subscription-canary')
+            manager.order.append('detach-'+name)
+            if self.kind=='detach-failure': raise RuntimeError('detach-canary')
+        self.listeners[name].remove(fn)
     def emit(self,name,value):
         for fn in self.listeners.get(name,[]): fn(value)
     def locator(self,selector): return self
@@ -1021,7 +1049,8 @@ class RuntimePage(FakePage):
 
 
 class RuntimeManager(FakeManager):
-    def __init__(self,page): super().__init__(); self.page=page
+    def __init__(self,page):
+        super().__init__(); self.page=page; page.subscription_manager=self
     async def new_page(self): self.calls.append('page'); return self.page
 
 
@@ -1051,6 +1080,15 @@ class RuntimeRunTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(private,output)
         for path in Path(self.args.output_dir).iterdir(): self.assertEqual(path.stat().st_mode&0o777,0o600)
 
+    async def test_detach_failure_preserves_prior_failure_and_stops_once(self):
+        page=RuntimePage('detach-failure'); manager=RuntimeManager(page)
+        self.assertEqual(await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status),1)
+        self.assertEqual(self.summary()['failure']['reason'],'human-priority')
+        self.assertEqual(self.summary()['lifecycle']['cleanupStatus'],'incomplete')
+        self.assertEqual(manager.order.count('detach-request'),1)
+        self.assertEqual(manager.calls.count('close'),1); self.assertEqual(manager.calls.count('stop'),1)
+        self.assertNotIn('detach-canary',json.dumps(self.summary()))
+
     async def test_initial_write_failure_never_constructs_manager(self):
         calls=[]
         with patch.object(runner.passive,'atomic_evidence',side_effect=OSError('secret-error')):
@@ -1077,6 +1115,8 @@ class RuntimeRunTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(3): task.cancel(); await asyncio.sleep(.005)
         self.assertEqual(await task,1); self.assertEqual(manager.calls.count('close'),1); self.assertEqual(manager.calls.count('stop'),1)
         self.assertEqual(self.summary()['failure']['reason'],'cancelled')
+        self.assertEqual(manager.order.count('detach-request'),1)
+        self.assertEqual(manager.order.count('detach-response'),1)
         self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],[])
 
     async def test_final_status_host_change_cannot_be_cleared_by_ready_viewer(self):
@@ -1307,6 +1347,8 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
                 sample=ready_sample(10+self.samples); sample.pop('attemptHash'); sample['attempt']='attempt-canary'
                 result=dict(state=state,sample=sample)
                 if 'finalize' in script:
+                    self.subscription_manager.order.append('final-export')
+                    if self.change=='export-failure': raise RuntimeError('export-canary')
                     self.final_before=json.loads((Path(self.output)/'samples.jsonl').read_text().splitlines()[-1])
                     if self.change=='lease': sample['leaseEpoch']+=1
                     elif self.change=='path': sample['transport']['pathIdentity']='path-2'
@@ -1319,10 +1361,10 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
 
         original_sleep=asyncio.sleep
         original_time=runner.time
-        for change in ('unchanged','lease','path','counter','pc','attempt','generation'):
+        for change in ('unchanged','lease','path','counter','pc','attempt','generation','detach-failure','export-failure'):
             with self.subTest(change=change):
                 self.args.output_dir=str(self.root/change)
-                page=QualifiedPage(change); page.output=self.args.output_dir; manager=RuntimeManager(page)
+                page=QualifiedPage(change); page.kind='detach-failure' if change=='detach-failure' else None; page.output=self.args.output_dir; manager=RuntimeManager(page)
                 clock=[0.125]
                 async def sleep(delay):
                     clock[0]+=delay
@@ -1339,7 +1381,7 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
                 # The first ready row transitions from startup into baseline;
                 # the persisted wrapper keeps its actual observation phase.
                 self.assertEqual(summary['continuity']['samples'],len(qualified)+1)
-                self.assertEqual(page.final_before,rows[-2])
+                if change!='export-failure': self.assertEqual(page.final_before,rows[-2])
                 self.assertEqual(page.clicks,1)
                 self.assertEqual(summary['ordinaryRecovery']['status'],'NOT_RUN')
                 if change=='unchanged':
@@ -1349,7 +1391,20 @@ class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(result,1)
                     self.assertNotEqual(summary['continuity']['status'],'PASS')
-                    self.assertEqual(summary['failure'],{'phase':'baseline','reason':'baseline-failed'})
+                    if change not in ('detach-failure','export-failure'):
+                        self.assertEqual(summary['failure'],{'phase':'baseline','reason':'baseline-failed'})
+                    if change=='detach-failure':
+                        self.assertEqual(summary['failure']['reason'],'cleanup-incomplete')
+                        self.assertEqual(summary['lifecycle']['captureStatus'],'ok')
+                    if change=='export-failure':
+                        self.assertEqual(summary['lifecycle']['captureStatus'],'error')
+                order=manager.order
+                self.assertLess(order.index('final-export'),order.index('detach-request'))
+                if change!='detach-failure': self.assertLess(order.index('detach-response'),order.index('browser-close'))
+                self.assertLess(order.index('detach-request'),order.index('browser-close'))
+                self.assertLess(order.index('browser-close'),order.index('manager-stop'))
+                self.assertEqual(order.count('detach-request'),1)
+                self.assertEqual(summary['lifecycle']['ownedProcessExitEvidence'],'not-observed')
                 self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
 
     def test_fractional_elapsed_seconds_allowed_but_counts_stay_integer(self):

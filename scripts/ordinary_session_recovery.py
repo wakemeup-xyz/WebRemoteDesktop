@@ -592,7 +592,7 @@ class OwnedBrowserLifecycle:
             if key not in self.caps: raise ValueError('schema-rejected')
             _number(value,self.caps[key]); self.caps[key] = value
         self.manager = self.playwright = self.browser = self.context = self.page = None
-        self.disarm = None; self.diagnostic = empty_diagnostic()
+        self.disarm = None; self.detach_admission = None; self.diagnostic = empty_diagnostic()
         self.capture_status, self.write_status = 'not-started','ok'
         self.python = dict(failureDetectedMs=None,failureWallEpochMs=None,cleanupStatus='not-started',
             **{k:dict(startedMs=None,finishedMs=None,status='not-created' if k=='browserClose' else 'not-started')
@@ -647,6 +647,11 @@ class OwnedBrowserLifecycle:
             self.capture_status = ('cancelled' if isinstance(exc,asyncio.CancelledError) else
                 'noncooperative' if isinstance(exc,CancellationCooperationError) else 'timeout' if isinstance(exc,TimeoutError)
                 else ('schema-rejected' if str(exc) not in REASONS or str(exc)=='schema-rejected' else 'unavailable') if isinstance(exc,ValueError) else 'error')
+        if self.detach_admission is not None:
+            try:
+                await lifecycle_stage(_await(self.detach_admission()),remaining('export'),
+                    settlement=min(.075,remaining('export')/4))
+            except BaseException: failed=True
         for key, owned, operation in (
             ('browserClose',self.browser,lambda:self.browser.close()),
             ('managerStop',self.manager,lambda:self.playwright.stop() if self.playwright is not None and hasattr(self.playwright,'stop')
@@ -1317,6 +1322,7 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
         model.transition('startup')
         page=await life.start(manager_factory); page.set_default_timeout(8000)
         guard=_AdmissionObservation(page,origin); page._wrd_ordinary_guard=guard
+        life.detach_admission=guard.detach
         if fault is not None:
             life.disarm=fault.disarm
             await lifecycle_stage(fault.install(page,origin,scenario=args.scenario),8)
@@ -1372,9 +1378,6 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
             except BaseException: break
         try: coordinator.result()
         except BaseException: life.python['cleanupStatus']='incomplete'
-        if guard is not None:
-            try: guard.detach()
-            except Exception: life.python['cleanupStatus']='incomplete'; fail(ValueError('cleanup-incomplete'))
         if log is not None:
             try: log.close()
             except OSError:
