@@ -116,6 +116,7 @@ function loadWebRTC(overrides = {}) {
     // Explicit offline configuration response; never use a real network fetch.
     fetch: async (url) => ({ ok: true, status: 200, json: async () => url.endsWith('/api/auth/viewer-admission') ? { admission: { ticket: 'fixture-ticket' } } : {} }),
     AbortController,
+    URLSearchParams,
     setTimeout: trackTimeout,
     clearTimeout: clearTrackedTimeout,
     setInterval: trackInterval,
