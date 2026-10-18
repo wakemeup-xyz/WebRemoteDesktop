@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "scope": "fixed-reviews-and-bounded-safe-summaries-not-raw-input-or-runtime-qualification",
+  "sourceViewerTIP": "c802a68362459b46b84593c7e8921575e0783394",
+  "files": [
+    {
+      "file": "move-quarantine-assessment.md",
+      "sha256": "8b6db9376347a59f55a27ce2c7fb862d47e4097a13c65abd30404a890dd5a277",
+      "bytes": 9479,
+      "originalPath": "/tmp/wrd-move-backpressure-recovery-assessment-20261018.md"
+    },
+    {
+      "file": "move-task-review.md",
+      "sha256": "19e0b6122d9c323ed74d9dbabe7f72f2923ea86fee2b5abcf23808c8773f39b0",
+      "bytes": 7410,
+      "originalPath": "/tmp/wrd-move-quarantine-fallback-task-review-20261018.md"
+    },
+    {
+      "file": "move-final-review.md",
+      "sha256": "66fb351b4328c7735d0b6eacc87e0a8034fb13238139082ad7fc595e279f17b9",
+      "bytes": 7851,
+      "originalPath": "/tmp/wrd-final-move-quarantine-fallback-review-20261018.md"
+    },
+    {
+      "file": "move-task-report.md",
+      "sha256": "722008d184344a35486db6a04f52011bb668656e0cb21d1b39860cced9fcdc61",
+      "bytes": 7448,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/.superpowers/sdd/2026-10-18-move-quarantine-fallback-plan/task-1-report.md"
+    },
+    {
+      "file": "move-ledger.md",
+      "sha256": "8316d1be189c5083710e2e996c2ee64b77ccfe791f538568d6e7d3f46005c9ca",
+      "bytes": 2287,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/.superpowers/sdd/2026-10-18-move-quarantine-fallback-plan/progress.md"
+    },
+    {
+      "file": "r4-operations-review.md",
+      "sha256": "f76c423f8fb1d6a507894027f258a2973f69622c0108aad3556217e971120c71",
+      "bytes": 9006,
+      "originalPath": "/tmp/wrd-frontend-move-context-operations-r4-independent-review-20261018.md"
+    },
+    {
+      "file": "r4-checker-failure-assessment.md",
+      "sha256": "5d54a9760cb2e2e2da4a341c411c77cb8f2b57b48fdc3214f32ed72c545cb7c0",
+      "bytes": 5415,
+      "originalPath": "/tmp/wrd-r4-mixed-checker-failure-assessment-20261018.md"
+    },
+    {
+      "file": "r5-operations-fix-review.md",
+      "sha256": "96264a6cd0d0af58fed7d4fb7b1fe8f134caddc756f5574f72af921e79c520ba",
+      "bytes": 8019,
+      "originalPath": "/tmp/wrd-frontend-move-context-operations-r5-fix1-review-20261018.md"
+    },
+    {
+      "file": "r5-actual-asset-review.md",
+      "sha256": "58b3ae882fc8511df755159d3e78193eafb07fe6b5f326cbdba6f487acf44bcd",
+      "bytes": 12936,
+      "originalPath": "/tmp/wrd-r5-actual-asset-template-independent-review-20261018.md"
+    },
+    {
+      "file": "r5-baseline-cleanup-assessment.md",
+      "sha256": "6bed460c49e8932602dbbf9af73a155bfa20f2c4f446d4a1d5b84b1ff9befbd1",
+      "bytes": 10096,
+      "originalPath": "/tmp/wrd-r5-baseline-cleanup-failure-assessment-20261018.md"
+    },
+    {
+      "file": "r5-baseline-performance-assessment.md",
+      "sha256": "39cf2ea176143295b9d412cb76a1525887472dcf9b0e8756176a33977037feec",
+      "bytes": 13587,
+      "originalPath": "/tmp/wrd-r5-baseline-performance-assessment-20261018.md"
+    },
+    {
+      "file": "admission-teardown-task-report.md",
+      "sha256": "1c0ee95f9744b205816c76d0d28760ddc77b03509adab53522c3a78e6cd08aa4",
+      "bytes": 3862,
+      "originalPath": ".superpowers/sdd/2026-10-18-ordinary-admission-teardown-plan/task-1-report.md"
+    },
+    {
+      "file": "admission-teardown-task-review.md",
+      "sha256": "faf284c72d938285a295b2e7e0621d1254b332f52f0e094eb339d25658950d0c",
+      "bytes": 8111,
+      "originalPath": "/tmp/wrd-ordinary-admission-teardown-task-review-20261018.md"
+    },
+    {
+      "file": "admission-teardown-ledger.md",
+      "sha256": "e5daa8c7a6d4bb244e1cf73a6c6266c355f46d068bafea53f5ffbfadd4fe05a4",
+      "bytes": 1309,
+      "originalPath": ".superpowers/sdd/2026-10-18-ordinary-admission-teardown-plan/progress.md"
+    },
+    {
+      "file": "pacing-v2-fix-review.md",
+      "sha256": "e4146c2c76d4499920f18983c987983325392e331a2eb7e358a53c6f3fd769f2",
+      "bytes": 5658,
+      "originalPath": "/tmp/wrd-capture-pacing-experiment-v2-fix1-review-20261018.md"
+    },
+    {
+      "file": "pacing-v2-r5-interface-assessment.md",
+      "sha256": "f2e76d319a6782fcbc2bb12849083ae9f33ec65acc4ccde44651e98ecd7a7cf3",
+      "bytes": 11839,
+      "originalPath": "/tmp/wrd-pacing-v2-r5-interface-assessment-20261018.md"
+    },
+    {
+      "file": "pacing-v2-whole-fake-integration.md",
+      "sha256": "27ce8300c3251cd798a3e9ba257d94512df2320f73ea33dea810f50d2092607c",
+      "bytes": 9318,
+      "originalPath": "/tmp/wrd-capture-pacing-v2-whole-fake-integration-20261018.md"
+    },
+    {
+      "file": "root-review-closure.md",
+      "sha256": "1ccdde650472b9ce9d6a163c2c7d27755853d6e88a9e0b42bfdea8bdcf438762",
+      "bytes": 1394,
+      "originalPath": null
+    }
+  ],
+  "noCredentials": true,
+  "rawPrivateLogsNotCopied": true
+}

@@ -26,7 +26,7 @@
 
 **Interfaces:** consumes _AdmissionObservation.detach(), OwnedBrowserLifecycle.cleanup(export), existing lifecycle_stage and passive.cleanup_allowance. Produces one optional no-argument admission teardown callback on OwnedBrowserLifecycle, called exactly once during cleanup before browser close. Keep snapshot/record/CLI/result interfaces unchanged.
 
-- [ ] Step1: Extend the existing fake subscription page/manager so remove_listener raises after manager.stop, records request/response detach, and can inject a detach failure. Add an actual run regression driven by the existing full qualified fake300-second flow; assert export→both listener removals→close→stop, successful cleanup, ownedProcessExitEvidence=not-observed. Add failure/cancellation cases covering first-failure retention and one independent close/stop. Use existing test fixture methods instead of copying the whole qualified-run fixture.
+- [x] Step1: Extend the existing fake subscription page/manager so remove_listener raises after manager.stop, records request/response detach, and can inject a detach failure. Add an actual run regression driven by the existing full qualified fake300-second flow; assert export→both listener removals→close→stop, successful cleanup, ownedProcessExitEvidence=not-observed. Add failure/cancellation cases covering first-failure retention and one independent close/stop. Use existing test fixture methods instead of copying the whole qualified-run fixture.
 
 ```python
 # Required assertions in the actual injected runner path:
@@ -36,8 +36,8 @@ self.assertLess(order.index('browser-close'), order.index('manager-stop'))
 self.assertEqual(summary['lifecycle']['ownedProcessExitEvidence'], 'not-observed')
 ```
 
-- [ ] Step2: Run only new covering cases on current source; retain the actual RED command/output. Failure must be the post-stop unsubscribe behavior or wrong ordering, not missing helper/fixture fields.
-- [ ] Step3: Implement the narrow callback after final export (even when export fails), capped using lifecycle_stage and remaining('export') on the existing deadline; record only cleanup failure through current fields; bind guard.detach when guard exists and remove outer post-stop detach. Independently close and stop in the same existing coordinator.
+- [x] Step2: Run only new covering cases on current source; retain the actual RED command/output. Failure must be the post-stop unsubscribe behavior or wrong ordering, not missing helper/fixture fields.
+- [x] Step3: Implement the narrow callback after final export (even when export fails), capped using lifecycle_stage and remaining('export') on the existing deadline; record only cleanup failure through current fields; bind guard.detach when guard exists and remove outer post-stop detach. Independently close and stop in the same existing coordinator.
 
 ```python
 # Intended bounded shape; reuse existing exception bookkeeping:
@@ -50,7 +50,7 @@ if self.detach_admission is not None:
         failed = True
 ```
 
-- [ ] Step4: Run covering cases GREEN, then affected suites once:
+- [x] Step4: Run covering cases GREEN, then affected suites once:
 
 ```bash
 /Users/macstudio1/.homebrew/opt/python@3.11/bin/python3.11 -B -m unittest scripts.test_ordinary_session_recovery scripts.test_ordinary_recovery_fault scripts.test_passive_session_soak

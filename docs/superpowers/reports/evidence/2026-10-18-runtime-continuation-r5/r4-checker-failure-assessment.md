@@ -1,0 +1,27 @@
+# R4 mixed checker failure: focused static assessment
+
+Finding: Important — definite variable shadowing in the checker harness. The prepared R4 checker reads `args.viewer_build_id` inside `async def capture(args, **injection)` at mixed-native-integration.py:116. That parameter is the native fixture runtime SimpleNamespace, not main's parsed CLI args. Its actual construction at scripts/test_ordinary_session_recovery.py:1034–1035 has origin/scenario/mode/runtime_manifest/hash/output_dir/runtime_config, with no viewer_build_id. NativeStartupBoundaryTests.run_page calls the patched runner.run with that namespace at :1421. If the mixed checker reaches line116, Python must raise AttributeError while evaluating this expected Viewer record.
+
+This is a checker correctness defect, not a producer/consumer acceptance failure or evidence that the product build is bad. It is a strong explanation for the actual failed checker but, without root's separate trace result, this static assessment does not independently establish which exception occurred in that actual run. No checker was executed during this assessment.
+
+## Evidence and why the initial output hides it
+
+Root's execution receipt records F2=c802a68362459b46b84593c7e8921575e0783394 / actual buildbb581651b422e400 / checkerSHA19ad92c008347303fccdfa5b324618a1cfe64b0dc7a4ca912ae33c22f32c3128, exit1 in1.712945627s, no timeout, stdout52B SHA692b878ba8c8aeb4e697db6d3f855f0afde442ac26e714c6524d0fca57c6cab4. It remains failed-or-indeterminate. The error is caught by unittest's TestResult during case.run at checker:143. The outer require at :144 then reports generic failure; the main BaseException handler at :155 suppresses details and emits the single failure JSON.
+
+The earlier actually passed /tmp/wrd-pure-native-startup-integration-20261018-r4.py also names its capture parameter args but has no mixed-component Viewer assertion and never reads viewer_build_id there. The mixed-component assertion added for R3 introduced the erroneous reference and R4 carried it unchanged except TIP. Both static package review and my R4 binding preparation missed this functional scope bug. The amended six pure binding guards did not execute the checker and were never evidence that the new mixed checker passed. Original successful old-component evidence cannot substitute.
+
+The closures mixed_manifest and mixed_sample at checker:89–97 correctly see main's outer CLI args; the scope problem is specifically the capture parameter at :100 and the assertion at :116. The final result serialization at :151 is back in main and correctly sees CLI args. The producer, unchanged consumer and native fixture remain suitable; no validation predicate needs to be weakened.
+
+## Smallest correction
+
+Use a distinct capture parameter name such as runtime_args, replacing all capture-local args references for scenario/mode/output_dir/runtime_config/runtime_manifest/hash and actual_run invocation. Leave the assertion's expected viewer build bound to the outer CLI args. This changes only the harness argument binding and preserves the exact component/build assertion.
+
+An equally safe alternative is to bind the already validated CLI build ID to a clearly named outer immutable local and use that name in mixed_manifest, mixed_sample, the capture assertion and final serialization. Avoid adding a fake viewer_build_id attribute to runtime args: that would conceal the ownership error rather than keep runtime fixture inputs and checker CLI identity separate. Do not patch producer/consumer predicates or relax method/count/row/component expectations.
+
+A narrowly scoped regression should compile only the exact corrected capture AST with injected fake runner/file/consumer adapters, supply runtime_args without viewer_build_id and an independent outer reviewed build value, verify the valid case reaches count update, and verify a deliberately different manifest Viewer build is rejected before consumer acceptance. Root must then independently review the corrected checker and run the real fake producer→consumer checker with F2 and the actual newly approved template build. Preserve four methods, two accepts, ten rejects and1262 rows; preserve all sandbox/audit/config-canary protections.
+
+## Frozen context and limits
+
+Do not modify sealed R4 manifest9729dee3b65e4d6648cdf7f6f78528c56d0963489cd0d8d5a932b1925734b2d3, its execution receipt, failed checker result, private build evidence or timestamp window. The checker belongs to frozen codeHashes and the package manifest, so correcting it requires a new reviewed package/frozen context; do not graft new checker bytes into R4 or relabel the old result. Any reuse of unchanged source/product artifacts must be an explicit reviewed derivation with its exact lineage; expired build windows cannot be extended silently. No primary source copy or service reload has occurred according to the root handoff.
+
+This assessment only read the sealed checker, root execution JSON, actual native fixture/producer/consumer source and prior actual checker script. No tests, imports of live entry points, builds, process/health/network/browser/service/tunnel/native actions or source/package changes were performed. Only this report was written. Missing runtime/native/input-to-picture evidence remains NOT_RUN/null. Root's pending trace may add actual failure-line confirmation without turning this failed run into a pass.
