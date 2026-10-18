@@ -21,7 +21,7 @@
 - Task1 最终67项相关纯测试通过；Task2 最终84项通过；Task3 最新相同源码的六组相关纯测试103项通过。范围重叠，不相加为独立用例总数。
 - 仅纯 Python 和实际方法的 AST 提取：fake Thread/callback/手动 coroutine，无真实线程、睡眠、子进程、Host/MSS/Quartz/PyAV/aiortc 导入或业务原生输入。
 - 最终相关命令（cwd python-host）：指定 Python3.11 的 unittest test_peer_cleanup_observation test_capture_resource_owner test_capture_shutdown_contract test_capture_cadence test_capture_observation test_runtime_observability。103 tests / 30.241s，exit0，OK；diff --check 无输出。
-- Task1 review 的计时归属问题已由原实现者修复并定向复审 Approved；Task2、Task3 独立并发 review 均 Approved；最终整体 review 尚待完成。四份任务 review 与固定测试事实已归档到 [证据目录](evidence/2026-10-18-host-cadence-cleanup/source-review.md)。
+- Task1 review 的计时归属问题已由原实现者修复并定向复审 Approved；Task2、Task3 独立并发 review 均 Approved；最终整体 Astra review 也已 Approved，可在 fresh preflight 后受控 Host-only 加载。四份任务 review 与固定测试事实已归档到 [证据目录](evidence/2026-10-18-host-cadence-cleanup/source-review.md)。
 - 早期命令工作目录/路径错误已纠正，只是工具执行错误，不当作行为 RED 或产品故障。
 
 ## 上线前的实际运行状态
@@ -34,7 +34,7 @@
 
 ## 新 Host 加载与运行验收
 
-NOT RUN。完成独立任务/整体 review 后，核对 fresh health/Hostonline/Viewer0/relay0，按现有 safe helper 仅 restart-host；重载后单独回报两项本机运行密码，密码不进入本报告。Signal、Viewer build/assets、tunnel/watcher、quick URL状态保持。
+NOT RUN。独立任务和整体源码 review 已全部 Approved；接着核对 fresh health/Hostonline/Viewer0/relay0，按现有 safe helper 仅 restart-host；重载后单独回报两项本机运行密码，密码不进入本报告。Signal、Viewer build/assets、tunnel/watcher、quick URL状态保持。
 
 随后新的正式路径300秒与10800秒被动连续性分别记录；使用正常UI登录、一次Start、一次性proof和既有已审查SUP。短测失败先定位，不拼接旧PASS；真实MSS close返回、线程状态、join与executor请求分别取证。新计时仅解释观测范围，不构造全会话P95、单向网络耗时或内容新鲜度因果结论。
 

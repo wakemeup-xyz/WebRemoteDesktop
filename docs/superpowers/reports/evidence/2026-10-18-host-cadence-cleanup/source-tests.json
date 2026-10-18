@@ -63,7 +63,7 @@
     "businessNativeInput": false,
     "serviceOperations": false
   },
-  "taskReview": "Approved for all three tasks; whole increment pending",
+  "taskReview": "Approved for all three tasks and final whole-increment source gate",
   "reviewArtifacts": {
     "task-1-review.md": {
       "sha256": "622cdddf6693788aad802c43373d30448f4d3439c30beb5c82279937c73b48fd",
@@ -95,5 +95,12 @@
       "sha256": "db2ddc74ea654815ea7be7fcdeaa77a24a993ace5e8b5d357ae17a0675e3b8e3",
       "bytes": 10085
     }
+  },
+  "finalSourceReview": {
+    "base": "4d591bb27434cca0c6071aadf7478cb8fba956ca",
+    "head": "ff47e04f977b5c377b0e6dffe3fe8d39aa4e8d22",
+    "verdict": "Approved",
+    "reviewSha256": "77862e587ded483d69c03f8a6076fd642a9ee18f3ba63736300a5618ae0be94c",
+    "runtimeQualification": "NOT RUN"
   }
 }

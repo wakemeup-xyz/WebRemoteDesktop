@@ -1,6 +1,6 @@
 # Source implementation and review evidence
 
-The product increment is BASE4d591bb → c239482, with design/plan d3bdf81 and three serial Host tasks. No source promotion, Host reload or new runtime qualification has occurred at this record. All three task gates are Approved; final whole-increment review is pending.
+The product increment is BASE4d591bb → c239482, with design/plan d3bdf81 and three serial Host tasks. No source promotion, Host reload or new runtime qualification has occurred at this record. All three task gates and the most-capable final whole-increment review are Approved. [Final source verdict](final-source-review.md) reviewed exact4d591bb..ff47e04; later gate-record edits are documents only. Runtime remains pending.
 
 - Task1 original Important finding: new observer CPU was charged to native-grab non-CPU time. Original worker fixed it in d3eaa28; scoped R1 Approved. The 7ms observer + 10ms native fake produces 10ms wall / 10ms CPU / 0ms non-CPU, with7ms postGrab. [Original task review](task-1-review.md), [scoped R1](task-1-r1-review.md).
 - Task2 exact-once existing-worker resource closure and late-pixel guard: independent Astra review Approved, no findings. [Review](task-2-review.md).
