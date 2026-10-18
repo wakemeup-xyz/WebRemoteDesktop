@@ -1,6 +1,6 @@
 # After-grace recovery：无租约 PeerConnection 的 attempt 归属修复
 
-日期：2026-10-19。状态：设计与计划已写，自审完成；尚未实施、测试、部署或取得新的运行资格。
+日期：2026-10-19。状态：最小修复已实施，候选 commit `cc833d82a2e0700135a92dc53fac7bfad0912dbf`，受影响测试 459/459 通过；独立 Task 1 review Approved，最终源码复核待完成。尚未部署或取得新的运行资格。
 
 ## 目标与证据边界
 

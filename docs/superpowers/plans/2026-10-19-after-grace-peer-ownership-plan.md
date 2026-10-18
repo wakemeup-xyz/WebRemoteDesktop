@@ -249,3 +249,6 @@ root 先按 Step 7 的精确文件规则创建候选 commit 和 immutable review
 - 2026-10-19：设计与计划自审完成。方案已比较；实现只改既有分支；矩阵覆盖新 attempt、旧 producer、same lease、首 grant；计划保留独立 task/final review 和后续部署/全新资格分层。未实施、未运行测试/build、未操作服务/网络/浏览器/native，未变更 index/HEAD。
 - 2026-10-19：按独立设计/计划 review 的 Important 修正文档：强制同 VM 装载并初始化真实媒体 controller/runtime；通过真实 manual-pause 理由转换建立正 generation intent，匹配实际 emitted request 的 `handleMediaActivityAck()`，覆盖 ACK→frame、frame→ACK 与旧 scope 拒绝；独立保留双 reset ACK。仅静态核对现有装载测试与源码 API，未执行 VM 测试；修订等待 root 窄复审，不表示实现准入。
 - 执行状态：Task 1、Final review 与 Root 后续阶段均未执行。本条作为当前事实基线；执行者随后追加真实时间、commit、RED/GREEN 和 review 证据，不提前勾选。
+
+- 2026-10-19 实施更新：Task 1 候选 `cc833d82a2e0700135a92dc53fac7bfad0912dbf`。真实 VM RED 在旧实现以 `assert.notEqual(w.pc, orphan)` 失败（175.565082ms）；最小分支修复后同例 GREEN（188.307589ms），ownership 10/10（304.791350ms），最终受影响六文件 459/459（24420.546633ms）。保留历史失败和 continuity fixture 修订记录，详见同目录 reports/evidence/2026-10-19-after-grace-peer-ownership/task-1-implementation.md。
+- 2026-10-19 独立 Task 1 review：spec compliance ✅、quality Approved，无 Critical/Important。重复 grant 的既有媒体重确认不扩大本修复；root 同步当前文档状态。审查记录 task-1-review.md 纳入版本管理。Task 1 complete；Final review 待完成，实际部署/新序列、native/visible/physical 仍 NOT_RUN。
