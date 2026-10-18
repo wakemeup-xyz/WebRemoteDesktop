@@ -431,3 +431,378 @@ test('relay origin keys preserve earlier samples in the current collector scope 
   const absent = monitor.snapshot().metrics.relayFrameAckRttMs;
   assert.equal(absent.available, false); assert.equal(absent.last, null); assert.equal(absent.count, 0);
 });
+
+test('native latency: stores event clocks independently of processing high-water', () => {
+  let now = 100;
+  const m = createLatencyMonitor({ now: () => now, schedule: () => null, cancel() {} });
+  const scope = { connectionAttemptId: 'attempt', generation: 2, leaseEpoch: 4 };
+  const source = {}, pc = {};
+  const live = { pc,
+    datachannel: { selectedMoveSendSource: source, selectedReliableSendSource: source,
+      reliableAckSource: source },
+    socket: { selectedSendSource: null, reliableAckSource: null, object: null, id: null } };
+  const current = { scope, leaseId: 'lease', streamId: 'video', pc, live };
+  m.setScope(scope);
+  assert.equal(m.beginControlledInputEvidence({ inputId: 'lab_inp_1',
+    leaseId: 'lease', scope, streamId: 'video', inputType: 'mouse', action: 'down' }), true);
+  assert.equal(m.observeControlledSend({ inputId: 'lab_inp_1', leaseId: 'lease',
+    leaseEpoch: 4, inputType: 'mouse', action: 'down', seq: 1 }, {
+    scope, streamId: 'video', transport: 'datachannel', sendSource: source,
+    ackSource: source, socketId: null, pc, live, viewerClockMs: 100 }), true);
+  now = 150;
+  m.recordInputSend('unrelated', { scope, submittedAtMs: 150 });
+  now = 300;
+  m.snapshot();
+  assert.equal(m.observeControlledAck({ schemaVersion: 2, inputType: 'mouse',
+    inputIds: ['lab_inp_1'], leaseEpoch: 4, appliedSeq: 1, status: 'applied' }, {
+    ...current, transport: 'datachannel', source, socketId: null,
+    viewerClockMs: 200, verdict: 'reliable-applied' }), true);
+  const row = m.readControlledInputEvidence('lab_inp_1', current);
+  assert.equal(row.send.viewerClockMs, 100);
+  assert.equal(row.ack.viewerClockMs, 200);
+  assert.equal(row.hostTiming.hostApplyMs, null);
+  assert.equal(JSON.stringify(row).includes('ackSource'), false);
+  m.clearControlledInputEvidence('lab_inp_1');
+  assert.equal(m.readControlledInputEvidence('lab_inp_1', current), null);
+});
+
+function controlledFixture({ at = 100, action = 'down', inputType = 'mouse', transport = 'datachannel', inputId = 'lab_1', createMonitor = createLatencyMonitor } = {}) {
+  let now = at, timers = 0;
+  const m = createMonitor({ now: () => now, schedule() { timers++; return 1; }, cancel() {} });
+  const scope = { connectionAttemptId: 'attempt', generation: 2, leaseEpoch: 4 };
+  const pc = {}, move = {}, reliable = {}, socket = {};
+  const live = { pc, datachannel: { selectedMoveSendSource: move, selectedReliableSendSource: reliable, reliableAckSource: reliable },
+    socket: { selectedSendSource: socket, reliableAckSource: socket, object: socket, id: 'socket-1' } };
+  const reservation = { inputId, leaseId: 'lease', scope, streamId: 'video', inputType, action };
+  const current = { scope, leaseId: 'lease', streamId: 'video', pc, live };
+  const source = transport === 'socket' ? socket : action === 'move' ? move : reliable;
+  const ackSource = transport === 'socket' ? socket : reliable;
+  const meta = { inputId, leaseId: 'lease', leaseEpoch: 4, inputType, action, seq: action === 'move' ? null : 1 };
+  const sendContext = { ...current, transport, sendSource: source, ackSource,
+    socketId: transport === 'socket' ? 'socket-1' : null, viewerClockMs: at };
+  const ack = { schemaVersion: 2, inputIds: [inputId], inputType, leaseEpoch: 4, status: 'applied', appliedSeq: 1 };
+  const ackContext = { ...current, transport, source: ackSource, socketId: sendContext.socketId,
+    viewerClockMs: at + 20, verdict: action === 'move' ? 'unordered-applied' : 'reliable-applied' };
+  const frame = { scope, streamId: 'video', inputIds: [inputId], viewerClockMs: at + 30,
+    traceStatus: 'matched', captureSeq: 1, rtpTimestamp: 90, wireTimestamp: 80, rtpOrigin: 10,
+    captureFresh: true, captureAfterApplied: true };
+  m.setScope(scope);
+  return { m, reservation, current, scope, live, meta, sendContext, ack, ackContext, frame,
+    setNow(t) { now = t; }, timers: () => timers,
+    begin() { return m.beginControlledInputEvidence(reservation); },
+    send() { return m.observeControlledSend(meta, sendContext); },
+    acknowledge() { now = at + 40; return m.observeControlledAck(ack, ackContext); },
+    present() { now = at + 40; return m.onPostApplyFrame(frame, { scope }); },
+    read(options) { return m.readControlledInputEvidence(inputId, current, options); },
+    complete() { this.begin(); this.send(); this.acknowledge(); this.present(); },
+  };
+}
+
+test('native latency: zero clock, independent late ACK and exact bounded projection', () => {
+  const f = controlledFixture({ at: 0 });
+  f.begin(); f.send(); f.present(); // video can arrive before ACK
+  assert.equal(f.acknowledge(), true);
+  const row = f.read({ finalize: true });
+  assert.equal(row.state, 'COMPLETE'); assert.equal(row.reason, 'none');
+  assert.equal(row.finalized, true); assert.equal(row.send.viewerClockMs, 0);
+  assert.equal(row.ack.viewerClockMs, 20); assert.equal(row.postApply.viewerClockMs, 30);
+  assert.equal(row.beganAtMs, 0); assert.equal(row.deadlineAtMs, 10000);
+  assert.deepEqual(row.observationCounters, { duplicateAcks: 0, invalidObservations: 0 });
+  assert.deepEqual(Object.keys(row).sort(), ['schemaVersion', 'state', 'reason', 'inputId', 'leaseId', 'scope', 'streamId',
+    'beganAtMs', 'deadlineAtMs', 'remainingMs', 'finalized', 'expired', 'send', 'ack', 'postApply', 'hostTiming', 'observationCounters'].sort());
+  assert.equal(f.timers(), 0);
+  row.scope.generation = 900; row.send.viewerClockMs = 900;
+  assert.equal(f.read().scope.generation, 2); assert.equal(f.read().send.viewerClockMs, 0);
+});
+
+test('native latency: refused second begin and wrong IDs leave the slot and deadline untouched', () => {
+  const f = controlledFixture(); assert.equal(f.begin(), true);
+  assert.equal(f.m.beginControlledInputEvidence({ ...f.reservation, inputId: 'other' }), false);
+  assert.equal(f.m.observeControlledSend({ ...f.meta, inputId: 'other' }, f.sendContext), false);
+  assert.equal(f.m.observeControlledAck({ ...f.ack, inputIds: ['other'] }, f.ackContext), false);
+  f.setNow(9999);
+  assert.equal(f.m.readControlledInputEvidence('other', null, { finalize: true }), null);
+  f.m.clearControlledInputEvidence('other');
+  const row = f.read(); assert.equal(row.beganAtMs, 100); assert.equal(row.deadlineAtMs, 10100);
+  assert.equal(row.finalized, false); assert.equal(row.reason, 'not-sent');
+  assert.deepEqual(row.observationCounters, { duplicateAcks: 0, invalidObservations: 0 });
+});
+
+for (const [name, patch] of [
+  ['long ID', { inputId: 'x'.repeat(129) }], ['8KiB ID', { inputId: 'x'.repeat(8193) }],
+  ['bad ID', { inputId: 'non\nprintable' }], ['bad lease', { leaseId: '' }],
+  ['stream', { streamId: 'track' }], ['type', { inputType: 'command' }],
+  ...['reset', 'click', 'dblclick', 'key', 'batch', 'keydown', 'keyup', 'arbitrary'].map(action => [action, { action }]),
+  ['generation', { scope: { connectionAttemptId: 'attempt', generation: -1, leaseEpoch: 4 } }],
+  ['unsafe epoch', { scope: { connectionAttemptId: 'attempt', generation: 2, leaseEpoch: Number.MAX_SAFE_INTEGER + 1 } }],
+]) test(`native latency: reservation rejects ${name} before occupying slot`, () => {
+  const f = controlledFixture();
+  assert.equal(f.m.beginControlledInputEvidence({ ...f.reservation, ...patch }), false);
+  assert.equal(f.read(), null); assert.equal(f.begin(), true);
+});
+
+for (const [name, metaPatch, contextPatch, reason] of [
+  ['type', { inputType: 'keyboard' }, {}, 'conflicting-observation'],
+  ['action', { action: 'move' }, {}, 'conflicting-observation'],
+  ['lease', { leaseId: 'other' }, {}, 'lease-changed'],
+  ['epoch', { leaseEpoch: 5 }, {}, 'scope-changed'],
+  ['generation', {}, { scope: { connectionAttemptId: 'attempt', generation: 3, leaseEpoch: 4 } }, 'scope-changed'],
+  ['stream', {}, { streamId: 'track' }, 'scope-changed'],
+  ['PC', {}, { pc: {} }, 'source-changed'],
+  ['source', {}, { sendSource: {} }, 'source-changed'],
+  ['ACK source', {}, { ackSource: {} }, 'source-changed'],
+  ['sequence', { seq: 0 }, {}, null],
+]) test(`native latency: accepted send rejects wrong ${name}`, () => {
+  const f = controlledFixture(); f.begin();
+  assert.equal(f.m.observeControlledSend({ ...f.meta, ...metaPatch }, { ...f.sendContext, ...contextPatch }), false);
+  assert.equal(f.read().send, null); assert.equal(f.read().observationCounters.invalidObservations, 1);
+  if (reason) assert.equal(f.read().reason, reason);
+});
+
+for (const value of [NaN, Infinity, -1, 101, undefined]) {
+  test(`native latency: invalid send event clock ${value}`, () => {
+    const f = controlledFixture(); f.begin();
+    assert.equal(f.m.observeControlledSend(f.meta, { ...f.sendContext, viewerClockMs: value }), false);
+    assert.equal(f.read().reason, 'clock-invalid');
+  });
+}
+for (const stage of ['send', 'ack', 'frame', 'read']) test(`native latency: processing clock throw is isolated in ${stage}`, () => {
+  let t = 100, throws = false;
+  const m = createLatencyMonitor({ now() { if (throws) throw new Error('private secret'); return t; } });
+  const f = controlledFixture(); m.setScope(f.scope); m.beginControlledInputEvidence(f.reservation);
+  m.observeControlledSend(f.meta, f.sendContext); throws = true;
+  assert.doesNotThrow(() => {
+    if (stage === 'send') m.observeControlledSend(f.meta, f.sendContext);
+    if (stage === 'ack') m.observeControlledAck(f.ack, f.ackContext);
+    if (stage === 'frame') {
+      // The diagnostic observer is isolated; M1 still receives its own explicit valid processing clock.
+      m.onPostApplyFrame(f.frame, { scope: f.scope, nowMs: 140 });
+    }
+    if (stage === 'read') m.readControlledInputEvidence('lab_1', f.current);
+  });
+  throws = false; t = 140;
+  const row = m.readControlledInputEvidence('lab_1', f.current);
+  assert.equal(row.reason, 'observation-error'); assert.equal(JSON.stringify(row).includes('secret'), false);
+});
+
+test('native latency: ACK before send cannot acquire evidence and send twice is a conflict', () => {
+  const f = controlledFixture(); f.begin(); f.setNow(140);
+  assert.equal(f.m.observeControlledAck(f.ack, f.ackContext), false);
+  assert.equal(f.read().ack, null); assert.equal(f.send(), true);
+  assert.equal(f.send(), false); assert.equal(f.read().reason, 'conflicting-observation');
+});
+
+for (const [name, ackPatch, contextPatch] of [
+  ['rejected', { status: 'execution-failed' }, {}], ['wire duplicate', { status: 'duplicate' }, {}],
+  ['future seq', { appliedSeq: 2 }, {}], ['wrong type', { inputType: 'keyboard' }, {}],
+  ['wrong epoch', { leaseEpoch: 3 }, {}], ['multi ID', { inputIds: ['lab_1', 'other'] }, {}],
+  ['version', { schemaVersion: 1 }, {}], ['verdict', {}, { verdict: 'unordered-applied' }],
+]) test(`native latency: ${name} ACK does not create a sample`, () => {
+  const f = controlledFixture(); f.begin(); f.send(); f.setNow(140);
+  assert.equal(f.m.observeControlledAck({ ...f.ack, ...ackPatch }, { ...f.ackContext, ...contextPatch }), false);
+  assert.equal(f.read().ack, null); assert.equal(f.read().observationCounters.invalidObservations, 1);
+});
+
+for (const [stage, event] of [['ACK', 99], ['ACK', 150], ['frame', 99], ['frame', NaN]]) test(`native latency: ${stage} clock ${event} cannot qualify`, () => {
+  const f = controlledFixture(); f.begin(); f.send(); f.setNow(140);
+  if (stage === 'ACK') f.m.observeControlledAck(f.ack, { ...f.ackContext, viewerClockMs: event });
+  else f.m.onPostApplyFrame({ ...f.frame, viewerClockMs: event }, { scope: f.scope });
+  assert.equal(f.read().reason, 'clock-invalid');
+});
+
+test('native latency: exact duplicate ACK counts once and conflicting duplicate is sticky', () => {
+  const f = controlledFixture(); f.begin(); f.send(); f.acknowledge();
+  f.ackContext.viewerClockMs = 130;
+  assert.equal(f.m.observeControlledAck(f.ack, f.ackContext), false);
+  assert.equal(f.read().ack.viewerClockMs, 120); assert.equal(f.read().observationCounters.duplicateAcks, 1);
+  assert.equal(f.m.observeControlledAck({ ...f.ack, hostApplyMs: 3 }, f.ackContext), false);
+  assert.equal(f.read().reason, 'conflicting-observation');
+  assert.equal(f.read().observationCounters.invalidObservations, 1);
+});
+
+for (const [field, value] of [['captureFresh', undefined], ['captureAfterApplied', false], ['traceStatus', 'unmatched'],
+  ['captureSeq', -1], ['rtpTimestamp', 0x100000000], ['wireTimestamp', undefined], ['rtpOrigin', -1]]) {
+  test(`native latency: M2 requires ${field}`, () => {
+    const f = controlledFixture(); f.begin(); f.send(); f.acknowledge();
+    f.m.onPostApplyFrame({ ...f.frame, [field]: value }, { scope: f.scope });
+    assert.equal(f.read().postApply, null); assert.equal(f.read().observationCounters.invalidObservations, 1);
+  });
+}
+
+for (const transport of ['datachannel', 'socket']) for (const action of ['down', 'move']) {
+  const rotations = transport === 'socket' ? ['object', 'id', 'selectedSendSource', 'reliableAckSource']
+    : [action === 'move' ? 'selectedMoveSendSource' : 'selectedReliableSendSource', 'reliableAckSource', 'pc'];
+  for (const rotation of rotations) test(`native latency: completed ${transport}/${action} rotates ${rotation}`, () => {
+    const f = controlledFixture({ transport, action }); f.complete();
+    if (rotation === 'pc') { f.current.pc = {}; f.live.pc = f.current.pc; }
+    else f.live[transport][rotation] = rotation === 'id' ? 'new-id' : {};
+    const row = f.read({ finalize: true });
+    assert.equal(row.state, 'INCOMPLETE'); assert.equal(row.reason, 'source-changed'); assert.equal(row.finalized, true);
+  });
+}
+
+test('native latency: unordered ACK from former reliable channel cannot qualify', () => {
+  const f = controlledFixture({ action: 'move' }); f.begin(); f.send(); f.setNow(140);
+  f.live.datachannel.reliableAckSource = {};
+  assert.equal(f.m.observeControlledAck(f.ack, f.ackContext), false);
+  assert.equal(f.read().reason, 'source-changed'); assert.equal(f.read().ack, null);
+});
+
+test('native latency: unused source candidates may rotate and finalized complete is rechecked', () => {
+  const f = controlledFixture(); f.complete();
+  f.live.datachannel.selectedMoveSendSource = {}; f.live.socket.object = {};
+  assert.equal(f.read({ finalize: true }).state, 'COMPLETE');
+  f.live.datachannel.reliableAckSource = {};
+  assert.equal(f.read().reason, 'source-changed'); assert.equal(f.read().state, 'INCOMPLETE');
+});
+
+test('native latency: socket ID must be nonempty and identical at accepted send', () => {
+  for (const socketId of [null, '', 'wrong']) {
+    const f = controlledFixture({ transport: 'socket' }); f.begin();
+    assert.equal(f.m.observeControlledSend(f.meta, { ...f.sendContext, socketId }), false);
+    assert.equal(f.read().reason, 'source-changed');
+  }
+});
+
+test('native latency: immutable 10s deadline handles polling, late M2 and missing-stage precedence', () => {
+  const f = controlledFixture(); f.begin(); f.send(); f.acknowledge();
+  for (const t of [200, 1000, 10099]) {
+    f.setNow(t); const row = f.read();
+    assert.equal(row.beganAtMs, 100); assert.equal(row.deadlineAtMs, 10100);
+    assert.equal(row.remainingMs, 10100 - t); assert.equal(row.finalized, false);
+  }
+  f.setNow(10100); const row = f.read({ finalize: true });
+  assert.equal(row.reason, 'post-apply-missing'); assert.equal(row.expired, true); assert.equal(row.finalized, true);
+  f.frame.viewerClockMs = 10100; f.m.onPostApplyFrame(f.frame, { scope: f.scope });
+  assert.equal(f.read().postApply, null);
+  const late = controlledFixture(); late.begin(); late.send(); late.acknowledge(); late.setNow(10099);
+  late.frame.viewerClockMs = 10090; late.m.onPostApplyFrame(late.frame, { scope: late.scope });
+  assert.equal(late.read({ finalize: true }).state, 'COMPLETE');
+});
+
+for (const mode of ['not-sent', 'ack-missing', 'all']) test(`native latency: expired ${mode} terminal precedence`, () => {
+  const f = controlledFixture(); f.begin();
+  if (mode !== 'not-sent') f.send();
+  if (mode === 'all') { f.acknowledge(); f.present(); }
+  f.setNow(10100); const row = f.read({ finalize: true });
+  assert.equal(row.reason, mode === 'all' ? 'expired' : mode); assert.equal(row.state, 'INCOMPLETE');
+});
+
+for (const terminalReason of ['dispatch-refused', 'observation-error', 'cancelled']) test(`native latency: explicit ${terminalReason} wins missing stage but loses sticky identity error`, () => {
+  const f = controlledFixture(); f.begin();
+  assert.equal(f.read({ finalize: true, terminalReason }).reason, terminalReason);
+  const g = controlledFixture(); g.begin(); g.current.leaseId = 'other';
+  assert.equal(g.read({ finalize: true, terminalReason }).reason, 'lease-changed');
+});
+
+test('native latency: scope replacement cancels evidence, explicit clear releases it', () => {
+  const f = controlledFixture(); f.complete();
+  f.m.setScope({ ...f.scope, generation: 3 }); assert.equal(f.read().reason, 'scope-changed');
+  f.m.clearControlledInputEvidence('lab_1'); assert.equal(f.read(), null);
+  f.m.setScope(f.scope); assert.equal(f.begin(), true);
+  f.m.setScope(null); assert.equal(f.read().reason, 'scope-changed');
+});
+
+test('native latency: maximum legal ASCII metadata stays bounded, projections omit private payload and references', () => {
+  const f = controlledFixture({ inputId: '\\'.repeat(128) });
+  f.reservation.leaseId = f.meta.leaseId = f.current.leaseId = f.ackContext.leaseId = '"'.repeat(128);
+  f.scope.connectionAttemptId = '\\'.repeat(128); f.m.setScope(f.scope);
+  f.reservation.payload = { private: 'x'.repeat(9000) }; f.meta.payload = f.reservation.payload;
+  f.complete(); const row = f.read({ finalize: true });
+  assert.equal(row.state, 'COMPLETE'); assert.ok(Buffer.byteLength(JSON.stringify(row)) <= 8192);
+  for (const key of ['private', 'payload', 'sendSource', 'ackSource', 'socketId', 'live', 'pc']) assert.equal(JSON.stringify(row).includes(`"${key}"`), false);
+});
+
+test('native latency: controlled APIs leave product ledgers, samples and timers unchanged', () => {
+  const f = controlledFixture(); f.m.recordInputSend('business', { scope: f.scope });
+  const before = f.m.snapshot(); f.complete();
+  f.m.observeControlledAck(f.ack, f.ackContext); f.read({ finalize: true });
+  const after = f.m.snapshot();
+  assert.deepEqual(after.outcomes, before.outcomes);
+  assert.deepEqual(Object.fromEntries(Object.entries(after.metrics).map(([k, v]) => [k, v.count])),
+    Object.fromEntries(Object.entries(before.metrics).map(([k, v]) => [k, v.count])));
+  assert.equal(f.m.hasPendingFrameInputs(), true); assert.equal(f.timers(), 0);
+});
+
+for (const stage of ['ack', 'read']) for (const field of ['scope', 'leaseId', 'streamId', 'pc']) {
+  test(`native latency: ${stage} freshly fences ${field}`, () => {
+    const f = controlledFixture(); f.begin(); f.send(); f.setNow(140);
+    const context = { ...f.current, [field]: field === 'scope' ? { ...f.scope, generation: 9 }
+      : field === 'pc' ? {} : 'other' };
+    if (stage === 'ack') assert.equal(f.m.observeControlledAck(f.ack, { ...f.ackContext, ...context }), false);
+    const row = f.m.readControlledInputEvidence('lab_1', stage === 'read' ? context : f.current, { finalize: true });
+    assert.equal(row.reason, field === 'leaseId' ? 'lease-changed' : field === 'pc' ? 'source-changed' : 'scope-changed');
+  });
+}
+
+test('native latency: ACK requires incoming saved source and socket ID', () => {
+  for (const transport of ['datachannel', 'socket']) {
+    const f = controlledFixture({ transport }); f.begin(); f.send(); f.setNow(140);
+    assert.equal(f.m.observeControlledAck(f.ack, { ...f.ackContext, source: {} }), false);
+    assert.equal(f.read().reason, 'source-changed');
+  }
+  const g = controlledFixture({ transport: 'socket' }); g.begin(); g.send(); g.setNow(140);
+  assert.equal(g.m.observeControlledAck(g.ack, { ...g.ackContext, socketId: 'other' }), false);
+  assert.equal(g.read().reason, 'source-changed');
+});
+
+for (const value of [NaN, Infinity, -1, undefined]) test(`native latency: invalid processing clock ${value} isolates evidence`, () => {
+  const f = controlledFixture(); f.begin(); f.send(); f.setNow(value);
+  assert.equal(f.m.observeControlledAck(f.ack, f.ackContext), false);
+  f.setNow(140); assert.equal(f.read().reason, 'clock-invalid');
+});
+
+test('native latency: overflow begin clock cannot occupy a slot; backwards processing cannot repair evidence', () => {
+  const f = controlledFixture(); f.setNow(Number.MAX_VALUE);
+  assert.equal(f.begin(), false); assert.equal(f.read(), null);
+  f.setNow(100); assert.equal(f.begin(), true); f.send(); f.setNow(99);
+  assert.equal(f.m.observeControlledAck(f.ack, f.ackContext), false);
+  f.setNow(140); assert.equal(f.read().reason, 'clock-invalid');
+});
+
+test('native latency: explicit terminal reason retains precedence at the expiry boundary', () => {
+  const f = controlledFixture(); f.begin(); f.setNow(10100);
+  const row = f.read({ finalize: true, terminalReason: 'dispatch-refused' });
+  assert.equal(row.reason, 'dispatch-refused'); assert.equal(row.expired, true);
+});
+
+test('native latency: counters saturate safely without retaining repeated ACK rows', () => {
+  // Seed the otherwise private counters at the numeric boundary; no public mutation hook.
+  const source = fs.readFileSync(path.join(__dirname, 'latency-monitor.js'), 'utf8')
+    .replace('counters: { duplicateAcks: 0, invalidObservations: 0 }',
+      'counters: { duplicateAcks: Number.MAX_SAFE_INTEGER - 1, invalidObservations: Number.MAX_SAFE_INTEGER - 1 }');
+  const sandbox = { module: { exports: {} } };
+  vm.runInNewContext(source, sandbox);
+  const f = controlledFixture({ createMonitor: sandbox.module.exports.createLatencyMonitor });
+  f.begin(); f.send(); f.setNow(140);
+  for (let i = 0; i < 3; i++) f.m.observeControlledAck({ ...f.ack, status: 'duplicate' }, f.ackContext);
+  f.acknowledge();
+  for (let i = 0; i < 3; i++) f.m.observeControlledAck(f.ack, f.ackContext);
+  assert.equal(f.read().observationCounters.duplicateAcks, Number.MAX_SAFE_INTEGER);
+  f.m.observeControlledAck({ ...f.ack, hostApplyMs: 1 }, f.ackContext);
+  f.current.leaseId = 'other';
+  assert.equal(f.read().observationCounters.invalidObservations, Number.MAX_SAFE_INTEGER);
+  assert.equal(Object.keys(f.read().observationCounters).length, 2);
+});
+
+test('native latency: keyboard text and every declared mouse action remain supported', () => {
+  for (const [inputType, action] of [['mouse', 'wheel'], ['mouse', 'down'], ['mouse', 'move'], ['mouse', 'up'], ['keyboard', 'text']]) {
+    const f = controlledFixture({ inputType, action }); f.complete();
+    assert.equal(f.read({ finalize: true }).state, 'COMPLETE');
+  }
+});
+
+test('native latency: later observations cannot change finalized rows or terminal reason', () => {
+  const f = controlledFixture(); f.begin();
+  const first = f.read({ finalize: true, terminalReason: 'cancelled' });
+  f.send(); f.acknowledge(); f.present();
+  assert.deepEqual(f.read(), { ...first, remainingMs: 9960 });
+});
+
+test('native latency: frame without an accepted send cannot populate the slot', () => {
+  const f = controlledFixture(); f.begin(); f.setNow(140);
+  f.m.onPostApplyFrame(f.frame, { scope: f.scope });
+  assert.equal(f.read().postApply, null); assert.equal(f.read().observationCounters.invalidObservations, 1);
+  f.send(); f.acknowledge(); f.present();
+  assert.equal(f.read({ finalize: true }).state, 'COMPLETE');
+});

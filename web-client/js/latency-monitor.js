@@ -100,11 +100,209 @@ const createLatencyMonitor = (options = {}) => {
     enforceMetadataBudget();
     return true;
   };
+  // One diagnostic slot, independent of the product pending ledger and M1 clock.
+  // Only fixed scalar projections are serializable; transport references stay here.
+  let controlled = null;
+  const controlledActions = {
+    mouse: new Set(['move', 'down', 'up', 'wheel']),
+    keyboard: new Set(['text']),
+  };
+  const controlledScopeValid = s => Boolean(s && validId(s.connectionAttemptId)
+    && Number.isSafeInteger(s.generation) && s.generation >= 0
+    && Number.isSafeInteger(s.leaseEpoch) && s.leaseEpoch >= 0);
+  const controlledInc = name => {
+    controlled.counters[name] = Math.min(Number.MAX_SAFE_INTEGER, controlled.counters[name] + 1);
+  };
+  const controlledFail = reason => {
+    if (!controlled.error) controlled.error = reason;
+    controlled.finalized = true;
+    return false;
+  };
+  const controlledReject = reason => {
+    controlledInc('invalidObservations');
+    return reason ? controlledFail(reason) : false;
+  };
+  const controlledGuard = (fallback, fn) => {
+    try { return fn(); } catch (_) {
+      if (controlled) { controlledInc('invalidObservations'); controlledFail('observation-error'); }
+      return fallback;
+    }
+  };
+  const controlledTime = () => {
+    const t = now();
+    if (!valid(t) || (controlled && t < controlled.processingAtMs)) {
+      if (controlled) controlledReject('clock-invalid');
+      return null;
+    }
+    if (controlled) {
+      controlled.processingAtMs = t;
+      controlled.expired = t >= controlled.deadlineAtMs;
+      if (controlled.expired) controlled.finalized = true;
+    }
+    return t;
+  };
+  const controlledEventTime = (event, t) => valid(event) && event <= t
+    && event >= (controlled.send?.viewerClockMs ?? controlled.beganAtMs);
+  const controlledIdentity = (current, observation = false) => {
+    const fail = reason => observation ? controlledReject(reason) : controlledFail(reason);
+    if (!controlledScopeValid(current.scope) || !sameScope(controlled.scope, current.scope)
+        || !sameScope(scope, controlled.scope) || current.streamId !== controlled.streamId) return fail('scope-changed');
+    if (current.leaseId !== controlled.leaseId) return fail('lease-changed');
+    if (!current.live || (current.pc !== null && (typeof current.pc !== 'object' || !current.pc)) || current.pc !== current.live.pc) return fail('source-changed');
+    if (!controlled.refs) return true;
+    const r = controlled.refs, live = current.live;
+    if (current.pc !== r.pc) return fail('source-changed');
+    if (r.transport === 'datachannel') {
+      const selected = controlled.inputType === 'mouse' && controlled.action === 'move'
+        ? live.datachannel?.selectedMoveSendSource : live.datachannel?.selectedReliableSendSource;
+      if (selected !== r.sendSource || live.datachannel?.reliableAckSource !== r.ackSource) return fail('source-changed');
+    } else if (live.socket?.selectedSendSource !== r.sendSource
+        || live.socket?.reliableAckSource !== r.ackSource
+        || live.socket?.object !== r.socket || live.socket?.id !== r.socketId) return fail('source-changed');
+    return true;
+  };
+  const controlledProjection = t => {
+    const c = controlled;
+    const missing = !c.send ? 'not-sent' : !c.ack ? 'ack-missing' : !c.postApply ? 'post-apply-missing' : null;
+    const reason = c.error || c.terminalReason || missing || (c.expired && !c.completed ? 'expired' : 'none');
+    return {
+      schemaVersion: 1,
+      state: reason === 'none' ? 'COMPLETE' : c.finalized ? 'INCOMPLETE' : 'PENDING', reason,
+      inputId: c.inputId, leaseId: c.leaseId, scope: copyScope(c.scope), streamId: c.streamId,
+      beganAtMs: c.beganAtMs, deadlineAtMs: c.deadlineAtMs,
+      remainingMs: Math.max(0, c.deadlineAtMs - t), finalized: c.finalized, expired: c.expired,
+      send: c.send ? { ...c.send } : null, ack: c.ack ? { ...c.ack } : null,
+      postApply: c.postApply ? { ...c.postApply } : null,
+      hostTiming: { ...c.hostTiming }, observationCounters: { ...c.counters },
+    };
+  };
+  const controlledBudget = t => {
+    if (JSON.stringify(controlledProjection(t)).length <= 8192) return true;
+    // Drop observations on overflow, retaining only the bounded reservation/error.
+    controlled.send = controlled.ack = controlled.postApply = controlled.ackKey = controlled.refs = null;
+    return controlledReject('metadata-cap');
+  };
+  const controlledRow = viewerClockMs => ({ inputId: controlled.inputId, viewerClockMs,
+    attemptId: controlled.scope.connectionAttemptId, generation: controlled.scope.generation,
+    streamId: controlled.streamId });
+  const observeControlledFrame = (row, context) => controlledGuard(false, () => {
+    if (!controlled || !Array.isArray(row.inputIds) || !row.inputIds.includes(controlled.inputId)) return false;
+    const t = controlledTime();
+    if (t === null || controlled.finalized) return false;
+    if (!sameScope(controlled.scope, context.scope) || !sameScope(controlled.scope, row.scope)
+        || !sameScope(scope, controlled.scope) || row.streamId !== controlled.streamId) return controlledReject('scope-changed');
+    if (!controlled.send) return controlledReject();
+    if (!controlledEventTime(row.viewerClockMs, t)) return controlledReject('clock-invalid');
+    if (row.traceStatus !== 'matched' || row.captureFresh !== true || row.captureAfterApplied !== true
+        || !Number.isSafeInteger(row.captureSeq) || row.captureSeq < 0
+        || ![row.rtpTimestamp, row.wireTimestamp, row.rtpOrigin].every(v => Number.isSafeInteger(v) && v >= 0 && v <= 0xffffffff)
+        || t - row.viewerClockMs >= 2000) return controlledReject();
+    // M2 may join before ACK. Its presentation clock remains independent of ACK arrival.
+    if (controlled.postApply) return false;
+    controlled.postApply = { ...controlledRow(row.viewerClockMs), captureSeq: row.captureSeq,
+      rtpTimestamp: row.rtpTimestamp, wireTimestamp: row.wireTimestamp, rtpOrigin: row.rtpOrigin,
+      traceStatus: 'matched', captureFresh: true, captureAfterApplied: true };
+    return controlledBudget(t);
+  });
   let serial = 0;
   const api = {
     init() {},
+    beginControlledInputEvidence(reservation) {
+      return controlledGuard(false, () => {
+        if (controlled) return false;
+        if (!reservation || !validId(reservation.inputId) || !validId(reservation.leaseId)
+            || !controlledScopeValid(reservation.scope) || !sameScope(scope, reservation.scope)
+            || reservation.streamId !== 'video' || !controlledActions[reservation.inputType]?.has(reservation.action)) return false;
+        const t = controlledTime(); if (t === null) return false;
+        const deadlineAtMs = t + 10000;
+        if (!valid(deadlineAtMs) || deadlineAtMs <= t) return false;
+        controlled = { inputId: reservation.inputId, leaseId: reservation.leaseId,
+          scope: copyScope(reservation.scope), streamId: reservation.streamId,
+          inputType: reservation.inputType, action: reservation.action,
+          beganAtMs: t, deadlineAtMs, processingAtMs: t,
+          finalized: false, expired: false, completed: false, error: null, terminalReason: null,
+          send: null, ack: null, postApply: null, refs: null, ackKey: null,
+          hostTiming: { hostAdapterAwaitMs: null, hostQueueMs: null, hostApplyMs: null },
+          counters: { duplicateAcks: 0, invalidObservations: 0 } };
+        return controlledBudget(t);
+      });
+    },
+    observeControlledSend(meta, context) {
+      return controlledGuard(false, () => {
+        if (!controlled || meta?.inputId !== controlled.inputId) return false;
+        const t = controlledTime(); if (t === null || controlled.finalized) return false;
+        if (meta.inputType !== controlled.inputType || meta.action !== controlled.action) return controlledReject('conflicting-observation');
+        if (!controlledIdentity({ ...context, leaseId: meta.leaseId }, true)) return false;
+        if (meta.leaseEpoch !== controlled.scope.leaseEpoch) return controlledReject('scope-changed');
+        if (!controlledEventTime(context.viewerClockMs, t)) return controlledReject('clock-invalid');
+        const move = controlled.inputType === 'mouse' && controlled.action === 'move';
+        if (move ? meta.seq !== null : !Number.isSafeInteger(meta.seq) || meta.seq <= 0) return controlledReject();
+        if (controlled.send) return controlledReject('conflicting-observation');
+        if (!['socket', 'datachannel'].includes(context.transport)
+            || !context.sendSource || typeof context.sendSource !== 'object'
+            || !context.ackSource || typeof context.ackSource !== 'object') return controlledReject('source-changed');
+        const socket = context.transport === 'socket' ? context.live.socket : null;
+        if (socket && (!validId(context.socketId) || context.socketId !== socket.id
+            || socket.object !== context.sendSource || socket.object !== context.ackSource)) return controlledReject('source-changed');
+        controlled.refs = { transport: context.transport, sendSource: context.sendSource,
+          ackSource: context.ackSource, socket: socket?.object ?? null,
+          socketId: socket?.id ?? null, pc: context.pc, seq: meta.seq };
+        if (!controlledIdentity({ ...context, leaseId: meta.leaseId }, true)) return false;
+        controlled.send = controlledRow(context.viewerClockMs);
+        return controlledBudget(t);
+      });
+    },
+    observeControlledAck(ack, context) {
+      return controlledGuard(false, () => {
+        if (!controlled || !Array.isArray(ack?.inputIds) || !ack.inputIds.includes(controlled.inputId)) return false;
+        const t = controlledTime(); if (t === null || controlled.finalized) return false;
+        if (!controlled.send) return controlledReject();
+        if (!controlledIdentity(context, true)) return false;
+        const r = controlled.refs;
+        if (context.transport !== r.transport || context.source !== r.ackSource
+            || (r.transport === 'socket' && context.socketId !== r.socketId)) return controlledReject('source-changed');
+        if (!controlledEventTime(context.viewerClockMs, t)) return controlledReject('clock-invalid');
+        const move = controlled.inputType === 'mouse' && controlled.action === 'move';
+        if (ack.schemaVersion !== 2 || ack.inputIds.length !== 1 || ack.inputType !== controlled.inputType
+            || ack.leaseEpoch !== controlled.scope.leaseEpoch || ack.status !== 'applied'
+            || context.verdict !== (move ? 'unordered-applied' : 'reliable-applied')
+            || (!move && ack.appliedSeq !== r.seq)) return controlledReject(controlled.ack ? 'conflicting-observation' : null);
+        const timing = Object.fromEntries(['hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs']
+          .map(k => [k, valid(ack[k]) ? ack[k] : null]));
+        const key = JSON.stringify({ status: ack.status, appliedSeq: move ? null : ack.appliedSeq, ...timing });
+        if (controlled.ack) {
+          if (controlled.ackKey !== key) return controlledReject('conflicting-observation');
+          controlledInc('duplicateAcks'); return false;
+        }
+        controlled.ack = { ...controlledRow(context.viewerClockMs), status: 'applied' };
+        controlled.ackKey = key; controlled.hostTiming = timing;
+        return controlledBudget(t);
+      });
+    },
+    readControlledInputEvidence(inputId, current, options = {}) {
+      return controlledGuard(null, () => {
+        if (!controlled || inputId !== controlled.inputId) return null;
+        const wasFinalized = controlled.finalized;
+        const t = controlledTime();
+        controlledIdentity(current);
+        if (options.finalize === true && !wasFinalized) {
+          controlled.finalized = true;
+          if (['dispatch-refused', 'observation-error', 'cancelled'].includes(options.terminalReason)) controlled.terminalReason = options.terminalReason;
+          controlled.completed = Boolean(!controlled.error && !controlled.terminalReason
+            && controlled.send && controlled.ack && controlled.postApply && !controlled.expired);
+        }
+        controlledBudget(t ?? controlled.processingAtMs);
+        return controlledProjection(t ?? controlled.processingAtMs);
+      });
+    },
+    clearControlledInputEvidence(inputId) {
+      controlledGuard(undefined, () => { if (controlled && inputId === controlled.inputId) controlled = null; });
+    },
     setScope(next) {
       if (next !== null && (!next || !validId(next.connectionAttemptId) || !Number.isSafeInteger(next.generation) || next.generation < 0 || !Number.isSafeInteger(next.leaseEpoch) || next.leaseEpoch < 0)) return;
+      controlledGuard(undefined, () => {
+        if (controlled && !sameScope(controlled.scope, next)) controlledFail('scope-changed');
+      });
       const t = clock(); if (t === null || sameScope(scope, next)) return;
       expire(t);
       for (const record of pending.values()) inc('cancelled');
@@ -183,6 +381,7 @@ const createLatencyMonitor = (options = {}) => {
       return [...pending.values(), ...tombstones.values()].some(r => !r.postApply && t - r.sent < 10000 && (!r.state || r.state === 'acked'));
     },
     onPostApplyFrame(row = {}, context = {}) {
+      observeControlledFrame(row, context);
       const t = clock(context.nowMs); if (t === null) return false; expire(t);
       if (!sameScope(scope, context.scope) || !sameScope(scope, row.scope)
           || row.traceStatus !== 'matched' || !valid(row.viewerClockMs) || row.viewerClockMs > t || t - row.viewerClockMs >= 2000) return false;
