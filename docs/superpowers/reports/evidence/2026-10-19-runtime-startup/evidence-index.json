@@ -1,708 +1,923 @@
 {
+  "files": {
+    "diagnostics/wrd-baseline-known-process-scan-exit-assessment-20261019.md": {
+      "bytes": 11023,
+      "originalPath": "/tmp/wrd-baseline-known-process-scan-exit-assessment-20261019.md",
+      "sha256": "ab40c003d1f034b804b42fd26626b627fbfbca043b5b3a236f70c88b3ae32090"
+    },
+    "diagnostics/wrd-current-runtime-log-summary-20261019.json": {
+      "bytes": 14310,
+      "originalPath": "/tmp/wrd-current-runtime-log-summary-20261019.json",
+      "sha256": "75b3369a61faa6194ae2c8afb6c56219d579c4759257edaba5f3033487d007d7"
+    },
+    "diagnostics/wrd-current-runtime-log-summary-20261019.md": {
+      "bytes": 6443,
+      "originalPath": "/tmp/wrd-current-runtime-log-summary-20261019.md",
+      "sha256": "9a2c58f73bf27cb17d89c7918fcffa944218bdeea76065f6b8ebabc5b83cd013"
+    },
+    "diagnostics/wrd-current-runtime-log-summary-v2-20261019-host-whitelist.jsonl": {
+      "bytes": 95690,
+      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019-host-whitelist.jsonl",
+      "sha256": "70239e50720f77b6c1f6a8d8e87d70f441af7f130faf6823977481a48b22dfc2"
+    },
+    "diagnostics/wrd-current-runtime-log-summary-v2-20261019-signal-whitelist.jsonl": {
+      "bytes": 5400,
+      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019-signal-whitelist.jsonl",
+      "sha256": "193796d19e1584be9cee2a6da3236b81defff62c9bb4bb79b66e090583dc66e7"
+    },
+    "diagnostics/wrd-current-runtime-log-summary-v2-20261019.json": {
+      "bytes": 20558,
+      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019.json",
+      "sha256": "f70c3a84947d1df21930460f7f1020f90e21ecc399611511dc59f34db72eea3d"
+    },
+    "diagnostics/wrd-current-runtime-log-summary-v2-20261019.md": {
+      "bytes": 8520,
+      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019.md",
+      "sha256": "839a51a78bce9a41c56b05c14734fa7dbd28343e10563e701a1e0b27ae736fa0"
+    },
+    "diagnostics/wrd-formal-403-readonly-diagnosis-20261019.json": {
+      "bytes": 6635,
+      "originalPath": "/tmp/wrd-formal-403-readonly-diagnosis-20261019.json",
+      "sha256": "68886ccf9aad2d155c691e29d920abec962016ff66176541c70e0e4cc5700b91"
+    },
+    "diagnostics/wrd-formal-403-readonly-diagnosis-20261019.md": {
+      "bytes": 2553,
+      "originalPath": "/tmp/wrd-formal-403-readonly-diagnosis-20261019.md",
+      "sha256": "9db0411060ec23c0e2c6c93a6a8902085f68980b9d44a893090f8e3b579b3071"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-20261019.json": {
+      "bytes": 7720,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-20261019.json",
+      "sha256": "f054178bfdb57d89578b352ab4ec73587ceaabf27f1acaca65ab9f9d2317cfe4"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-20261019.md": {
+      "bytes": 4593,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-20261019.md",
+      "sha256": "67674a2a654cfeae5c91c5de0f25349edf9e859a80ad3870c9043aa138d8acf4"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-v2-20261019.json": {
+      "bytes": 9964,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-v2-20261019.json",
+      "sha256": "de338544d07a254bd3cb6a49517aee9e1b1fe3f765abc23a2cf98a708b0e365f"
+    },
+    "diagnostics/wrd-host-lag-observer-source-review-v2-20261019.md": {
+      "bytes": 2666,
+      "originalPath": "/tmp/wrd-host-lag-observer-source-review-v2-20261019.md",
+      "sha256": "f4b3a2f50145e7d7e9c50fb501f95e2d435de409697783b924778621a4f1688e"
+    },
+    "diagnostics/wrd-live-host-source-manifest-20261019.json": {
+      "bytes": 1611,
+      "originalPath": "/tmp/wrd-live-host-source-review-20261019-walu85ev/manifest.json",
+      "sha256": "c7a6d8e599ab86e9ff30f6015f06970558dfd225f0144604eceb001123e64a55"
+    },
+    "diagnostics/wrd-loaded-viewer-startup-evidence-20261019.json": {
+      "bytes": 9652,
+      "originalPath": "/tmp/wrd-loaded-viewer-startup-evidence-20261019.json",
+      "sha256": "5a3a6b31d3fbf7fd42ade24dfd27c66b28e83a768461ea2f85548cca1a725256"
+    },
+    "diagnostics/wrd-loaded-viewer-startup-evidence-20261019.md": {
+      "bytes": 4508,
+      "originalPath": "/tmp/wrd-loaded-viewer-startup-evidence-20261019.md",
+      "sha256": "246d6a349233ee05e1c36cdce3c032b15c387b76c1766cf6f47c50a47f744e6e"
+    },
+    "diagnostics/wrd-loaded-viewer-transport-evidence-20261019.json": {
+      "bytes": 7328,
+      "originalPath": "/tmp/wrd-loaded-viewer-transport-evidence-20261019.json",
+      "sha256": "02b7b6deaf91f777226a5116960b39ea0ec1113612b7da8bed82a6c9044cbfcb"
+    },
+    "diagnostics/wrd-loaded-viewer-transport-evidence-20261019.md": {
+      "bytes": 2840,
+      "originalPath": "/tmp/wrd-loaded-viewer-transport-evidence-20261019.md",
+      "sha256": "a8fa62a10c853da51d38066ca6b41c8146f806f1e86927c54ae175ecd360a53d"
+    },
+    "diagnostics/wrd-pacing-v2-r4f1-eligibility-gap-assessment-20261019.md": {
+      "bytes": 15453,
+      "originalPath": "/tmp/wrd-pacing-v2-r4f1-eligibility-gap-assessment-20261019.md",
+      "sha256": "dce878e5a3ec508cfa6c4e6961ed36dd7d034c15fbe4214c457d40e5eb486c53"
+    },
+    "diagnostics/wrd-port-owner-global-15s-diagnostic-20261019.md": {
+      "bytes": 4508,
+      "originalPath": "/tmp/wrd-port-owner-global-15s-diagnostic-20261019.md",
+      "sha256": "31778cec441581cf0a19cf09cd98cf896ed97017ac334365e51d3fd8c84af736"
+    },
+    "diagnostics/wrd-port-owner-lookup-latency-assessment-20261019.md": {
+      "bytes": 10499,
+      "originalPath": "/tmp/wrd-port-owner-lookup-latency-assessment-20261019.md",
+      "sha256": "6a37ca087c273a2bf75a8556e92ab1891d6c4b77378ec9d0f203b06dcccf7cac"
+    },
+    "diagnostics/wrd-port-owner-netstat-runtime-schema-20261019.md": {
+      "bytes": 6116,
+      "originalPath": "/tmp/wrd-port-owner-netstat-runtime-schema-20261019.md",
+      "sha256": "bf304be373183ee2291b0b1fcd4b2562a0902fa16fa15a9035c1752140a693fd"
+    },
+    "diagnostics/wrd-r4f1-baseline-terminal-scan-race-assessment-20261019.md": {
+      "bytes": 17901,
+      "originalPath": "/tmp/wrd-r4f1-baseline-terminal-scan-race-assessment-20261019.md",
+      "sha256": "018bc56ccb7c734248b9f678fcc88431dd23fe484d2cf9e18938418e8fffde24"
+    },
+    "diagnostics/wrd-startup-join-execution-diagnostics-supplement-draft-20261019.md": {
+      "bytes": 13556,
+      "originalPath": "/tmp/wrd-startup-join-execution-diagnostics-supplement-draft-20261019.md",
+      "sha256": "4376928f2eebf820b301f28219e858fca4843cbf3be6adbb3595b3b28836808e"
+    },
+    "diagnostics/wrd-startup-join-r4f1-actual-assets-review-20261019.md": {
+      "bytes": 6121,
+      "originalPath": "/tmp/wrd-startup-join-r4f1-actual-assets-review-20261019.md",
+      "sha256": "e055f48a0821ba07562fae66f5dd236ed46d50cc278a37eb44c4136b200325d5"
+    },
+    "diagnostics/wrd-startup-join-r4f1-readiness-reconciliation-review-20261019.md": {
+      "bytes": 4143,
+      "originalPath": "/tmp/wrd-startup-join-r4f1-readiness-reconciliation-review-20261019.md",
+      "sha256": "1114587ff78f8701e79d9db67645ecaef3e2fb4f3a9bc031e290c3212cd1a4be"
+    },
+    "diagnostics/wrd-startup-viewer-tools-successor-r4-fix1-operations-review-20261019.md": {
+      "bytes": 8563,
+      "originalPath": "/tmp/wrd-startup-viewer-tools-successor-r4-fix1-operations-review-20261019.md",
+      "sha256": "3b76da80be85825dea439aa2673cf842800875f5eeddf3a1a4c09d54865d0156"
+    },
+    "immutable-registry-supervisor.py": {
+      "bytes": 18141,
+      "originalPath": "/tmp/wrd-owned-turn-probe-private/supervisor.py",
+      "sha256": "d03cc2025f41d26c0079d3f820fdb2cd5479ae14448fb1c6f91c4589d6bd5c7b"
+    },
+    "operations-r4-fix1/CONTRACT.md": {
+      "bytes": 8853,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/CONTRACT.md",
+      "sha256": "cfa3b6c77de6f33a13f9db91cd10ccb874ce1dd98331bc9c85c1985a78e61f83"
+    },
+    "operations-r4-fix1/DERIVATION.md": {
+      "bytes": 5352,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/DERIVATION.md",
+      "sha256": "b53a4286248c53ffe753830ca8898c2247345d98a0f1b9c5c6b317e545902ff0"
+    },
+    "operations-r4-fix1/FINAL-BINDING.json": {
+      "bytes": 487,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/FINAL-BINDING.json",
+      "sha256": "70f386dd393532b7c09656cb98e08aae7a8e7174f3c3eaf51fd0922907751453"
+    },
+    "operations-r4-fix1/FINAL-SOURCE-REVIEW.json": {
+      "bytes": 24382,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/FINAL-SOURCE-REVIEW.json",
+      "sha256": "dff8d03693e11e14448d838459edd6626105dffb009a9d21dbe4b0e6fd532029"
+    },
+    "operations-r4-fix1/PREPARATION-CORRECTIONS.json": {
+      "bytes": 1057,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/PREPARATION-CORRECTIONS.json",
+      "sha256": "f1f9cd919f03c3dd021394ed0f967ad8e27ad895a22ff77875dcf8ee2b0e6e1b"
+    },
+    "operations-r4-fix1/R1-to-R2.diff": {
+      "bytes": 30972,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R1-to-R2.diff",
+      "sha256": "bc765fd45bdcd8aa7a379fe1bcf5092c58bb915bd94e772ec91062e4b2fc0fd0"
+    },
+    "operations-r4-fix1/R2-static-verification.json": {
+      "bytes": 1409,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R2-static-verification.json",
+      "sha256": "3cd225ec9dbdaacda3fe8b38e286eaafecf68bbb91ed008ba7007bf2a51426bc"
+    },
+    "operations-r4-fix1/R2-to-R3.diff": {
+      "bytes": 39363,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R2-to-R3.diff",
+      "sha256": "b4fbe7685d569b0a4c49278946fecb1bdef3cb64a1bd066ef474f922855fa8b0"
+    },
+    "operations-r4-fix1/R3-HISTORICAL-FAILURES.json": {
+      "bytes": 1071,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-HISTORICAL-FAILURES.json",
+      "sha256": "b4e369778bdce218786e7b413a3c7cdd332ed864476e133af41ca67d43afc1dd"
+    },
+    "operations-r4-fix1/R3-REPORT-HISTORICAL.md": {
+      "bytes": 19084,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-REPORT-HISTORICAL.md",
+      "sha256": "7d9cfa62cf495caafde2e01ec77a9f7e16ef70408f6ff6308209d16221c0e346"
+    },
+    "operations-r4-fix1/R3-static-verification.json": {
+      "bytes": 1452,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-static-verification.json",
+      "sha256": "4c4a2fa7ba8b23b626716b0f2f6a69f66034019269d8cf31d64f0e4d3909636a"
+    },
+    "operations-r4-fix1/R3-to-R4.diff": {
+      "bytes": 56624,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-to-R4.diff",
+      "sha256": "69f281a97ad97d0c4b7e593b92928406503b84b9d43d338424b32179b656f9d3"
+    },
+    "operations-r4-fix1/R4-HISTORICAL-FAILURE.json": {
+      "bytes": 1599,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R4-HISTORICAL-FAILURE.json",
+      "sha256": "1047342b8bd808509221b88d095a32385a379629124863882b96d13887e3cf80"
+    },
+    "operations-r4-fix1/R4-static-verification.json": {
+      "bytes": 2234,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R4-static-verification.json",
+      "sha256": "7dd93f7741d7d3a212a123ec20561cc3ac61cb6e37a341f778695aa08bc59422"
+    },
+    "operations-r4-fix1/R4-to-fix1.diff": {
+      "bytes": 19329,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R4-to-fix1.diff",
+      "sha256": "2bd2b2370d7c96f225c1023ae863832ca7516be5f3ab2eda5aa86574cd7e02b9"
+    },
+    "operations-r4-fix1/R5-to-successor.diff": {
+      "bytes": 86038,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R5-to-successor.diff",
+      "sha256": "273cfdd56ba5a0eddfa020d126c19aab32d464d201906d676d4f2386b6f687ee"
+    },
+    "operations-r4-fix1/REPORT.md": {
+      "bytes": 13595,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/REPORT.md",
+      "sha256": "a47b936eb3f8c732bd022ebbd7de6e83c7eb9b356885fc93d4a6dce15eaa77b2"
+    },
+    "operations-r4-fix1/SHA256SUMS.json": {
+      "bytes": 6096,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/SHA256SUMS.json",
+      "sha256": "bcd09baaa0b0936e7424cd0dea5e51fb067503399ca49d3a236e789fc0fa6861"
+    },
+    "operations-r4-fix1/apply-frontend-context.py": {
+      "bytes": 2398,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/apply-frontend-context.py",
+      "sha256": "e64daa7b9cf033fec65355331d805845e574e678d20dcef3ecd1de5082717c70"
+    },
+    "operations-r4-fix1/asset_template.py": {
+      "bytes": 5147,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/asset_template.py",
+      "sha256": "3efa7982fcebebcf807d2d4540d162c846330e9f807ee53a00deaeb537e44bf5"
+    },
+    "operations-r4-fix1/bindings.py": {
+      "bytes": 13567,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/bindings.py",
+      "sha256": "01d0891a4122ae797c2ec2192e358d8d52206e138bf4ba85e8ea5c47153bff70"
+    },
+    "operations-r4-fix1/blob-batch-pure-run-1.log": {
+      "bytes": 1121,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/blob-batch-pure-run-1.log",
+      "sha256": "1780ddc092d4fb5498dfdc72f08654ddc879b6d786d15ac05fc5ed8ee9c1790d"
+    },
+    "operations-r4-fix1/blob-batch-raw-fix1-pure-run-1.log": {
+      "bytes": 1415,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/blob-batch-raw-fix1-pure-run-1.log",
+      "sha256": "0fc2cc646743ee2a6987d7b73186e780f5ba1b5d72f5860d7230a34a10c0bef0"
+    },
+    "operations-r4-fix1/build-frontend-template.py": {
+      "bytes": 2711,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/build-frontend-template.py",
+      "sha256": "2f0abaac1a44a3c893092ddd7e795e550f48abd5c113ef71098d0c764dd090e6"
+    },
+    "operations-r4-fix1/build_primitives.py": {
+      "bytes": 5075,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/build_primitives.py",
+      "sha256": "1e67304f18ac7d34672e49c82b8a6418568cafa75c10dac4ac7e56e7cd3c8cd1"
+    },
+    "operations-r4-fix1/builder-diagnostics-pure-run-1.log": {
+      "bytes": 1233,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/builder-diagnostics-pure-run-1.log",
+      "sha256": "7649b614992158fbe34b7ecd7235e48ec7d594604ba23fb833f42f13a8f67aef"
+    },
+    "operations-r4-fix1/continuation_common.py": {
+      "bytes": 13902,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/continuation_common.py",
+      "sha256": "d0fe02e028f6c5ba3b27f67628639f99d7c4d835f8eaeaf7ed569bf36870c897"
+    },
+    "operations-r4-fix1/core.py": {
+      "bytes": 12707,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/core.py",
+      "sha256": "d78804708d6e7da5581ad9288faefb8ed9a785e51084ad3bdac5f63f9f2b12a3"
+    },
+    "operations-r4-fix1/deployment-history.json": {
+      "bytes": 4072,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-history.json",
+      "sha256": "39f9fed12228525408665da86660b9148a4229e3599a98257a8bca5a00f4568b"
+    },
+    "operations-r4-fix1/deployment.py": {
+      "bytes": 13784,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment.py",
+      "sha256": "13994c6a56a29759e04669eb2c1702013d4026039596e43bc00c14afd6432187"
+    },
+    "operations-r4-fix1/freeze-frontend-context.py": {
+      "bytes": 3156,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/freeze-frontend-context.py",
+      "sha256": "1a3d34d0933d22a482074038bc1532d090a05ba2b52f71834cc34133d764ddef"
+    },
+    "operations-r4-fix1/known_attempt_quiescence.py": {
+      "bytes": 10667,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/known_attempt_quiescence.py",
+      "sha256": "a64687c3a220a8b995e86c44296ccee19923663c64e4e23d8e0a6fbdbd6e38e0"
+    },
+    "operations-r4-fix1/legacy-deployed-reference.json": {
+      "bytes": 192970,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/legacy-deployed-reference.json",
+      "sha256": "eef8320156c7ab9c9a2b0f6dc6a48ec3ed86a475b519f26ccd9c3ae82f760ee6"
+    },
+    "operations-r4-fix1/legacy-tool-history.json": {
+      "bytes": 1887,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/legacy-tool-history.json",
+      "sha256": "cc9a57bb54c9f3f0b1b68cff2720b8c22679ecab049df59d753d7ae4dc208a20"
+    },
+    "operations-r4-fix1/mixed-native-integration.py": {
+      "bytes": 10900,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/mixed-native-integration.py",
+      "sha256": "06ccee3f1cfeaa6a41c9d5ddbb3c1e37e581d8e17155d36ff59cad70b1646423"
+    },
+    "operations-r4-fix1/operational_common.py": {
+      "bytes": 102,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/operational_common.py",
+      "sha256": "091099da66914034875a3fffec7899edbcbdf3a8492dd8aef955f6104807f7c6"
+    },
+    "operations-r4-fix1/ordinary-continuation-supervisor.py": {
+      "bytes": 13626,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/ordinary-continuation-supervisor.py",
+      "sha256": "b485f982befac8e284861af24e6684b006850b67c43847219a5503ec234308df"
+    },
+    "operations-r4-fix1/owned_reload.py": {
+      "bytes": 5405,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/owned_reload.py",
+      "sha256": "3ac947969760350f8c09ed5cc7b2c069a4f1eca2d152eb69f2cccad9e851320a"
+    },
+    "operations-r4-fix1/paused-tool-draft-to-successor.diff": {
+      "bytes": 116693,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/paused-tool-draft-to-successor.diff",
+      "sha256": "887addf9113ed898c0e02248459dc68021f386f0d8b9756b824ecb920d1b6ee1"
+    },
+    "operations-r4-fix1/policy.py": {
+      "bytes": 3776,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/policy.py",
+      "sha256": "9ef6f5e3bc43942199864107cda1c7b6da0bf8bc9770a07387b1fe539a3133d8"
+    },
+    "operations-r4-fix1/prepare-attempt.py": {
+      "bytes": 6502,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/prepare-attempt.py",
+      "sha256": "5e68568a99ced40c8e105a0bf147cf812017f1ba7e284b934e827d02d037813e"
+    },
+    "operations-r4-fix1/prepare-deployment-quiescence.py": {
+      "bytes": 903,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/prepare-deployment-quiescence.py",
+      "sha256": "09e88dece026bd033066efdbfff5f16003a682fa8ac2d1a1b517e59826b57159"
+    },
+    "operations-r4-fix1/prepare-frontend-sequence.py": {
+      "bytes": 1387,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/prepare-frontend-sequence.py",
+      "sha256": "3004e837a5986730dae43546be2a1275eb37e4943b64ca777e1d57be2d05ffb9"
+    },
+    "operations-r4-fix1/private-builder-entry.js": {
+      "bytes": 990,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/private-builder-entry.js",
+      "sha256": "018d74ebfbec66de3c234bf5b5af99dad73a8665862aa443701387e0644e73e2"
+    },
+    "operations-r4-fix1/process_observation_diagnostics.py": {
+      "bytes": 14504,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/process_observation_diagnostics.py",
+      "sha256": "00bd2366d770b9e65b272acadf54027c77cde48050b12106a2fd79338059f82b"
+    },
+    "operations-r4-fix1/provenance.json": {
+      "bytes": 14454,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/provenance.json",
+      "sha256": "cda2bc0142e51c198938ec294a63e328d0d07205553d7a56e88b3c367b614f03"
+    },
+    "operations-r4-fix1/pure-successor-run-1.log": {
+      "bytes": 2611,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/pure-successor-run-1.log",
+      "sha256": "8e3a6d2106520280c0a460877feef7b6660087b0d4f0d906a7c384a649be1723"
+    },
+    "operations-r4-fix1/pure-successor-run-2.log": {
+      "bytes": 1440,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/pure-successor-run-2.log",
+      "sha256": "892c5b01fe29db53639be545da916f45cd97011ca106becfaa6097dad6b2e6f7"
+    },
+    "operations-r4-fix1/pure-successor-run-3.log": {
+      "bytes": 2691,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/pure-successor-run-3.log",
+      "sha256": "59d102ce89456332dd642dbb780815ede152365f822c205c0e30a1f496f9e4e3"
+    },
+    "operations-r4-fix1/qualification_evidence.py": {
+      "bytes": 21711,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/qualification_evidence.py",
+      "sha256": "ea398d2260c405a6115808c3c5f3f975974974e62bc6cb88be61c414e0c941b4"
+    },
+    "operations-r4-fix1/readiness-frontend.py": {
+      "bytes": 1616,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/readiness-frontend.py",
+      "sha256": "1fdfe193c790408a31d0751c793e3f037c869aa8631b603dd45ed8506f54dc3e"
+    },
+    "operations-r4-fix1/readiness_records.py": {
+      "bytes": 1948,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/readiness_records.py",
+      "sha256": "ce35cf06b063e700fe693301608e63a6de4232fb20d91c6a62472868dce1edc9"
+    },
+    "operations-r4-fix1/restart-signal-frontend.py": {
+      "bytes": 3146,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/restart-signal-frontend.py",
+      "sha256": "fcc9ee1675a12ec2539716143884f90a92b384d8a46a2ae9b428aae3b9f7ee12"
+    },
+    "operations-r4-fix1/source-receipt-flow-run-1.log": {
+      "bytes": 538,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/source-receipt-flow-run-1.log",
+      "sha256": "df6d609a12b230111a9432d813b9588963e89ef72812bb375987cb0ffa3d9fab"
+    },
+    "operations-r4-fix1/source-receipt-flow-run-2.log": {
+      "bytes": 538,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/source-receipt-flow-run-2.log",
+      "sha256": "a248ef37f3fac5b6046f3dea28132bbce0dc73237c877f619889576d3123fe99"
+    },
+    "operations-r4-fix1/source_review_gate.py": {
+      "bytes": 6727,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/source_review_gate.py",
+      "sha256": "a6ee41d85848110a9b69ae0bbafccc023eed577f49686744947b7ac869e3c992"
+    },
+    "operations-r4-fix1/static-verification.json": {
+      "bytes": 921,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/static-verification.json",
+      "sha256": "cd9e6fdaf95f12026a464c3f8ef1d39a79f71cb306557ef5d2d65ce2b7e8c56f"
+    },
+    "operations-r4-fix1/test_blob_batch.py": {
+      "bytes": 9565,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_blob_batch.py",
+      "sha256": "9fd19bdae83ca5a1ae71e676c6558f7382ef7c4ad6bf6ce1bfebc19c77db564c"
+    },
+    "operations-r4-fix1/test_builder_diagnostics.py": {
+      "bytes": 9486,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_builder_diagnostics.py",
+      "sha256": "4c683bb9922fcc2266669e0623611d9bfbcb9037b18d5994271fda73caf55062"
+    },
+    "operations-r4-fix1/test_continuation_guards.py": {
+      "bytes": 8888,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_continuation_guards.py",
+      "sha256": "3e63b1a31c52df0138908855a44356df39a9ca349190ed306901ef764c82bb5c"
+    },
+    "operations-r4-fix1/test_source_receipt_flow.py": {
+      "bytes": 7461,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_source_receipt_flow.py",
+      "sha256": "cdb8dfb535311c5ac607d04210709fd5f87b566ef39301f69b4887a477235a8a"
+    },
+    "operations-r4-fix1/test_successor_policy.py": {
+      "bytes": 6119,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_successor_policy.py",
+      "sha256": "3aad185219cd2df18ebfa761463a2a4c781d326efcd7a7b137e085fc39d4e9fa"
+    },
+    "operations-r4-fix1/test_supervisor_registration.py": {
+      "bytes": 3625,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_supervisor_registration.py",
+      "sha256": "649b3d8df2e070579125a12512d8e172906a5b98dd480e3e6fa43cf71e69e4f3"
+    },
+    "operations-r4-fix1/validation_stages.py": {
+      "bytes": 776,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/validation_stages.py",
+      "sha256": "2646ce4e70aaf97b2d41a6b289a68403e34de59dbcd76b76c0ef69efc058251c"
+    },
+    "r4f1-baseline/lifecycle.json": {
+      "bytes": 8412,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/lifecycle.json",
+      "sha256": "b5e38c4708772a2f1381b36941670d1249c181ec66c564c9de4e8f0f50ab77d0"
+    },
+    "r4f1-baseline/origin-evidence.json": {
+      "bytes": 890,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/origin-evidence.json",
+      "sha256": "0408755280b9ae07fe554925711fe76c48930293d8f3b504f40165af1b36aa16"
+    },
+    "r4f1-baseline/qualification-result.json": {
+      "bytes": 7662,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/qualification-result.json",
+      "sha256": "5ebf46ff9919847f0be320f7f55df255928b6e4b8c9b22c0f9059364909f0dfd"
+    },
+    "r4f1-baseline/qualification-started.json": {
+      "bytes": 1172,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/qualification-started.json",
+      "sha256": "61a1875a020f325d4609509a7f9570e740ee3c825af702efad4b20ecafdd1f5e"
+    },
+    "r4f1-baseline/runtime-manifest.json": {
+      "bytes": 1158,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/runtime-manifest.json",
+      "sha256": "2002654ee48a6aa1485e670181dee94af59ca71963a845beb5b35bd75f23ae83"
+    },
+    "r4f1-baseline/summary.json": {
+      "bytes": 2361,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/summary.json",
+      "sha256": "5898c37279fb3105301d53ab6b3426016055450605fd16c37bb266bf1e246e4d"
+    },
+    "r4f1-runtime/EXECUTION-REVIEW.json": {
+      "bytes": 364,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/EXECUTION-REVIEW.json",
+      "sha256": "4c19e03b7264ede923bdae1d4afc7774e828623030df2f3f036043a81826d95b"
+    },
+    "r4f1-runtime/apply-result.json": {
+      "bytes": 3113,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/apply-result.json",
+      "sha256": "4eb2f339a6c0f3035e7ba7204ae78c658f247c5e4e790f9cd6b9eb05b02c1ad0"
+    },
+    "r4f1-runtime/build-result.json": {
+      "bytes": 4843,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/build-result.json",
+      "sha256": "ce8cfc7b19d8184602cd917648b643e20a51234683e0e79c3642425eb83098ed"
+    },
+    "r4f1-runtime/frozen.json": {
+      "bytes": 24268,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/frozen.json",
+      "sha256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618"
+    },
+    "r4f1-runtime/quiescence-apply.json": {
+      "bytes": 9494,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-apply.json",
+      "sha256": "923c2794e0deaa86f7c9307ff87bb8e2b97c179e3a866d0b8fe345a82bd196e3"
+    },
+    "r4f1-runtime/quiescence-reload.json": {
+      "bytes": 9563,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-reload.json",
+      "sha256": "3094a53580b4740e4418a96d01b8aa7c0937acc376aafc16268b17f94f707787"
+    },
+    "r4f1-runtime/readiness-result.json": {
+      "bytes": 5337,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/readiness-result.json",
+      "sha256": "1064eeaa41ac546ad9bd22d3ee05f5042be75f2423edda82f3f0137f0e60a74c"
+    },
+    "r4f1-runtime/reload-result.json": {
+      "bytes": 8470,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/reload-result.json",
+      "sha256": "ff6ff0b8b356c1f889dea3e0b1d39d68c527678066390711c4f28f41907b410f"
+    },
+    "r4f1-runtime/template.json": {
+      "bytes": 10635,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/two-time-template-ue2ctc6z/template.json",
+      "sha256": "6b88170a18dc68154244dcdb0727217532dbbeb2c05ebc15ed4cb350328e57c9"
+    },
+    "r5-actual-qualification/after-grace/legacy-attempt.json": {
+      "bytes": 2050,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/d7b37380c9d7be913a2429734a3bdda0/attempt.json",
+      "sha256": "85d916da547208e9250c7c28b0ddbf65c3694c2b0da95ce10e5e67ed4875b2d9"
+    },
+    "r5-actual-qualification/after-grace/qualification-result.json": {
+      "bytes": 7048,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/d7b37380c9d7be913a2429734a3bdda0/qualification-result.json",
+      "sha256": "3f60e971936761e8e6e1e8eeaac59b39f8631758232fc5b68c0ab11223bb8cc9"
+    },
+    "r5-actual-qualification/after-grace/qualification-started.json": {
+      "bytes": 1178,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/d7b37380c9d7be913a2429734a3bdda0/qualification-started.json",
+      "sha256": "d28d21076a5cfbca5bc565148911945b551248a58e2130aea86e0815ee5a1e70"
+    },
+    "r5-actual-qualification/after-grace/r5-attempt.json": {
+      "bytes": 4276,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/d7b37380c9d7be913a2429734a3bdda0/r5-attempt.json",
+      "sha256": "fd94377cf45767c666ba3ec8a76227185b905624d9cac73a3fd0faa0ea1db035"
+    },
+    "r5-actual-qualification/after-grace/r5-result.json": {
+      "bytes": 19526,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/d7b37380c9d7be913a2429734a3bdda0/r5-result.json",
+      "sha256": "68add7b2a2f9b3b81a61ad40d072f23a6b535d4380348c8689901dffe4cb750b"
+    },
+    "r5-actual-qualification/after-grace/r5-root-decision.json": {
+      "bytes": 1804,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/d7b37380c9d7be913a2429734a3bdda0/root-decision.json",
+      "sha256": "686e6bb881f23fa6e74e42875a544cb43049b52a9d0f0174ce8b40767e90f0d5"
+    },
+    "r5-actual-qualification/after-grace/r5-started.json": {
+      "bytes": 17639,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/d7b37380c9d7be913a2429734a3bdda0/r5-started.json",
+      "sha256": "169511e3b978a0db0207f6dd6dbaf548c44bf9d21fe831b9771c8620827e7e23"
+    },
+    "r5-actual-qualification/after-grace/root-audit.json": {
+      "bytes": 6010,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/actual-after-grace-failure-audit.json",
+      "sha256": "72bb91719c2e9c472288d4a7ddf09f6dbb2a345d58c5d061019f7df4ce54c173"
+    },
+    "r5-actual-qualification/after-grace/summary.json": {
+      "bytes": 2471,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/d7b37380c9d7be913a2429734a3bdda0/ordinary-after-grace-54r8li44/session/summary.json",
+      "sha256": "625ec582673a9b91a1e3aa2790317d4407094c454383d8352b62a2fba57ef877"
+    },
+    "r5-actual-qualification/after-grace/terminal-proof.json": {
+      "bytes": 179,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/d7b37380c9d7be913a2429734a3bdda0/terminal-proof.json",
+      "sha256": "38f843afedb2041b63ef99cf5d34dc90680e0916c3936d2c82bab7f407585d85"
+    },
+    "r5-actual-qualification/baseline/legacy-attempt.json": {
+      "bytes": 2046,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/342e69a20f95f82c0b6adbe53e0552d3/attempt.json",
+      "sha256": "85231cee8bbb4ca498d037a5a36852e23451388b0ce6e5b56238b53a9b239ec9"
+    },
+    "r5-actual-qualification/baseline/qualification-result.json": {
+      "bytes": 11930,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/342e69a20f95f82c0b6adbe53e0552d3/qualification-result.json",
+      "sha256": "9fd7ec14997898f90b90735dbc91dd355889a0c8b1ff02700a37cca032013a92"
+    },
+    "r5-actual-qualification/baseline/qualification-started.json": {
+      "bytes": 1172,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/342e69a20f95f82c0b6adbe53e0552d3/qualification-started.json",
+      "sha256": "f5b712ebe96f367c161f73c7ddc9ac2b1424248d2174b96a75e7843b232336f2"
+    },
+    "r5-actual-qualification/baseline/r5-attempt.json": {
+      "bytes": 4024,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/342e69a20f95f82c0b6adbe53e0552d3/r5-attempt.json",
+      "sha256": "89e245292e744c6b839132a78c23c4035e34bab546de61991c509fcc134ca3b7"
+    },
+    "r5-actual-qualification/baseline/r5-result.json": {
+      "bytes": 19741,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/342e69a20f95f82c0b6adbe53e0552d3/r5-result.json",
+      "sha256": "6c2804dc44100e9ed22cb97b429d3917138aef0b55d65fd9b5d5eef3b28dc3af"
+    },
+    "r5-actual-qualification/baseline/r5-root-decision.json": {
+      "bytes": 1552,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/342e69a20f95f82c0b6adbe53e0552d3/root-decision.json",
+      "sha256": "772973ff1d42814963a4bdb0496f54c3aa26cd6e89412ead33ef5fe205d56d4d"
+    },
+    "r5-actual-qualification/baseline/r5-started.json": {
+      "bytes": 17631,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/342e69a20f95f82c0b6adbe53e0552d3/r5-started.json",
+      "sha256": "9862b71343de6efdc13ee0dc2c3cbff02a0ce1f4c347e87e36e3a98698adf237"
+    },
+    "r5-actual-qualification/baseline/root-audit.json": {
+      "bytes": 5868,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/actual-baseline-audit.json",
+      "sha256": "fe5bed9a044ba244487f9775cb2e867089fe25438f9c671fd01afac8231a7ee6"
+    },
+    "r5-actual-qualification/baseline/summary.json": {
+      "bytes": 2346,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/342e69a20f95f82c0b6adbe53e0552d3/ordinary-baseline-o34b35bk/session/summary.json",
+      "sha256": "70a08df1e019eaaa0bfb217d8ed08d83a6d242ca4ecc998d312ce786f9de2864"
+    },
+    "r5-actual-qualification/baseline/terminal-proof.json": {
+      "bytes": 943,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/342e69a20f95f82c0b6adbe53e0552d3/terminal-proof.json",
+      "sha256": "b0ac3c696db1319ec88c915b4439a3b17a96ef82108cdf00c608552e00884795"
+    },
+    "r5-actual-qualification/context/actual-check-only-result.json": {
+      "bytes": 2239,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/actual-check-only-result.json",
+      "sha256": "2d06d90e8fb11b7cfad2111384bbe512d055979acf04d6cbec32d0ffd3d025b5"
+    },
+    "r5-actual-qualification/context/after-failure-availability.json": {
+      "bytes": 1967,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/AFTER-GRACE-FAIL-AVAILABILITY.json",
+      "sha256": "070c73dce3a65de12b710df2e23c99dbed6fc883eedb4fb3eb6ba0854e779bd8"
+    },
+    "r5-actual-qualification/context/after-grace-failure-metadata-projection.json": {
+      "bytes": 145855,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/after-grace-failure-metadata-projection.json",
+      "sha256": "bca5b6a239976b2f2a5de26bb215e76674db1f28aa5909c702a72998a5206138"
+    },
+    "r5-actual-qualification/context/after-grace-recovery-source-assessment.md": {
+      "bytes": 14922,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/after-grace-recovery-source-assessment.md",
+      "sha256": "583b22c1286bd7fa65837da631358e12899d3d54f14891909fad6f2661688066"
+    },
+    "r5-actual-qualification/context/code-pins.json": {
+      "bytes": 291,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/code-pins.json",
+      "sha256": "3ba9a1bb4fd073b4381adbd437f8c4c8b816e396e827ade4a2e1923c7cd27c4a"
+    },
+    "r5-actual-qualification/context/dependency-seal.json": {
+      "bytes": 2226,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/dependency-seal.json",
+      "sha256": "62b624fb7218c1197f66b48222d755160374cc9af9de227c98d9bb1fb8edea04"
+    },
+    "r5-actual-qualification/context/history.json": {
+      "bytes": 16274,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/history.json",
+      "sha256": "e5c424266a0a954a5304e69060c7f1df49b2e9b351e5f4ce4f6667b42bac0a64"
+    },
+    "r5-actual-qualification/context/root-after-grace-decision.json": {
+      "bytes": 1059,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/root-after-grace-decision.json",
+      "sha256": "13759b9da240a8ccdc111b9406ffee2aa9ecd988db73938051ac72d239f7e0f3"
+    },
+    "r5-actual-qualification/context/root-baseline-decision-2.json": {
+      "bytes": 763,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/root-baseline-decision-2.json",
+      "sha256": "dad4ef95147dac8bb8f7c6117f8b9b6358e05f6e94599f0e02370db0510b9fa7"
+    },
+    "r5-actual-qualification/context/root-sequence-decision-2.json": {
+      "bytes": 1429,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/root-sequence-decision-2.json",
+      "sha256": "37b3ddca9636a1d7a8a9483bd2efa3423f96a5fcbd982c39dc26fb789678a9e6"
+    },
+    "r5-actual-qualification/context/root-within-grace-decision.json": {
+      "bytes": 1060,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/root-within-grace-decision.json",
+      "sha256": "cfc5b217d43c0b44859a3e7bb53482c742e79e23436c22cf7ab4fe4f25257de9"
+    },
+    "r5-actual-qualification/context/startup-gap-source-followup.json": {
+      "bytes": 1185,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/startup-gap-source-followup.json",
+      "sha256": "25c3e3b2991e0368213ae6ee0f017ee49f6a4ea8d8ff48ad0d8e3204b831e05c"
+    },
+    "r5-actual-qualification/context/static-validation.json": {
+      "bytes": 1774,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/static-validation.json",
+      "sha256": "3771e8695bc3842a19391065e1ff4703e35783b969f74314902161334d6b4c9d"
+    },
+    "r5-actual-qualification/within-grace/legacy-attempt.json": {
+      "bytes": 2052,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/7c4cd88fd62b2cd6484c3f5b339b2d85/attempt.json",
+      "sha256": "a7759c8d44ecdcbaf555ba627df63616322a50c410d4dd243cf51067b391b02d"
+    },
+    "r5-actual-qualification/within-grace/qualification-result.json": {
+      "bytes": 12087,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/7c4cd88fd62b2cd6484c3f5b339b2d85/qualification-result.json",
+      "sha256": "9262d1cd019516578a6f9678b65a8ec7c912fcb6d4f9f79466841ef85337e80d"
+    },
+    "r5-actual-qualification/within-grace/qualification-started.json": {
+      "bytes": 1180,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/7c4cd88fd62b2cd6484c3f5b339b2d85/qualification-started.json",
+      "sha256": "fd59394ecaf9e6056490c81fa519dc3be12c9839e3549ffebadfd8a54f1ac91e"
+    },
+    "r5-actual-qualification/within-grace/r5-attempt.json": {
+      "bytes": 4277,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/7c4cd88fd62b2cd6484c3f5b339b2d85/r5-attempt.json",
+      "sha256": "5a5e74845e1f6fe0886482dd0763c1f05f9d228da46c67685d3dd543f867fee3"
+    },
+    "r5-actual-qualification/within-grace/r5-result.json": {
+      "bytes": 19743,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/7c4cd88fd62b2cd6484c3f5b339b2d85/r5-result.json",
+      "sha256": "a04ac6764f7e9b122df8ec462e5120297579cb8f747f5c42f68684d57ff6d16b"
+    },
+    "r5-actual-qualification/within-grace/r5-root-decision.json": {
+      "bytes": 1806,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/7c4cd88fd62b2cd6484c3f5b339b2d85/root-decision.json",
+      "sha256": "b9e05d9283ade8f273a87c0b4953aa37b6fedec6c241b38d15e3e0239582aad3"
+    },
+    "r5-actual-qualification/within-grace/r5-started.json": {
+      "bytes": 17630,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/7c4cd88fd62b2cd6484c3f5b339b2d85/r5-started.json",
+      "sha256": "7c1188a2aef0660f3c5d13a7afc70f8669993d37d3c546e031a1e01692224612"
+    },
+    "r5-actual-qualification/within-grace/root-audit.json": {
+      "bytes": 6320,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/actual-within-grace-audit.json",
+      "sha256": "6cab5684e75c65ac4c701989732c75e29df79043995eda0adffe9863632fe5f9"
+    },
+    "r5-actual-qualification/within-grace/summary.json": {
+      "bytes": 2420,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/7c4cd88fd62b2cd6484c3f5b339b2d85/ordinary-within-grace-rh8itk_i/session/summary.json",
+      "sha256": "fbbdf19c226526a61dc26658d03d15b3ad714748a278b1e15868fdce957689f8"
+    },
+    "r5-actual-qualification/within-grace/terminal-proof.json": {
+      "bytes": 943,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-run-20261019-tw42zr3y/e0d817ad446b77398041d33d404cda2a/7c4cd88fd62b2cd6484c3f5b339b2d85/terminal-proof.json",
+      "sha256": "a23d0e98b9f859959268f505c46f14e84527567ea1fb766e69397722b3e5c41a"
+    },
+    "root/STARTUP-JOIN-R1-FREEZE-FAILURE.json": {
+      "bytes": 1411,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
+      "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
+    },
+    "root/STARTUP-JOIN-R3-READONLY-PREFLIGHT-FAILURE.json": {
+      "bytes": 812,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3-READONLY-PREFLIGHT-FAILURE.json",
+      "sha256": "25619b4f8486d3b1b8c624b35645a8dadc0b1855dbe703c2e6c787c3b4e10856"
+    },
+    "root/STARTUP-JOIN-R3B-MIXED-INTEGRATION-EXECUTION.json": {
+      "bytes": 784,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3B-MIXED-INTEGRATION-EXECUTION.json",
+      "sha256": "49666cc5e2fdc75a44c6ca8066370f9bba3bd497b04169913fc51400d1a782f1"
+    },
+    "root/STARTUP-JOIN-R3B-MIXED-INTEGRATION-RESULT.json": {
+      "bytes": 436,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3B-MIXED-INTEGRATION-RESULT.json",
+      "sha256": "cf484d747f310c4699535a035c68c0dd7b20bf6cf0a0c254cf1a262a8f86155b"
+    },
+    "root/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json": {
+      "bytes": 7308,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json",
+      "sha256": "532fb0d8fcd27fe4d650f0533894829f6f179e85eeebc7a42899b6abadcf631a"
+    },
+    "root/STARTUP-JOIN-R4F1-ASSET-REVIEW.json": {
+      "bytes": 532,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-ASSET-REVIEW.json",
+      "sha256": "30bf20addd4a6afae627266b3b214037467dd4ab31ab2d5ed307c2f885cd6d97"
+    },
+    "root/STARTUP-JOIN-R4F1-AVAILABILITY-0256.json": {
+      "bytes": 1277,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-AVAILABILITY-0256.json",
+      "sha256": "7dbaa6b107666a921731968b9d2131bfb803b8ac10daa8693f5c7772d747bc7b"
+    },
+    "root/STARTUP-JOIN-R4F1-BASELINE-DECISION.json": {
+      "bytes": 839,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-BASELINE-DECISION.json",
+      "sha256": "e37bc7a9105c9e6b61e1e6193280b14521c9e05e0177a3380f06dafc1b37f3f9"
+    },
+    "root/STARTUP-JOIN-R4F1-FREEZE-EXECUTION.json": {
+      "bytes": 385,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-FREEZE-EXECUTION.json",
+      "sha256": "244ba87d739e6cf2459319ee362f8c27431810b8b26537e96136398171f88e3b"
+    },
+    "root/STARTUP-JOIN-R4F1-POST-BASELINE-HEALTH.json": {
+      "bytes": 533,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-POST-BASELINE-HEALTH.json",
+      "sha256": "93ec0dbe52df482d039ea466b802c28c30725c08e703a7bdae6b5ad24d7c6b82"
+    },
+    "root/STARTUP-JOIN-R4F1-REUSED-ACTUAL-OFFLINE-INTEGRATION.json": {
+      "bytes": 1250,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-REUSED-ACTUAL-OFFLINE-INTEGRATION.json",
+      "sha256": "b63020856af50db03d7a16b2ff732d07491f7d2a6952158b79d41ea3b1b94b2c"
+    },
+    "root/STARTUP-JOIN-R4F1-SEQUENCE-DECISION.json": {
+      "bytes": 1535,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-SEQUENCE-DECISION.json",
+      "sha256": "030513e0a7194d367a000e34bf0c59066e9cc7f83975e3ff2f1f95b41c71ea85"
+    },
+    "root/SYSTEM-RESOURCE-PRESSURE-SNAPSHOT-20261019-0143.json": {
+      "bytes": 5560,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/SYSTEM-RESOURCE-PRESSURE-SNAPSHOT-20261019-0143.json",
+      "sha256": "1d4bf29a8f652f508541f29eed4710496cfb7eb184070f61ebb36110412d0c75"
+    },
+    "root/TERMINAL-PROOF-FORMAL-ENTRY-FOLLOWUP-0320.json": {
+      "bytes": 988,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-FORMAL-ENTRY-FOLLOWUP-0320.json",
+      "sha256": "05c3540ca0597220dfd2b31f6ba1190df811fac2be18dcfe44c8862752aeb780"
+    },
+    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0319.json": {
+      "bytes": 1288,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0319.json",
+      "sha256": "488cfbe5a3375c426a2347c4ff414eb1fc8eeca803f84031a497f68bea911207"
+    },
+    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0336.json": {
+      "bytes": 1652,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0336.json",
+      "sha256": "6151760875c8635c6724a1b8797f5cf05a0851c7b387a01f73c823996279a471"
+    },
+    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0359.json": {
+      "bytes": 1966,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0359.json",
+      "sha256": "c713206ba20183b28b4e7abf57e7775e74ed4f8ddd41c274e590ad00a2391bcf"
+    },
+    "terminal-proof-sdd/final-review.md": {
+      "bytes": 7329,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/final-review.md",
+      "sha256": "7845901ad57606b026453c0684eb41d05c8a9d4dbfe4918ca5b6d5cd64f2b605"
+    },
+    "terminal-proof-sdd/operations-recipe-before-fix.md": {
+      "bytes": 24947,
+      "originalPath": "/tmp/wrd-r5-root-operation-recipe-20261019.md",
+      "sha256": "d8b065b79145d5832b20e7b2712aabc3009e005918e6bef04d42f151b630b48d"
+    },
+    "terminal-proof-sdd/operations-recipe-fix-review.md": {
+      "bytes": 2089,
+      "originalPath": "/tmp/wrd-r5-root-operation-recipe-fix-review-20261019.md",
+      "sha256": "7b2f9b8808476e8b397db8e6353cd04c026199e2b9fad0a93ed54babe71bd44b"
+    },
+    "terminal-proof-sdd/operations-recipe-review.md": {
+      "bytes": 5910,
+      "originalPath": "/tmp/wrd-r5-root-operation-recipe-review-20261019.md",
+      "sha256": "d6e68e3ec1ee491af26335059d88061dc005b5b7e555ba0bbf75614b6ec50fcf"
+    },
+    "terminal-proof-sdd/progress-before-final-review.md": {
+      "bytes": 12069,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md",
+      "sha256": "d97b85062d48bb96a8ddbfa936d7fdc5753a3b74156be3722d92ceedcff852fa"
+    },
+    "terminal-proof-sdd/progress-code-phase-complete.md": {
+      "bytes": 13981,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md",
+      "sha256": "5c17133052b66bdfdc7cc6da2c2c3a3e23fa1f597c5f819e0d8ae3f797b5efb5"
+    },
+    "terminal-proof-sdd/progress-code-review-complete.md": {
+      "bytes": 13395,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md",
+      "sha256": "1754fa4e36cb4e2de66d814c186036dad7c6e49366b0d1472e11a68cc51d27ac"
+    },
+    "terminal-proof-task1/task-1-fix-1-review.md": {
+      "bytes": 2168,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-fix-1-review.md",
+      "sha256": "a54c8e986a414af2aa5ee2ba29437dfadd014dc3a9541af6179fb6e9bc153307"
+    },
+    "terminal-proof-task1/task-1-fix-2-review.md": {
+      "bytes": 3356,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-fix-2-review.md",
+      "sha256": "d273bb8a25237c9d80b1c569c343ad767e2089d563e364d07ce045dd75d7d277"
+    },
+    "terminal-proof-task1/task-1-report-fix-2.md": {
+      "bytes": 15348,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-report.md",
+      "sha256": "df5efc692caee85287589c29fc71089e5cb991ee14474ee72c06ac483ee02e02"
+    },
+    "terminal-proof-task1/task-1-report.md": {
+      "bytes": 9780,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-report.md",
+      "sha256": "ed62b5ee8cd16af6e3c3fc964653fe545f755a126e6cb77334cff1894105c040"
+    },
+    "terminal-proof-task1/task-1-review.md": {
+      "bytes": 6156,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-review.md",
+      "sha256": "e4c517590560e91355a8f92d5eb6a56b62b10fde7e47158c6ff4c77529721d21"
+    },
+    "terminal-proof-task2/task-2-fix-1-review.md": {
+      "bytes": 4111,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-fix-1-review.md",
+      "sha256": "9480760ff1a2002a358d34be10ce458f817d199400a953c2116747b4d26584ca"
+    },
+    "terminal-proof-task2/task-2-report-before-fix.md": {
+      "bytes": 14901,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-report.md",
+      "sha256": "a39ff32377a00193621b879ab7f2d427858ea229c3a9eb2643ea35d36ade1c0d"
+    },
+    "terminal-proof-task2/task-2-report-fix-1.md": {
+      "bytes": 21910,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-report.md",
+      "sha256": "e93e620f46c8a9771b787ec1ddae6df70d79321d2b91bdf95627318c05e29a7d"
+    },
+    "terminal-proof-task2/task-2-review.md": {
+      "bytes": 11595,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-review.md",
+      "sha256": "be08cea3e51bb88f0956a2d75d58cbf4fb1636e5cbdbc8c0b6f5ecadae92df82"
+    }
+  },
   "schemaVersion": 1,
   "scope": "archived-byte-copies-not-execution-authorization",
   "sourceProductTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
-  "files": {
-    "root/STARTUP-JOIN-R1-FREEZE-FAILURE.json": {
-      "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e",
-      "bytes": 1411,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json"
-    },
-    "root/STARTUP-JOIN-R3-READONLY-PREFLIGHT-FAILURE.json": {
-      "sha256": "25619b4f8486d3b1b8c624b35645a8dadc0b1855dbe703c2e6c787c3b4e10856",
-      "bytes": 812,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3-READONLY-PREFLIGHT-FAILURE.json"
-    },
-    "root/STARTUP-JOIN-R3B-MIXED-INTEGRATION-RESULT.json": {
-      "sha256": "cf484d747f310c4699535a035c68c0dd7b20bf6cf0a0c254cf1a262a8f86155b",
-      "bytes": 436,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3B-MIXED-INTEGRATION-RESULT.json"
-    },
-    "root/STARTUP-JOIN-R3B-MIXED-INTEGRATION-EXECUTION.json": {
-      "sha256": "49666cc5e2fdc75a44c6ca8066370f9bba3bd497b04169913fc51400d1a782f1",
-      "bytes": 784,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3B-MIXED-INTEGRATION-EXECUTION.json"
-    },
-    "root/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json": {
-      "sha256": "532fb0d8fcd27fe4d650f0533894829f6f179e85eeebc7a42899b6abadcf631a",
-      "bytes": 7308,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json"
-    },
-    "root/STARTUP-JOIN-R4F1-FREEZE-EXECUTION.json": {
-      "sha256": "244ba87d739e6cf2459319ee362f8c27431810b8b26537e96136398171f88e3b",
-      "bytes": 385,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-FREEZE-EXECUTION.json"
-    },
-    "root/STARTUP-JOIN-R4F1-POST-BASELINE-HEALTH.json": {
-      "sha256": "93ec0dbe52df482d039ea466b802c28c30725c08e703a7bdae6b5ad24d7c6b82",
-      "bytes": 533,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-POST-BASELINE-HEALTH.json"
-    },
-    "root/SYSTEM-RESOURCE-PRESSURE-SNAPSHOT-20261019-0143.json": {
-      "sha256": "1d4bf29a8f652f508541f29eed4710496cfb7eb184070f61ebb36110412d0c75",
-      "bytes": 5560,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/SYSTEM-RESOURCE-PRESSURE-SNAPSHOT-20261019-0143.json"
-    },
-    "r4f1-runtime/frozen.json": {
-      "sha256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
-      "bytes": 24268,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/frozen.json"
-    },
-    "r4f1-runtime/build-result.json": {
-      "sha256": "ce8cfc7b19d8184602cd917648b643e20a51234683e0e79c3642425eb83098ed",
-      "bytes": 4843,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/build-result.json"
-    },
-    "r4f1-runtime/apply-result.json": {
-      "sha256": "4eb2f339a6c0f3035e7ba7204ae78c658f247c5e4e790f9cd6b9eb05b02c1ad0",
-      "bytes": 3113,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/apply-result.json"
-    },
-    "r4f1-runtime/reload-result.json": {
-      "sha256": "ff6ff0b8b356c1f889dea3e0b1d39d68c527678066390711c4f28f41907b410f",
-      "bytes": 8470,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/reload-result.json"
-    },
-    "r4f1-runtime/readiness-result.json": {
-      "sha256": "1064eeaa41ac546ad9bd22d3ee05f5042be75f2423edda82f3f0137f0e60a74c",
-      "bytes": 5337,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/readiness-result.json"
-    },
-    "r4f1-runtime/quiescence-apply.json": {
-      "sha256": "923c2794e0deaa86f7c9307ff87bb8e2b97c179e3a866d0b8fe345a82bd196e3",
-      "bytes": 9494,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-apply.json"
-    },
-    "r4f1-runtime/quiescence-reload.json": {
-      "sha256": "3094a53580b4740e4418a96d01b8aa7c0937acc376aafc16268b17f94f707787",
-      "bytes": 9563,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-reload.json"
-    },
-    "r4f1-baseline/qualification-started.json": {
-      "sha256": "61a1875a020f325d4609509a7f9570e740ee3c825af702efad4b20ecafdd1f5e",
-      "bytes": 1172,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/qualification-started.json"
-    },
-    "r4f1-baseline/qualification-result.json": {
-      "sha256": "5ebf46ff9919847f0be320f7f55df255928b6e4b8c9b22c0f9059364909f0dfd",
-      "bytes": 7662,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/qualification-result.json"
-    },
-    "r4f1-baseline/runtime-manifest.json": {
-      "sha256": "2002654ee48a6aa1485e670181dee94af59ca71963a845beb5b35bd75f23ae83",
-      "bytes": 1158,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/runtime-manifest.json"
-    },
-    "r4f1-baseline/origin-evidence.json": {
-      "sha256": "0408755280b9ae07fe554925711fe76c48930293d8f3b504f40165af1b36aa16",
-      "bytes": 890,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/origin-evidence.json"
-    },
-    "r4f1-baseline/summary.json": {
-      "sha256": "5898c37279fb3105301d53ab6b3426016055450605fd16c37bb266bf1e246e4d",
-      "bytes": 2361,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/summary.json"
-    },
-    "r4f1-baseline/lifecycle.json": {
-      "sha256": "b5e38c4708772a2f1381b36941670d1249c181ec66c564c9de4e8f0f50ab77d0",
-      "bytes": 8412,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/lifecycle.json"
-    },
-    "diagnostics/wrd-startup-join-execution-diagnostics-supplement-draft-20261019.md": {
-      "sha256": "4376928f2eebf820b301f28219e858fca4843cbf3be6adbb3595b3b28836808e",
-      "bytes": 13556,
-      "originalPath": "/tmp/wrd-startup-join-execution-diagnostics-supplement-draft-20261019.md"
-    },
-    "diagnostics/wrd-port-owner-lookup-latency-assessment-20261019.md": {
-      "sha256": "6a37ca087c273a2bf75a8556e92ab1891d6c4b77378ec9d0f203b06dcccf7cac",
-      "bytes": 10499,
-      "originalPath": "/tmp/wrd-port-owner-lookup-latency-assessment-20261019.md"
-    },
-    "diagnostics/wrd-port-owner-global-15s-diagnostic-20261019.md": {
-      "sha256": "31778cec441581cf0a19cf09cd98cf896ed97017ac334365e51d3fd8c84af736",
-      "bytes": 4508,
-      "originalPath": "/tmp/wrd-port-owner-global-15s-diagnostic-20261019.md"
-    },
-    "diagnostics/wrd-port-owner-netstat-runtime-schema-20261019.md": {
-      "sha256": "bf304be373183ee2291b0b1fcd4b2562a0902fa16fa15a9035c1752140a693fd",
-      "bytes": 6116,
-      "originalPath": "/tmp/wrd-port-owner-netstat-runtime-schema-20261019.md"
-    },
-    "diagnostics/wrd-current-runtime-log-summary-20261019.md": {
-      "sha256": "9a2c58f73bf27cb17d89c7918fcffa944218bdeea76065f6b8ebabc5b83cd013",
-      "bytes": 6443,
-      "originalPath": "/tmp/wrd-current-runtime-log-summary-20261019.md"
-    },
-    "diagnostics/wrd-current-runtime-log-summary-20261019.json": {
-      "sha256": "75b3369a61faa6194ae2c8afb6c56219d579c4759257edaba5f3033487d007d7",
-      "bytes": 14310,
-      "originalPath": "/tmp/wrd-current-runtime-log-summary-20261019.json"
-    },
-    "diagnostics/wrd-current-runtime-log-summary-v2-20261019.md": {
-      "sha256": "839a51a78bce9a41c56b05c14734fa7dbd28343e10563e701a1e0b27ae736fa0",
-      "bytes": 8520,
-      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019.md"
-    },
-    "diagnostics/wrd-current-runtime-log-summary-v2-20261019.json": {
-      "sha256": "f70c3a84947d1df21930460f7f1020f90e21ecc399611511dc59f34db72eea3d",
-      "bytes": 20558,
-      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019.json"
-    },
-    "diagnostics/wrd-startup-viewer-tools-successor-r4-fix1-operations-review-20261019.md": {
-      "sha256": "3b76da80be85825dea439aa2673cf842800875f5eeddf3a1a4c09d54865d0156",
-      "bytes": 8563,
-      "originalPath": "/tmp/wrd-startup-viewer-tools-successor-r4-fix1-operations-review-20261019.md"
-    },
-    "diagnostics/wrd-startup-join-r4f1-actual-assets-review-20261019.md": {
-      "sha256": "e055f48a0821ba07562fae66f5dd236ed46d50cc278a37eb44c4136b200325d5",
-      "bytes": 6121,
-      "originalPath": "/tmp/wrd-startup-join-r4f1-actual-assets-review-20261019.md"
-    },
-    "diagnostics/wrd-startup-join-r4f1-readiness-reconciliation-review-20261019.md": {
-      "sha256": "1114587ff78f8701e79d9db67645ecaef3e2fb4f3a9bc031e290c3212cd1a4be",
-      "bytes": 4143,
-      "originalPath": "/tmp/wrd-startup-join-r4f1-readiness-reconciliation-review-20261019.md"
-    },
-    "diagnostics/wrd-r4f1-baseline-terminal-scan-race-assessment-20261019.md": {
-      "sha256": "018bc56ccb7c734248b9f678fcc88431dd23fe484d2cf9e18938418e8fffde24",
-      "bytes": 17901,
-      "originalPath": "/tmp/wrd-r4f1-baseline-terminal-scan-race-assessment-20261019.md"
-    },
-    "diagnostics/wrd-baseline-known-process-scan-exit-assessment-20261019.md": {
-      "sha256": "ab40c003d1f034b804b42fd26626b627fbfbca043b5b3a236f70c88b3ae32090",
-      "bytes": 11023,
-      "originalPath": "/tmp/wrd-baseline-known-process-scan-exit-assessment-20261019.md"
-    },
-    "diagnostics/wrd-pacing-v2-r4f1-eligibility-gap-assessment-20261019.md": {
-      "sha256": "dce878e5a3ec508cfa6c4e6961ed36dd7d034c15fbe4214c457d40e5eb486c53",
-      "bytes": 15453,
-      "originalPath": "/tmp/wrd-pacing-v2-r4f1-eligibility-gap-assessment-20261019.md"
-    },
-    "operations-r4-fix1/CONTRACT.md": {
-      "sha256": "cfa3b6c77de6f33a13f9db91cd10ccb874ce1dd98331bc9c85c1985a78e61f83",
-      "bytes": 8853,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/CONTRACT.md"
-    },
-    "operations-r4-fix1/DERIVATION.md": {
-      "sha256": "b53a4286248c53ffe753830ca8898c2247345d98a0f1b9c5c6b317e545902ff0",
-      "bytes": 5352,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/DERIVATION.md"
-    },
-    "operations-r4-fix1/FINAL-BINDING.json": {
-      "sha256": "70f386dd393532b7c09656cb98e08aae7a8e7174f3c3eaf51fd0922907751453",
-      "bytes": 487,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/FINAL-BINDING.json"
-    },
-    "operations-r4-fix1/FINAL-SOURCE-REVIEW.json": {
-      "sha256": "dff8d03693e11e14448d838459edd6626105dffb009a9d21dbe4b0e6fd532029",
-      "bytes": 24382,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/FINAL-SOURCE-REVIEW.json"
-    },
-    "operations-r4-fix1/PREPARATION-CORRECTIONS.json": {
-      "sha256": "f1f9cd919f03c3dd021394ed0f967ad8e27ad895a22ff77875dcf8ee2b0e6e1b",
-      "bytes": 1057,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/PREPARATION-CORRECTIONS.json"
-    },
-    "operations-r4-fix1/R1-to-R2.diff": {
-      "sha256": "bc765fd45bdcd8aa7a379fe1bcf5092c58bb915bd94e772ec91062e4b2fc0fd0",
-      "bytes": 30972,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R1-to-R2.diff"
-    },
-    "operations-r4-fix1/R2-static-verification.json": {
-      "sha256": "3cd225ec9dbdaacda3fe8b38e286eaafecf68bbb91ed008ba7007bf2a51426bc",
-      "bytes": 1409,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R2-static-verification.json"
-    },
-    "operations-r4-fix1/R2-to-R3.diff": {
-      "sha256": "b4fbe7685d569b0a4c49278946fecb1bdef3cb64a1bd066ef474f922855fa8b0",
-      "bytes": 39363,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R2-to-R3.diff"
-    },
-    "operations-r4-fix1/R3-HISTORICAL-FAILURES.json": {
-      "sha256": "b4e369778bdce218786e7b413a3c7cdd332ed864476e133af41ca67d43afc1dd",
-      "bytes": 1071,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-HISTORICAL-FAILURES.json"
-    },
-    "operations-r4-fix1/R3-REPORT-HISTORICAL.md": {
-      "sha256": "7d9cfa62cf495caafde2e01ec77a9f7e16ef70408f6ff6308209d16221c0e346",
-      "bytes": 19084,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-REPORT-HISTORICAL.md"
-    },
-    "operations-r4-fix1/R3-static-verification.json": {
-      "sha256": "4c4a2fa7ba8b23b626716b0f2f6a69f66034019269d8cf31d64f0e4d3909636a",
-      "bytes": 1452,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-static-verification.json"
-    },
-    "operations-r4-fix1/R3-to-R4.diff": {
-      "sha256": "69f281a97ad97d0c4b7e593b92928406503b84b9d43d338424b32179b656f9d3",
-      "bytes": 56624,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R3-to-R4.diff"
-    },
-    "operations-r4-fix1/R4-HISTORICAL-FAILURE.json": {
-      "sha256": "1047342b8bd808509221b88d095a32385a379629124863882b96d13887e3cf80",
-      "bytes": 1599,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R4-HISTORICAL-FAILURE.json"
-    },
-    "operations-r4-fix1/R4-static-verification.json": {
-      "sha256": "7dd93f7741d7d3a212a123ec20561cc3ac61cb6e37a341f778695aa08bc59422",
-      "bytes": 2234,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R4-static-verification.json"
-    },
-    "operations-r4-fix1/R4-to-fix1.diff": {
-      "sha256": "2bd2b2370d7c96f225c1023ae863832ca7516be5f3ab2eda5aa86574cd7e02b9",
-      "bytes": 19329,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R4-to-fix1.diff"
-    },
-    "operations-r4-fix1/R5-to-successor.diff": {
-      "sha256": "273cfdd56ba5a0eddfa020d126c19aab32d464d201906d676d4f2386b6f687ee",
-      "bytes": 86038,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/R5-to-successor.diff"
-    },
-    "operations-r4-fix1/REPORT.md": {
-      "sha256": "a47b936eb3f8c732bd022ebbd7de6e83c7eb9b356885fc93d4a6dce15eaa77b2",
-      "bytes": 13595,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/REPORT.md"
-    },
-    "operations-r4-fix1/apply-frontend-context.py": {
-      "sha256": "e64daa7b9cf033fec65355331d805845e574e678d20dcef3ecd1de5082717c70",
-      "bytes": 2398,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/apply-frontend-context.py"
-    },
-    "operations-r4-fix1/asset_template.py": {
-      "sha256": "3efa7982fcebebcf807d2d4540d162c846330e9f807ee53a00deaeb537e44bf5",
-      "bytes": 5147,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/asset_template.py"
-    },
-    "operations-r4-fix1/bindings.py": {
-      "sha256": "01d0891a4122ae797c2ec2192e358d8d52206e138bf4ba85e8ea5c47153bff70",
-      "bytes": 13567,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/bindings.py"
-    },
-    "operations-r4-fix1/blob-batch-pure-run-1.log": {
-      "sha256": "1780ddc092d4fb5498dfdc72f08654ddc879b6d786d15ac05fc5ed8ee9c1790d",
-      "bytes": 1121,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/blob-batch-pure-run-1.log"
-    },
-    "operations-r4-fix1/blob-batch-raw-fix1-pure-run-1.log": {
-      "sha256": "0fc2cc646743ee2a6987d7b73186e780f5ba1b5d72f5860d7230a34a10c0bef0",
-      "bytes": 1415,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/blob-batch-raw-fix1-pure-run-1.log"
-    },
-    "operations-r4-fix1/build-frontend-template.py": {
-      "sha256": "2f0abaac1a44a3c893092ddd7e795e550f48abd5c113ef71098d0c764dd090e6",
-      "bytes": 2711,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/build-frontend-template.py"
-    },
-    "operations-r4-fix1/build_primitives.py": {
-      "sha256": "1e67304f18ac7d34672e49c82b8a6418568cafa75c10dac4ac7e56e7cd3c8cd1",
-      "bytes": 5075,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/build_primitives.py"
-    },
-    "operations-r4-fix1/builder-diagnostics-pure-run-1.log": {
-      "sha256": "7649b614992158fbe34b7ecd7235e48ec7d594604ba23fb833f42f13a8f67aef",
-      "bytes": 1233,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/builder-diagnostics-pure-run-1.log"
-    },
-    "operations-r4-fix1/continuation_common.py": {
-      "sha256": "d0fe02e028f6c5ba3b27f67628639f99d7c4d835f8eaeaf7ed569bf36870c897",
-      "bytes": 13902,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/continuation_common.py"
-    },
-    "operations-r4-fix1/core.py": {
-      "sha256": "d78804708d6e7da5581ad9288faefb8ed9a785e51084ad3bdac5f63f9f2b12a3",
-      "bytes": 12707,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/core.py"
-    },
-    "operations-r4-fix1/deployment-history.json": {
-      "sha256": "39f9fed12228525408665da86660b9148a4229e3599a98257a8bca5a00f4568b",
-      "bytes": 4072,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-history.json"
-    },
-    "operations-r4-fix1/deployment.py": {
-      "sha256": "13994c6a56a29759e04669eb2c1702013d4026039596e43bc00c14afd6432187",
-      "bytes": 13784,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment.py"
-    },
-    "operations-r4-fix1/freeze-frontend-context.py": {
-      "sha256": "1a3d34d0933d22a482074038bc1532d090a05ba2b52f71834cc34133d764ddef",
-      "bytes": 3156,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/freeze-frontend-context.py"
-    },
-    "operations-r4-fix1/known_attempt_quiescence.py": {
-      "sha256": "a64687c3a220a8b995e86c44296ccee19923663c64e4e23d8e0a6fbdbd6e38e0",
-      "bytes": 10667,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/known_attempt_quiescence.py"
-    },
-    "operations-r4-fix1/legacy-deployed-reference.json": {
-      "sha256": "eef8320156c7ab9c9a2b0f6dc6a48ec3ed86a475b519f26ccd9c3ae82f760ee6",
-      "bytes": 192970,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/legacy-deployed-reference.json"
-    },
-    "operations-r4-fix1/legacy-tool-history.json": {
-      "sha256": "cc9a57bb54c9f3f0b1b68cff2720b8c22679ecab049df59d753d7ae4dc208a20",
-      "bytes": 1887,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/legacy-tool-history.json"
-    },
-    "operations-r4-fix1/mixed-native-integration.py": {
-      "sha256": "06ccee3f1cfeaa6a41c9d5ddbb3c1e37e581d8e17155d36ff59cad70b1646423",
-      "bytes": 10900,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/mixed-native-integration.py"
-    },
-    "operations-r4-fix1/operational_common.py": {
-      "sha256": "091099da66914034875a3fffec7899edbcbdf3a8492dd8aef955f6104807f7c6",
-      "bytes": 102,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/operational_common.py"
-    },
-    "operations-r4-fix1/ordinary-continuation-supervisor.py": {
-      "sha256": "b485f982befac8e284861af24e6684b006850b67c43847219a5503ec234308df",
-      "bytes": 13626,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/ordinary-continuation-supervisor.py"
-    },
-    "operations-r4-fix1/owned_reload.py": {
-      "sha256": "3ac947969760350f8c09ed5cc7b2c069a4f1eca2d152eb69f2cccad9e851320a",
-      "bytes": 5405,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/owned_reload.py"
-    },
-    "operations-r4-fix1/paused-tool-draft-to-successor.diff": {
-      "sha256": "887addf9113ed898c0e02248459dc68021f386f0d8b9756b824ecb920d1b6ee1",
-      "bytes": 116693,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/paused-tool-draft-to-successor.diff"
-    },
-    "operations-r4-fix1/policy.py": {
-      "sha256": "9ef6f5e3bc43942199864107cda1c7b6da0bf8bc9770a07387b1fe539a3133d8",
-      "bytes": 3776,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/policy.py"
-    },
-    "operations-r4-fix1/prepare-attempt.py": {
-      "sha256": "5e68568a99ced40c8e105a0bf147cf812017f1ba7e284b934e827d02d037813e",
-      "bytes": 6502,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/prepare-attempt.py"
-    },
-    "operations-r4-fix1/prepare-deployment-quiescence.py": {
-      "sha256": "09e88dece026bd033066efdbfff5f16003a682fa8ac2d1a1b517e59826b57159",
-      "bytes": 903,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/prepare-deployment-quiescence.py"
-    },
-    "operations-r4-fix1/prepare-frontend-sequence.py": {
-      "sha256": "3004e837a5986730dae43546be2a1275eb37e4943b64ca777e1d57be2d05ffb9",
-      "bytes": 1387,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/prepare-frontend-sequence.py"
-    },
-    "operations-r4-fix1/private-builder-entry.js": {
-      "sha256": "018d74ebfbec66de3c234bf5b5af99dad73a8665862aa443701387e0644e73e2",
-      "bytes": 990,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/private-builder-entry.js"
-    },
-    "operations-r4-fix1/process_observation_diagnostics.py": {
-      "sha256": "00bd2366d770b9e65b272acadf54027c77cde48050b12106a2fd79338059f82b",
-      "bytes": 14504,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/process_observation_diagnostics.py"
-    },
-    "operations-r4-fix1/provenance.json": {
-      "sha256": "cda2bc0142e51c198938ec294a63e328d0d07205553d7a56e88b3c367b614f03",
-      "bytes": 14454,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/provenance.json"
-    },
-    "operations-r4-fix1/pure-successor-run-1.log": {
-      "sha256": "8e3a6d2106520280c0a460877feef7b6660087b0d4f0d906a7c384a649be1723",
-      "bytes": 2611,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/pure-successor-run-1.log"
-    },
-    "operations-r4-fix1/pure-successor-run-2.log": {
-      "sha256": "892c5b01fe29db53639be545da916f45cd97011ca106becfaa6097dad6b2e6f7",
-      "bytes": 1440,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/pure-successor-run-2.log"
-    },
-    "operations-r4-fix1/pure-successor-run-3.log": {
-      "sha256": "59d102ce89456332dd642dbb780815ede152365f822c205c0e30a1f496f9e4e3",
-      "bytes": 2691,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/pure-successor-run-3.log"
-    },
-    "operations-r4-fix1/qualification_evidence.py": {
-      "sha256": "ea398d2260c405a6115808c3c5f3f975974974e62bc6cb88be61c414e0c941b4",
-      "bytes": 21711,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/qualification_evidence.py"
-    },
-    "operations-r4-fix1/readiness-frontend.py": {
-      "sha256": "1fdfe193c790408a31d0751c793e3f037c869aa8631b603dd45ed8506f54dc3e",
-      "bytes": 1616,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/readiness-frontend.py"
-    },
-    "operations-r4-fix1/readiness_records.py": {
-      "sha256": "ce35cf06b063e700fe693301608e63a6de4232fb20d91c6a62472868dce1edc9",
-      "bytes": 1948,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/readiness_records.py"
-    },
-    "operations-r4-fix1/restart-signal-frontend.py": {
-      "sha256": "fcc9ee1675a12ec2539716143884f90a92b384d8a46a2ae9b428aae3b9f7ee12",
-      "bytes": 3146,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/restart-signal-frontend.py"
-    },
-    "operations-r4-fix1/source-receipt-flow-run-1.log": {
-      "sha256": "df6d609a12b230111a9432d813b9588963e89ef72812bb375987cb0ffa3d9fab",
-      "bytes": 538,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/source-receipt-flow-run-1.log"
-    },
-    "operations-r4-fix1/source-receipt-flow-run-2.log": {
-      "sha256": "a248ef37f3fac5b6046f3dea28132bbce0dc73237c877f619889576d3123fe99",
-      "bytes": 538,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/source-receipt-flow-run-2.log"
-    },
-    "operations-r4-fix1/source_review_gate.py": {
-      "sha256": "a6ee41d85848110a9b69ae0bbafccc023eed577f49686744947b7ac869e3c992",
-      "bytes": 6727,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/source_review_gate.py"
-    },
-    "operations-r4-fix1/static-verification.json": {
-      "sha256": "cd9e6fdaf95f12026a464c3f8ef1d39a79f71cb306557ef5d2d65ce2b7e8c56f",
-      "bytes": 921,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/static-verification.json"
-    },
-    "operations-r4-fix1/test_blob_batch.py": {
-      "sha256": "9fd19bdae83ca5a1ae71e676c6558f7382ef7c4ad6bf6ce1bfebc19c77db564c",
-      "bytes": 9565,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_blob_batch.py"
-    },
-    "operations-r4-fix1/test_builder_diagnostics.py": {
-      "sha256": "4c683bb9922fcc2266669e0623611d9bfbcb9037b18d5994271fda73caf55062",
-      "bytes": 9486,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_builder_diagnostics.py"
-    },
-    "operations-r4-fix1/test_continuation_guards.py": {
-      "sha256": "3e63b1a31c52df0138908855a44356df39a9ca349190ed306901ef764c82bb5c",
-      "bytes": 8888,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_continuation_guards.py"
-    },
-    "operations-r4-fix1/test_source_receipt_flow.py": {
-      "sha256": "cdb8dfb535311c5ac607d04210709fd5f87b566ef39301f69b4887a477235a8a",
-      "bytes": 7461,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_source_receipt_flow.py"
-    },
-    "operations-r4-fix1/test_successor_policy.py": {
-      "sha256": "3aad185219cd2df18ebfa761463a2a4c781d326efcd7a7b137e085fc39d4e9fa",
-      "bytes": 6119,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_successor_policy.py"
-    },
-    "operations-r4-fix1/test_supervisor_registration.py": {
-      "sha256": "649b3d8df2e070579125a12512d8e172906a5b98dd480e3e6fa43cf71e69e4f3",
-      "bytes": 3625,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/test_supervisor_registration.py"
-    },
-    "operations-r4-fix1/validation_stages.py": {
-      "sha256": "2646ce4e70aaf97b2d41a6b289a68403e34de59dbcd76b76c0ef69efc058251c",
-      "bytes": 776,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/validation_stages.py"
-    },
-    "operations-r4-fix1/SHA256SUMS.json": {
-      "sha256": "bcd09baaa0b0936e7424cd0dea5e51fb067503399ca49d3a236e789fc0fa6861",
-      "bytes": 6096,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/SHA256SUMS.json"
-    },
-    "r4f1-runtime/template.json": {
-      "sha256": "6b88170a18dc68154244dcdb0727217532dbbeb2c05ebc15ed4cb350328e57c9",
-      "bytes": 10635,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/two-time-template-ue2ctc6z/template.json"
-    },
-    "r4f1-runtime/EXECUTION-REVIEW.json": {
-      "sha256": "4c19e03b7264ede923bdae1d4afc7774e828623030df2f3f036043a81826d95b",
-      "bytes": 364,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/EXECUTION-REVIEW.json"
-    },
-    "root/STARTUP-JOIN-R4F1-ASSET-REVIEW.json": {
-      "sha256": "30bf20addd4a6afae627266b3b214037467dd4ab31ab2d5ed307c2f885cd6d97",
-      "bytes": 532,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-ASSET-REVIEW.json"
-    },
-    "root/STARTUP-JOIN-R4F1-REUSED-ACTUAL-OFFLINE-INTEGRATION.json": {
-      "sha256": "b63020856af50db03d7a16b2ff732d07491f7d2a6952158b79d41ea3b1b94b2c",
-      "bytes": 1250,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-REUSED-ACTUAL-OFFLINE-INTEGRATION.json"
-    },
-    "root/STARTUP-JOIN-R4F1-SEQUENCE-DECISION.json": {
-      "sha256": "030513e0a7194d367a000e34bf0c59066e9cc7f83975e3ff2f1f95b41c71ea85",
-      "bytes": 1535,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-SEQUENCE-DECISION.json"
-    },
-    "root/STARTUP-JOIN-R4F1-BASELINE-DECISION.json": {
-      "sha256": "e37bc7a9105c9e6b61e1e6193280b14521c9e05e0177a3380f06dafc1b37f3f9",
-      "bytes": 839,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-BASELINE-DECISION.json"
-    },
-    "diagnostics/wrd-current-runtime-log-summary-v2-20261019-signal-whitelist.jsonl": {
-      "sha256": "193796d19e1584be9cee2a6da3236b81defff62c9bb4bb79b66e090583dc66e7",
-      "bytes": 5400,
-      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019-signal-whitelist.jsonl"
-    },
-    "diagnostics/wrd-current-runtime-log-summary-v2-20261019-host-whitelist.jsonl": {
-      "sha256": "70239e50720f77b6c1f6a8d8e87d70f441af7f130faf6823977481a48b22dfc2",
-      "bytes": 95690,
-      "originalPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019-host-whitelist.jsonl"
-    },
-    "immutable-registry-supervisor.py": {
-      "sha256": "d03cc2025f41d26c0079d3f820fdb2cd5479ae14448fb1c6f91c4589d6bd5c7b",
-      "bytes": 18141,
-      "originalPath": "/tmp/wrd-owned-turn-probe-private/supervisor.py"
-    },
-    "root/STARTUP-JOIN-R4F1-AVAILABILITY-0256.json": {
-      "sha256": "7dbaa6b107666a921731968b9d2131bfb803b8ac10daa8693f5c7772d747bc7b",
-      "bytes": 1277,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-AVAILABILITY-0256.json"
-    },
-    "diagnostics/wrd-host-lag-observer-source-review-20261019.md": {
-      "sha256": "67674a2a654cfeae5c91c5de0f25349edf9e859a80ad3870c9043aa138d8acf4",
-      "bytes": 4593,
-      "originalPath": "/tmp/wrd-host-lag-observer-source-review-20261019.md"
-    },
-    "diagnostics/wrd-host-lag-observer-source-review-20261019.json": {
-      "sha256": "f054178bfdb57d89578b352ab4ec73587ceaabf27f1acaca65ab9f9d2317cfe4",
-      "bytes": 7720,
-      "originalPath": "/tmp/wrd-host-lag-observer-source-review-20261019.json"
-    },
-    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0319.json": {
-      "sha256": "488cfbe5a3375c426a2347c4ff414eb1fc8eeca803f84031a497f68bea911207",
-      "bytes": 1288,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0319.json"
-    },
-    "root/TERMINAL-PROOF-FORMAL-ENTRY-FOLLOWUP-0320.json": {
-      "sha256": "05c3540ca0597220dfd2b31f6ba1190df811fac2be18dcfe44c8862752aeb780",
-      "bytes": 988,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-FORMAL-ENTRY-FOLLOWUP-0320.json"
-    },
-    "diagnostics/wrd-formal-403-readonly-diagnosis-20261019.md": {
-      "sha256": "9db0411060ec23c0e2c6c93a6a8902085f68980b9d44a893090f8e3b579b3071",
-      "bytes": 2553,
-      "originalPath": "/tmp/wrd-formal-403-readonly-diagnosis-20261019.md"
-    },
-    "diagnostics/wrd-formal-403-readonly-diagnosis-20261019.json": {
-      "sha256": "68886ccf9aad2d155c691e29d920abec962016ff66176541c70e0e4cc5700b91",
-      "bytes": 6635,
-      "originalPath": "/tmp/wrd-formal-403-readonly-diagnosis-20261019.json"
-    },
-    "terminal-proof-task1/task-1-report.md": {
-      "sha256": "ed62b5ee8cd16af6e3c3fc964653fe545f755a126e6cb77334cff1894105c040",
-      "bytes": 9780,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-report.md"
-    },
-    "terminal-proof-task1/task-1-review.md": {
-      "sha256": "e4c517590560e91355a8f92d5eb6a56b62b10fde7e47158c6ff4c77529721d21",
-      "bytes": 6156,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-review.md"
-    },
-    "terminal-proof-task1/task-1-fix-1-review.md": {
-      "sha256": "a54c8e986a414af2aa5ee2ba29437dfadd014dc3a9541af6179fb6e9bc153307",
-      "bytes": 2168,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-fix-1-review.md"
-    },
-    "diagnostics/wrd-host-lag-observer-source-review-v2-20261019.md": {
-      "sha256": "f4b3a2f50145e7d7e9c50fb501f95e2d435de409697783b924778621a4f1688e",
-      "bytes": 2666,
-      "originalPath": "/tmp/wrd-host-lag-observer-source-review-v2-20261019.md"
-    },
-    "diagnostics/wrd-host-lag-observer-source-review-v2-20261019.json": {
-      "sha256": "de338544d07a254bd3cb6a49517aee9e1b1fe3f765abc23a2cf98a708b0e365f",
-      "bytes": 9964,
-      "originalPath": "/tmp/wrd-host-lag-observer-source-review-v2-20261019.json"
-    },
-    "diagnostics/wrd-live-host-source-manifest-20261019.json": {
-      "sha256": "c7a6d8e599ab86e9ff30f6015f06970558dfd225f0144604eceb001123e64a55",
-      "bytes": 1611,
-      "originalPath": "/tmp/wrd-live-host-source-review-20261019-walu85ev/manifest.json"
-    },
-    "diagnostics/wrd-loaded-viewer-startup-evidence-20261019.md": {
-      "sha256": "246d6a349233ee05e1c36cdce3c032b15c387b76c1766cf6f47c50a47f744e6e",
-      "bytes": 4508,
-      "originalPath": "/tmp/wrd-loaded-viewer-startup-evidence-20261019.md"
-    },
-    "diagnostics/wrd-loaded-viewer-startup-evidence-20261019.json": {
-      "sha256": "5a3a6b31d3fbf7fd42ade24dfd27c66b28e83a768461ea2f85548cca1a725256",
-      "bytes": 9652,
-      "originalPath": "/tmp/wrd-loaded-viewer-startup-evidence-20261019.json"
-    },
-    "diagnostics/wrd-loaded-viewer-transport-evidence-20261019.md": {
-      "sha256": "a8fa62a10c853da51d38066ca6b41c8146f806f1e86927c54ae175ecd360a53d",
-      "bytes": 2840,
-      "originalPath": "/tmp/wrd-loaded-viewer-transport-evidence-20261019.md"
-    },
-    "diagnostics/wrd-loaded-viewer-transport-evidence-20261019.json": {
-      "sha256": "02b7b6deaf91f777226a5116960b39ea0ec1113612b7da8bed82a6c9044cbfcb",
-      "bytes": 7328,
-      "originalPath": "/tmp/wrd-loaded-viewer-transport-evidence-20261019.json"
-    },
-    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0336.json": {
-      "sha256": "6151760875c8635c6724a1b8797f5cf05a0851c7b387a01f73c823996279a471",
-      "bytes": 1652,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0336.json"
-    },
-    "terminal-proof-task2/task-2-report-before-fix.md": {
-      "sha256": "a39ff32377a00193621b879ab7f2d427858ea229c3a9eb2643ea35d36ade1c0d",
-      "bytes": 14901,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-report.md"
-    },
-    "terminal-proof-task2/task-2-review.md": {
-      "sha256": "be08cea3e51bb88f0956a2d75d58cbf4fb1636e5cbdbc8c0b6f5ecadae92df82",
-      "bytes": 11595,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-review.md"
-    },
-    "terminal-proof-task1/task-1-report-fix-2.md": {
-      "sha256": "df5efc692caee85287589c29fc71089e5cb991ee14474ee72c06ac483ee02e02",
-      "bytes": 15348,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-report.md"
-    },
-    "terminal-proof-task1/task-1-fix-2-review.md": {
-      "sha256": "d273bb8a25237c9d80b1c569c343ad767e2089d563e364d07ce045dd75d7d277",
-      "bytes": 3356,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-1-fix-2-review.md"
-    },
-    "terminal-proof-task2/task-2-report-fix-1.md": {
-      "sha256": "e93e620f46c8a9771b787ec1ddae6df70d79321d2b91bdf95627318c05e29a7d",
-      "bytes": 21910,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-report.md"
-    },
-    "root/TERMINAL-PROOF-READONLY-AVAILABILITY-0359.json": {
-      "sha256": "c713206ba20183b28b4e7abf57e7775e74ed4f8ddd41c274e590ad00a2391bcf",
-      "bytes": 1966,
-      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/TERMINAL-PROOF-READONLY-AVAILABILITY-0359.json"
-    },
-    "terminal-proof-task2/task-2-fix-1-review.md": {
-      "sha256": "9480760ff1a2002a358d34be10ce458f817d199400a953c2116747b4d26584ca",
-      "bytes": 4111,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/task-2-fix-1-review.md"
-    },
-    "terminal-proof-sdd/progress-before-final-review.md": {
-      "sha256": "d97b85062d48bb96a8ddbfa936d7fdc5753a3b74156be3722d92ceedcff852fa",
-      "bytes": 12069,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md"
-    },
-    "terminal-proof-sdd/final-review.md": {
-      "sha256": "7845901ad57606b026453c0684eb41d05c8a9d4dbfe4918ca5b6d5cd64f2b605",
-      "bytes": 7329,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/final-review.md"
-    },
-    "terminal-proof-sdd/progress-code-review-complete.md": {
-      "sha256": "1754fa4e36cb4e2de66d814c186036dad7c6e49366b0d1472e11a68cc51d27ac",
-      "bytes": 13395,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md"
-    },
-    "terminal-proof-sdd/operations-recipe-before-fix.md": {
-      "sha256": "d8b065b79145d5832b20e7b2712aabc3009e005918e6bef04d42f151b630b48d",
-      "bytes": 24947,
-      "originalPath": "/tmp/wrd-r5-root-operation-recipe-20261019.md"
-    },
-    "terminal-proof-sdd/operations-recipe-review.md": {
-      "sha256": "d6e68e3ec1ee491af26335059d88061dc005b5b7e555ba0bbf75614b6ec50fcf",
-      "bytes": 5910,
-      "originalPath": "/tmp/wrd-r5-root-operation-recipe-review-20261019.md"
-    },
-    "terminal-proof-sdd/operations-recipe-fix-review.md": {
-      "sha256": "7b2f9b8808476e8b397db8e6353cd04c026199e2b9fad0a93ed54babe71bd44b",
-      "bytes": 2089,
-      "originalPath": "/tmp/wrd-r5-root-operation-recipe-fix-review-20261019.md"
-    },
-    "terminal-proof-sdd/progress-code-phase-complete.md": {
-      "sha256": "5c17133052b66bdfdc7cc6da2c2c3a3e23fa1f597c5f819e0d8ae3f797b5efb5",
-      "bytes": 13981,
-      "originalPath": "/Users/macstudio1/.codex/worktrees/terminal-scan-exit/WebRemoteDesktop/.superpowers/sdd/2026-10-19-known-process-terminal-scan-proof-plan/progress.md"
-    }
-  },
-  "totalBytes": 1506216
+  "totalBytes": 1895152
 }

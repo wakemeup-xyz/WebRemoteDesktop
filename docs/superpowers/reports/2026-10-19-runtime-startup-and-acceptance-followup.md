@@ -4,7 +4,9 @@
 
 Viewer 启动配置/授权并发修正 `fefc555` 和 ordinary 收尾修正 `2822441` 已实际进入运行目录。Signal 已重载为 PID33179/birth1792348311.587397，Viewer build `a3671ba674ad7516`、builtAt1792348315201，当前 core `23d4e5e6416b1792`。原 Host36877/birth1792322600.528357 保持运行；tunnel84671、watcher897 身份未变，quick URL 文件仍不存在。
 
-新版完成了一次正常连接后的五分钟被动连续性观察：300.4068秒、301个基线样本，missing/late/failed/identity-change 均0，最大画面回调无进展间隔533.312ms，未触发 Host sample。worker退出0，收尾正常。但**整体资格失败**，不能进入该序列的恢复/三小时步骤，也不能作为 pacing 诊断的成功基线：进程扫描在浏览器子进程退出时遇到 `children()/NoSuchProcess`，原覆盖检查拒绝。真实输入、可见效果及物理显示均未验收。
+**最新实际结果：新 R5 序列的五分钟基线和宽限内恢复均合格通过，宽限外恢复失败，序列已关闭，三小时未运行。频繁控制丢失尚不能宣布解决。** 长断线后已观察到新PC解码但画面回调停滞、输入门禁持续关闭；这是当前优先代码整改项。后文历史失败及原始收据不改判。
+
+此前旧序列完成了一次正常连接后的五分钟被动连续性观察：300.4068秒、301个基线样本，missing/late/failed/identity-change 均0，最大画面回调无进展间隔533.312ms，未触发 Host sample。worker退出0，收尾正常。但**该旧序列整体资格失败**，不能继续该序列，也不能作为 pacing 诊断的成功基线：进程扫描在浏览器子进程退出时遇到 `children()/NoSuchProcess`，原覆盖检查拒绝。真实输入、可见效果及物理显示均未验收。
 
 失败后的独立本地检查在02:45:22.910–22.956 CST取得 health/status200、Host在线、Viewer0/relay0，33.317/13.063ms。该后来窗口不能反向解释先前最终严格健康检查的 RuntimeError；不能仅猜测为断线宽限。
 
@@ -96,3 +98,36 @@ Task2fixround1独立窄复审确认两P2全部解决、无新Critical/Important�
 全分支独立most-capable review已完成（ee0fcde→55ceb32），代码/文档范围Ready，Critical/Important/Minor均无；50/45项测试证据和不可变原定义逐项核对，未重复执行套件或运行操作。现在只结束代码review阶段，不宣布运行通过。后续实际操作配方已同步到仓库plans/2026-10-19-r5-real-qualification-operations.md，实际材料与时间仍待root按次创建，先真实check-only，再独立fresh run decision；源执行HEAD与两production文件须在整个新sequence固定，运行证据先保存在私有root，序列关闭后归档。
 
 实际操作配方也完成独立review：唯一P2为把所有prepare-attempt失败都当reservation已消费，现按原sequence/decision前置校验→reserve→后续准备的真实阶段及实际marker判断；已窄复核Ready。现有off-line复用边界、CLI/schema/history/freshness顺序核对无其他finding。配方明确整个新sequence冻结executionHEAD（包括暂停docscommit），运行证据私有保存到序列关闭；这只是执行准备，不提供真实准入/资格证据。两production文件字节已与最终review55ceb32对应Git blob逐一相同，新增均为文档和审查归档。
+
+## 新 R5 实际资格及宽限外恢复缺陷
+
+前瞻终态证明的两任务及独立全分支审查完成后，execution HEAD 固定为 b032481707f08f35bb91683da1f3a6ac4c22fa24。实际原完整门禁链 check-only 退出0，未消费one-use；随后独立新root决策单次运行每个场景。没有复用旧失败场景或其时间戳，没有修改5秒端口查询、60秒新鲜度、场景预算或媒体质量。实际序列 e0d817ad446b77398041d33d404cda2a 已因after-grace失败关闭，不自动重试或继续。
+
+| 场景 | 实际结果 | 关键观察 | 收尾 |
+|---|---|---|---|
+| baseline | qualified PASS，CLI0 | 300.250165秒、301样本，missing/late/failed/identity-change均0；301行inputAllowed/scopeStable/mediaActive全true；最大无进展200ms | 7个已记录worker身份退出、无信号、无Host sample；1条前瞻终态证明，原raw gap保留 |
+| within-grace | qualified PASS，CLI0 | 恢复5.999977秒，稳定30.030126秒；31个稳定阶段样本inputAllowed全true；Host未观察到断线 | 全部原验证阶段通过；7个已记录worker退出、1条证明；整个恢复场景无Host sample |
+| after-grace | failed-or-indeterminate，CLI2/worker1 | routed故障12秒、阻断2条WS/0条HTTP；未达到画面/输入恢复门禁，60秒恢复窗口结束，reason reset-unconfirmed | worker阶段失败，后续验证not-evaluated；7个已记录worker退出、无信号、无sample；保留health RuntimeError |
+| continuity | NOT_RUN | 前一场景失败，未获新的root推进决定 | 无运行记录 |
+
+以上PASS只覆盖被动连续性和普通恢复契约；logical inputAllowed=true不证明真实键鼠执行、采样之间无短暂中断或可见效果。完整进程树仍unknown，原始worker的api-finished-exit-unknown表述保留；独立supervisor提供的是已记录身份及窄终态证明。真实输入、业务/可见效果、物理显示继续NOT_RUN。
+
+### 失败时序与源码发现
+
+服务端依次记录grace-started、grace-expired(lease8/REVOKING)、reset-completed(lease8/FREE)。新lease9高于旧lease7和reset8，满足runner的reset关联条件。随后PC2保持同一身份，generation从2升3；PC connected且framesDecoded从4增长到823，但callbacks停在6034，末行frameAge44517.372ms。产品自身hasPaintedFrame/currentAttemptReady/inputAllowed均false，uiPhase=signaling，blockedReasons为inactive及media-not-ready-for-attempt。
+
+runner在超过60秒时统一输出reset-unconfirmed，因此这个标签不能解释为后端没有reset。此次失败不能通过改标签或以decoded代替presented帧来变成PASS。
+
+有限静态调查确认可达的生命周期缺陷：无lease恢复创建的peer捕获旧attempt owner；handleControlGrant只退休绑定了其他lease的peer，保留未绑定lease的peer，随后beginConnectionAttempt提升代次；新offer可绑定新lease并开始解码，peer回调却仍持旧owner。ontrack和连接回调因此可被防陈旧检查拒绝，既不能挂载新stream，也不启动当前stats/rVFC。该链与实测吻合，但本次未直接保存owner/track/play元数据，现场因果仍为有依据的推断，不是唯一根因证明。
+
+最小整改方向是在changed-lease推进attempt时一并退休已有无lease peer，并在最终attempt确定后重建，保留旧回调拒绝及同lease宽限内复用。不能修改旧owner、放松rVFC或强制开放输入。完整调查、边界和回归建议已按原字节归档；后续代码需独立RED/GREEN及review，再准备新版本部署与全新资格序列。
+
+本次失败收尾中的严格health RuntimeError保留。后续独立只读检查epoch1792357099.878–1792357100.891取得local health/status200(5.244/4.382ms)、formal browser-UA health200(1008.041ms)、Host在线、Viewer0/relay0、四个服务原birth均匹配、safe URL不存在；这是后来的独立可用观察，不反向改判原错误或证明持续可用。此轮没有服务、Host、watcher或tunnel重启。
+
+### 新基线延迟口径
+
+新baseline保存的transport.rttMs有301行数值，范围21–50ms，最新22ms；不是单程或输入到画面的耗时。点击到媒体就绪标记5825.8ms，bootstrap-start到ready652.7ms、ready到namespace信令连接3021.9ms、信令到媒体就绪2150.6ms。源码确认bootstrap-start在准入POST之前，socket在ready之前已创建并与配置加载并行，故652.7ms是复合阶段，3021.9ms是并行连接的剩余等待。未发现ready后固定等待3秒的代码，不能据两次约3秒间隔归因timer。
+
+first-frame/active仍不是唯一首个rVFC或输入就绪标记；精确首次回调、单程、六项真实输入指标仍null/NOT_RUN。后续应新增准入开始/完成、socket创建、engine-open、namespace-connect及真实帧/input-ready的独立有界时标。输入延迟collector在另一隔离分支继续离线实施，未加载当前服务，不给本轮补造真实输入数值。
+
+此轮新增43份必要摘要/原收据/脱敏投影，未归档原始samples或Host/Signal日志。证据索引现有183个payload、1895152bytes，SHA256 7b0bbb04ff0531cec78199c94f4d581fa12ebe005d0a34e66234dbdbf42a8680；所有副本regular/0644/长度/SHA重新核对。归档只为审计，不能用作执行授权或重放原one-use。
