@@ -456,9 +456,8 @@ class TerminalProofTests(unittest.TestCase):
     def test_all_exact_schemas_and_limits_reject_extras_and_bool(self):
         for target in range(3):
             values = deepcopy(self.good())
-            if target != 0:
-                values[target]['extra'] = 0
-                self.reject(values)
+            values[target]['extra'] = 0
+            self.reject(values)
         for key in ('proofs', 'bytes', 'maxIntervalSeconds'):
             values = deepcopy(self.good()); values[2]['limits'][key] = True; self.reject(values)
         for key in ('events', 'gaps', 'contextDepth', 'counter'):
@@ -630,6 +629,22 @@ class TerminalProofTests(unittest.TestCase):
         case.scan()
         self.assertTrue(case.registry.terminal_proof_snapshot()['failed'])
         self.reject(case.finish_exited())
+
+
+    def test_ownership_envelope_exact_original_schema(self):
+        valid = self.good()
+        self.assertEqual(set(valid[0]), {'identities', 'signals', 'allRecordedIdentitiesExited',
+                                       'completeProcessTreeExitEstablished', 'coverage'})
+        self.assertEqual(validate_terminal_coverage(*valid)['policy'], 'prospective-terminal-race-v1')
+        extra = deepcopy(valid)
+        extra[0]['unexpectedSchemaField'] = {'invalid': True}
+        with self.subTest(extra='unexpectedSchemaField'):
+            self.reject(extra)
+        for field in valid[0]:
+            missing = deepcopy(valid)
+            del missing[0][field]
+            with self.subTest(missing=field):
+                self.reject(missing)
 
 
 if __name__ == '__main__':

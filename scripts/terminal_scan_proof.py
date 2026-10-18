@@ -186,7 +186,9 @@ def _validate(owner, diag, snapshot):
             _require(type(event['errno']) is int and -_MAX_INT <= event['errno'] <= _MAX_INT)
         _number(event['wall']); _number(event['monotonic'])
         events[event['eventId']] = event
-    _require(type(owner) is dict and type(owner['coverage']) is list
+    _keys(owner, ('identities', 'signals', 'allRecordedIdentitiesExited',
+                  'completeProcessTreeExitEstablished', 'coverage'))
+    _require(type(owner['coverage']) is list
              and all(type(reason) is str for reason in owner['coverage']))
     coverage = set(owner['coverage'])
     _require(len(coverage) == len(owner['coverage']) and _INHERENT <= coverage
