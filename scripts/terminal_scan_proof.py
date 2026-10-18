@@ -337,7 +337,12 @@ def instrument_terminal_registry(registry_type, diagnostic, *, wall, monotonic):
                     absent_pid = getattr(absent, 'pid', None); _pid(absent_pid); _require(absent_pid == pid)
                     after['outcome'] = 'absent'
                 else:
-                    birth = target.create_time(); status = target.status(); again = target.create_time()
+                    birth = target.create_time(); status = target.status()
+                    # Process.create_time() caches on each public handle. A second
+                    # independent resolve is the fresh birth observation, not a retry.
+                    verification = diagnostic._factory(pid)
+                    _require(verification is not target)
+                    again = verification.create_time()
                     _number(birth, positive=True); _number(again, positive=True)
                     _require(birth == again and type(status) is str and status in _ALIVE_STATUSES | {'zombie'})
                     after.update(birth=birth, birthAgain=again, status=status)

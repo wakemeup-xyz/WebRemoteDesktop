@@ -74,9 +74,9 @@ class Process:
 
 class Case:
     registered_pid = 71
-    def __init__(self, after='absent', instrument=True, children_error=True):
+    def __init__(self, after='absent', instrument=True, children_error=True, birth=100.):
         self.clock = Clock(); self.calls = []; self.signal_calls = []; self.script = {}
-        self.birth = 100.; self.after = after; self.after_observation = False
+        self.birth = birth; self.after = after; self.after_observation = False
         self.final = False; self.error = NoSuchProcess(71); self.children_error = children_error
         self.process = Process(self)
         self.diag = Diagnostics(self.resolve, (NoSuchProcess, AccessDenied, OSError), 'worker', monotonic=self.clock, wall=self.clock)
@@ -94,7 +94,7 @@ class Case:
             return value() if callable(value) else value
         if self.final or (self.after_observation and self.after == 'absent'):
             raise NoSuchProcess(pid)
-        return self.process
+        return Process(self)
     def scan(self):
         self.registry.scan()
         return self
@@ -102,6 +102,53 @@ class Case:
         self.final = True
         self.diag.set_stage('result')
         return self.registry.result(), self.diag.snapshot(), self.registry.terminal_proof_snapshot()
+
+
+class CachedHandle:
+    """A public handle caches its first birth just as psutil.Process does."""
+    pid = 71
+    def __init__(self, case):
+        self.case = case
+        self.cached_birth = None
+    def create_time(self):
+        self.case.calls.append(('birth', self.pid))
+        if self.cached_birth is None:
+            self.cached_birth = self.case.backend_birth
+            self.case.backend_birth_reads.append(self.cached_birth)
+        return self.cached_birth
+    def status(self):
+        self.case.calls.append(('status', self.pid))
+        if self.case.after_observation:
+            if self.case.mutate_after_status:
+                self.case.backend_birth = 30.
+            return 'zombie' if self.case.candidate == 'zombie' else 'running'
+        return 'running'
+    def children(self, recursive=False):
+        self.case.calls.append(('children', self.pid))
+        self.case.after_observation = True
+        self.case.backend_birth = 20.
+        raise self.case.error
+
+
+class CachedCase(Case):
+    def __init__(self, candidate='zombie', mutate=True, same_handle=False):
+        self.candidate = candidate
+        self.backend_birth = 20. if candidate == 'zombie' else 10.
+        self.backend_birth_reads = []
+        self.mutate_after_status = mutate
+        self.same_handle = same_handle
+        self.after_handles = []
+        super().__init__(after='alive', birth=self.backend_birth)
+    def resolve(self, pid):
+        self.calls.append(('resolve', pid))
+        if self.final:
+            raise NoSuchProcess(pid)
+        if self.after_observation and self.same_handle and self.after_handles:
+            return self.after_handles[0]
+        handle = CachedHandle(self)
+        if self.after_observation:
+            self.after_handles.append(handle)
+        return handle
 
 
 class TerminalProofTests(unittest.TestCase):
@@ -138,7 +185,7 @@ class TerminalProofTests(unittest.TestCase):
         self.assertEqual(result['checkedProofs'], 1)
         self.assertEqual(case.calls, [('birth', 71), ('resolve', 71), ('birth', 71), ('status', 71),
                                     ('resolve', 71), ('children', 71), ('resolve', 71), ('birth', 71),
-                                    ('status', 71), ('birth', 71), ('resolve', 71)])
+                                    ('status', 71), ('resolve', 71), ('birth', 71), ('resolve', 71)])
 
     def test_normal_calls_match_original_and_no_proof(self):
         original = Case(instrument=False, children_error=False).scan()
@@ -645,6 +692,85 @@ class TerminalProofTests(unittest.TestCase):
             del missing[0][field]
             with self.subTest(missing=field):
                 self.reject(missing)
+
+
+    def test_cache_faithful_birth_change_during_status_is_rejected(self):
+        for candidate in ('zombie', 'reused'):
+            with self.subTest(candidate=candidate):
+                case = CachedCase(candidate=candidate, mutate=True).scan()
+                owner, diag, proof = case.finish_exited()
+                self.assertTrue(owner['allRecordedIdentitiesExited'])
+                self.assertEqual(owner['identities'][0]['status'], 'exited')
+                self.assertEqual(case.backend_birth, 30.)
+                # This is the actual producer + consumer; final reused cannot mask failure.
+                self.reject((owner, diag, proof))
+                self.assertTrue(proof['failed'])
+                self.assertEqual(case.backend_birth_reads[-2:], [20., 30.])
+                self.assertEqual(len(case.after_handles), 2)
+                self.assertIsNot(case.after_handles[0], case.after_handles[1])
+
+    def test_cache_faithful_same_factory_handle_rejected(self):
+        case = CachedCase(candidate='zombie', mutate=False, same_handle=True).scan()
+        owner, diag, proof = case.finish_exited()
+        self.assertTrue(owner['allRecordedIdentitiesExited'])
+        self.reject((owner, diag, proof))
+        self.assertTrue(proof['failed'])
+
+
+    def test_cache_faithful_stable_zombie_and_reused_positive(self):
+        for candidate, outcome in (('zombie', 'same-birth-zombie'), ('reused', 'stable-reused')):
+            with self.subTest(candidate=candidate):
+                case = CachedCase(candidate=candidate, mutate=False).scan()
+                values = case.finish_exited()
+                self.assertEqual(validate_terminal_coverage(*values)['checkedProofs'], 1)
+                after = values[2]['proofs'][0]['after']
+                self.assertEqual(after['outcome'], outcome)
+                self.assertEqual(after['birth'], 20.)
+                self.assertEqual(after['birthAgain'], 20.)
+                self.assertEqual(len(case.after_handles), 2)
+                self.assertIsNot(case.after_handles[0], case.after_handles[1])
+                self.assertEqual(case.backend_birth_reads[-2:], [20., 20.])
+                self.assertEqual(case.signal_calls, [])
+
+    def test_present_adds_exact_two_same_pid_resolves_two_birth_one_status(self):
+        original = Case(instrument=False, after='zombie').scan()
+        adapted = Case(after='zombie').scan()
+        self.assertEqual(adapted.calls, original.calls + [
+            ('resolve', 71), ('birth', 71), ('status', 71), ('resolve', 71), ('birth', 71)])
+        validate_terminal_coverage(*adapted.finish_exited())
+        # The separate absent ledger enforces one resolve and no birth/status.
+
+    def test_second_handle_resolve_errors_do_not_become_absent(self):
+        for error in (NoSuchProcess(71), AccessDenied(), OSError(), RuntimeError('unsupported')):
+            with self.subTest(error=type(error).__name__):
+                case = Case(after='zombie')
+                case.script['resolve'] = [case.process, case.process, Process(case), error]
+                case.scan()
+                values = case.finish_exited()
+                self.assertEqual(values[2]['proofs'], [])
+                self.assertTrue(values[2]['failed'])
+                self.assertEqual(values[1]['events'][0]['operation'], 'children')
+                self.assertEqual(len(values[1]['events']), 1)
+                self.assertEqual(values[1]['gaps'][0]['eventId'], values[1]['events'][0]['eventId'])
+                self.reject(values)
+                self.assertEqual(case.calls, [('birth', 71), ('resolve', 71), ('birth', 71),
+                    ('status', 71), ('resolve', 71), ('children', 71), ('resolve', 71),
+                    ('birth', 71), ('status', 71), ('resolve', 71), ('resolve', 71)])
+
+    def test_second_handle_birth_errors_unknown_and_change_rejected(self):
+        for value in (NoSuchProcess(71), AccessDenied(), OSError(), RuntimeError('unsupported'),
+                      None, True, float('nan'), float('inf'), 0., 30.):
+            with self.subTest(value=value):
+                case = Case(after='zombie')
+                case.script['birth'] = [100., 100., value]
+                case.scan()
+                values = case.finish_exited()
+                self.assertTrue(values[0]['allRecordedIdentitiesExited'])
+                self.assertEqual(values[2]['proofs'], [])
+                self.assertTrue(values[2]['failed'])
+                self.assertEqual(len(values[1]['events']), 1)
+                self.assertEqual(len(values[1]['gaps']), 1)
+                self.reject(values)
 
 
 if __name__ == '__main__':
