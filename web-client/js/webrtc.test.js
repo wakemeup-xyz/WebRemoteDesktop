@@ -8341,3 +8341,339 @@ test('startup config join: ready configuration and late real Input grant', async
 for (const outcome of ['input-unavailable', 'no-control', 'cancel', 'supersede', 'auth-change']) {
   test(`startup config join: delayed config preserves ${outcome}`, async () => { await startupJoinScenario(true, outcome); });
 }
+
+// Offline synthetic browser boundaries; all recovery, media and Input methods are real.
+async function afterGracePeerFixture({ pending = false, firstGrant = false, channelState = 'open' } = {}) {
+  let clock = 1000, timerId = 0, frameId = 0;
+  const timers = new Map(), frames = new Map(), peers = [], emitted = [], writes = [], plays = [], samples = [];
+  const setTimer = (fn, ms, interval = false) => {
+    const id = ++timerId; timers.set(id, { fn, ms, interval }); return id;
+  };
+  class RecoveryPeer {
+    constructor() {
+      this.connectionState = this.iceConnectionState = 'new';
+      this.signalingState = 'stable'; this.iceGatheringState = 'complete';
+      this.transceivers = []; this.channels = []; this.decoded = 0; this.offers = 0; peers.push(this);
+    }
+    createDataChannel() {
+      const channel = { readyState: channelState, bufferedAmount: 0,
+        send(value) { writes.push(JSON.parse(value)); }, close() { this.readyState = 'closed'; this.onclose?.(); } };
+      this.channels.push(channel); return channel;
+    }
+    getTransceivers() { return this.transceivers; }
+    addTransceiver() {
+      const t = { receiver: { track: { kind: 'video' } }, setCodecPreferences() {} };
+      this.transceivers.push(t); return t;
+    }
+    getReceivers() { return []; }
+    async createOffer() { this.offers++; return { type: 'offer', sdp: 'offline-fixture-sdp' }; }
+    async setLocalDescription(value) { this.localDescription = value; this.signalingState = 'have-local-offer'; }
+    async setRemoteDescription(value) { this.remoteDescription = value; this.signalingState = 'stable'; }
+    async getStats() { return new Map([['video', { type: 'inbound-rtp', kind: 'video',
+      framesDecoded: this.decoded, framesReceived: this.decoded, frameWidth: 1280, frameHeight: 720 }]]); }
+    addEventListener() {} removeEventListener() {}
+    close() {
+      this.connectionState = this.iceConnectionState = this.signalingState = 'closed';
+      this.channels.forEach(channel => channel.close()); // Exercise synchronous close reentry too.
+    }
+  }
+  const elements = new Map();
+  const h = loadWebRTC({ realInput: true, RTCPeerConnection: RecoveryPeer,
+    console: { log() {}, warn() {}, error() {} },
+    window: { location: { origin: 'http://offline.invalid' }, addEventListener() {}, removeEventListener() {} },
+    document: { hidden: false, readyState: 'loading', body: makeElement(), activeElement: null,
+      addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; },
+      getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); } },
+    performance: { now: () => clock },
+    setTimeout: (fn, ms) => setTimer(fn, ms), clearTimeout: id => timers.delete(id),
+    setInterval: (fn, ms) => setTimer(fn, ms, true), clearInterval: id => timers.delete(id),
+  });
+  for (const filename of ['webrtc-stats.js', 'media-activity-controller.js', 'media-activity-runtime.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, filename), 'utf8'), h.context);
+  }
+  h.context.MediaActivityController = h.context.MediaActivityController || h.context.window.MediaActivityController;
+  h.context.MediaActivityRuntime = h.context.MediaActivityRuntime || h.context.window.MediaActivityRuntime;
+  vm.runInContext('globalThis.__Stats = WebRtcStats;', h.context);
+  const createSampler = h.context.__Stats.createWebRtcStatsSampler;
+  h.context.__Stats.createWebRtcStatsSampler = options => { samples.push(options); return createSampler(options); };
+  const w = h.WebRTC, input = h.context.__Input, video = h.context.document.getElementById('remoteVideo');
+  video.videoWidth = 1280; video.videoHeight = 720; video.readyState = 0;
+  video.play = () => new Promise((resolve, reject) => plays.push({ stream: video.srcObject, resolve, reject }));
+  video.requestVideoFrameCallback = fn => { frames.set(++frameId, fn); return frameId; };
+  video.cancelVideoFrameCallback = id => frames.delete(id);
+  w.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); if (event === 'input') writes.push(payload); } };
+  const settle = startupJoinFlush;
+  const connect = async (peer = w.pc, stream = { getTracks: () => [] }) => {
+    await peer.setRemoteDescription({ type: 'answer', sdp: 'offline-answer' });
+    peer.ontrack({ track: { kind: 'video' }, streams: [stream] });
+    peer.connectionState = peer.iceConnectionState = 'connected'; peer.onconnectionstatechange();
+    await settle(); return stream;
+  };
+  const paint = () => {
+    const id = w._videoFrameCallbackId, fn = frames.get(id);
+    assert.equal(typeof fn, 'function', 'real current rVFC must exist');
+    frames.delete(id); clock += 16; fn(clock, {});
+  };
+  const mediaRequest = (state = 'active') => {
+    const entry = [...emitted].reverse().find(({ event, payload }) => event === 'media-activity-change'
+      && payload.state === state && payload.connectionAttemptId === w.currentConnectionAttemptId
+      && payload.generation === w._mediaIntent?.generation);
+    assert.ok(entry, 'real current-scope media request must have been emitted');
+    assert.ok(entry.payload.generation > 0); return entry.payload;
+  };
+  const ackMedia = request => w.handleMediaActivityAck({ state: request.state, generation: request.generation,
+    connectionAttemptId: request.connectionAttemptId, applied: true });
+  const ackInput = write => {
+    const ack = { schemaVersion: 2, inputType: write.type, inputIds: write.inputIds,
+      leaseEpoch: write.leaseEpoch, appliedSeq: write.seq, status: 'applied' };
+    return write.type === 'keyboard' ? input.acceptKeyboardAck(ack) : input.acceptMouseAck(ack);
+  };
+  const ackResets = () => writes.filter(write => write.action === 'reset').forEach(ackInput);
+  w.initializeMediaActivity();
+  assert.ok(w.mediaActivityController); assert.ok(w.mediaActivityRuntime);
+  w.beginStartupEpisode(); w.startStartupMediaBudget(); w.beginConnectionAttempt('viewer-open');
+  const lease = { controller: true, leaseId: 'offline-original-lease', leaseEpoch: 7 };
+  if (firstGrant) { w.createPeerConnection(); return { h, w, input, video, peers, emitted, frames, timers, settle, connect, paint, mediaRequest, ackMedia, ackInput, ackResets, writes, plays, samples, lease }; }
+  w.handleControlGrant(lease); await settle();
+  assert.ok(w.pc.localDescription, 'real createOffer must finish');
+  await connect();
+  w.setMediaActivityReason('manual-pause', true); ackMedia(mediaRequest('suspended'));
+  assert.equal(w.getMediaAppliedPhase(), 'suspended');
+  w.setMediaActivityReason('manual-pause', false);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  ackMedia(mediaRequest());
+  assert.equal(w.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  if (!pending) {
+    paint(); assert.equal(w.getMediaAppliedPhase(), 'active'); assert.equal(w.canEnableDesktopInput(), true);
+    w.checkStartupEpisode({ painted: true }); assert.equal(w._startupEpisode.state, 'complete');
+    ackResets(); assert.equal(input.getEffectiveInputGate().allowed, true);
+  }
+  return { h, w, input, video, peers, emitted, frames, timers, settle, connect, paint, mediaRequest, ackMedia, ackInput, ackResets, writes, plays, samples, lease };
+}
+
+test('after-grace fixture: real positive generation media and Input baseline', async () => {
+  const { w, input } = await afterGracePeerFixture();
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+  assert.equal(input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: changed grant retires unleased refreshed peer', async () => {
+  const f = await afterGracePeerFixture();
+  const { w, input, video, peers, settle, connect, paint, mediaRequest, ackMedia, ackResets, plays } = f;
+  w.freezeControl('signal-disconnect'); await w.refresh({ reason: 'signal-reconnected' });
+  const orphan = w.pc, owner = w._peerCallbackOwner;
+  assert.equal(orphan._wrdControlLease, null);
+  const oldTrack = orphan.ontrack, oldConnected = orphan.onconnectionstatechange;
+  w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await settle();
+  assert.notEqual(w.pc, orphan, 'new attempt must not retain a peer owned by the previous attempt');
+  assert.equal(orphan.connectionState, 'closed'); assert.equal(w.ownsStartupOwner(owner), false);
+  assert.equal(w._peerCallbackOwner.peer, w.pc); assert.equal(w._peerCallbackOwner.attempt, w.currentConnectionAttemptId);
+  assert.equal(w._peerCallbackOwner.sequence, w.connectionAttemptSequence);
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  const stream = { getTracks: () => [] }; await connect(w.pc, stream);
+  assert.equal(video.srcObject, stream); assert.equal(plays.filter(play => play.stream === stream).length, 1);
+  assert.ok(w._statsSampler); assert.ok(w._videoFrameOwner);
+  oldTrack({ track: { kind: 'video' }, streams: [{ getTracks: () => [] }] }); oldConnected();
+  assert.equal(video.srcObject, stream);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming'); assert.equal(w.canEnableDesktopInput(), false);
+  const request = mediaRequest(); ackMedia(request);
+  const applied = w.mediaActivityRuntime.snapshot().lastAck;
+  assert.equal(applied.applied, true); assert.equal(applied.connectionAttemptId, request.connectionAttemptId);
+  assert.equal(applied.generation, request.generation);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(w.canEnableDesktopInput(), false, 'applied ACK alone is not a fresh frame');
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  paint(); assert.equal(w.isCurrentAttemptMediaReady(), true); assert.equal(w.getMediaAppliedPhase(), 'active');
+  assert.equal(w.canEnableDesktopInput(), true); ackResets(); assert.equal(input.getEffectiveInputGate().allowed, true);
+  assert.equal(peers.filter(peer => peer.connectionState !== 'closed').length, 1);
+});
+
+async function afterGraceChangedGrant(f, { beforeGrant = false } = {}) {
+  const { w, settle, connect } = f;
+  w.freezeControl('signal-disconnect'); await w.refresh({ reason: 'signal-reconnected' });
+  const orphan = w.pc, owner = w._peerCallbackOwner;
+  assert.equal(orphan._wrdControlLease, null);
+  if (beforeGrant) await connect(orphan);
+  w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await settle();
+  assert.notEqual(w.pc, orphan); assert.equal(orphan.connectionState, 'closed');
+  assert.equal(w.ownsStartupOwner(owner), false);
+  assert.equal(w._peerCallbackOwner.peer, w.pc);
+  assert.equal(w._peerCallbackOwner.attempt, w.currentConnectionAttemptId);
+  assert.equal(w._peerCallbackOwner.sequence, w.connectionAttemptSequence);
+  return orphan;
+}
+
+test('after-grace ownership: pending startup preserves allowance', async () => {
+  const f = await afterGracePeerFixture({ pending: true });
+  const { w } = f, episode = w._startupEpisode;
+  const { remaining, feedbackRemaining } = episode;
+  await afterGraceChangedGrant(f);
+  assert.equal(w._startupEpisode, episode); assert.equal(episode.state, 'pending');
+  assert.ok(episode.remaining <= remaining); assert.ok(episode.feedbackRemaining <= feedbackRemaining);
+  await f.connect(); f.ackMedia(f.mediaRequest()); f.paint();
+  w.checkStartupEpisode({ painted: true }); assert.equal(episode.state, 'complete');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: current frame waits for matching media ACK', async () => {
+  const f = await afterGracePeerFixture();
+  const old = f.mediaRequest();
+  await afterGraceChangedGrant(f); await f.connect();
+  const current = f.mediaRequest();
+  f.paint(); assert.equal(f.w.isCurrentAttemptMediaReady(), true);
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(old); f.ackMedia({ ...current, generation: current.generation - 1 });
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.w.canEnableDesktopInput(), false);
+  f.ackMedia(current); assert.equal(f.w.getMediaAppliedPhase(), 'active');
+  assert.equal(f.w.canEnableDesktopInput(), true, 'same request early frame may replay after matching ACK');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: old media proof cannot complete new request', async () => {
+  const f = await afterGracePeerFixture(), old = f.mediaRequest();
+  const oldFrame = f.frames.get(f.w._videoFrameCallbackId);
+  assert.equal(typeof oldFrame, 'function');
+  await afterGraceChangedGrant(f); await f.connect();
+  f.ackMedia(old); oldFrame(2000, {});
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.w.isCurrentAttemptMediaReady(), false);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(f.mediaRequest()); oldFrame(2016, {});
+  assert.equal(f.w.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.w.canEnableDesktopInput(), false);
+  f.paint(); assert.equal(f.w.getMediaAppliedPhase(), 'active');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: connected and track before changed grant', async () => {
+  const f = await afterGracePeerFixture();
+  f.w.freezeControl('signal-disconnect'); await f.w.refresh({ reason: 'signal-reconnected' });
+  const orphan = f.w.pc; const stream = await f.connect(orphan);
+  const track = orphan.ontrack, connected = orphan.onconnectionstatechange;
+  const frame = f.frames.get(f.w._videoFrameCallbackId), sample = f.samples.at(-1).onSample;
+  f.paint(); assert.equal(f.w.isCurrentAttemptMediaReady(), true);
+  f.w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await f.settle();
+  assert.notEqual(f.w.pc, orphan); assert.equal(orphan.connectionState, 'closed');
+  assert.equal(f.w.isCurrentAttemptMediaReady(), false); assert.equal(f.w.hasPaintedFrame, false);
+  track({ track: { kind: 'video' }, streams: [stream] }); connected(); frame(2100, {}); sample({ framesDecoded: 50 });
+  assert.equal(f.w.isCurrentAttemptMediaReady(), false); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  const nextStream = await f.connect(); assert.equal(f.video.srcObject, nextStream);
+  assert.equal(f.plays.filter(play => play.stream === nextStream).length, 1);
+  f.ackMedia(f.mediaRequest()); assert.equal(f.w.getMediaAppliedPhase(), 'resuming');
+  f.paint(); assert.equal(f.w.getMediaAppliedPhase(), 'active');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: retired producers cannot revive', async () => {
+  const f = await afterGracePeerFixture({ channelState: 'connecting' });
+  f.w.freezeControl('signal-disconnect'); await f.w.refresh({ reason: 'signal-reconnected' });
+  const orphan = f.w.pc, oldOwner = f.w._peerCallbackOwner, oldChannel = f.w.inputChannel;
+  const watchdog = f.w._dataChannelWatchdog;
+  assert.ok(watchdog); const watchdogCallback = f.timers.get(watchdog.timer).fn;
+  const priorTimers = new Set(f.timers.keys());
+  const stream = await f.connect(orphan);
+  const fallback = [...f.timers].filter(([id, timer]) => !priorTimers.has(id) && timer.ms === 8000 && !timer.interval);
+  assert.ok(fallback.length, 'ontrack must generate the real 8s fallback');
+  // Two actual play requests let both queued fulfillment and rejection run.
+  orphan.ontrack({ track: { kind: 'video' }, streams: [stream] });
+  const oldPlays = f.plays.slice(-2); assert.equal(oldPlays.length, 2);
+  const sample = f.samples.at(-1);
+  const queued = [
+    ['track', () => orphanTrack({ track: { kind: 'video' }, streams: [stream] })],
+    ['connection', orphan.onconnectionstatechange], ['ICE connection', orphan.oniceconnectionstatechange],
+    ['ICE candidate', () => orphanIce({ candidate: { candidate: 'offline-candidate' } })],
+    ['DC open', oldChannel.onopen], ['DC close', oldChannel.onclose],
+    ['DC message', () => oldMessage({ data: JSON.stringify({ type: 'capture_stats', fps: 999 }) })],
+    ['watchdog', watchdogCallback], ['stats sample', () => sample.onSample({ framesDecoded: 500, framesReceived: 500 })],
+    ['stats error', () => sample.onError(new Error('offline queued error'))],
+    ['rVFC', () => oldFrame(2200, {})], ['metadata', f.video.onloadedmetadata], ['playing', f.video.onplaying],
+    ...fallback.map(([, timer]) => ['8s fallback', timer.fn]),
+    ['play resolve', () => oldPlays[0].resolve()], ['play reject', () => oldPlays[1].reject(new Error('offline queued rejection'))],
+  ];
+  const orphanTrack = orphan.ontrack, orphanIce = orphan.onicecandidate, oldMessage = oldChannel.onmessage;
+  const oldFrame = f.frames.get(f.w._videoFrameCallbackId);
+  queued.forEach(([name, fn]) => assert.equal(typeof fn, 'function', `${name} must actually exist`));
+  f.w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await f.settle();
+  assert.equal(f.w.ownsStartupOwner(oldOwner), false); assert.equal(orphan.connectionState, 'closed');
+  await f.connect();
+  const invariant = () => ({ pc: f.w.pc, stream: f.video.srcObject, painted: f.w.hasPaintedFrame,
+    ready: f.w.isCurrentAttemptMediaReady(), gate: f.input.getEffectiveInputGate().allowed,
+    phase: f.w.getMediaAppliedPhase(), sampler: f.w._statsSampler, frameOwner: f.w._videoFrameOwner,
+    callback: f.w._videoFrameCallbackId, timers: [...f.timers.keys()], frames: [...f.frames.keys()],
+    captureFps: f.w._hostCaptureFps, emitted: f.emitted.length });
+  const current = invariant();
+  for (const [name, fn] of queued) { fn(); await f.settle(); assert.deepEqual(invariant(), current, name); }
+  f.ackMedia(f.mediaRequest()); f.paint(); f.ackResets();
+  assert.equal(f.input.getEffectiveInputGate().allowed, true);
+  const active = invariant();
+  for (const [name, fn] of queued) { fn(); await f.settle(); assert.deepEqual(invariant(), active, `active: ${name}`); }
+});
+
+test('after-grace ownership: duplicate grant preserves healthy peer', async () => {
+  const f = await afterGracePeerFixture();
+  const pc = f.w.pc, owner = f.w._peerCallbackOwner, attempt = f.w.currentConnectionAttemptId;
+  const sequence = f.w.connectionAttemptSequence, sampler = f.w._statsSampler, frameOwner = f.w._videoFrameOwner;
+  const offers = pc.offers;
+  f.w.handleControlGrant(f.lease); await f.settle();
+  assert.equal(f.w.pc, pc); assert.equal(f.peers.length, 1); assert.equal(pc.offers, offers);
+  assert.equal(f.w._peerCallbackOwner, owner); assert.equal(f.w.currentConnectionAttemptId, attempt);
+  assert.equal(f.w.connectionAttemptSequence, sequence); assert.equal(f.w._statsSampler, sampler);
+  assert.equal(f.w._videoFrameOwner, frameOwner); assert.equal(f.w.isCurrentAttemptMediaReady(), true);
+  assert.equal(f.w.hasPaintedFrame, true);
+  // Existing intent replay may require another applied ACK and fresh resume frame.
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(f.mediaRequest()); f.paint(); f.ackResets();
+  assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: within grace rebind preserves peer and ACK barrier', async () => {
+  const f = await afterGracePeerFixture();
+  const pc = f.w.pc, attempt = f.w.currentConnectionAttemptId, sequence = f.w.connectionAttemptSequence;
+  f.w.socket.connected = false; f.w.freezeControl('signal-disconnect');
+  f.w.scheduleSignalingRecovery('signal-disconnected');
+  f.w.socket.connected = true;
+  assert.equal(f.w.handleSignalingRecoveryConnected(), true);
+  const before = f.writes.length; f.w.handleControlGrant(f.lease); await f.settle();
+  assert.equal(f.w.pc, pc); assert.equal(f.peers.length, 1);
+  assert.equal(f.w.currentConnectionAttemptId, attempt); assert.equal(f.w.connectionAttemptSequence, sequence);
+  const resets = f.writes.slice(before).filter(write => write.action === 'reset');
+  assert.equal(resets.length, 2); assert.deepEqual(resets.map(write => write.type).sort(), ['keyboard', 'mouse']);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(f.mediaRequest()); f.paint();
+  assert.equal(f.w.getMediaAppliedPhase(), 'active'); assert.equal(f.w.canEnableDesktopInput(), true);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false, 'media proof cannot replace either reset ACK');
+  f.ackInput(resets[0]); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackInput(resets[1]); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: first grant keeps unleased startup peer', async () => {
+  const f = await afterGracePeerFixture({ firstGrant: true });
+  const pc = f.w.pc, owner = f.w._peerCallbackOwner, attempt = f.w.currentConnectionAttemptId;
+  const sequence = f.w.connectionAttemptSequence;
+  assert.equal(pc._wrdControlLease, null); assert.equal(f.w._mediaControlLease == null, true);
+  f.w.handleControlGrant(f.lease); await f.settle();
+  assert.equal(f.w.pc, pc); assert.equal(f.peers.length, 1); assert.equal(f.w._peerCallbackOwner, owner);
+  assert.equal(f.w.currentConnectionAttemptId, attempt); assert.equal(f.w.connectionAttemptSequence, sequence);
+  assert.equal(f.w.ownsStartupOwner(owner), true);
+  await f.connect(); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.paint(); f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: different leased peer still retires', async () => {
+  const f = await afterGracePeerFixture();
+  const old = f.w.pc, owner = f.w._peerCallbackOwner;
+  assert.equal(old._wrdControlLease.leaseEpoch, 7);
+  f.w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await f.settle();
+  assert.notEqual(f.w.pc, old); assert.equal(old.connectionState, 'closed');
+  assert.equal(f.w.ownsStartupOwner(owner), false);
+  assert.equal(f.w._peerCallbackOwner.peer, f.w.pc);
+  assert.equal(f.w._peerCallbackOwner.attempt, f.w.currentConnectionAttemptId);
+  assert.equal(f.w._peerCallbackOwner.sequence, f.w.connectionAttemptSequence);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  await f.connect(); f.ackMedia(f.mediaRequest());
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.paint(); f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});

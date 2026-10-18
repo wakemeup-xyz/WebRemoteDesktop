@@ -4181,7 +4181,9 @@ const WebRTC = {
       && (previousLease.leaseId !== data.leaseId || previousLease.leaseEpoch !== data.leaseEpoch);
     const peerLease = this.pc?._wrdControlLease;
     const differentPeerLease = peerLease && (peerLease.leaseId !== data.leaseId || peerLease.leaseEpoch !== data.leaseEpoch);
-    if (differentPeerLease) {
+    // A new attempt cannot inherit an unleased peer's old callback owner.
+    const unleasedPeerChangesAttempt = this.pc && mediaLeaseChanged && !peerLease;
+    if (differentPeerLease || unleasedPeerChangesAttempt) {
       this.cancelDataChannelWatchdog();
       const oldPeer = this.pc;
       for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',

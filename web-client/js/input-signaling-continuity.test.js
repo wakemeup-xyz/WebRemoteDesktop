@@ -70,7 +70,17 @@ function fixture({ heartbeat = false } = {}) {
   WebRTC.inputChannel = { readyState: 'open', send(payload) {
     sent.push({ channel: 'datachannel', ...JSON.parse(payload) });
   } };
-  WebRTC.pc = { connectionState: 'connected' };
+  // Regrants may retire even an unleased peer. Supply the browser boundaries
+  // needed by the real retirement/replacement path rather than a state-only PC.
+  context.RTCPeerConnection = class ContinuityPeer {
+    constructor() { this.connectionState = 'connected'; }
+    createDataChannel() {
+      return { readyState: 'open', bufferedAmount: 0,
+        send(payload) { sent.push({ channel: 'datachannel', ...JSON.parse(payload) }); }, close() {} };
+    }
+    close() { this.connectionState = 'closed'; }
+  };
+  WebRTC.pc = new context.RTCPeerConnection();
   WebRTC.currentConnectionAttemptId = 'offline-attempt';
   WebRTC._mediaReadyConnectionAttemptId = 'offline-attempt';
   WebRTC.uiPhase = 'connected';
@@ -87,6 +97,10 @@ function fixture({ heartbeat = false } = {}) {
   const lease = { leaseId: 'offline-lease', leaseEpoch: 7 };
   const grant = (next = lease) => WebRTC.handleControlGrant({ controller: true, ...next });
   grant();
+  // This fixture starts with an already-negotiated healthy peer. Its stubbed
+  // createOffer does not install the identity that the real offer would bind.
+  WebRTC.pc._wrdControlLease = { ...lease };
+  WebRTC.pc._wrdConnectionAttemptId = WebRTC.currentConnectionAttemptId;
   const acknowledge = (write, status = 'applied') => {
     const ack = { schemaVersion: 2, inputType: write.type, inputIds: write.inputIds,
       leaseEpoch: write.leaseEpoch, appliedSeq: write.seq, status };
@@ -206,13 +220,20 @@ test('real revocation and a different regrant discard suspended identity and sta
     h.disconnect();
     if (revokeFirst) h.WebRTC.freezeControl('control-revoked');
     h.WebRTC.socket.connected = true;
+    const beforeGrant = h.sent.length;
     h.grant({ leaseId: 'different-lease', leaseEpoch: 8 });
     assert.equal(h.Input._suspendedControlLease, null);
     assert.equal(h.Input._signalingInputResumePending, false);
-    assert.equal(h.Input.keyboardTransport.getSnapshot().lastSent, 0);
+    // Actual peer retirement removes the old DC before lease rebind. When the
+    // suspended identity is still present, the real transport emits reset #1
+    // over the socket; it must be ACKed before the next keyboard write.
+    const resets = h.sent.slice(beforeGrant).filter(write => write.type === 'keyboard' && write.action === 'reset');
+    assert.equal(resets.length, revokeFirst ? 0 : 1);
+    resets.forEach(write => { assert.equal(write.seq, 1); h.acknowledge(write); });
+    assert.equal(h.Input.keyboardTransport.getSnapshot().lastSent, resets.length);
     assert.equal(h.Input._desktopWriteSequence, 0);
     assert.equal(h.Input.keyboardController.sendText('fresh'), true);
-    assert.equal(h.sent.at(-1).seq, 1);
+    assert.equal(h.sent.at(-1).seq, resets.length + 1);
   }
 });
 
