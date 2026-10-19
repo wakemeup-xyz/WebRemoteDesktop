@@ -806,3 +806,92 @@ test('native latency: frame without an accepted send cannot populate the slot', 
   f.send(); f.acknowledge(); f.present();
   assert.equal(f.read({ finalize: true }).state, 'COMPLETE');
 });
+
+for (const transport of ['datachannel', 'socket']) {
+  for (const [inputType, action] of [['mouse', 'down'], ['mouse', 'up'], ['mouse', 'wheel'], ['keyboard', 'text']]) {
+    test(`native latency: saved reliable ${inputType}/${action}/${transport} replay via unordered path preserves late M2`, () => {
+      const f = controlledFixture({ transport, inputType, action });
+      f.ack.hostAdapterAwaitMs = 0; f.ack.hostQueueMs = 2; f.ack.hostApplyMs = 3;
+      f.begin(); f.send(); f.acknowledge();
+      const first = f.read();
+      const replay = { ...f.ackContext, verdict: 'unordered-applied', viewerClockMs: 130 };
+      assert.equal(f.m.observeControlledAck(f.ack, replay), false);
+      const pending = f.read();
+      assert.equal(pending.state, 'PENDING'); assert.equal(pending.reason, 'post-apply-missing');
+      assert.equal(pending.finalized, false); assert.equal(pending.postApply, null);
+      assert.deepEqual(pending.ack, first.ack); assert.deepEqual(pending.hostTiming, first.hostTiming);
+      assert.equal(pending.beganAtMs, first.beganAtMs); assert.equal(pending.deadlineAtMs, first.deadlineAtMs);
+      assert.deepEqual(pending.observationCounters, { duplicateAcks: 1, invalidObservations: 0 });
+      f.present();
+      const final = f.read({ finalize: true });
+      assert.equal(final.state, 'COMPLETE'); assert.equal(final.finalized, true);
+      assert.equal(final.ack.viewerClockMs, 120); assert.equal(final.postApply.viewerClockMs, 130);
+      assert.deepEqual(final.hostTiming, { hostAdapterAwaitMs: 0, hostQueueMs: 2, hostApplyMs: 3 });
+    });
+  }
+}
+
+for (const transport of ['datachannel', 'socket']) {
+  for (const [name, ackPatch, contextPatch, reason] of [
+    ['unknown verdict', {}, { verdict: 'unknown' }, 'conflicting-observation'],
+    ['missing verdict', {}, { verdict: undefined }, 'conflicting-observation'],
+    ['future sequence', { appliedSeq: 2 }, {}, 'conflicting-observation'],
+    ['wrong type', { inputType: 'keyboard' }, {}, 'conflicting-observation'],
+    ['wrong epoch', { leaseEpoch: 3 }, {}, 'conflicting-observation'],
+    ['wrong schema', { schemaVersion: 1 }, {}, 'conflicting-observation'],
+    ['wire duplicate status', { status: 'duplicate' }, {}, 'conflicting-observation'],
+    ['multiple IDs', { inputIds: ['lab_1', 'other'] }, {}, 'conflicting-observation'],
+    ['conflicting timing', { hostApplyMs: 9 }, {}, 'conflicting-observation'],
+    ['wrong source', {}, { source: {} }, 'source-changed'],
+    ['wrong lease', {}, { leaseId: 'other' }, 'lease-changed'],
+    ['wrong scope', {}, { scope: { connectionAttemptId: 'attempt', generation: 3, leaseEpoch: 4 } }, 'scope-changed'],
+    ['wrong stream', {}, { streamId: 'other' }, 'scope-changed'],
+    ['wrong PC', {}, { pc: {} }, 'source-changed'],
+    ['future clock', {}, { viewerClockMs: 150 }, 'clock-invalid'],
+    ['clock before send', {}, { viewerClockMs: 99 }, 'clock-invalid'],
+  ]) test(`native latency: saved ${transport} replay cannot bypass ${name}`, () => {
+    const f = controlledFixture({ transport }); f.begin(); f.send(); f.acknowledge();
+    const first = f.read();
+    assert.equal(f.m.observeControlledAck({ ...f.ack, ...ackPatch },
+      { ...f.ackContext, verdict: 'unordered-applied', viewerClockMs: 130, ...contextPatch }), false);
+    const row = f.read();
+    assert.equal(row.reason, reason); assert.equal(row.state, 'INCOMPLETE');
+    assert.equal(row.observationCounters.duplicateAcks, 0);
+    assert.deepEqual(row.ack, first.ack); assert.deepEqual(row.hostTiming, first.hostTiming);
+  });
+}
+
+for (const transport of ['datachannel', 'socket']) test(`native latency: saved ${transport} replay rechecks fresh selected source`, () => {
+  const f = controlledFixture({ transport }); f.begin(); f.send(); f.acknowledge();
+  if (transport === 'socket') f.live.socket.id = 'new-socket-id';
+  else f.live.datachannel.selectedReliableSendSource = {};
+  assert.equal(f.m.observeControlledAck(f.ack, { ...f.ackContext, verdict: 'unordered-applied', viewerClockMs: 130 }), false);
+  assert.equal(f.read().reason, 'source-changed');
+  assert.equal(f.read().observationCounters.duplicateAcks, 0);
+});
+
+test('native latency: saved socket replay must retain incoming socket ID', () => {
+  const f = controlledFixture({ transport: 'socket' }); f.begin(); f.send(); f.acknowledge();
+  assert.equal(f.m.observeControlledAck(f.ack, { ...f.ackContext, verdict: 'unordered-applied', socketId: 'other' }), false);
+  assert.equal(f.read().reason, 'source-changed'); assert.equal(f.read().observationCounters.duplicateAcks, 0);
+});
+
+test('native latency: unrelated replay ID cannot alter saved ACK or acquire duplicate qualification', () => {
+  const f = controlledFixture(); f.begin(); f.send(); f.acknowledge();
+  const before = f.read();
+  assert.equal(f.m.observeControlledAck({ ...f.ack, inputIds: ['other'] }, { ...f.ackContext, verdict: 'unordered-applied' }), false);
+  assert.deepEqual(f.read(), before);
+});
+
+for (const transport of ['datachannel', 'socket']) {
+  for (const [inputType, action, verdict] of [['mouse', 'down', 'unordered-applied'], ['keyboard', 'text', 'unordered-applied'], ['mouse', 'move', 'reliable-applied']]) {
+    test(`native latency: first ${inputType}/${action}/${transport} ACK still requires original action authority`, () => {
+      const f = controlledFixture({ transport, inputType, action }); f.begin(); f.send(); f.setNow(140);
+      assert.equal(f.m.observeControlledAck(f.ack, { ...f.ackContext, verdict }), false);
+      const row = f.read();
+      assert.equal(row.ack, null); assert.equal(row.state, 'PENDING'); assert.equal(row.finalized, false);
+      assert.deepEqual(row.observationCounters, { duplicateAcks: 0, invalidObservations: 1 });
+      assert.equal(f.acknowledge(), true);
+    });
+  }
+}

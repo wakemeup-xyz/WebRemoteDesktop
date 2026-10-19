@@ -265,7 +265,7 @@ const createLatencyMonitor = (options = {}) => {
         const move = controlled.inputType === 'mouse' && controlled.action === 'move';
         if (ack.schemaVersion !== 2 || ack.inputIds.length !== 1 || ack.inputType !== controlled.inputType
             || ack.leaseEpoch !== controlled.scope.leaseEpoch || ack.status !== 'applied'
-            || context.verdict !== (move ? 'unordered-applied' : 'reliable-applied')
+            || !['reliable-applied', 'unordered-applied'].includes(context.verdict)
             || (!move && ack.appliedSeq !== r.seq)) return controlledReject(controlled.ack ? 'conflicting-observation' : null);
         const timing = Object.fromEntries(['hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs']
           .map(k => [k, valid(ack[k]) ? ack[k] : null]));
@@ -274,6 +274,10 @@ const createLatencyMonitor = (options = {}) => {
           if (controlled.ackKey !== key) return controlledReject('conflicting-observation');
           controlledInc('duplicateAcks'); return false;
         }
+        // A reliable replay can arrive through the unordered observer after C
+        // consumes pending state. Only the saved ACK permits duplicate handling;
+        // the first ACK still requires its original action-specific authority.
+        if (context.verdict !== (move ? 'unordered-applied' : 'reliable-applied')) return controlledReject();
         controlled.ack = { ...controlledRow(context.viewerClockMs), status: 'applied' };
         controlled.ackKey = key; controlled.hostTiming = timing;
         return controlledBudget(t);
