@@ -398,6 +398,22 @@ const Input = {
       traceResult(false);
       throw error;
     }
+    try {
+      const viewerClockMs = performance.now();
+      if (typeof LatencyMonitor !== 'undefined' && typeof WebRTC !== 'undefined'
+          && payload.leaseId === this.activeControlLease?.leaseId
+          && payload.leaseEpoch === this.activeControlLease?.leaseEpoch) {
+        LatencyMonitor.observeControlledSend?.({
+          inputId: payload.inputIds?.length === 1 ? payload.inputIds[0] : null,
+          leaseId: payload.leaseId, leaseEpoch: payload.leaseEpoch,
+          inputType: payload.type, action: payload.action, seq: payload.seq ?? null,
+        }, {
+          viewerClockMs, scope: this.latencyScope(), streamId: WebRTC.currentFrameTraceIdentity().streamId,
+          transport: 'socket', sendSource: socket, ackSource: socket, socketId: socket.id || null,
+          pc: WebRTC.pc || null, live: WebRTC.captureControlledTransportSnapshot(),
+        });
+      }
+    } catch (_) { /* Observation cannot change an accepted delivery. */ }
     traceResult(true);
     this.recordLatency(payload, 'socket');
     return true;
@@ -2596,6 +2612,22 @@ const Input = {
         if (reliableWrite) this._getInputBudget().release(data.inputIds[0]);
         throw error;
       }
+      try {
+        const viewerClockMs = performance.now();
+        if (typeof LatencyMonitor !== 'undefined' && typeof WebRTC !== 'undefined'
+            && data.leaseId === this.activeControlLease?.leaseId
+            && data.leaseEpoch === this.activeControlLease?.leaseEpoch) {
+          LatencyMonitor.observeControlledSend?.({
+            inputId: data.inputIds?.length === 1 ? data.inputIds[0] : null,
+            leaseId: data.leaseId, leaseEpoch: data.leaseEpoch,
+            inputType: data.type, action: data.action, seq: data.seq ?? null,
+          }, {
+            viewerClockMs, scope: this.latencyScope(), streamId: WebRTC.currentFrameTraceIdentity().streamId,
+            transport: 'socket', sendSource: socket, ackSource: socket, socketId: socket.id || null,
+            pc: WebRTC.pc || null, live: WebRTC.captureControlledTransportSnapshot(),
+          });
+        }
+      } catch (_) { /* Observation cannot change an accepted delivery. */ }
       this._recordInputTrace('transport-send', {
         inputType: traceInputType,
         action,

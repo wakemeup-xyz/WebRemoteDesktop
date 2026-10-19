@@ -226,6 +226,426 @@ function loadWebRTC(overrides = {}) {
   return { WebRTC: context.__WebRTC, context, elements, cleanup };
 }
 
+test('native latency: accepted channel send and ACK entry survive later observer work', () => {
+  let now = 100;
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  const sends = [];
+  const observeSend = monitor.observeControlledSend;
+  monitor.observeControlledSend = (meta, context) => {
+    sends.push(context.viewerClockMs);
+    return observeSend(meta, context);
+  };
+  const { WebRTC: w, context } = loadWebRTC({ realInput: true,
+    LatencyMonitor: monitor, performance: { now: () => now } });
+  const input = context.__Input;
+  w.currentConnectionAttemptId = 'attempt'; w.connectionAttemptSequence = 2; w.pc = {};
+  input.activeControlLease = { leaseId: 'lease', leaseEpoch: 4 }; input.isActive = true;
+  const channel = w.inputChannel = { readyState: 'open', bufferedAmount: 0, send() { now = 110; } };
+  w.socket = { connected: false };
+  const reservation = input.prepareLabInput('mouse', 'down', { relX: .5, relY: .5 });
+  monitor.setScope(w.latencyScope());
+  assert.equal(monitor.beginControlledInputEvidence({ inputId: reservation.inputId,
+    leaseId: 'lease', scope: w.latencyScope(), streamId: 'video', inputType: 'mouse', action: 'down' }), true);
+  const originalTrace = input._recordInputTrace;
+  input._recordInputTrace = function(...args) {
+    const result = originalTrace.apply(this, args); now = Math.max(now, 200); return result;
+  };
+  assert.equal(input.dispatchPreparedLabInput(reservation), reservation.inputId);
+  assert.deepEqual(sends, [110]);
+  const pending = input._desktopWritePending.get(reservation.inputId);
+  const originalAck = input._acceptMouseAck;
+  input._acceptMouseAck = function(ack) {
+    const result = originalAck.call(this, ack); now = 400; return result;
+  };
+  now = 300;
+  w.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', leaseEpoch: 4,
+    inputIds: [reservation.inputId], appliedSeq: pending.seq, status: 'applied' },
+  { transport: 'datachannel', dataChannel: channel });
+  const row = monitor.readControlledInputEvidence(reservation.inputId, {
+    scope: w.latencyScope(), leaseId: 'lease', streamId: 'video', pc: w.pc,
+    live: w.captureControlledTransportSnapshot(),
+  });
+  assert.equal(row.send.viewerClockMs, 110);
+  assert.equal(row.ack.viewerClockMs, 300);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, 200);
+});
+
+function nativeLatencyFixture({ transport = 'datachannel', type = 'mouse', action = 'down',
+  traceUnavailable = false, wallStep = 0 } = {}) {
+  let mono = 100, wall = 1792208500000;
+  class PageDate extends Date { static now() { return wall; } }
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => mono });
+  const trace = require('./input-trace.js').InputTrace.create({ now: () => mono,
+    hashInputIds: null, setTimeoutFn: () => null, clearTimeoutFn() {} });
+  const { WebRTC: w, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor,
+    performance: { now: () => mono }, Date: PageDate });
+  const input = context.__Input;
+  // Only the collector capability is substituted; trace, pruning and product methods stay real.
+  input._traceCollector = traceUnavailable ? () => null : () => trace;
+  w.currentConnectionAttemptId = 'attempt'; w.connectionAttemptSequence = 2; w.pc = {};
+  input.activeControlLease = { leaseId: 'lease', leaseEpoch: 4 }; input.isActive = true;
+  const sent = [], observedSends = [];
+  const accepted = data => { sent.push(JSON.parse(JSON.stringify(data))); mono = 110; };
+  const reliable = w.inputChannel = { readyState: transport === 'datachannel' ? 'open' : 'closed',
+    bufferedAmount: 0, send(json) { accepted(JSON.parse(json)); } };
+  const move = w.inputMoveChannel = { readyState: reliable.readyState, bufferedAmount: 0,
+    send(json) { accepted(JSON.parse(json)); } };
+  const socket = w.socket = { connected: transport === 'socket', id: 'socket',
+    emit(event, data) { assert.equal(event, 'input'); accepted(data); } };
+  const observeSend = monitor.observeControlledSend;
+  monitor.observeControlledSend = (meta, current) => {
+    observedSends.push({ meta, current }); return observeSend(meta, current);
+  };
+  const payload = type === 'keyboard' ? { text: 'offline fixture' } : { relX: .5, relY: .5 };
+  const reservation = input.prepareLabInput(type, action, payload);
+  assert.ok(reservation);
+  const current = () => ({ scope: w.latencyScope(), leaseId: input.activeControlLease?.leaseId,
+    streamId: w.currentFrameTraceIdentity().streamId, pc: w.pc, live: w.captureControlledTransportSnapshot() });
+  monitor.setScope(w.latencyScope());
+  assert.equal(monitor.beginControlledInputEvidence({ inputId: reservation.inputId, leaseId: 'lease',
+    scope: w.latencyScope(), streamId: 'video', inputType: type, action }), true);
+  const source = transport === 'socket' ? { transport, socket } : { transport, dataChannel: reliable };
+  const ack = (overrides = {}, incoming = source) => w.acceptObservedInputAck({ schemaVersion: 2,
+    inputType: type, inputIds: [reservation.inputId], leaseEpoch: 4, status: 'applied',
+    ...(action === 'move' ? {} : { appliedSeq: sent[0]?.seq }), ...overrides }, incoming);
+  return { w, input, context, monitor, trace, reliable, move, socket, sent, observedSends,
+    reservation, payload, source, current, ack, set: value => { mono = value; },
+    jump: () => { wall += wallStep; }, dispatch: () => input.dispatchPreparedLabInput(reservation),
+    row: options => monitor.readControlledInputEvidence(reservation.inputId, current(), options) };
+}
+
+for (const traceUnavailable of [false, true]) for (const wallStep of [-60000, 0, 60000]) {
+  for (const variant of ['accepted', 'wrong-source', 'unknown-id', 'buffered']) {
+    test(`native latency: trace independent move ${traceUnavailable}/${wallStep}/${variant}`, () => {
+      const f = nativeLatencyFixture({ action: 'move', traceUnavailable, wallStep });
+      try {
+        if (variant === 'buffered') f.move.bufferedAmount = 4097;
+        assert.equal(f.dispatch(), f.reservation.inputId);
+        assert.equal(f.input._desktopWritePending.size, 0);
+        f.jump(); f.set(210);
+        if (variant === 'wrong-source') f.ack({}, { transport: 'datachannel', dataChannel: f.move });
+        else f.ack(variant === 'unknown-id' ? { inputIds: ['unknown'] } : {});
+        const row = f.row();
+        assert.equal(row.send?.viewerClockMs ?? null, variant === 'buffered' ? null : 110);
+        assert.equal(row.ack?.viewerClockMs ?? null, variant === 'accepted' ? 210 : null);
+        assert.equal(f.sent.length, variant === 'buffered' ? 0 : 1);
+        assert.equal(f.observedSends.length, variant === 'buffered' ? 0 : 1);
+        if (traceUnavailable || wallStep !== 0 || variant === 'accepted') {
+          assert.equal(f.input._unorderedTraceSends.size, 0);
+        }
+        if (variant === 'accepted') {
+          assert.equal(f.observedSends[0].current.sendSource, f.move);
+          assert.equal(f.observedSends[0].current.ackSource, f.reliable);
+          assert.equal(f.monitor.snapshot().metrics.inputAckRttMs.last, 100);
+        }
+      } finally { f.trace.dispose(); }
+    });
+  }
+}
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: genuine ${transport} send keeps raw v2 envelope and one-use reservation`, () => {
+    const f = nativeLatencyFixture({ transport });
+    try {
+      assert.equal(f.dispatch(), f.reservation.inputId);
+      assert.equal(f.dispatch(), null);
+      assert.deepEqual(f.sent, [{ type: 'mouse', action: 'down', payload: f.payload,
+        inputIds: [f.reservation.inputId], schemaVersion: 2, leaseId: 'lease', leaseEpoch: 4, seq: 1,
+        ...(transport === 'datachannel' ? { transport: 'datachannel' } : {}) }]);
+      assert.equal(f.row().send.viewerClockMs, 110);
+      assert.equal(f.observedSends.length, 1);
+      const meta = f.observedSends[0].meta;
+      assert.deepEqual(Object.keys(meta).sort(), ['action', 'inputId', 'inputType', 'leaseEpoch', 'leaseId', 'seq']);
+      assert.equal(JSON.stringify(meta).includes('payload'), false);
+      f.set(210); f.ack();
+      assert.equal(f.row().ack.viewerClockMs, 210);
+      assert.equal(f.input._desktopWritePending.size, 0);
+      assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: DC refusal records exactly one socket acceptance with the original ID', () => {
+  const f = nativeLatencyFixture({ transport: 'socket' });
+  try {
+    f.reliable.readyState = 'open'; f.reliable.bufferedAmount = 524289;
+    assert.equal(f.dispatch(), f.reservation.inputId);
+    assert.equal(f.observedSends.length, 1);
+    assert.equal(f.observedSends[0].current.transport, 'socket');
+    assert.equal(f.sent[0].inputIds[0], f.reservation.inputId);
+    f.set(210); f.ack(); assert.equal(f.row().ack.viewerClockMs, 210);
+  } finally { f.trace.dispose(); }
+});
+
+for (const failure of ['channel-throw', 'socket-throw', 'disconnected', 'quarantined-selected-move']) {
+  test(`native latency: ${failure} creates no actual-send evidence`, () => {
+    const f = nativeLatencyFixture({ transport: failure === 'socket-throw' ? 'socket' : 'datachannel',
+      action: failure === 'quarantined-selected-move' ? 'move' : 'down' });
+    try {
+      const error = new Error('fixture refusal');
+      if (failure === 'channel-throw') f.reliable.send = () => { throw error; };
+      if (failure === 'socket-throw') f.socket.emit = () => { throw error; };
+      if (failure === 'disconnected') { f.reliable.readyState = 'closed'; f.socket.connected = false; }
+      if (failure === 'quarantined-selected-move') f.w._quarantinedInputChannel = f.move;
+      if (failure.endsWith('throw')) assert.throws(f.dispatch, actual => actual === error);
+      else assert.equal(f.dispatch(), null);
+      assert.equal(f.observedSends.length, 0);
+      assert.equal(f.row().send, null);
+      assert.equal(f.sent.length, 0);
+      if (failure === 'quarantined-selected-move') {
+        const live = f.w.captureControlledTransportSnapshot();
+        assert.equal(live.datachannel.selectedMoveSendSource, null);
+        assert.equal(live.datachannel.selectedReliableSendSource, f.reliable);
+      }
+    } finally { f.trace.dispose(); }
+  });
+}
+
+const nativeRotations = {
+  'move-channel': f => { f.w.inputMoveChannel = { ...f.move }; },
+  'reliable-channel': f => { f.w.inputChannel = { ...f.reliable }; },
+  'socket-object': f => { f.w.socket = { ...f.socket }; },
+  'socket-id': f => { f.socket.id = 'rotated'; },
+  'pc': f => { f.w.pc = {}; },
+};
+for (const phase of ['before-ack', 'after-completion']) for (const [name, rotate] of Object.entries(nativeRotations)) {
+  test(`native latency: ${name} rotation ${phase} fails the fresh source fence`, () => {
+    const f = nativeLatencyFixture({ action: name.startsWith('socket') ? 'down' : 'move',
+      transport: name.startsWith('socket') ? 'socket' : 'datachannel' });
+    try {
+      f.dispatch(); f.set(210);
+      if (phase === 'before-ack') rotate(f);
+      f.ack();
+      if (phase === 'after-completion') {
+        f.set(220);
+        f.monitor.onPostApplyFrame({ inputIds: [f.reservation.inputId], scope: f.w.latencyScope(),
+          attemptId: 'attempt', generation: 2, streamId: 'video', viewerClockMs: 215,
+          captureSeq: 1, rtpTimestamp: 44, wireTimestamp: 44, rtpOrigin: 0,
+          traceStatus: 'matched', captureFresh: true, captureAfterApplied: true }, { scope: f.w.latencyScope() });
+        assert.equal(f.row().state, 'COMPLETE'); rotate(f);
+      }
+      const row = f.row({ finalize: true });
+      assert.equal(row.reason, 'source-changed'); assert.equal(row.state, 'INCOMPLETE');
+      if (phase === 'before-ack') assert.equal(row.ack, null);
+      // The observer fence does not rewrite C's outcome; old socket ACKs are already rejected by C.
+      assert.equal(f.monitor.snapshot().outcomes.acked,
+        phase === 'before-ack' && name.startsWith('socket') ? 0 : 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const change of ['scope', 'lease', 'epoch', 'future-sequence', 'stale-status', 'wrong-type', 'unknown-id']) {
+  test(`native latency: ${change} cannot produce a controlled applied ACK`, () => {
+    const f = nativeLatencyFixture();
+    try {
+      f.dispatch(); f.set(210);
+      if (change === 'scope') f.w.connectionAttemptSequence++;
+      if (change === 'lease') f.input.activeControlLease = { leaseId: 'new-lease', leaseEpoch: 4 };
+      if (change === 'epoch') f.input.activeControlLease = { leaseId: 'lease', leaseEpoch: 5 };
+      f.ack(change === 'future-sequence' ? { appliedSeq: 999 }
+        : change === 'stale-status' ? { status: 'stale-lease' }
+          : change === 'wrong-type' ? { inputType: 'keyboard' }
+            : change === 'unknown-id' ? { inputIds: ['unknown'] } : {});
+      assert.equal(f.row().ack, null);
+      assert.equal(f.row({ finalize: true }).state, 'INCOMPLETE');
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: duplicate actual ACK handling keeps one controlled sample and M1 result', () => {
+  const f = nativeLatencyFixture({ action: 'move' });
+  try {
+    f.dispatch(); f.set(210); f.ack(); f.set(230); f.ack();
+    assert.equal(f.row().ack.viewerClockMs, 210);
+    assert.equal(f.row().observationCounters.duplicateAcks, 1);
+    assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+    assert.equal(f.monitor.snapshot().metrics.inputAckRttMs.count, 1);
+  } finally { f.trace.dispose(); }
+});
+
+test('native latency: lease replacement during real C processing cannot qualify the entry clock', () => {
+  const f = nativeLatencyFixture();
+  try {
+    f.dispatch();
+    const accept = f.input._acceptMouseAck;
+    f.input._acceptMouseAck = function(...args) {
+      const result = accept.apply(this, args);
+      this.activeControlLease = { leaseId: 'replacement', leaseEpoch: 4 };
+      return result;
+    };
+    f.set(210); f.ack();
+    assert.equal(f.row().ack, null); assert.equal(f.row().reason, 'lease-changed');
+    assert.equal(f.input._desktopWritePending.size, 0);
+    assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+  } finally { f.trace.dispose(); }
+});
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: ${transport} API accepting across lease replacement records no controlled send`, () => {
+    const f = nativeLatencyFixture({ transport });
+    try {
+      const source = transport === 'socket' ? f.socket : f.reliable;
+      const method = transport === 'socket' ? 'emit' : 'send', send = source[method];
+      source[method] = function(...args) {
+        const result = send.apply(this, args);
+        f.input.activeControlLease = { leaseId: 'replacement', leaseEpoch: 4 };
+        return result;
+      };
+      assert.equal(f.dispatch(), f.reservation.inputId);
+      assert.equal(f.sent.length, 1); assert.equal(f.row().send, null);
+      assert.equal(f.observedSends.length, 0);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const fault of ['missing-monitor', 'send-observer', 'ack-observer', 'snapshot', 'clock', 'stream-context']) {
+  test(`native latency: ${fault} failure preserves real delivery, C/M1 and final trace`, () => {
+    const f = nativeLatencyFixture();
+    try {
+      const throws = () => { throw new Error('observer fixture'); };
+      if (fault === 'missing-monitor') delete f.context.LatencyMonitor;
+      if (fault === 'send-observer') f.monitor.observeControlledSend = throws;
+      if (fault === 'ack-observer') f.monitor.observeControlledAck = throws;
+      if (fault === 'snapshot') f.w.captureControlledTransportSnapshot = throws;
+      let failClock = false;
+      if (fault === 'clock') {
+        const now = f.context.performance.now, send = f.reliable.send;
+        f.reliable.send = function(...args) { send.apply(this, args); failClock = true; };
+        f.context.performance.now = () => {
+          if (failClock) { failClock = false; return throws(); }
+          return now();
+        };
+      }
+      if (fault === 'stream-context') f.w.currentFrameTraceIdentity = throws;
+      assert.equal(f.dispatch(), f.reservation.inputId);
+      f.set(210); if (fault === 'clock') failClock = true;
+      assert.doesNotThrow(() => f.ack());
+      assert.equal(f.input._desktopWritePending.size, 0);
+      assert.equal(f.input._desktopWriteSequence, 1);
+      assert.equal(f.sent.length, 1);
+      assert.equal(f.trace.snapshot().events.some(event => event.stage === 'ack'), true);
+      if (fault !== 'missing-monitor') assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: prepared desktop keyboard text records ${transport} acceptance without inventing C authority`, () => {
+    const f = nativeLatencyFixture({ transport, type: 'keyboard', action: 'text' });
+    try {
+      assert.equal(f.dispatch(), f.reservation.inputId); assert.equal(f.dispatch(), null);
+      assert.equal(f.row().send.viewerClockMs, 110);
+      assert.equal(f.sent[0].payload.text, f.payload.text);
+      f.set(210); f.ack();
+      assert.equal(f.row().ack, null); // Existing C requires KeyboardTransport-owned pending.
+      assert.equal(f.input._desktopWritePending.size, 1);
+    } finally { f.trace.dispose(); }
+  });
+
+  test(`native latency: actual keyboard wrapper ${transport} send and C-applied ACK retain raw clocks`, () => {
+    const f = nativeLatencyFixture({ transport, type: 'keyboard', action: 'text' });
+    try {
+      // The real transport owns its ledger; its supported ID allocator joins the prepared fixture ID.
+      f.input.keyboardTransport = f.context.KeyboardTransport.create({
+        makeInputId: () => f.reservation.inputId, now: f.context.performance.now,
+        sendDataChannel: transport === 'datachannel' ? data => f.input.sendKeyboardDataChannel(data) : undefined,
+        sendSocket: data => f.input.sendKeyboardSocket(data),
+        getConnectionAttemptId: () => f.w.currentConnectionAttemptId,
+        getSocket: () => f.w.socket, getDataChannel: () => f.w.inputChannel,
+        setTimeoutFn: () => null, clearTimeoutFn() {},
+      });
+      f.input.keyboardTransport.setLease(f.input.activeControlLease);
+      const envelope = { type: 'keyboard', action: 'text', payload: f.payload,
+        inputIds: [f.reservation.inputId] };
+      assert.ok(f.input.keyboardTransport.send(envelope));
+      assert.equal(f.row().send.viewerClockMs, 110);
+      f.set(210); f.ack({ appliedSeq: f.sent[0].seq, pressedKeyCount: 0, modifierMask: 0 });
+      assert.equal(f.row().ack.viewerClockMs, 210);
+      assert.equal(f.input.keyboardTransport.getSnapshot().pendingCount, 0);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: socket and channel candidates are finite with no action or trace lookup (${transport})`, () => {
+    const f = nativeLatencyFixture({ transport });
+    try {
+      assert.equal(f.w.captureControlledTransportSnapshot.length, 0);
+      f.dispatch();
+      // An unused path is not an identity fence for this reservation.
+      f.w.inputMoveChannel = { ...f.move };
+      if (transport === 'socket') f.w.inputChannel = { ...f.reliable };
+      f.set(210); f.ack();
+      assert.equal(f.row().ack.viewerClockMs, 210);
+      const live = f.w.captureControlledTransportSnapshot();
+      assert.deepEqual(Object.keys(live).sort(), ['datachannel', 'pc', 'socket']);
+      assert.deepEqual(Object.keys(live.datachannel).sort(),
+        ['reliableAckSource', 'selectedMoveSendSource', 'selectedReliableSendSource']);
+      assert.deepEqual(Object.keys(live.socket).sort(), ['id', 'object', 'reliableAckSource', 'selectedSendSource']);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: move selection survives quarantine of the unused reliable send candidate', () => {
+  const f = nativeLatencyFixture({ action: 'move' });
+  try {
+    f.w._quarantinedInputChannel = f.reliable;
+    assert.equal(f.dispatch(), f.reservation.inputId);
+    const live = f.w.captureControlledTransportSnapshot();
+    assert.equal(live.datachannel.selectedMoveSendSource, f.move);
+    assert.equal(live.datachannel.selectedReliableSendSource, null);
+    assert.equal(live.datachannel.reliableAckSource, f.reliable);
+    f.set(210); f.ack(); assert.equal(f.row().ack.viewerClockMs, 210);
+  } finally { f.trace.dispose(); }
+});
+
+for (const site of ['desktop', 'keyboard-wrapper']) {
+  test(`native latency: ${site} socket acceptance precedes trace and sequence observation`, () => {
+    const f = nativeLatencyFixture({ transport: 'socket', type: site === 'desktop' ? 'mouse' : 'keyboard',
+      action: site === 'desktop' ? 'down' : 'text' });
+    try {
+      const trace = f.input._recordInputTrace;
+      f.input._recordInputTrace = function(...args) {
+        const result = trace.apply(this, args); f.set(200); return result;
+      };
+      if (site === 'desktop') assert.equal(f.dispatch(), f.reservation.inputId);
+      else assert.equal(f.input.sendKeyboardSocket({ type: 'keyboard', action: 'text', payload: f.payload,
+        inputIds: [f.reservation.inputId], schemaVersion: 2, leaseId: 'lease', leaseEpoch: 4, seq: 1 }), true);
+      assert.equal(f.row().send.viewerClockMs, 110);
+      assert.equal(f.observedSends.length, 1);
+      assert.equal(f.monitor.snapshot().outcomes.sent, 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const action of ['down', 'move']) {
+  test(`native latency: real ${action} C then M1 then controlled observation then trace order`, () => {
+    const f = nativeLatencyFixture({ action });
+    try {
+      f.dispatch(); const order = [];
+      for (const [object, method, stage] of [[f.input, 'acceptMouseAck', 'C'],
+        [f.monitor, action === 'move' ? 'onUnorderedInputAck' : 'onInputAck', 'M1'],
+        [f.monitor, 'observeControlledAck', 'controlled'], [f.input, 'recordObservedInputAck', 'trace']]) {
+        const original = object[method];
+        object[method] = function(...args) { order.push(stage); return original.apply(this, args); };
+      }
+      f.set(210); f.ack();
+      assert.deepEqual(order, ['C', 'M1', 'controlled', 'trace']);
+      assert.equal(f.row().ack.viewerClockMs, 210);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: actual socket emit without a bounded socket ID cannot qualify evidence', () => {
+  const f = nativeLatencyFixture({ transport: 'socket' });
+  try {
+    f.socket.id = ''; assert.equal(f.dispatch(), f.reservation.inputId);
+    assert.equal(f.sent.length, 1); assert.equal(f.row().send, null);
+    f.set(210); f.ack(); assert.equal(f.row().ack, null);
+    assert.equal(f.input._desktopWritePending.size, 0);
+  } finally { f.trace.dispose(); }
+});
+
 test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
   const { WebRTC, cleanup } = loadWebRTC();
   let cleared = false;

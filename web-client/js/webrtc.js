@@ -1299,7 +1299,37 @@ const WebRTC = {
     if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.setScope?.(this.latencyScope());
   },
 
+  captureControlledTransportSnapshot() {
+    const reliable = this.inputChannel;
+    const move = this.inputMoveChannel?.readyState === 'open' ? this.inputMoveChannel : reliable;
+    const selected = channel => channel?.readyState === 'open'
+      && channel !== this._quarantinedInputChannel ? channel : null;
+    const socket = this.socket || null;
+    const socketId = socket?.id;
+    return {
+      pc: this.pc || null,
+      datachannel: { selectedMoveSendSource: selected(move),
+        selectedReliableSendSource: selected(reliable), reliableAckSource: reliable || null },
+      socket: { selectedSendSource: socket?.connected ? socket : null,
+        reliableAckSource: socket?.connected ? socket : null, object: socket,
+        id: typeof socketId === 'string' && socketId.length > 0 && socketId.length <= 128 ? socketId : null },
+    };
+  },
+
   acceptObservedInputAck(data, context = {}) {
+    let controlledArrival = null;
+    try {
+      const viewerClockMs = performance.now();
+      controlledArrival = {
+        viewerClockMs, scope: this.latencyScope(),
+        leaseId: typeof Input !== 'undefined' ? Input.activeControlLease?.leaseId : null,
+        streamId: this.currentFrameTraceIdentity().streamId,
+        transport: context.transport,
+        source: context.transport === 'socket' ? context.socket : context.dataChannel,
+        socketId: context.transport === 'socket' ? (context.socket?.id || null) : null,
+        pc: this.pc || null,
+      };
+    } catch (_) { /* Raw evidence cannot affect ACK validation. */ }
     // Finish C's validation first. Timing never grants or repairs authority.
     const source = context.socket || context.dataChannel ? context : undefined;
     let metadata = null;
@@ -1323,6 +1353,15 @@ const WebRTC = {
           if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onUnorderedInputAck?.(data, {
             scope: this.latencyScope(), transport: context.transport,
           });
+          try {
+            if (controlledArrival && typeof LatencyMonitor !== 'undefined') {
+              LatencyMonitor.observeControlledAck?.(data, { ...controlledArrival,
+                scope: this.latencyScope(),
+                leaseId: typeof Input !== 'undefined' ? Input.activeControlLease?.leaseId : null,
+                pc: this.pc || null,
+                live: this.captureControlledTransportSnapshot(), verdict: 'unordered-applied' });
+            }
+          } catch (_) { /* Observation cannot change M1 or the early return. */ }
           return;
         }
       }
@@ -1330,6 +1369,16 @@ const WebRTC = {
         this.syncLatencyScope();
         LatencyMonitor.onInputAck(data, { scope: this.latencyScope() });
       }
+      try {
+        if (controlledArrival && results.some(result => result?.status === 'applied')
+            && typeof LatencyMonitor !== 'undefined') {
+          LatencyMonitor.observeControlledAck?.(data, { ...controlledArrival,
+            scope: this.latencyScope(),
+            leaseId: typeof Input !== 'undefined' ? Input.activeControlLease?.leaseId : null,
+            pc: this.pc || null,
+            live: this.captureControlledTransportSnapshot(), verdict: 'reliable-applied' });
+        }
+      } catch (_) { /* Observation cannot change C/M1 or final tracing. */ }
     } finally {
       // Passive tracing is last, including the unordered/stale early return.
       // Observer failures cannot alter the ACK result or M1 routing.
@@ -5117,6 +5166,20 @@ const WebRTC = {
       ...data,
       transport: 'datachannel'
     }));
+    try {
+      const viewerClockMs = performance.now();
+      if (typeof LatencyMonitor !== 'undefined' && typeof Input !== 'undefined'
+          && data.leaseId === Input.activeControlLease?.leaseId
+          && data.leaseEpoch === Input.activeControlLease?.leaseEpoch) LatencyMonitor.observeControlledSend?.({
+        inputId: data.inputIds?.length === 1 ? data.inputIds[0] : null,
+        leaseId: data.leaseId, leaseEpoch: data.leaseEpoch,
+        inputType: data.type, action: data.action, seq: data.seq ?? null,
+      }, {
+        viewerClockMs, scope: this.latencyScope(), streamId: this.currentFrameTraceIdentity().streamId,
+        transport: 'datachannel', sendSource: channel, ackSource: this.inputChannel,
+        socketId: null, pc: this.pc || null, live: this.captureControlledTransportSnapshot(),
+      });
+    } catch (_) { /* Observation cannot change an accepted delivery. */ }
     return true;
   },
 

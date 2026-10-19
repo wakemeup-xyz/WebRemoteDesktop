@@ -112,6 +112,43 @@ function loadInput(overrides = {}) {
   };
 }
 
+for (const site of ['desktop', 'keyboard-wrapper']) {
+  test(`native latency: real Input ${site} socket hook preserves wire data and raw API return time`, () => {
+    let now = 100;
+    const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+    const { Input, context, trace } = loadInput({ LatencyMonitor: monitor, performance: { now: () => now } });
+    // Load the actual snapshot implementation, with shell boot deferred by the fake DOM.
+    context.document.readyState = 'loading';
+    vm.runInContext(`${fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8')}\nglobalThis.__WebRTC = WebRTC;`, context);
+    const w = context.__WebRTC, sent = [];
+    w.currentConnectionAttemptId = 'attempt'; w.connectionAttemptSequence = 2; w.pc = {};
+    w.socket = { connected: true, id: 'socket', emit(event, data) { sent.push({ event, data }); now = 110; } };
+    Input.activeControlLease = { leaseId: 'lease', leaseEpoch: 4 }; Input.isActive = true;
+    const type = site === 'desktop' ? 'mouse' : 'keyboard', action = site === 'desktop' ? 'down' : 'text';
+    const payload = type === 'mouse' ? { relX: .5, relY: .5 } : { text: 'offline fixture' };
+    const reservation = Input.prepareLabInput(type, action, payload);
+    monitor.setScope(w.latencyScope());
+    monitor.beginControlledInputEvidence({ inputId: reservation.inputId, leaseId: 'lease',
+      scope: w.latencyScope(), streamId: 'video', inputType: type, action });
+    const record = Input._recordInputTrace;
+    Input._recordInputTrace = function(...args) { const result = record.apply(this, args); now = 200; return result; };
+    const wire = { type, action, payload, inputIds: [reservation.inputId], schemaVersion: 2,
+      leaseId: 'lease', leaseEpoch: 4, seq: 1 };
+    if (site === 'desktop') {
+      assert.equal(Input.dispatchPreparedLabInput(reservation), reservation.inputId);
+      assert.equal(Input.dispatchPreparedLabInput(reservation), null);
+    } else assert.equal(Input.sendKeyboardSocket(wire), true);
+    assert.deepEqual(JSON.parse(JSON.stringify(sent)), [{ event: 'input', data: wire }]);
+    if (site === 'keyboard-wrapper') assert.equal(sent[0].data, wire);
+    const row = monitor.readControlledInputEvidence(reservation.inputId, { scope: w.latencyScope(),
+      leaseId: 'lease', streamId: 'video', pc: w.pc, live: w.captureControlledTransportSnapshot() });
+    assert.equal(row.send.viewerClockMs, 110);
+    assert.equal(monitor.snapshot().outcomes.sent, 1);
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
+    Input._clearDesktopWriteTimer(); trace.dispose();
+  });
+}
+
 function loadUi(context) {
   const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__UI = UI;`, context);

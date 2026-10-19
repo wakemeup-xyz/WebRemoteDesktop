@@ -299,7 +299,7 @@ for (const traceFirst of [true, false]) {
       getSynchronizationSources: () => [{ source: 7 }] }]; } };
     w.decodeControlledMarkerFromVideo = () => { clock += 20; return marker; };
     w.stopVideoFrameTracking = () => {};
-    w.markMediaAttemptReady = () => {};
+    w.markMediaAttemptReady = () => true;
     w.ensureDesktopSessionState = () => ({ applyMedia() {} });
     w.recordLossLabRvfc = w.observePaintFrame = w.observeFreshResumeFrame = () => {};
     const detailed = w.ensureFrameTraceCollector(), sparse = w.ensureInputFrameCollector();
@@ -355,6 +355,58 @@ function freshnessFixture() {
     w.consumeInputFrameMatches();
   };
   return { w, monitor, scope, set, send, paint, bind, gauge: () => monitor.snapshot().metrics.freshFrameAgeMs };
+}
+
+for (const traceFirst of [true, false]) {
+  test(`native latency: actual send and callback retain video-before-ACK clock (${traceFirst ? 'trace-first' : 'frame-first'})`, () => {
+    let now = 100, callback;
+    const Collector = loadCollector(() => now), runtime = Collector.runtime, w = runtime.__WebRTC;
+    for (const name of ['input-geometry.js', 'keyboard-transport.js', 'remote-keyboard-controller.js', 'input.js']) {
+      const source = fs.readFileSync(path.join(__dirname, name), 'utf8');
+      vm.runInContext(name === 'input.js' ? `${source}\nglobalThis.__Input = Input;` : source, runtime);
+    }
+    const input = runtime.__Input;
+    const monitor = runtime.LatencyMonitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+    w.currentConnectionAttemptId = 'a'; w.connectionAttemptSequence = 1;
+    input.activeControlLease = { leaseId: 'lease', leaseEpoch: 4 }; input.isActive = true;
+    w.inputChannel = { readyState: 'open', bufferedAmount: 0, send() { now = 110; } };
+    w.socket = { connected: false };
+    const video = { videoWidth: 256, srcObject: { getVideoTracks: () => [{ id: 'v' }] },
+      requestVideoFrameCallback(fn) { callback = fn; return 1; } };
+    runtime.document.getElementById = () => video;
+    w.pc = { getReceivers() { now += 10; return [{ track: { kind: 'video', id: 'v' },
+      getSynchronizationSources: () => [{ source: 7 }] }]; } };
+    w.serverConfig = { inputFrameCorrelationVersion: 1 };
+    // Media UI is outside this fake-platform callback's concern; the callback/join stay real.
+    w.stopVideoFrameTracking = () => {};
+    w.markMediaAttemptReady = () => true;
+    w.ensureDesktopSessionState = () => ({ applyMedia() {} });
+    w.recordLossLabRvfc = w.observePaintFrame = w.observeFreshResumeFrame = () => {};
+    const reservation = input.prepareLabInput('mouse', 'down', { relX: .5, relY: .5 });
+    const scope = w.latencyScope(); monitor.setScope(scope);
+    monitor.beginControlledInputEvidence({ inputId: reservation.inputId, leaseId: 'lease', scope,
+      streamId: 'video', inputType: 'mouse', action: 'down' });
+    assert.equal(input.dispatchPreparedLabInput(reservation), reservation.inputId);
+    const seq = input._desktopWritePending.get(reservation.inputId).seq;
+    const sparse = w.ensureInputFrameCollector();
+    const bind = () => sparse.acceptBinding({ type: 'input_frame_binding', schemaVersion: 1, scope,
+      streamId: 'video', captureSeq: 7, encoderTimestamp: 9000, wireTimestamp: 44, ssrc: 7,
+      captureFresh: true, captureAfterApplied: true, inputIds: [reservation.inputId] }, scope);
+    if (traceFirst) bind();
+    w.startVideoFrameTracking(); now = 150; callback(150, { rtpTimestamp: 44 });
+    if (!traceFirst) { now = 180; bind(); w.consumeInputFrameMatches(); }
+    const current = () => ({ scope: w.latencyScope(), leaseId: 'lease', streamId: 'video', pc: w.pc,
+      live: w.captureControlledTransportSnapshot() });
+    assert.equal(monitor.readControlledInputEvidence(reservation.inputId, current()).postApply.viewerClockMs, 150);
+    now = 210;
+    w.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4,
+      inputIds: [reservation.inputId], appliedSeq: seq }, { transport: 'datachannel', dataChannel: w.inputChannel });
+    const row = monitor.readControlledInputEvidence(reservation.inputId, current(), { finalize: true });
+    assert.equal(row.state, 'COMPLETE'); assert.equal(row.send.viewerClockMs, 110);
+    assert.equal(row.postApply.viewerClockMs, 150); assert.equal(row.ack.viewerClockMs, 210);
+    assert.equal(monitor.snapshot().metrics.inputToPostApplyFrameMs.last, 40);
+    input._clearDesktopWriteTimer();
+  });
 }
 
 test('verified sparse join publishes original rVFC age and does not grant control or ACK', () => {
