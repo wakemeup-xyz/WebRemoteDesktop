@@ -460,6 +460,14 @@ WebRemoteDesktop/
 5. 如果 Host 日志出现 `No usable monitor reported by MSS`，说明这次失败是 Host 屏幕枚举异常，不是公网入口异常；当前 Host 会优先用 `MSS`，若只拿到 `0x0` monitor 再回退到 `screeninfo`
 6. 2026-07-09 已验证：`https://link.stockhub.wiki` 下手动切到 `隧道中继` 可以真实出画，Viewer 状态会显示 `已连接 / 链路 tunnel / Tunnel relay stream`
 
+### 画面正常但鼠标/键盘失去控制（2026-10-16）
+
+不要仅凭 PeerConnection/DataChannel 的 `connected/open` 判断输入正常。可靠输入 ACK 超时后，Viewer 会隔离当前可靠 DataChannel，后续可靠输入使用 Socket.IO；鼠标和键盘复位优先经 Socket.IO，只有当前会话的双复位 ACK 确认后才开放输入。未确认的点击和文本不会自动重放。
+
+同页面短暂信令重连时，Signal 等待 Host 确认 socket 身份迁移后再重授原租约；Viewer 保留输入序号并执行双复位。真实撤权或新租约仍清空旧状态。新媒体连接就绪时，对尚未确认的 active 恢复请求补一次有界重放，不取消用户暂停或 Terminal 暂停。主动暂停/后台期间不再误报首次出画超时。
+
+这些是源码恢复行为，离线测试不等于已部署或真实公网验收。应用改动需重载本地 Signal/Host 并刷新 Viewer；只重载前端无法启用 Host 会话迁移。事故证据和验证边界见 [运行手册](docs/runbook-safe-startup.md#2026-10-16-反复失控排查)。
+
 ### TURN 媒体时钟、策略和观测（2026-09-06）
 
 - Host 已使用单调 90kHz RTP 时钟；Viewer 的 canonical FPS 是区间解码增量推导的 `derivedFps`，浏览器瞬时 FPS 只保留在诊断字段。

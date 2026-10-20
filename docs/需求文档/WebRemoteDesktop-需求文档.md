@@ -302,6 +302,13 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] 诊断 summary 对 transport failure、reset ACK 过期、输入事件丢弃和控制复位等待提供脱敏告警码
 - [x] 公网、真实 TURN、浏览器和物理 macOS 输入仍以独立验收结果记录，未执行项必须标记 `NOT RUN`
 
+2026-10-16 控制恢复补充（源码与离线验证，不代表部署验收）：
+
+- 可靠 DataChannel 即使仍为 `open`，鼠标 down/up ACK 超时也必须停止信任该通道；后续可靠输入转 Socket.IO，鼠标/键盘双 reset 的当前身份 ACK 均确认后恢复输入，不能重放不确定投递的点击或文本。
+- 同页面信令短断保留原租约的序号，但冻结所有本地输入入口；Signal 必须等 Host 确认旧/新 socket 身份迁移后才重授控制。迁移拒绝/超时回到既有 reset barrier，旧 ACK 不得复活旧会话。
+- 新 PeerConnection 就绪时，对同 attempt/generation 尚未确认的 active 媒体恢复请求只补发一次，不取消 manual-pause/terminal-active。主动暂停与后台页面不报首帧等待超时；恢复等待仍以匹配 ACK 与新帧为准。
+- 控制事件日志必须保留事件名、原因、epoch 与脱敏关联信息，不能退化为无内容的 `unknown` 事件。
+
 ---
 
 ## 4. 部署需求

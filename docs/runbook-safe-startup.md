@@ -577,6 +577,26 @@ Viewer 对 Relay、STUN/直连和 Tunnel 都启用 signaling recovery。短暂�
 
 控制恢复保持 fail-closed：`Host 输入复位未确认，控制已安全锁定` 表示复位 ACK 尚未匹配当前 attempt、lease epoch 和 input id。不要绕过锁定；确认 Host 在线后等待有界重试，仍 blocked 时只重启本地 Signal/Host，绝不重启或重建 tunnel。
 
+### 2026-10-16 反复失控排查
+
+以下时间均为 Asia/Shanghai，证据来自 10 月 15 日晚至 16 日凌晨的 Host/Signal 日志与 `/tmp/wrd-diag`。诊断包 `receivedAt` 是接收时间，网络中断可能延迟上送，不能直接当成输入事件发生时间。
+
+| 证据 | 判断 |
+| --- | --- |
+| 22:28–22:31 诊断：PC/ICE connected、租约有效，出现输入 ACK 超时和双 reset 等待 | 视频与租约正常不能证明可靠输入仍在交付 |
+| 22:30:40 附近的鼠标 down/up/reset 未出现在 Host；同轮 22:30:42.887 keyboard reset 经 Socket.IO 到达，约 0.705ms applied | 可靠 DataChannel 上行未交付，恢复继续走同一坏通道导致卡住；不是这次 reset 的 Quartz 执行慢 |
+| 22:07:34.960 Host active 恢复失败，reason=closed；随后新 offer/PC 成功、解码约 20 FPS，却缺少成功恢复 ACK | 恢复请求先到旧媒体实例，新实例就绪后漏补发；媒体门禁继续等待 |
+| 当天 21 份 paint-pending-timeout 中 18 份处于 suspended/suspending | 大量告警属于主动暂停时错误计时，不能当成 21 次网络故障 |
+| 正式入口巡检 21:44:48、21:45:59 失败，其余该晚样本大多健康；Host 未反复重启 | 存在入口抖动，但不能用它解释所有丢控制 |
+
+已修复的恢复缺口还包括：同租约重连时 Viewer 清零序号而 Host 保留旧序号；Signal 只迁移自己的 socket 映射、未迁移 Host 身份；控制日志字段不匹配真实 logger，落成空 `unknown`。这些缺口已用离线反例验证，但不能据此断言每次历史断控都由同一个缺陷触发。
+
+恢复策略：可靠输入 ACK 超时隔离当前 DC，可靠输入改用 Socket.IO；安全 reset 优先用 Socket.IO，并等待当前身份的双 ACK；同页面重绑先等待 Host ACK，超时/拒绝继续使用既有 reset barrier。未确认输入不自动重放。新 peer 就绪后只补发一次未确认的 active 请求，不覆盖手动/Terminal 暂停。
+
+应用代码需一起重载本地 Signal/Host，再刷新 Viewer。Signal 重启会结束内存中的共享 Terminal 会话，应先安排好当前工作；普通重载不操作 Cloudflare。源码测试与临时目录构建不改变线上运行状态，真实公网、TURN 长时间运行和物理输入保持 `NOT RUN`，须加载修复后实测。当前证据不足以判定最初可靠 DC 中断究竟由 TURN 丢包、SCTP 还是浏览器调度触发；不要把恢复修复描述为已消除全部网络抖动。
+
+本次验证：前端 799、Signal 85、Host 84 项测试全部通过，前端临时目录构建通过。01:35–01:37 仅重载本地 Signal/Host，随后 health 正常、Host 在线，观察到鼠标/键盘 reset 已执行；正式 tunnel 进程与 quick URL 文件状态未变。Host 启动超过脚本等待时限，独立复查确认后来上线。排查期间系统负载显著升高（12 逻辑核、01:38 load1 约 547），此时仍有调度延迟风险；昨晚 20:00–21:00 Host 告警样本的 load1 中位数约 3–5，不能将排查期间的高负载倒推为全部历史故障原因。已有 Viewer 页面必须完整刷新加载新前端。脱敏诊断汇总见 [summary.json](superpowers/reports/evidence/2026-10-16-control-recovery/summary.json)。
+
 ### 2026-10-17 入口分层巡检（W2b）
 
 生产 `watch-fixed-domain.sh` 的 Python coordinator 保留六层有界 ProbeResult：origin/formal health、login/viewer HTML、当前 core hash 资源、已有被动业务摘要；health 最快每 60 秒，HTML/core 最快每 300 秒，串行共享 15 秒单调截止。健康/HTML 正文限制 64 KiB、core 1 MiB，当前 manifest 只读本地普通文件并验证同源 hash 路径，重定向不跟随；默认沿环境代理，显式 `WRD_FIXED_PROBE_PROXY_MODE=direct` 才走直连。持久化只包含有限 layer/routeClass/reason、HTTP 状态、时间和字节数，不保存完整 URL、代理地址、原始异常或响应正文。默认 manifest 为 `web-client/dist/asset-manifest.json`，可显式设置 `WRD_FIXED_ASSET_MANIFEST`。

@@ -1,0 +1,673 @@
+{
+  "scope": "Offline synthetic static text, 65 frames per run; not public TURN/browser acceptance. Runtime CPU load varies; timings are not controlled comparisons.",
+  "versions": {
+    "PyAV": "16.1.0",
+    "aiortc": "1.14.0"
+  },
+  "baseline": [
+    {
+      "size": [
+        1152,
+        720
+      ],
+      "tb": "90000",
+      "bitrate": 1800000,
+      "encodeMsMedian": 10.492,
+      "encodeMsP95": 14.104,
+      "keyframeSamples": [
+        {
+          "i": 18,
+          "idr": false,
+          "bytes": 6726,
+          "encodeMs": 10.43,
+          "psnr": 30.284,
+          "changeMAE": 0.541
+        },
+        {
+          "i": 19,
+          "idr": false,
+          "bytes": 9647,
+          "encodeMs": 9.432,
+          "psnr": 30.866,
+          "changeMAE": 0.666
+        },
+        {
+          "i": 20,
+          "idr": true,
+          "bytes": 18085,
+          "encodeMs": 11.1,
+          "psnr": 17.54,
+          "changeMAE": 17.084
+        },
+        {
+          "i": 21,
+          "idr": false,
+          "bytes": 7043,
+          "encodeMs": 13.624,
+          "psnr": 18.236,
+          "changeMAE": 3.261
+        },
+        {
+          "i": 22,
+          "idr": false,
+          "bytes": 10617,
+          "encodeMs": 11.206,
+          "psnr": 19.347,
+          "changeMAE": 3.935
+        },
+        {
+          "i": 38,
+          "idr": false,
+          "bytes": 7732,
+          "encodeMs": 9.767,
+          "psnr": 31.565,
+          "changeMAE": 0.526
+        },
+        {
+          "i": 39,
+          "idr": false,
+          "bytes": 6259,
+          "encodeMs": 9.266,
+          "psnr": 31.927,
+          "changeMAE": 0.403
+        },
+        {
+          "i": 40,
+          "idr": true,
+          "bytes": 18094,
+          "encodeMs": 11.832,
+          "psnr": 17.538,
+          "changeMAE": 17.028
+        },
+        {
+          "i": 41,
+          "idr": false,
+          "bytes": 6538,
+          "encodeMs": 9.732,
+          "psnr": 18.212,
+          "changeMAE": 3.199
+        },
+        {
+          "i": 42,
+          "idr": false,
+          "bytes": 9933,
+          "encodeMs": 12.93,
+          "psnr": 19.232,
+          "changeMAE": 3.809
+        },
+        {
+          "i": 58,
+          "idr": false,
+          "bytes": 7093,
+          "encodeMs": 8.692,
+          "psnr": 31.418,
+          "changeMAE": 0.499
+        },
+        {
+          "i": 59,
+          "idr": false,
+          "bytes": 8114,
+          "encodeMs": 9.542,
+          "psnr": 31.845,
+          "changeMAE": 0.494
+        },
+        {
+          "i": 60,
+          "idr": true,
+          "bytes": 18089,
+          "encodeMs": 11.685,
+          "psnr": 17.541,
+          "changeMAE": 16.89
+        },
+        {
+          "i": 61,
+          "idr": false,
+          "bytes": 6908,
+          "encodeMs": 10.272,
+          "psnr": 18.249,
+          "changeMAE": 3.348
+        },
+        {
+          "i": 62,
+          "idr": false,
+          "bytes": 10735,
+          "encodeMs": 9.433,
+          "psnr": 19.339,
+          "changeMAE": 3.963
+        }
+      ]
+    },
+    {
+      "size": [
+        1728,
+        1080
+      ],
+      "tb": "90000",
+      "bitrate": 2500000,
+      "encodeMsMedian": 24.072,
+      "encodeMsP95": 30.088,
+      "keyframeSamples": [
+        {
+          "i": 18,
+          "idr": false,
+          "bytes": 11353,
+          "encodeMs": 28.857,
+          "psnr": 31.153,
+          "changeMAE": 0.419
+        },
+        {
+          "i": 19,
+          "idr": false,
+          "bytes": 11970,
+          "encodeMs": 24.015,
+          "psnr": 31.682,
+          "changeMAE": 0.399
+        },
+        {
+          "i": 20,
+          "idr": true,
+          "bytes": 28871,
+          "encodeMs": 25.251,
+          "psnr": 19.298,
+          "changeMAE": 11.321
+        },
+        {
+          "i": 21,
+          "idr": false,
+          "bytes": 9170,
+          "encodeMs": 24.01,
+          "psnr": 19.914,
+          "changeMAE": 1.965
+        },
+        {
+          "i": 22,
+          "idr": false,
+          "bytes": 10894,
+          "encodeMs": 22.978,
+          "psnr": 20.695,
+          "changeMAE": 1.962
+        },
+        {
+          "i": 38,
+          "idr": false,
+          "bytes": 12512,
+          "encodeMs": 22.732,
+          "psnr": 32.213,
+          "changeMAE": 0.433
+        },
+        {
+          "i": 39,
+          "idr": false,
+          "bytes": 10199,
+          "encodeMs": 23.446,
+          "psnr": 32.637,
+          "changeMAE": 0.334
+        },
+        {
+          "i": 40,
+          "idr": true,
+          "bytes": 28870,
+          "encodeMs": 28.212,
+          "psnr": 19.298,
+          "changeMAE": 11.131
+        },
+        {
+          "i": 41,
+          "idr": false,
+          "bytes": 8903,
+          "encodeMs": 24.649,
+          "psnr": 19.895,
+          "changeMAE": 1.909
+        },
+        {
+          "i": 42,
+          "idr": false,
+          "bytes": 11197,
+          "encodeMs": 24.773,
+          "psnr": 20.692,
+          "changeMAE": 2.064
+        },
+        {
+          "i": 58,
+          "idr": false,
+          "bytes": 12261,
+          "encodeMs": 25.378,
+          "psnr": 32.241,
+          "changeMAE": 0.417
+        },
+        {
+          "i": 59,
+          "idr": false,
+          "bytes": 8774,
+          "encodeMs": 23.413,
+          "psnr": 32.6,
+          "changeMAE": 0.276
+        },
+        {
+          "i": 60,
+          "idr": true,
+          "bytes": 28914,
+          "encodeMs": 25.872,
+          "psnr": 19.295,
+          "changeMAE": 11.252
+        },
+        {
+          "i": 61,
+          "idr": false,
+          "bytes": 8373,
+          "encodeMs": 21.474,
+          "psnr": 19.853,
+          "changeMAE": 1.761
+        },
+        {
+          "i": 62,
+          "idr": false,
+          "bytes": 11129,
+          "encodeMs": 24.692,
+          "psnr": 20.641,
+          "changeMAE": 2.071
+        }
+      ]
+    },
+    {
+      "size": [
+        1728,
+        1080
+      ],
+      "tb": "1/90000",
+      "bitrate": 2500000,
+      "encodeMsMedian": 38.234,
+      "encodeMsP95": 93.111,
+      "keyframeSamples": [
+        {
+          "i": 18,
+          "idr": false,
+          "bytes": 11353,
+          "encodeMs": 32.964,
+          "psnr": 31.153,
+          "changeMAE": 0.419
+        },
+        {
+          "i": 19,
+          "idr": false,
+          "bytes": 11970,
+          "encodeMs": 93.111,
+          "psnr": 31.682,
+          "changeMAE": 0.399
+        },
+        {
+          "i": 20,
+          "idr": true,
+          "bytes": 28871,
+          "encodeMs": 86.553,
+          "psnr": 19.298,
+          "changeMAE": 11.321
+        },
+        {
+          "i": 21,
+          "idr": false,
+          "bytes": 9170,
+          "encodeMs": 93.634,
+          "psnr": 19.914,
+          "changeMAE": 1.965
+        },
+        {
+          "i": 22,
+          "idr": false,
+          "bytes": 10894,
+          "encodeMs": 43.294,
+          "psnr": 20.695,
+          "changeMAE": 1.962
+        },
+        {
+          "i": 38,
+          "idr": false,
+          "bytes": 12512,
+          "encodeMs": 73.805,
+          "psnr": 32.213,
+          "changeMAE": 0.433
+        },
+        {
+          "i": 39,
+          "idr": false,
+          "bytes": 10199,
+          "encodeMs": 102.282,
+          "psnr": 32.637,
+          "changeMAE": 0.334
+        },
+        {
+          "i": 40,
+          "idr": true,
+          "bytes": 28870,
+          "encodeMs": 64.689,
+          "psnr": 19.298,
+          "changeMAE": 11.131
+        },
+        {
+          "i": 41,
+          "idr": false,
+          "bytes": 8903,
+          "encodeMs": 49.186,
+          "psnr": 19.895,
+          "changeMAE": 1.909
+        },
+        {
+          "i": 42,
+          "idr": false,
+          "bytes": 11197,
+          "encodeMs": 33.942,
+          "psnr": 20.692,
+          "changeMAE": 2.064
+        },
+        {
+          "i": 58,
+          "idr": false,
+          "bytes": 12261,
+          "encodeMs": 20.678,
+          "psnr": 32.241,
+          "changeMAE": 0.417
+        },
+        {
+          "i": 59,
+          "idr": false,
+          "bytes": 8774,
+          "encodeMs": 21.106,
+          "psnr": 32.6,
+          "changeMAE": 0.276
+        },
+        {
+          "i": 60,
+          "idr": true,
+          "bytes": 28914,
+          "encodeMs": 25.488,
+          "psnr": 19.295,
+          "changeMAE": 11.252
+        },
+        {
+          "i": 61,
+          "idr": false,
+          "bytes": 8373,
+          "encodeMs": 23.537,
+          "psnr": 19.853,
+          "changeMAE": 1.761
+        },
+        {
+          "i": 62,
+          "idr": false,
+          "bytes": 11129,
+          "encodeMs": 22.544,
+          "psnr": 20.641,
+          "changeMAE": 2.071
+        }
+      ]
+    }
+  ],
+  "variants": [
+    {
+      "variant": "vbv200ms",
+      "size": [
+        1728,
+        1080
+      ],
+      "tb": "1/90000",
+      "bitrate": 2500000,
+      "encodeMsMedian": 26.996,
+      "encodeMsP95": 31.623,
+      "keyframeSamples": [
+        {
+          "i": 18,
+          "idr": false,
+          "bytes": 10944,
+          "encodeMs": 23.886,
+          "psnr": 30.799,
+          "changeMAE": 0.44
+        },
+        {
+          "i": 19,
+          "idr": false,
+          "bytes": 11230,
+          "encodeMs": 27.933,
+          "psnr": 31.284,
+          "changeMAE": 0.438
+        },
+        {
+          "i": 20,
+          "idr": true,
+          "bytes": 28914,
+          "encodeMs": 31.857,
+          "psnr": 19.3,
+          "changeMAE": 11.823
+        },
+        {
+          "i": 21,
+          "idr": false,
+          "bytes": 11115,
+          "encodeMs": 27.483,
+          "psnr": 20.044,
+          "changeMAE": 2.327
+        },
+        {
+          "i": 22,
+          "idr": false,
+          "bytes": 15556,
+          "encodeMs": 26.373,
+          "psnr": 21.117,
+          "changeMAE": 2.62
+        },
+        {
+          "i": 38,
+          "idr": false,
+          "bytes": 9256,
+          "encodeMs": 23.769,
+          "psnr": 32.276,
+          "changeMAE": 0.316
+        },
+        {
+          "i": 39,
+          "idr": false,
+          "bytes": 10530,
+          "encodeMs": 25.073,
+          "psnr": 32.681,
+          "changeMAE": 0.322
+        },
+        {
+          "i": 40,
+          "idr": true,
+          "bytes": 52305,
+          "encodeMs": 27.572,
+          "psnr": 21.758,
+          "changeMAE": 8.814
+        },
+        {
+          "i": 41,
+          "idr": false,
+          "bytes": 5847,
+          "encodeMs": 24.216,
+          "psnr": 22.122,
+          "changeMAE": 0.77
+        },
+        {
+          "i": 42,
+          "idr": false,
+          "bytes": 6738,
+          "encodeMs": 25.389,
+          "psnr": 22.551,
+          "changeMAE": 0.844
+        },
+        {
+          "i": 58,
+          "idr": false,
+          "bytes": 10760,
+          "encodeMs": 27.032,
+          "psnr": 33.02,
+          "changeMAE": 0.325
+        },
+        {
+          "i": 59,
+          "idr": false,
+          "bytes": 9008,
+          "encodeMs": 27.648,
+          "psnr": 33.43,
+          "changeMAE": 0.363
+        },
+        {
+          "i": 60,
+          "idr": true,
+          "bytes": 52305,
+          "encodeMs": 25.602,
+          "psnr": 21.758,
+          "changeMAE": 8.316
+        },
+        {
+          "i": 61,
+          "idr": false,
+          "bytes": 7048,
+          "encodeMs": 22.663,
+          "psnr": 22.182,
+          "changeMAE": 0.876
+        },
+        {
+          "i": 62,
+          "idr": false,
+          "bytes": 9144,
+          "encodeMs": 26.627,
+          "psnr": 22.771,
+          "changeMAE": 1.161
+        }
+      ]
+    },
+    {
+      "variant": "superfast",
+      "size": [
+        1728,
+        1080
+      ],
+      "tb": "1/90000",
+      "bitrate": 2500000,
+      "encodeMsMedian": 33.391,
+      "encodeMsP95": 41.537,
+      "keyframeSamples": [
+        {
+          "i": 18,
+          "idr": false,
+          "bytes": 10860,
+          "encodeMs": 32.095,
+          "psnr": 29.189,
+          "changeMAE": 0.524
+        },
+        {
+          "i": 19,
+          "idr": false,
+          "bytes": 11144,
+          "encodeMs": 29.792,
+          "psnr": 29.671,
+          "changeMAE": 0.493
+        },
+        {
+          "i": 20,
+          "idr": true,
+          "bytes": 29059,
+          "encodeMs": 41.537,
+          "psnr": 19.43,
+          "changeMAE": 10.73
+        },
+        {
+          "i": 21,
+          "idr": false,
+          "bytes": 7869,
+          "encodeMs": 34.2,
+          "psnr": 20.016,
+          "changeMAE": 1.708
+        },
+        {
+          "i": 22,
+          "idr": false,
+          "bytes": 12144,
+          "encodeMs": 36.704,
+          "psnr": 20.866,
+          "changeMAE": 2.071
+        },
+        {
+          "i": 38,
+          "idr": false,
+          "bytes": 9212,
+          "encodeMs": 32.102,
+          "psnr": 30.565,
+          "changeMAE": 0.365
+        },
+        {
+          "i": 39,
+          "idr": false,
+          "bytes": 11930,
+          "encodeMs": 32.335,
+          "psnr": 31.028,
+          "changeMAE": 0.444
+        },
+        {
+          "i": 40,
+          "idr": true,
+          "bytes": 29051,
+          "encodeMs": 44.796,
+          "psnr": 19.429,
+          "changeMAE": 10.321
+        },
+        {
+          "i": 41,
+          "idr": false,
+          "bytes": 8457,
+          "encodeMs": 30.081,
+          "psnr": 20.063,
+          "changeMAE": 1.799
+        },
+        {
+          "i": 42,
+          "idr": false,
+          "bytes": 14105,
+          "encodeMs": 32.886,
+          "psnr": 21.058,
+          "changeMAE": 2.307
+        },
+        {
+          "i": 58,
+          "idr": false,
+          "bytes": 11336,
+          "encodeMs": 34.68,
+          "psnr": 30.697,
+          "changeMAE": 0.424
+        },
+        {
+          "i": 59,
+          "idr": false,
+          "bytes": 10885,
+          "encodeMs": 30.461,
+          "psnr": 31.133,
+          "changeMAE": 0.408
+        },
+        {
+          "i": 60,
+          "idr": true,
+          "bytes": 29073,
+          "encodeMs": 33.808,
+          "psnr": 19.428,
+          "changeMAE": 10.374
+        },
+        {
+          "i": 61,
+          "idr": false,
+          "bytes": 7531,
+          "encodeMs": 43.157,
+          "psnr": 19.985,
+          "changeMAE": 1.609
+        },
+        {
+          "i": 62,
+          "idr": false,
+          "bytes": 9844,
+          "encodeMs": 40.378,
+          "psnr": 20.71,
+          "changeMAE": 1.869
+        }
+      ]
+    }
+  ]
+}
