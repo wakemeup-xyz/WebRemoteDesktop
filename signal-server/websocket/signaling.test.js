@@ -962,6 +962,47 @@ test('authenticated viewer reconnect rebinds the lease during the short disconne
   assert.equal(replacement.sent.at(-1)?.event, 'control-state');
 });
 
+test('Host rebind retries bounded timeouts and ignores late callbacks from older attempts', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+    rebindAckTimeoutsMs: [1500, 3000, 6000],
+  });
+  const host = new FakeSocket('host-rebind-retry', 'host');
+  const first = new FakeSocket('viewer-rebind-retry-a', 'viewer');
+  first.handshake.auth.viewerSessionId = 'session-rebind-retry';
+  io.connect(host);
+  io.connect(first);
+  const grant = grantActiveLease(io, host, first, 'retry-grant');
+  first.disconnect();
+  const replacement = new FakeSocket('viewer-rebind-retry-b', 'viewer');
+  replacement.handshake.auth.viewerSessionId = 'session-rebind-retry';
+  io.connect(replacement);
+
+  const firstAttempt = host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+  assert.equal(firstAttempt.timeoutMs, 1500);
+  firstAttempt.ack(new Error('operation has timed out'));
+  const secondAttempt = host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+  assert.notEqual(secondAttempt, firstAttempt);
+  assert.equal(secondAttempt.timeoutMs, 3000);
+
+  firstAttempt.ack(null, { status: 'applied' });
+  assert.equal(replacement.sent.some(entry => entry.event === 'control-grant'), false);
+  secondAttempt.ack(new Error('operation has timed out'));
+  const thirdAttempt = host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+  assert.notEqual(thirdAttempt, secondAttempt);
+  assert.equal(thirdAttempt.timeoutMs, 6000);
+  assert.equal(host.sent.filter(entry => entry.event === 'viewer-session-rebind').length, 3);
+
+  thirdAttempt.ack(null, { status: 'applied' });
+  assert.deepEqual(replacement.sent.find(entry => entry.event === 'control-grant')?.data, {
+    controller: true,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+});
+
 test('another viewer session cannot rebind the disconnected controller at Host', () => {
   resetConnections();
   const io = makeIo();
@@ -1012,6 +1053,7 @@ for (const outcome of ['rejected', 'timeout', 'disconnected', 'superseded']) {
     const timers = [];
     setupSignaling(io, {
       makeLeaseId: () => 'lease-000000000001',
+      rebindAckTimeoutsMs: [1500],
       scheduler: {
         setInterval: () => ({ unref() {} }),
         setTimeout(fn, ms) {
@@ -1110,6 +1152,7 @@ test('control lifecycle survives the production logger with correlation and no c
   const leaseId = 'lease-private-logging-fixture';
   setupSignaling(io, {
     makeLeaseId: () => leaseId,
+    viewerDisconnectGraceMs: 8000,
     scheduler: {
       setInterval: () => ({ unref() {} }),
       setTimeout: () => ({ unref() {} }),
@@ -3732,7 +3775,10 @@ for (const outcome of ['applied', 'rejected', 'timeout', 'superseded', 'disconne
   test(`legacy companion shares pending rebind gate and producer cleanup (${outcome})`, () => {
     resetConnections();
     const io = makeIo();
-    setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+    setupSignaling(io, {
+      makeLeaseId: () => 'lease-000000000001',
+      rebindAckTimeoutsMs: [1500],
+    });
     const host = new FakeSocket('legacy-host', 'host');
     const a = new FakeSocket('legacy-a', 'viewer');
     a.handshake.auth.viewerSessionId = 'legacy-session';

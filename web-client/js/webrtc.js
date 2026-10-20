@@ -509,7 +509,9 @@ const WebRTC = {
   _reclaimPromise: null,
   _pendingBootstrapConfig: null,
   SIGNAL_RECOVERY_RETRY_MS: 1500,
-  SIGNAL_RECOVERY_MAX_WAIT_MS: 12000,
+  // Keep the client recovery window below the server's 30s viewer grace
+  // period so a reconnect can still rebind the original lease.
+  SIGNAL_RECOVERY_MAX_WAIT_MS: 24000,
   _pageLifecycleRecoveryBound: false,
   _pageLifecycleHidden: false,
   _relayHardRefreshCount: 0,

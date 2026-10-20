@@ -823,6 +823,37 @@ class TunnelRelayStreamer:
             self.ack_event.set()
         return len(expired)
 
+    def drop_inflight_for_backpressure(self, reason):
+        """Release stale delivery slots after a bounded ACK wait.
+
+        A timed-out frame is no longer useful to a latest-frame relay. Keeping
+        it in ``inflight_frames`` until the normal two-second TTL makes the
+        next capture wait behind an old packet and turns a short transport
+        stall into a long tail. The late ACK remains safely unmatched because
+        the frame metadata is removed here.
+        """
+        dropped = len(self.inflight_frames)
+        if dropped:
+            # Keep the newest slot for feedback/diagnostics. It is the only
+            # candidate that can still represent the latest frame; older
+            # slots are the backlog that causes the long tail.
+            newest_id = max(self.inflight_frames)
+            newest = self.inflight_frames[newest_id]
+            self.inflight_frames.clear()
+            if dropped > 1:
+                self.inflight_frames[newest_id] = newest
+                dropped -= 1
+            # These frames were intentionally coalesced by the latest-frame
+            # policy; they did not expire by age and must not look like a
+            # transport timeout in the feedback summary.
+            self._increment('coalesced_count', dropped)
+            self.ack_event.set()
+            logger.debug(
+                "Tunnel relay dropped stale frames viewer=%s count=%s reason=%s",
+                self.viewer_id, dropped, reason,
+            )
+        return dropped
+
     async def emit_feedback_if_due(self, now_ms):
         scope = self.relay_scope
         if not scope or self.suspended or self._feedback_unavailable:
@@ -1115,6 +1146,7 @@ class TunnelRelayStreamer:
                         self.profile_name,
                     )
                     self.note_ack_timeout("pre-capture-backpressure")
+                    self.drop_inflight_for_backpressure("pre-capture-timeout")
                     self.expire_inflight(time.monotonic() * 1000.0)
                     continue
 
@@ -1177,6 +1209,7 @@ class TunnelRelayStreamer:
             except asyncio.TimeoutError:
                 logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
                 self.note_ack_timeout("post-send-backpressure")
+                self.drop_inflight_for_backpressure("post-send-timeout")
             except ValueError:
                 # Buffer limits stop this media task; never silently resize.
                 self.enabled = False

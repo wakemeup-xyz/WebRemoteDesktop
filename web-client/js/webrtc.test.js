@@ -8224,7 +8224,7 @@ for (const ordering of ['expiry-during-config', 'error-before-expiry', 'error-af
   test(`mode-switch watchdog ownership: ${ordering} recreates current socket at original max wait`, async t => {
     const h = modeSwitchRecoveryFixture(), { WebRTC } = h;
     const expected = [['[RECOVERY] Signaling connect error:', 'timeout'],
-      ['[RECOVERY] Recreating signaling socket after %sms reason=%s', 12000, 'signal-connect-error']];
+      ['[RECOVERY] Recreating signaling socket after %sms reason=%s', 24000, 'signal-connect-error']];
     captureExpectedSignalingWarnings(t, h.context, expected);
     const oldOrigin = WebRTC._signalRecoveryStartedAt;
     if (ordering === 'expiry-during-config' || ordering === 'error-after-expiry') {
@@ -8250,12 +8250,12 @@ for (const ordering of ['expiry-during-config', 'error-before-expiry', 'error-af
     }
     assert.equal(WebRTC._signalRecoveryStartedAt, oldOrigin, 'quiesce/error retain elapsed budget');
     assert.equal(WebRTC._signalRecoveryPending, true);
-    h.advanceTo(11999);
+    h.advanceTo(23999);
     assert.equal(h.sockets.length, 2);
-    h.advanceTo(12000);
+    h.advanceTo(24000);
     assert.equal(h.sockets.length, 3, 'current socket watchdog must recreate at unchanged maximum wait');
     assert.notEqual(WebRTC.socket, b);
-    assert.equal(WebRTC._signalRecoveryStartedAt, 12000);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 24000);
   });
 }
 
@@ -8309,7 +8309,7 @@ test('signaling watchdog retires its own spent handle before stale socket or epi
 });
 
 for (const wallStep of [-60000, 60000]) {
-  test(`duration clock: signaling preserves mono0 through 1500/12000/13500 with wall step ${wallStep}`, () => {
+  test(`duration clock: signaling preserves mono0 through 1500/24000/25500 with wall step ${wallStep}`, () => {
     const h = webRtcDurationFixture(), { WebRTC } = h;
     WebRTC.socket = { connected: false };
     let recreated = 0;
@@ -8319,12 +8319,12 @@ for (const wallStep of [-60000, 60000]) {
     h.stepWall(wallStep); h.advanceTo(1500);
     assert.equal(recreated, 0);
     assert.equal(WebRTC._signalRecoveryStartedAt, 0);
-    h.advanceTo(11999); assert.equal(recreated, 0);
-    h.advanceTo(12000); assert.equal(recreated, 1);
-    assert.equal(WebRTC._signalRecoveryStartedAt, 12000);
+    h.advanceTo(23999); assert.equal(recreated, 0);
+    h.advanceTo(24000); assert.equal(recreated, 1);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 24000);
     h.stepWall(-wallStep); h.advanceTo(13500);
     assert.equal(recreated, 1);
-    assert.equal(WebRTC._signalRecoveryStartedAt, 12000);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 24000);
   });
 
   test(`duration clock: media progress freshness expires by elapsed time with wall step ${wallStep}`, () => {

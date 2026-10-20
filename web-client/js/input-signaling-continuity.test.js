@@ -382,6 +382,7 @@ function ordinaryAfterGraceBridge(t, expectedWarnings = []) {
   const io = makeIo(), serverTimers = new Map();
   let timerId = 0, leaseId = 0;
   setupSignaling(io, { makeLeaseId: () => `ordinary-lease-${++leaseId}`,
+    viewerDisconnectGraceMs: 30_000,
     scheduler: { setInterval: () => ({ unref() {} }),
       setTimeout(fn, ms) { const id = ++timerId; serverTimers.set(id, { fn, ms }); return id; },
       clearTimeout(id) { serverTimers.delete(id); } } });
@@ -446,7 +447,7 @@ function ordinaryAfterGraceBridge(t, expectedWarnings = []) {
   first.disconnect();
   assert.equal(h.WebRTC.controlState.state, 'ACTIVE');
   assert.equal(h.WebRTC.controlState.controller, false);
-  const grace = [...serverTimers.values()].find(timer => timer.ms === 8000);
+  const grace = [...serverTimers.values()].find(timer => timer.ms === 30_000);
   assert.ok(grace);
   grace.fn(); apply();
   assert.equal(transitions().at(-1).data.viewerId, undefined, 'offline grace ends in a reset-only transition');
@@ -458,7 +459,7 @@ function ordinaryAfterGraceBridge(t, expectedWarnings = []) {
       client = initial; client.server = server; client.id = server.id; client.connected = true;
     } else {
       h.context.io = (_base, options) => makeClient(server, options.auth);
-      h.advance(12000); // Let the actual outage watchdog recreate Socket.IO.
+      h.advance(24000); // Let the actual outage watchdog recreate Socket.IO.
       client = h.WebRTC.socket;
       assert.notEqual(client, initial);
       client.connected = true;
@@ -475,7 +476,7 @@ function ordinaryAfterGraceBridge(t, expectedWarnings = []) {
 for (const kind of ['same-object', 'watchdog-replacement']) {
   test(`ordinary after-grace ${kind} welcome retains ACTIVE until authoritative FREE and acquires once`, t => {
     const h = ordinaryAfterGraceBridge(t, kind === 'watchdog-replacement'
-      ? [['[RECOVERY] Recreating signaling socket after %sms reason=%s', 12000, 'signal-disconnected']] : []);
+      ? [['[RECOVERY] Recreating signaling socket after %sms reason=%s', 24000, 'signal-disconnected']] : []);
     const { server } = h.resume(kind);
     assert.deepEqual(server.sent.slice(0, 2).map(e => e.event), ['connected', 'control-state']);
     const before = h.sent.length;
@@ -505,7 +506,7 @@ for (const kind of ['same-object', 'watchdog-replacement']) {
 for (const cancel of ['release', 'host-offline', 'superseded', 'auth-changed', 'new-start', 'stale-socket']) {
   test(`ordinary after-grace waiting intent is cancelled by actual ${cancel} lifecycle`, t => {
     const h = ordinaryAfterGraceBridge(t, [
-      ['[RECOVERY] Recreating signaling socket after %sms reason=%s', 12000, 'signal-disconnected'],
+      ['[RECOVERY] Recreating signaling socket after %sms reason=%s', 24000, 'signal-disconnected'],
       ...(cancel === 'superseded' ? [['[VIEWER] superseded', 'single-desktop-viewer', '']] : []),
     ]);
     const { client } = h.resume('watchdog-replacement');
@@ -551,6 +552,7 @@ function reconnectBridge() {
   const io = makeIo();
   let leaseSequence = 0;
   setupSignaling(io, { makeLeaseId: () => `bridge-lease-${++leaseSequence}`,
+    rebindAckTimeoutsMs: [1_500],
     scheduler: { setInterval: () => ({ unref() {} }),
       setTimeout: () => ({ unref() {} }), clearTimeout() {} } });
   const host = new FakeSocket('bridge-host', 'host');

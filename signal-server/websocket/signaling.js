@@ -177,7 +177,24 @@ function setupSignaling(io, options = {}) {
   const clearTimeoutFn = options.scheduler?.clearTimeout || options.clearTimeout || clearTimeout;
   const viewerDisconnectGraceMs = Number.isFinite(Number(options.viewerDisconnectGraceMs))
     ? Math.max(0, Math.min(30_000, Math.floor(Number(options.viewerDisconnectGraceMs))))
-    : 8_000;
+    : 30_000;
+  const configuredRebindAckTimeoutsMs = Array.isArray(options.rebindAckTimeoutsMs)
+    ? options.rebindAckTimeoutsMs
+      .map(value => Number.isFinite(Number(value))
+        ? Math.max(250, Math.min(10_000, Math.floor(Number(value)))) : null)
+      .filter(value => value !== null)
+      .slice(0, 3)
+    : [];
+  let configuredRebindBudgetMs = 0;
+  const boundedRebindAckTimeoutsMs = configuredRebindAckTimeoutsMs.filter(value => {
+    if (configuredRebindBudgetMs + value > 24_000) return false;
+    configuredRebindBudgetMs += value;
+    return true;
+  });
+  // Keep the total rebind wait bounded (1.5s + 3s + 6s by default) while
+  // leaving the 30s lease grace window for a fresh Viewer socket to arrive.
+  const rebindAckTimeoutsMs = boundedRebindAckTimeoutsMs.length > 0
+    ? boundedRebindAckTimeoutsMs : [1_500, 3_000, 6_000];
   const interval = intervalFactory(() => {
     dispatchLeaseEffect(desktopLease.expire());
   }, 1000);
@@ -486,6 +503,7 @@ function setupSignaling(io, options = {}) {
       socket._wrdRebindPending = true;
       const operation = {
         socket, host: connections.host, lease: previousLease, attempt: priorProgress, settled: false,
+        rebindAttempt: 0, activeRebindAttempt: 0,
         // The index has moved, but Host's actual producer remains with the old
         // owner until its rebind ACK. This snapshot belongs only to this operation.
         producerOwnerId: previous._wrdRebindOperation?.producerOwnerId || previousId,
@@ -497,12 +515,31 @@ function setupSignaling(io, options = {}) {
         socket._wrdRebindOperation = null;
         socket._wrdRebindPending = false;
       };
-      const finishRebind = (ack) => {
+      const sendRebind = () => {
+        if (operation.settled || socket._wrdRebindOperation !== operation
+          || connections.host !== operation.host) return;
+        operation.rebindAttempt += 1;
+        const attempt = operation.rebindAttempt;
+        operation.activeRebindAttempt = attempt;
+        operation.host.timeout(rebindAckTimeoutsMs[attempt - 1]).emit('viewer-session-rebind', {
+          previousViewerId: previousId,
+          viewerId: nextId,
+          ...previousLease,
+          ...(priorProgress ? {
+            connectionAttemptId: priorProgress.connectionAttemptId,
+            connectionAttemptSequence: priorProgress.connectionAttemptSequence,
+          } : {}),
+        }, (error, ack) => finishRebind(error
+          ? { status: 'rejected', reason: 'rebind-timeout' }
+          : ack, attempt));
+      };
+      const finishRebind = (ack, attempt) => {
         if (operation.settled) return;
-        operation.settled = true;
+        if (attempt !== operation.activeRebindAttempt) return;
         if (socket._wrdRebindOperation !== operation
           || connections.viewers.get(nextId) !== operation.socket
           || socket._wrdDisconnected === true) {
+          operation.settled = true;
           if (socket._wrdRebindOperation === operation
             && connections.viewers.get(nextId) === socket) {
             clearLegacyRelayCompanion(nextId, { stop: true });
@@ -513,11 +550,13 @@ function setupSignaling(io, options = {}) {
         const activeLease = withLeaseExpiry(() => desktopLease.getActiveLease(nextId));
         if (!activeLease || activeLease.leaseId !== operation.lease.leaseId
           || activeLease.leaseEpoch !== operation.lease.leaseEpoch) {
+          operation.settled = true;
           clearRebind();
           return;
         }
         if (connections.host !== operation.host
           || mediaActivityProgress.get(nextId) !== operation.attempt) {
+          operation.settled = true;
           // A cancelled migration must revoke its still-current authority before
           // reopening the pending gate, even if a replacement Host reused its ID.
           const reason = 'rebind-cancelled';
@@ -529,6 +568,7 @@ function setupSignaling(io, options = {}) {
           return;
         }
         if (ack?.status === 'applied') {
+          operation.settled = true;
           const renewed = withLeaseExpiry(() => desktopLease.heartbeat({ viewerId: nextId, ...activeLease }));
           if (!renewed.ok) {
             clearRebind();
@@ -539,6 +579,20 @@ function setupSignaling(io, options = {}) {
           emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, sessionId, leaseEpoch: activeLease.leaseEpoch });
           return;
         }
+        if (ack?.reason === 'rebind-timeout'
+          && operation.rebindAttempt < rebindAckTimeoutsMs.length) {
+          emitControlEvent('viewer_rebind_retry', {
+            viewerId: nextId,
+            previousViewerId: previousId,
+            sessionId,
+            leaseEpoch: activeLease.leaseEpoch,
+            attempt: operation.rebindAttempt,
+            reason: 'rebind-timeout',
+          });
+          sendRebind();
+          return;
+        }
+        operation.settled = true;
         clearLegacyRelayCompanion(nextId, { stop: true });
         clearRebind();
         const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
@@ -546,19 +600,7 @@ function setupSignaling(io, options = {}) {
         dispatchLeaseEffect(result, reason);
         emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
       };
-      // Socket.IO's timeout also removes its pending callback, so an old Host
-      // that never acknowledges cannot accumulate retained rebind closures.
-      operation.host.timeout(1500).emit('viewer-session-rebind', {
-        previousViewerId: previousId,
-        viewerId: nextId,
-        ...previousLease,
-        ...(priorProgress ? {
-          connectionAttemptId: priorProgress.connectionAttemptId,
-          connectionAttemptSequence: priorProgress.connectionAttemptSequence,
-        } : {}),
-      }, (error, ack) => finishRebind(error
-        ? { status: 'rejected', reason: 'rebind-timeout' }
-        : ack));
+      sendRebind();
     }
     previous._wrdRemoved = true;
     emitControlEvent('viewer_reconnected', {

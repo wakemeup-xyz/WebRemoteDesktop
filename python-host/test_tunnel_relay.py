@@ -158,6 +158,24 @@ def test_tunnel_relay_blocks_capture_when_inflight_window_is_full():
     assert relay.should_wait_before_capture() is False
 
 
+def test_tunnel_relay_timeout_drops_stale_inflight_slots_for_latest_frame():
+    relay = TunnelRelayStreamer(FakeSio())
+    relay.inflight_frames = {
+        1: {'sent_at_ms': 100.0, 'generation': relay.production_generation},
+        2: {'sent_at_ms': 110.0, 'generation': relay.production_generation},
+    }
+
+    assert relay.drop_inflight_for_backpressure('test-timeout') == 1
+    assert list(relay.inflight_frames) == [2]
+    assert relay.pending_frame_count() == 1
+    assert relay.coalesced_count == 1
+    assert relay.expired_frame_count == 0
+    assert relay.ack_event.is_set()
+    # A late ACK cannot resurrect a dropped frame or alter profile feedback.
+    assert relay.ack(1) is False
+    assert relay.unmatched_ack_count == 1
+
+
 def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback(monkeypatch):
     sio = FakeSio()
     relay = TunnelRelayStreamer(sio)
@@ -345,7 +363,7 @@ async def test_actual_run_retires_no_ack_window_and_keeps_one_worker(monkeypatch
     assert emit_timeouts[2] <= 4, 'third distinct capture resumes within four wait timeouts'
     assert len({f['frameId'] for f in emitted}) == len(emitted)
     assert max(pending) <= 2
-    assert relay.expired_frame_count > 0 and relay.timeout_count > 0
+    assert relay.coalesced_count > 0 and relay.expired_frame_count == 0 and relay.timeout_count > 0
     assert relay.pending_frame_count() <= 1  # Existing downshift eventually caps at one.
     assert len(feedback) > 3
     assert all(b[0] - a[0] >= 1 for a, b in zip(feedback, feedback[1:]))
