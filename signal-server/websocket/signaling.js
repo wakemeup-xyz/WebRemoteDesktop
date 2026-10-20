@@ -554,8 +554,11 @@ function setupSignaling(io, options = {}) {
           clearRebind();
           return;
         }
-        if (connections.host !== operation.host
-          || mediaActivityProgress.get(nextId) !== operation.attempt) {
+        const currentProgress = mediaActivityProgress.get(nextId);
+        const progressMatches = operation.attempt == null
+          ? currentProgress == null
+          : currentProgress === operation.attempt;
+        if (connections.host !== operation.host || !progressMatches) {
           operation.settled = true;
           // A cancelled migration must revoke its still-current authority before
           // reopening the pending gate, even if a replacement Host reused its ID.

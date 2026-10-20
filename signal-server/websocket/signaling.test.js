@@ -962,6 +962,32 @@ test('authenticated viewer reconnect rebinds the lease during the short disconne
   assert.equal(replacement.sent.at(-1)?.event, 'control-state');
 });
 
+test('rebind preserves an active lease when no media attempt was bound yet', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-rebind-no-attempt', 'host');
+  const first = new FakeSocket('viewer-rebind-no-attempt-a', 'viewer');
+  const sessionId = 'browser-session-rebind-no-attempt';
+  first.handshake.auth.viewerSessionId = sessionId;
+  io.connect(host);
+  io.connect(first);
+  const grant = grantActiveLease(io, host, first, 'no-attempt-grant');
+  first.disconnect();
+  const replacement = new FakeSocket('viewer-rebind-no-attempt-b', 'viewer');
+  replacement.handshake.auth.viewerSessionId = sessionId;
+  io.connect(replacement);
+  const rebind = host.sent.find(entry => entry.event === 'viewer-session-rebind');
+  assert.equal(rebind.data.connectionAttemptId, undefined);
+  assert.equal(rebind.data.connectionAttemptSequence, undefined);
+  rebind.ack(null, { status: 'applied' });
+  assert.deepEqual(replacement.sent.find(entry => entry.event === 'control-grant')?.data, {
+    controller: true,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+});
+
 test('Host rebind retries bounded timeouts and ignores late callbacks from older attempts', () => {
   resetConnections();
   const io = makeIo();
