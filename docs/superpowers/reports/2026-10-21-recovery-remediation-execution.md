@@ -22,7 +22,8 @@
 以下命令均在隔离 worktree `codex/after-grace-recovery-remediation` 执行，未启动或重启线上 Signal、Host 或 tunnel：
 
 - Signal：`node --test signal-server/websocket/signaling.test.js`，124 passed。
-- Viewer、受控输入和帧追踪：`node --test web-client/js/latency-monitor.test.js web-client/js/webrtc.frame-trace.test.js web-client/js/input.test.js web-client/js/webrtc.test.js`，728 passed。
+- Viewer、受控输入、帧追踪和信令连续性：`node --test web-client/js/latency-monitor.test.js web-client/js/webrtc.frame-trace.test.js web-client/js/input.test.js web-client/js/input-signaling-continuity.test.js web-client/js/webrtc.test.js`，813 passed。
+- 诊断链路：`node --test web-client/js/diagnostic.test.js signal-server/test/diagnostic.test.js`，64 passed。
 - Host 捕获、relay、采集观测和输入帧因果：`python3 -m pytest -q python-host/test_relay_frame_worker.py python-host/test_tunnel_relay.py python-host/test_latency_timing.py python-host/test_capture_observation.py python-host/test_media_stage_boundaries.py python-host/test_input_frame_causality.py`，111 passed，19 subtests passed；仅有 mss 弃用警告。
 - `node --check signal-server/websocket/signaling.js`、`git diff --check` 通过。
 
