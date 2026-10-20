@@ -261,6 +261,48 @@ test('duplicate ACK and notices yield at most one RTT and adapter sample', () =>
   assert.equal(s.metrics.inputToVisibleEffectMs.count, 0);
 });
 
+test('matched controlled marker frame records visible effect only after current ACK', () => {
+  const f = fixture();
+  f.m.recordInputSend('visible', { scope: testScope, inputType: 'mouse', action: 'down' });
+  f.set(1100);
+  f.m.onInputAck({ inputIds: ['visible'], inputType: 'mouse', status: 'applied', leaseEpoch: testScope.leaseEpoch },
+    { scope: testScope, nowMs: 1100 });
+  f.set(1250);
+  const row = { scope: testScope, traceStatus: 'matched', streamId: 'video', captureFresh: true,
+    captureAfterApplied: true, viewerClockMs: 1250, inputIds: ['visible'], marker: { sceneId: 1 } };
+  assert.equal(f.m.onVisibleEffect(row, { scope: testScope, nowMs: 1250 }), true);
+  assert.equal(f.snapshot().metrics.inputToVisibleEffectMs.last, 250);
+  assert.equal(f.m.onVisibleEffect(row, { scope: testScope, nowMs: 1250 }), false);
+
+  f.m.recordInputSend('unacked', { scope: testScope, inputType: 'mouse', action: 'down' });
+  assert.equal(f.m.onVisibleEffect({ ...row, inputIds: ['unacked'], viewerClockMs: 1260 },
+    { scope: testScope, nowMs: 1260 }), true);
+  assert.equal(f.snapshot().metrics.inputToVisibleEffectMs.count, 1);
+});
+
+test('marker before ACK is retained as a bounded scalar candidate and settled at ACK', () => {
+  const f = fixture();
+  f.m.recordInputSend('early-marker', { scope: testScope, inputType: 'mouse', action: 'down' });
+  f.set(1080);
+  const row = { scope: testScope, traceStatus: 'matched', streamId: 'video', captureFresh: true,
+    captureAfterApplied: true, viewerClockMs: 1080, inputIds: ['early-marker'], marker: { sceneId: 2 } };
+  assert.equal(f.m.onVisibleEffect(row, { scope: testScope, nowMs: 1080 }), true);
+  assert.equal(f.snapshot().metrics.inputToVisibleEffectMs.available, false);
+  f.set(1120);
+  f.m.onInputAck({ inputIds: ['early-marker'], inputType: 'mouse', status: 'applied', leaseEpoch: testScope.leaseEpoch },
+    { scope: testScope, nowMs: 1120 });
+  assert.equal(f.snapshot().metrics.inputToVisibleEffectMs.last, 80);
+
+  f.m.recordInputSend('early-reject', { scope: testScope, inputType: 'mouse', action: 'down' });
+  f.set(1180);
+  assert.equal(f.m.onVisibleEffect({ ...row, inputIds: ['early-reject'], viewerClockMs: 1180 },
+    { scope: testScope, nowMs: 1180 }), true);
+  f.set(1210);
+  f.m.onInputAck({ inputIds: ['early-reject'], inputType: 'mouse', status: 'execution-failed', leaseEpoch: testScope.leaseEpoch },
+    { scope: testScope, nowMs: 1210 });
+  assert.equal(f.snapshot().metrics.inputToVisibleEffectMs.count, 1);
+});
+
 test('clock sync times out retries rejects stale v0 and expires successful estimates', () => {
   const f = fixture(); const messages = [];
   assert.equal(f.m.requestClockSync(message => messages.push(message)), true);

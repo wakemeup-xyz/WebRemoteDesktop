@@ -325,6 +325,8 @@ class FrameTraceCollector {
         rtpTimestamp: row.rtpTimestamp, wireTimestamp: row.wireTimestamp,
         captureSeq: row.captureSeq, rtpOrigin: row.rtpOrigin,
         traceStatus: row.traceStatus,
+        ...(row.inputIds ? { inputIds: row.inputIds, scope: row.scope,
+          captureFresh: row.captureFresh, captureAfterApplied: row.captureAfterApplied } : {}),
       }];
     });
   }
@@ -5073,7 +5075,14 @@ const WebRTC = {
         if (data.type === 'input_frame_binding') {
           const collector = this.ensureInputFrameCollector();
           collector?.acceptBinding(data, this.latencyScope());
+          // Keep detailed marker joins opt-in. Ordinary production sessions
+          // retain M2 post-apply evidence but never infer content visibility
+          // from an arbitrary next frame.
+          if (this._controlledSceneMarkerRoi) {
+            this.ensureFrameTraceCollector().acceptBinding(data, this.latencyScope());
+          }
           this.consumeInputFrameMatches();
+          this.consumeControlledVisibleEffects();
           return;
         }
         if (data.type === 'frame_trace_batch') {
@@ -6294,6 +6303,7 @@ if (this.tunnelLastObjectUrl) {
         this.consumeInputFrameMatches();
       }
       this.recordLossLabRvfc(metadata, video);
+      this.consumeControlledVisibleEffects();
       this.observePaintFrame(now, metadata, video);
       this.observeFreshResumeFrame({
         source: 'video-callback',
@@ -6367,6 +6377,13 @@ if (this.tunnelLastObjectUrl) {
   consumeInputFrameMatches() {
     for (const row of this.inputFrameCollector?.takeMatched() || []) {
       if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onPostApplyFrame?.(row, { scope: this.latencyScope() });
+    }
+  },
+
+  consumeControlledVisibleEffects() {
+    if (!this._controlledSceneMarkerRoi || typeof LatencyMonitor === 'undefined') return;
+    for (const row of this.frameTraceCollector?.takeControlledVisualEvidence() || []) {
+      LatencyMonitor.onVisibleEffect?.(row, { scope: this.latencyScope() });
     }
   },
 

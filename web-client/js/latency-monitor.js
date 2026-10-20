@@ -348,6 +348,13 @@ const createLatencyMonitor = (options = {}) => {
         const rejected = data.status && data.status !== 'applied' && data.status !== 'unordered' && data.status !== 'duplicate';
         inc(rejected ? 'rejected' : 'acked');
         if (!rejected) push('inputAckRttMs', t - record.sent, t, id);
+        // A marker can be presented before the ACK callback reaches Viewer.
+        // Settle that bounded candidate only after the ACK proves the input
+        // was applied; keep the original rVFC clock as the sample timestamp.
+        if (!rejected && valid(record.visibleEffectAtMs) && record.visibleEffectAtMs >= record.sent) {
+          const delta = record.visibleEffectAtMs - record.sent;
+          if (push('inputToVisibleEffectMs', delta, record.visibleEffectAtMs, id)) record.visibleEffect = true;
+        }
         remember(id, record, rejected ? 'rejected' : 'acked', t);
       }
       if (matched) {
@@ -402,6 +409,32 @@ const createLatencyMonitor = (options = {}) => {
         freshCaptureSeq = row.captureSeq;
         // Late metadata joins retain the actual callback clock, never join time.
         if (freshAt === null || row.viewerClockMs > freshAt) freshAt = row.viewerClockMs;
+      }
+      return recorded;
+    },
+    onVisibleEffect(row = {}, context = {}) {
+      const t = clock(context.nowMs); if (t === null) return false; expire(t);
+      // A visible-effect sample is stronger than M2: it requires a decoded
+      // marker from the same trace identity and an already accepted ACK. The
+      // marker itself is deliberately never retained in the latency snapshot.
+      if (!mediaActive || !sameScope(scope, context.scope === undefined ? scope : context.scope)
+          || !sameScope(scope, row.scope) || row.traceStatus !== 'matched'
+          || row.streamId !== 'video' || row.captureFresh !== true || row.captureAfterApplied !== true
+          || !row.marker || !valid(row.viewerClockMs) || row.viewerClockMs > t
+          || t - row.viewerClockMs >= 2000 || !Array.isArray(row.inputIds)) return false;
+      let recorded = false;
+      for (const id of row.inputIds.filter(validId).slice(0, 64)) {
+        const record = pending.get(id) || tombstones.get(id);
+        if (!record || record.visibleEffect || valid(record.visibleEffectAtMs) || row.viewerClockMs < record.sent) continue;
+        if (record.state === 'acked') {
+          recorded = push('inputToVisibleEffectMs', row.viewerClockMs - record.sent, row.viewerClockMs, id) || recorded;
+          record.visibleEffect = true;
+        } else if (!record.state) {
+          // Keep only the scalar presentation clock until the accepted ACK
+          // arrives. Never retain marker pixels or a frame payload.
+          record.visibleEffectAtMs = row.viewerClockMs;
+          recorded = true;
+        }
       }
       return recorded;
     },

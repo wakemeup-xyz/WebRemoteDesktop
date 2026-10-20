@@ -70,6 +70,24 @@ test('actual 256x128 canvas pixels decode the dual-CRC marker before T3 visual e
   assert.equal(visual[0].traceStatus, 'matched');
 });
 
+test('controlled visual evidence keeps the binding identity for visible-effect timing', () => {
+  const Collector = loadCollector();
+  const collector = new Collector();
+  const scope = { connectionAttemptId: 'a', generation: 1, leaseEpoch: 7 };
+  collector.setScope({ attemptId: 'a', generation: 1, streamId: 'video' });
+  const binding = { type: 'input_frame_binding', schemaVersion: 1, scope, streamId: 'video', captureSeq: 7,
+    encoderTimestamp: 9, wireTimestamp: 44, ssrc: 7, captureFresh: true, captureAfterApplied: true,
+    inputIds: ['visible'] };
+  assert.equal(collector.acceptBinding(binding, scope), 0);
+  collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7, rtpTimestamp: 44 },
+    { marker: { sceneId: 1 } }, 100);
+  const visual = collector.takeControlledVisualEvidence();
+  assert.equal(visual.length, 1);
+  assert.deepEqual(visual[0].inputIds, ['visible']);
+  assert.deepEqual(visual[0].scope, scope);
+  assert.equal(visual[0].captureFresh, true);
+});
+
 test('late diagnostic joins the matching rVFC wire timestamp within two seconds', () => {
   let now = 100;
   const Collector = loadCollector(() => now);
