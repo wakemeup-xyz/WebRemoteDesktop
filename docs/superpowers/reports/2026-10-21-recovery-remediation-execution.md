@@ -27,9 +27,15 @@
 - Host 捕获、relay、采集观测和输入帧因果：`python3 -m pytest -q python-host/test_relay_frame_worker.py python-host/test_tunnel_relay.py python-host/test_latency_timing.py python-host/test_capture_observation.py python-host/test_media_stage_boundaries.py python-host/test_input_frame_causality.py`，111 passed，19 subtests passed；仅有 mss 弃用警告。
 - `node --check signal-server/websocket/signaling.js`、`git diff --check` 通过。
 
+## 合入 main 与本地重启结果
+
+已将整改分支合入 `main`，并补入无媒体 attempt 重绑定边界修复。合入后的 `main` 回归结果为：Signal 125 passed、Viewer/输入/帧追踪 813 passed、诊断 64 passed、Host 111 passed，19 个 Python 子测试通过。
+
+随后按 `webremote-service` 流程执行了本地 `restart-local`。重启后 Signal PID 为 `43044`，Host PID 为 `43093`；`/health` 返回 `status=ok`，`/api/status` 返回 `hostOnline=true`、`viewerCount=0`。`/tmp/wrd-safe-current-url.txt` 重启前后均为空，未发生 tunnel URL 变化，也没有停止、重启或重建 `cloudflared`。
+
 ## 当前仍需维护窗口验收
 
-本轮证据是离线代码和 fixture 证据。当前用户 Viewer 会话仍被保护，因此没有加载新构建、重启本地服务、重建 tunnel、做公网连接或真实输入验收。以下仍不能宣布完成：真实断网不超过 20 秒的原租约恢复、30 分钟长会话、正式域名连接、页面隐藏/恢复在真实浏览器上的顺序，以及生产环境的实际 `inputToVisibleEffectMs` 样本覆盖。
+本轮已完成本地构建加载和本地服务重启，但没有占用 Viewer 或发送真实输入。以下仍不能宣布完成：真实断网不超过 20 秒的原租约恢复、30 分钟长会话、正式域名连接、页面隐藏/恢复在真实浏览器上的顺序，以及生产环境的实际 `inputToVisibleEffectMs` 样本覆盖。
 
 维护窗口需要再次读取 `/tmp/wrd-safe-current-url.txt`、Signal/Host 当前日志和构建身份，先做本地健康与首帧，再做短断线恢复、控制输入和投屏长会话；失败时保留服务运行态并记录缺测原因。
 
