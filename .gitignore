@@ -2,6 +2,12 @@
 front-debug.log
 back-debug.log
 *.log
+/back-debug.log.*
+
+# Local browser/session artifacts
+/.playwright-mcp/
+/.workbuddy/
+/wrd-*.png
 
 # Python
 __pycache__/
