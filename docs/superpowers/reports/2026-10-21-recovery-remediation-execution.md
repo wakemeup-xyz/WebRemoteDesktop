@@ -31,7 +31,7 @@
 
 已将整改分支合入 `main`，并补入无媒体 attempt 重绑定边界修复。合入后的 `main` 回归结果为：Signal 125 passed、Viewer/输入/帧追踪 813 passed、诊断 64 passed、Host 111 passed，19 个 Python 子测试通过。
 
-随后按 `webremote-service` 流程执行了本地 `restart-local`。重启后 Signal PID 为 `43044`，Host PID 为 `43093`；`/health` 返回 `status=ok`，`/api/status` 返回 `hostOnline=true`、`viewerCount=0`。`/tmp/wrd-safe-current-url.txt` 重启前后均为空，未发生 tunnel URL 变化，也没有停止、重启或重建 `cloudflared`。
+随后按 `webremote-service` 流程执行了本地 `restart-local`。重启后 Signal PID 为 `43044`，Host PID 为 `43093`；`/health` 返回 `status=ok`，`/api/status` 返回 `hostOnline=true`、`viewerCount=0`。正式入口 `https://link.stockhub.wiki/health` 返回 `status=ok`，Viewer 页面返回 HTTP 200。`/tmp/wrd-safe-current-url.txt` 重启前后均为空，未发生 tunnel URL 变化，也没有停止、重启或重建 `cloudflared`。
 
 ## 当前仍需维护窗口验收
 
