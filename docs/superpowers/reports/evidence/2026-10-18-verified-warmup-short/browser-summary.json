@@ -1,0 +1,178 @@
+{
+  "sourceCommit": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+  "buildId": "79bf9a5afea0458e",
+  "run": "verified-warmup-short-20261018a",
+  "status": "PASS",
+  "requestedSeconds": 300,
+  "rowCount": 301,
+  "sampleSpanSeconds": 300.0000511801336,
+  "helperElapsedSeconds": 300.12743866303936,
+  "supervisorElapsedSeconds": 327.50801105611026,
+  "observationFailures": {
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0
+  },
+  "frameEvidence": "requestVideoFrameCallback",
+  "maxCompletedCallbackGapMs": 383.29999999998836,
+  "frameAgeAtOneHzSnapshotsMs": {
+    "count": 301,
+    "p50": 25.200000047683716,
+    "p95": 67.1000000476779,
+    "max": 251.8999999523221
+  },
+  "gateTrueCounts": {
+    "allowed": 301,
+    "inputActive": 301,
+    "hasInputLease": 301,
+    "viewportSupported": 301,
+    "hasPaintedFrame": 301,
+    "currentAttemptReady": 301,
+    "hasActiveControl": 301,
+    "socketConnected": 301
+  },
+  "allBuildIdsMatch": true,
+  "singlePageClickDeltasMs": {
+    "bootstrap-start": 0.6000000000003638,
+    "bootstrap-ready": 5.600000000000364,
+    "signal-connected": 2907.9000000000005,
+    "first-frame": 6622.900000000001,
+    "active": 6622.900000000001
+  },
+  "inputMetricUsableSnapshotCounts": {
+    "inputAckRttMs": 0,
+    "inputToPostApplyFrameMs": 0,
+    "inputToVisibleEffectMs": 0,
+    "hostQueueMs": 0,
+    "hostApplyMs": 0,
+    "hostAdapterAwaitMs": 0
+  },
+  "lastRollingMetricWindows": {
+    "candidateRttMs": {
+      "available": true,
+      "count": 5,
+      "last": 145,
+      "p95": 191,
+      "lastSampleAgeMs": 850.9000000953674
+    },
+    "jitterBufferMs": {
+      "available": true,
+      "count": 5,
+      "last": 72.3,
+      "p95": 77.5,
+      "lastSampleAgeMs": 850.9000000953674
+    },
+    "decodeMs": {
+      "available": true,
+      "count": 5,
+      "last": 0.7728000000000179,
+      "p95": 0.7933157894736903,
+      "lastSampleAgeMs": 850.9000000953674
+    },
+    "paintIntervalMs": {
+      "available": true,
+      "count": 85,
+      "last": 16.599999999976717,
+      "p95": 100,
+      "lastSampleAgeMs": 39.800000095390715
+    }
+  },
+  "metricLastAtSnapshots": {
+    "candidateRttMs": {
+      "count": 301,
+      "p50": 50,
+      "p95": 198,
+      "max": 410
+    },
+    "jitterBufferMs": {
+      "count": 299,
+      "p50": 52,
+      "p95": 81.8,
+      "max": 99.6
+    },
+    "decodeMs": {
+      "count": 299,
+      "p50": 0.7184736842105423,
+      "p95": 0.7817777777777786,
+      "max": 0.8165000000000008
+    }
+  },
+  "browserClose": {
+    "startedMs": 1422423107,
+    "finishedMs": 1422423162,
+    "status": "closed"
+  },
+  "managerStop": {
+    "startedMs": 1422423162,
+    "finishedMs": 1422423176,
+    "status": "ok"
+  },
+  "helperCleanupStatus": "api-finished-exit-unknown",
+  "registeredProcessExit": {
+    "identities": 7,
+    "allRecordedIdentitiesExited": true,
+    "signals": 0,
+    "coverage": [
+      "polling-may-miss-fast-orphan",
+      "macos-check-to-signal-race",
+      "no-CDP-no-manager-proxy"
+    ],
+    "completeProcessTreeExitEstablished": false
+  },
+  "hostStackSampleTriggered": false,
+  "lifecycle": {
+    "coverage": "partial",
+    "droppedEvents": 765,
+    "counters": {
+      "sd": 0,
+      "mc": 0,
+      "ec": 0,
+      "se": 0,
+      "re": 0,
+      "rx": 22,
+      "tx": 420,
+      "sc": 1,
+      "mo": 1,
+      "ra": 0,
+      "rr": 0,
+      "rf": 0,
+      "ep": 11,
+      "eo": 11,
+      "ef": 420,
+      "eu": 0,
+      "bind": 3,
+      "vis": 1,
+      "net": 1,
+      "focus": 1,
+      "hide": 0,
+      "show": 0,
+      "freeze": 0,
+      "resume": 0,
+      "preclose": 1,
+      "cap": 0
+    },
+    "browserLoopLag": {
+      "lastMs": 0,
+      "maxMs": 9,
+      "count": 308,
+      "missedIntervals": 0,
+      "buckets": [
+        308,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "threeHourContinuityMet": false,
+  "activeControl": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physicalDisplay": "NOT_RUN",
+  "limits": [
+    "Single page startup deltas are not percentiles or controlled causal comparisons.",
+    "1Hz frame age is callback recency; fresh callbacks do not prove capture content freshness.",
+    "Metric last snapshots and last rolling windows are different scopes and not full raw-event distributions.",
+    "Input metrics have no usable observations; gate openness does not establish delivery or visible effects."
+  ]
+}

@@ -9,6 +9,7 @@ import importlib.util
 import json
 import math
 import os
+import platform
 import queue
 import re
 import shlex
@@ -785,7 +786,7 @@ def _frame_count_for(periodic_idr_frames: int) -> int:
     return max(65, periodic_idr_frames + 25)
 
 
-def _evaluate_resolution_gates(run: dict, *, on_demand_only: bool) -> dict:
+def _evaluate_resolution_gates(run: dict, *, on_demand_only: bool, fps: int = 20, joint: bool = False) -> dict:
     frames = run["frames"]
     periodic_idrs = [
         frame for frame in frames if frame.get("idrKind") == "periodic"
@@ -793,7 +794,7 @@ def _evaluate_resolution_gates(run: dict, *, on_demand_only: bool) -> dict:
     pulse_indices = [
         int(frame["index"])
         for frame in periodic_idrs
-        if 16 <= int(frame["index"]) <= 30
+        if (0.8 <= int(frame["index"]) / fps <= 1.5 if joint else 16 <= int(frame["index"]) <= 30)
     ]
     periodic_change_mae = [float(frame["changeMAE"]) for frame in periodic_idrs]
     on_demand_psnr = [
@@ -801,7 +802,7 @@ def _evaluate_resolution_gates(run: dict, *, on_demand_only: bool) -> dict:
         for frame in frames
         if frame.get("idrKind") == "on-demand-probe"
     ]
-    encode_budget_ms = 25.0 if tuple(run["resolution"]) == (1152, 720) else 45.0
+    encode_budget_ms = 25.0 if (run["resolution"][1] == 720 if joint else tuple(run["resolution"]) == (1152, 720)) else 45.0
     gates = {
         "qualityPulse": _gate(
             not pulse_indices,
@@ -1578,13 +1579,13 @@ def load_probe_module():
     return module
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--policy", choices=("relay-legacy-v1",))
-    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement", "relay-preset-refinement", "relay-veryfast-refinement", "relay-peak-headroom-v1", "relay-peak-headroom-sliced2-v1"))
+    selection.add_argument("--matrix", choices=("relay", "relay-vbv-refinement", "relay-preset-refinement", "relay-veryfast-refinement", "relay-peak-headroom-v1", "relay-peak-headroom-sliced2-v1", "latency-joint-v1"))
     parser.add_argument("--output", required=True, type=Path)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _write_atomic_json(path: Path, evidence: dict) -> None:
@@ -1632,6 +1633,20 @@ def _peak_atomic_abort_artifact(error: Exception, *, sliced2: bool = False) -> d
     }
 
 
+def evaluate_latency_joint_matrix(probe):
+    from media_latency_qualification import evaluate_joint_matrix
+    identity = {
+        "codeRevision": _execution_source_revision(),
+        "codecVersions": {"aiortc": str(probe.aiortc.__version__),
+                          "PyAV": str(probe.av.__version__),
+                          "FFmpeg": str(probe.av.library_versions),
+                          "codec": str(probe.av.codec.Codec("libx264", "w").long_name),
+                          "OS": platform.platform()},
+        "machineDigest": hashlib.sha256((platform.node() + platform.machine()).encode()).hexdigest(),
+    }
+    return evaluate_joint_matrix(probe, identity=identity)
+
+
 def main() -> None:
     args = parse_args()
     try:
@@ -1647,6 +1662,8 @@ def main() -> None:
             if args.matrix == "relay-preset-refinement"
             else evaluate_veryfast_matrix(probe)
             if args.matrix == "relay-veryfast-refinement"
+            else evaluate_latency_joint_matrix(probe)
+            if args.matrix == "latency-joint-v1"
             else evaluate_peak_headroom_matrix(
                 probe, sliced2=args.matrix == "relay-peak-headroom-sliced2-v1"
             )

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "scope": "post-failed-baseline-local-readonly",
+  "startedEpoch": 1792349122.910018,
+  "routes": {
+    "/health": {
+      "httpStatus": 200,
+      "elapsedMs": 33.31655985675752,
+      "summary": {
+        "status": "ok"
+      }
+    },
+    "/api/status": {
+      "httpStatus": 200,
+      "elapsedMs": 13.062604004517198,
+      "summary": {
+        "status": "ok",
+        "hostOnline": true,
+        "viewerCount": 0,
+        "relayViewerCount": 0
+      }
+    }
+  },
+  "completedEpoch": 1792349122.956482
+}

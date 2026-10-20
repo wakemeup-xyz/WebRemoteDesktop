@@ -1,0 +1,11 @@
+# 故障采样结果的时间与可诊断性
+
+最新长测先达到5秒停帧失败，再触发一次sample。sample约10.25秒后被归属已验证的supervisor终止，报告0字节；现有final覆盖finishedEpoch为worker结束后的时间，造成采样109秒的错误表象。该证据不能证明权限问题、Host死锁或采到栈。
+
+选择修复私有监督器，保持生产helper和业务逻辑不变。超时检测、kill尝试、首次观察退出、最终封存使用独立时间字段；观察时间不冒充内核精确退出时间。超时后继续非阻塞poll并保留timeout结果，不再由worker收尾覆盖。维持一次采样、10秒外部预算、显式Host PID/出生时间/两份pidfile校验、只清理已登记自身子进程。
+
+增加sample自身stdout+stderr合并的私有有界诊断。PIPE设非阻塞，每轮最多读64KiB，保留前16KiB，超额只记字节数并继续有界排空；无新线程、无无限read循环、无阻塞等待。检查deadline在排空之前；收尾只做有界排空并关闭本端pipe。原始前缀以0600保存，分享摘要仅含字节计数/截断/固定状态，禁止自动发表原始进程信息。现有stack文件8MiB硬软limit与core0保持。
+
+launch、空报告、非空待验证报告与实际valid stack分开；只有root确认包含有效线程栈和目标身份才可写“取得栈”。不增加超时时长、不重试生产Host、不发送诊断signal、不提升权限。修复后先对root新建的无业务sleep子进程做一次3秒/10ms能力检查，最多10秒，检查同样私有保存stderr与空/非空报告；能力检查成功也不代表Host权限等同。该检查不创建Viewer、不抓屏、不发原生输入。
+
+被否决方案：仅延长timeout会增加扰动而无诊断；直接发送SIGUSR/faulthandler当前无注册hook可能终止Host。Python hook或新native profiler均不在本增量。

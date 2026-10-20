@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "actual-readonly-build-preflight-failure",
+  "observedAtEpoch": 1792345044.76366,
+  "sessionId": 18679,
+  "actualExitCode": 1,
+  "phase": "old_service_gate beforebuild-started/Node creation",
+  "errorClass": "subprocess.TimeoutExpired",
+  "command": [
+    "/usr/sbin/lsof",
+    "-nP",
+    "-t",
+    "-iTCP:8080",
+    "-sTCP:LISTEN"
+  ],
+  "timeoutSeconds": 5,
+  "frozenSHA256": "323f534d6aefb05afc6ea2dd9f4c93342811a3da3895149faa800794f33186d3",
+  "sourceBuildOrServiceMutation": false,
+  "markers": {
+    "build-started.json": false,
+    "build-result.json": false,
+    "apply-started.json": false,
+    "reload-started.json": false
+  },
+  "originalTrace": "retained full inchattool output; no claimed stderrfilehash",
+  "continuationRuling": "PENDING_CODE_CONSUMPTION_AUDIT"
+}

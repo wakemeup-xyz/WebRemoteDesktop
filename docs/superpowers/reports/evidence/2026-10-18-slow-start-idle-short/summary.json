@@ -1,0 +1,274 @@
+{
+  "summary": {
+    "status": "INCOMPLETE",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 302.93809474189766,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "maxObservedNoProgressMs": 2716.600000000006,
+    "frameStallThresholdMs": 5000,
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "failure": {
+      "stage": "cleanup",
+      "category": "runtime",
+      "reason": "cleanup-failed"
+    },
+    "originClass": "formal",
+    "mode": "relay"
+  },
+  "rows": 301,
+  "completeSamples": 301,
+  "gate": {
+    "allowed": {
+      "present": 301,
+      "true": 301
+    },
+    "inputActive": {
+      "present": 301,
+      "true": 301
+    },
+    "hasInputLease": {
+      "present": 301,
+      "true": 301
+    },
+    "viewportSupported": {
+      "present": 301,
+      "true": 301
+    },
+    "hasPaintedFrame": {
+      "present": 301,
+      "true": 301
+    },
+    "currentAttemptReady": {
+      "present": 301,
+      "true": 301
+    },
+    "hasActiveControl": {
+      "present": 301,
+      "true": 301
+    },
+    "socketConnected": {
+      "present": 301,
+      "true": 301
+    }
+  },
+  "states": {
+    "status": {
+      "observed": 301
+    },
+    "uiPhase": {
+      "connected": 301
+    },
+    "keyboardControllerState": {
+      "READY": 301
+    },
+    "keyboardTransportState": {
+      "ready": 301
+    },
+    "surfaceState": {
+      "settled": 301
+    },
+    "desktopWriteRecoveryState": {
+      "none": 301
+    },
+    "recoveryState": {
+      "idle": 301
+    }
+  },
+  "buildIds": {
+    "ed92d1313adb54f6": 301
+  },
+  "frameAgeMs": {
+    "n": 301,
+    "p50": 40.600000047677895,
+    "p95": 221.50000009536598,
+    "max": 2393.999999952328
+  },
+  "marks": [
+    {
+      "start-click": 5244.7,
+      "bootstrap-start": 5245.8,
+      "bootstrap-ready": 5945.3,
+      "signal-connected": 8446.5,
+      "first-frame": 14056.2,
+      "active": 14056.2
+    }
+  ],
+  "metrics": {
+    "candidateRttMs": {
+      "n": 301,
+      "p50": 43,
+      "p95": 269,
+      "max": 619
+    },
+    "jitterBufferMs": {
+      "n": 299,
+      "p50": 121.6,
+      "p95": 217.9,
+      "max": 240.6
+    },
+    "decodeMs": {
+      "n": 299,
+      "p50": 1.487263157894743,
+      "p95": 1.9553333333333336,
+      "max": 4.5161428571428095
+    }
+  },
+  "runtime": {
+    "sourceCommit": "93f390890aeb1198865d88ee8ed7426bedc82c5d",
+    "buildId": "ed92d1313adb54f6",
+    "signal": {
+      "pid": 51710,
+      "startCST": "2026-10-18 02:44:12"
+    },
+    "host": {
+      "pid": 51808,
+      "startCST": "2026-10-18 02:44:19"
+    },
+    "tunnelPid": 84671,
+    "watcherPid": 897,
+    "primaryHead": "b6bd0c11fd6055923768ac9f8d457995ac24cde0",
+    "primaryIndexSha256": "73b61eb5c361d2b72ac2db66a302b533bea9014b0d345dcafabd57c9075e98c8",
+    "preservedHeadIndexTunnelWatcherQuick": true
+  },
+  "cleanup": {
+    "python": {
+      "failureDetectedMs": 1415530760,
+      "failureWallEpochMs": 1792263076614,
+      "managerStart": {
+        "startedMs": 1415202973,
+        "finishedMs": 1415205201,
+        "status": "ok"
+      },
+      "managerLaunch": {
+        "startedMs": 1415205201,
+        "finishedMs": 1415206669,
+        "status": "ok"
+      },
+      "managerStop": {
+        "startedMs": 1415530694,
+        "finishedMs": 1415530760,
+        "status": "ok"
+      },
+      "browserClose": {
+        "startedMs": 1415527943,
+        "finishedMs": 1415530694,
+        "status": "timeout"
+      },
+      "cleanupStatus": "incomplete"
+    },
+    "registeredIdentityCount": 7,
+    "allRegisteredIdentitiesExited": true,
+    "signalAttempts": 0,
+    "completeProcessTreeExitEstablished": false,
+    "doesNotOverrideIncomplete": true
+  },
+  "threadSample": {
+    "status": "timeout",
+    "startedEpoch": 1792262929.138465,
+    "timeoutDetectedEpoch": 1792262939.509119,
+    "exitObservedEpoch": 1792262940.981417,
+    "exitCode": -9,
+    "outputBytes": 0,
+    "reportState": "report-empty",
+    "diagnosticPhase": "sampling-completed-symbol-processing",
+    "usableStack": false
+  },
+  "inputMeasurement": {
+    "inputAckRttMs": {
+      "usable": 0,
+      "value": null
+    },
+    "hostQueueMs": {
+      "usable": 0,
+      "value": null
+    },
+    "hostApplyMs": {
+      "usable": 0,
+      "value": null
+    },
+    "hostAdapterAwaitMs": {
+      "usable": 0,
+      "value": null
+    },
+    "inputToPostApplyFrameMs": {
+      "usable": 0,
+      "value": null
+    },
+    "inputToVisibleEffectMs": {
+      "usable": 0,
+      "value": null
+    }
+  },
+  "notes": [
+    "Sampling window had no failed observations under the 5000ms frame-gap policy, but final result remains INCOMPLETE because browser close timed out.",
+    "A 2716.6ms completed frame gap is a material performance observation even below that policy threshold.",
+    "Snapshot metric percentiles may repeat latest underlying values; no quantile sum or one-way RTT inference.",
+    "Same quality/path configuration does not establish controlled before/after causal attribution.",
+    "Actual native input, visible effect and three-hour qualification remain NOT RUN/not passed."
+  ],
+  "coverage": {
+    "firstTick": 0,
+    "lastTick": 300,
+    "firstSampleElapsedSeconds": 0.00014898996,
+    "lastSampleElapsedSeconds": 300.00119943195,
+    "firstToLastSampleSeconds": 300.001050442,
+    "browserWallApproxCst": [
+      "2026-10-18 02:46:13.688600",
+      "2026-10-18 02:51:13.690100"
+    ],
+    "helperElapsedIncludesCleanup": true,
+    "supervisorElapsedSeconds": 336.085056686,
+    "crossProcessWallCorrelationOnly": true
+  },
+  "correlatedPause": {
+    "browserGapMs": 2716.6,
+    "captureLastDurationMs": 2959.926,
+    "eventLoopLastMs": 1491.7,
+    "systemLoad1": 154.437,
+    "resourceCacheAgeMs": 7151.351,
+    "adjacentEncoderWindowMaxMs": [
+      201.783,
+      124.527,
+      86.609
+    ],
+    "cause": "UNCONFIRMED",
+    "nativeStack": "UNAVAILABLE"
+  },
+  "resetCompletion": {
+    "jsonlUniqueEvents": 1,
+    "epoch": 2,
+    "status": "applied",
+    "state": "FREE",
+    "failClosedToCompletedMs": 1006,
+    "retryToCompletedMs": 3,
+    "sameSignalClock": true,
+    "physicalEffect": "NOT_RUN"
+  },
+  "boundedLogSlices": [
+    {
+      "pathClass": "Host back-debug",
+      "startByte": 2739590,
+      "endByte": 3053217,
+      "sha256": "460d17f1b511ea6ade6196febb1492a310ad14887574528c41067af5f665b8b3"
+    },
+    {
+      "pathClass": "Signal stdout",
+      "startByte": 2186631,
+      "endByte": 2197227,
+      "sha256": "43c0a16c5835d54cc00068b83c0f033fdbd40163ff4ba6574a1646d8a8ad3902"
+    },
+    {
+      "pathClass": "Signal JSONL",
+      "startByte": 829022,
+      "endByte": 848941,
+      "sha256": "baf2d729419ec24c19c9086a67abe7b0e1eb0327c3f9db370e5539344e2599e8"
+    }
+  ]
+}

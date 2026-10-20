@@ -1,0 +1,349 @@
+{
+  "schemaVersion": 1,
+  "kind": "root-three-failure-quiescence",
+  "packageManifestSHA256": "bcd09baaa0b0936e7424cd0dea5e51fb067503399ca49d3a236e789fc0fa6861",
+  "frozenSHA256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "deploymentId": "1a71096791fb71844ae08c95c50fb9cc",
+  "phase": "apply",
+  "applySHA256": null,
+  "failedHistory": [
+    "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242",
+    "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+    "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+  ],
+  "knownIdentities": [
+    {
+      "registry": "1:owned",
+      "pid": 46165,
+      "birthEpoch": 1792323574.148967
+    },
+    {
+      "registry": "1:owned",
+      "pid": 46166,
+      "birthEpoch": 1792323574.350659
+    },
+    {
+      "registry": "1:owned",
+      "pid": 46167,
+      "birthEpoch": 1792323574.699382
+    },
+    {
+      "registry": "1:owned",
+      "pid": 46168,
+      "birthEpoch": 1792323574.815681
+    },
+    {
+      "registry": "1:owned",
+      "pid": 46169,
+      "birthEpoch": 1792323574.819213
+    },
+    {
+      "registry": "1:owned",
+      "pid": 46170,
+      "birthEpoch": 1792323574.859285
+    },
+    {
+      "registry": "1:owned",
+      "pid": 46207,
+      "birthEpoch": 1792323577.570527
+    },
+    {
+      "registry": "2:owned",
+      "pid": 69323,
+      "birthEpoch": 1792327090.384164
+    },
+    {
+      "registry": "2:owned",
+      "pid": 69327,
+      "birthEpoch": 1792327090.599847
+    },
+    {
+      "registry": "2:owned",
+      "pid": 69333,
+      "birthEpoch": 1792327091.534714
+    },
+    {
+      "registry": "2:owned",
+      "pid": 69336,
+      "birthEpoch": 1792327091.854785
+    },
+    {
+      "registry": "2:owned",
+      "pid": 69337,
+      "birthEpoch": 1792327091.878596
+    },
+    {
+      "registry": "2:owned",
+      "pid": 69338,
+      "birthEpoch": 1792327091.991729
+    },
+    {
+      "registry": "2:owned",
+      "pid": 69374,
+      "birthEpoch": 1792327095.433713
+    },
+    {
+      "registry": "3:owned",
+      "pid": 40560,
+      "birthEpoch": 1792336712.866106
+    },
+    {
+      "registry": "3:owned",
+      "pid": 40561,
+      "birthEpoch": 1792336713.056741
+    },
+    {
+      "registry": "3:owned",
+      "pid": 40562,
+      "birthEpoch": 1792336713.74222
+    },
+    {
+      "registry": "3:owned",
+      "pid": 40563,
+      "birthEpoch": 1792336714.090026
+    },
+    {
+      "registry": "3:owned",
+      "pid": 40564,
+      "birthEpoch": 1792336714.11741
+    },
+    {
+      "registry": "3:owned",
+      "pid": 40565,
+      "birthEpoch": 1792336714.231182
+    },
+    {
+      "registry": "3:owned",
+      "pid": 40597,
+      "birthEpoch": 1792336717.556109
+    }
+  ],
+  "observation": {
+    "started": {
+      "epoch": 1792348174.387399,
+      "monotonic": 1500628.615475933
+    },
+    "completed": {
+      "epoch": 1792348174.392716,
+      "monotonic": 1500628.620791669
+    },
+    "observations": [
+      {
+        "registry": "1:owned",
+        "pid": 46165,
+        "birthEpoch": 1792323574.148967,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.387817,
+        "observedMonotonic": 1500628.615893427
+      },
+      {
+        "registry": "1:owned",
+        "pid": 46166,
+        "birthEpoch": 1792323574.350659,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.388052,
+        "observedMonotonic": 1500628.616128684
+      },
+      {
+        "registry": "1:owned",
+        "pid": 46167,
+        "birthEpoch": 1792323574.699382,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.388267,
+        "observedMonotonic": 1500628.616343819
+      },
+      {
+        "registry": "1:owned",
+        "pid": 46168,
+        "birthEpoch": 1792323574.815681,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.388482,
+        "observedMonotonic": 1500628.616558103
+      },
+      {
+        "registry": "1:owned",
+        "pid": 46169,
+        "birthEpoch": 1792323574.819213,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.388681,
+        "observedMonotonic": 1500628.616757443
+      },
+      {
+        "registry": "1:owned",
+        "pid": 46170,
+        "birthEpoch": 1792323574.859285,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.388878,
+        "observedMonotonic": 1500628.61695403
+      },
+      {
+        "registry": "1:owned",
+        "pid": 46207,
+        "birthEpoch": 1792323577.570527,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.389076,
+        "observedMonotonic": 1500628.617152157
+      },
+      {
+        "registry": "2:owned",
+        "pid": 69323,
+        "birthEpoch": 1792327090.384164,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.389577,
+        "observedMonotonic": 1500628.61765363
+      },
+      {
+        "registry": "2:owned",
+        "pid": 69327,
+        "birthEpoch": 1792327090.599847,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.3898408,
+        "observedMonotonic": 1500628.617917073
+      },
+      {
+        "registry": "2:owned",
+        "pid": 69333,
+        "birthEpoch": 1792327091.534714,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.3900511,
+        "observedMonotonic": 1500628.618126732
+      },
+      {
+        "registry": "2:owned",
+        "pid": 69336,
+        "birthEpoch": 1792327091.854785,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.390251,
+        "observedMonotonic": 1500628.61832714
+      },
+      {
+        "registry": "2:owned",
+        "pid": 69337,
+        "birthEpoch": 1792327091.878596,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.3904462,
+        "observedMonotonic": 1500628.618521541
+      },
+      {
+        "registry": "2:owned",
+        "pid": 69338,
+        "birthEpoch": 1792327091.991729,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.390635,
+        "observedMonotonic": 1500628.6187108
+      },
+      {
+        "registry": "2:owned",
+        "pid": 69374,
+        "birthEpoch": 1792327095.433713,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.391177,
+        "observedMonotonic": 1500628.61925388
+      },
+      {
+        "registry": "3:owned",
+        "pid": 40560,
+        "birthEpoch": 1792336712.866106,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.3914418,
+        "observedMonotonic": 1500628.619517555
+      },
+      {
+        "registry": "3:owned",
+        "pid": 40561,
+        "birthEpoch": 1792336713.056741,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.391649,
+        "observedMonotonic": 1500628.619725461
+      },
+      {
+        "registry": "3:owned",
+        "pid": 40562,
+        "birthEpoch": 1792336713.74222,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.391857,
+        "observedMonotonic": 1500628.61993285
+      },
+      {
+        "registry": "3:owned",
+        "pid": 40563,
+        "birthEpoch": 1792336714.090026,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.392054,
+        "observedMonotonic": 1500628.620129797
+      },
+      {
+        "registry": "3:owned",
+        "pid": 40564,
+        "birthEpoch": 1792336714.11741,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.39225,
+        "observedMonotonic": 1500628.620325508
+      },
+      {
+        "registry": "3:owned",
+        "pid": 40565,
+        "birthEpoch": 1792336714.231182,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.392491,
+        "observedMonotonic": 1500628.620566783
+      },
+      {
+        "registry": "3:owned",
+        "pid": 40597,
+        "birthEpoch": 1792336717.556109,
+        "classification": "gone",
+        "observedBirthEpoch": null,
+        "status": null,
+        "observedAtEpoch": 1792348174.392697,
+        "observedMonotonic": 1500628.620772822
+      }
+    ],
+    "classification": "known-identities-quiescent",
+    "scope": "task-known-recorded-identities-only",
+    "fullProcessTreeExit": "unknown"
+  },
+  "scope": "task-known-recorded-identities-only",
+  "fullProcessTreeExit": "unknown"
+}

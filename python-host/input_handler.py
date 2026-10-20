@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """macOS Input Controller using Quartz"""
 import asyncio
+from input_admission_queue import input_commit_fence
 import logging
 import subprocess
 import threading
@@ -32,6 +33,7 @@ from quartz_keyboard_adapter import (
 )
 from remote_keyboard_state import LegacyInputAdapter, RemoteKeyboardState
 from remote_desktop_write_state import ReliableDesktopWriteState
+from input_timing import InputTiming
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -125,10 +127,12 @@ class InputHandler:
 
     async def apply_keyboard(self, envelope, *, transport=None):
         """Apply v2 or lease-bound legacy keyboard input on the ordered worker."""
+        timing = InputTiming()
+        commit_fence = input_commit_fence.get()
         async with self._keyboard_lock:
             loop = asyncio.get_running_loop()
 
-            def apply():
+            def execute():
                 if envelope.get("schemaVersion") == 2:
                     protocol_envelope = {
                         field: envelope[field]
@@ -138,16 +142,25 @@ class InputHandler:
                         )
                         if field in envelope
                     }
-                    return self._remote_keyboard.apply(protocol_envelope)
+                    return self._remote_keyboard.apply(protocol_envelope, commit_fence=commit_fence)
                 return self._legacy_keyboard.apply(
                     envelope,
                     transport=str(transport or envelope.get("transport") or "socket"),
+                    commit_fence=commit_fence,
                 )
+
+            def apply():
+                timing.start_apply()
+                try:
+                    return execute()
+                finally:
+                    timing.finish_apply()
 
             result = await loop.run_in_executor(
                 self._keyboard_executor, apply
             )
-            return self._keyboard_result(result, input_ids=envelope.get("inputIds", []))
+            stages = timing.durations() if result.status == "applied" else {"hostQueueMs": None, "hostApplyMs": None}
+            return {**self._keyboard_result(result, input_ids=envelope.get("inputIds", [])), **stages}
 
     def transition_desktop_writes(self, *, lease_id, lease_epoch):
         return self._desktop_writes.transition(lease_id=lease_id, lease_epoch=lease_epoch)
@@ -195,8 +208,8 @@ class InputHandler:
             "status": result.status,
             "pressedKeyCount": result.pressed_key_count,
             "modifierMask": result.modifier_mask,
-            "receiveTime": time.perf_counter(),
-            "executeTime": time.perf_counter(),
+            "receiveTime": None,
+            "executeTime": None,
         }
 
     async def handle_input(self, data):
@@ -204,6 +217,7 @@ class InputHandler:
         if not self._running:
             return
 
+        timing = InputTiming()
         i1 = time.perf_counter()
         try:
             input_type = data.get('type')
@@ -273,15 +287,21 @@ class InputHandler:
                 to_thread_start = time.perf_counter()
                 loop = asyncio.get_running_loop()
                 execution_result = None
+
+                def apply_native():
+                    timing.start_apply()
+                    try:
+                        if input_type == 'mouse':
+                            return self._handle_mouse(action, payload)
+                        if input_type == 'command':
+                            return self._handle_command(action, payload)
+                    finally:
+                        timing.finish_apply()
+
                 try:
-                    if input_type == 'mouse':
-                        execution_result = await loop.run_in_executor(
-                            self._input_thread_pool, self._handle_mouse, action, payload
-                        )
-                    elif input_type == 'command':
-                        execution_result = await loop.run_in_executor(
-                            self._input_thread_pool, self._handle_command, action, payload
-                        )
+                    execution_result = await loop.run_in_executor(
+                        self._input_thread_pool, apply_native
+                    )
                 except Exception as exc:
                     logger.error(
                         "Error executing input: type=%s action=%s error=%s",
@@ -299,11 +319,14 @@ class InputHandler:
                         "status": "execution-failed",
                         "receiveTime": i1,
                         "executeTime": i2,
+                        "hostQueueMs": None, "hostApplyMs": None,
                     }
                     if desktop is not None:
                         result["appliedSeq"] = self._desktop_writes.snapshot().last_applied_seq
                     return result
 
+                if not input_commit_fence.get()():
+                    return {"status": "stale-lease", "inputIds": []}
                 if desktop is not None and desktop.status == "applied":
                     desktop = self._desktop_writes.commit(
                         data["seq"],
@@ -334,6 +357,7 @@ class InputHandler:
                 "inputIds": data.get("inputIds", []),
                 "receiveTime": i1,
                 "executeTime": i2,
+                **timing.durations(),
             }
             if desktop is not None:
                 result.update(status=desktop.status, appliedSeq=desktop.applied_seq)

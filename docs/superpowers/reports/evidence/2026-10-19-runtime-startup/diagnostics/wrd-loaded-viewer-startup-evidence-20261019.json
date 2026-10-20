@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "scope": "Read-only offline extraction from fourth baseline persisted artifacts; no live observation or source execution",
+  "versions": {
+    "sha256": "2002654ee48a6aa1485e670181dee94af59ca71963a845beb5b35bd75f23ae83",
+    "runNonce": "0acf96f102fcd33e8f17b884a75e93f7",
+    "originSource": "formal-configured",
+    "originEvidenceSha256": "0408755280b9ae07fe554925711fe76c48930293d8f3b504f40165af1b36aa16",
+    "signalSourceCommit": "dfb15434e79da90b803b763c533836e16c080c71",
+    "hostSourceCommit": "dfb15434e79da90b803b763c533836e16c080c71",
+    "viewerSourceCommit": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+    "viewerBuildId": "a3671ba674ad7516",
+    "sourceEvidence": "root-attested"
+  },
+  "artifacts": [
+    {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/qualification-result.json",
+      "bytes": 7662,
+      "sha256": "5ebf46ff9919847f0be320f7f55df255928b6e4b8c9b22c0f9059364909f0dfd"
+    },
+    {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/runtime-manifest.json",
+      "bytes": 1158,
+      "sha256": "2002654ee48a6aa1485e670181dee94af59ca71963a845beb5b35bd75f23ae83"
+    },
+    {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/deployment-evidence.json",
+      "bytes": 4977,
+      "sha256": "04f4ab79ce84eb33353d1e03462d07196788fc9fde6eaacc8308965985718b46"
+    },
+    {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/summary.json",
+      "bytes": 2361,
+      "sha256": "5898c37279fb3105301d53ab6b3426016055450605fd16c37bb266bf1e246e4d"
+    },
+    {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/lifecycle.json",
+      "bytes": 8412,
+      "sha256": "b5e38c4708772a2f1381b36941670d1249c181ec66c564c9de4e8f0f50ab77d0"
+    },
+    {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/samples.jsonl",
+      "bytes": 1164155,
+      "sha256": "a96b18e67f05febca112059404495c1db7dd1c24da20f182438a15d852bf25cc"
+    }
+  ],
+  "qualification": {
+    "classification": "failed-or-indeterminate",
+    "firstFailedStage": "coverage",
+    "workerExitCode": 0,
+    "timedOut": false,
+    "errorClass": null,
+    "cleanupErrorClasses": [],
+    "coverageCause": "worker child-exit observation NoSuchProcess race; observation-unavailable",
+    "reclassified": false
+  },
+  "coverage": {
+    "rows": 312,
+    "rowElapsedSeconds": [
+      0.013160167029127479,
+      309.2589251229074
+    ],
+    "browserNowMs": [
+      945.5,
+      310141.90000009537
+    ],
+    "browserTimeOriginEpochMs": 1792348658779,
+    "browserDerivedRowWindowUTC": [
+      "2026-10-18T18:37:39.724500+00:00",
+      "2026-10-18T18:42:48.920900+00:00"
+    ],
+    "continuity": {
+      "status": "PASS",
+      "kind": "passive-session-continuity-only",
+      "requestedSeconds": 300,
+      "elapsedSeconds": 300.40683215111494,
+      "samples": 301,
+      "missingSamples": 0,
+      "lateSamples": 0,
+      "failedObservations": 0,
+      "identityChangeObservations": 0,
+      "maxObservedNoProgressMs": 533.3119999999981,
+      "progressAfterBaseline": true,
+      "frameStallThresholdMs": 5000,
+      "frameEvidence": "requestVideoFrameCallback",
+      "threeHourContinuityMet": false,
+      "visibleEffect": "NOT_RUN",
+      "activeControl": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN",
+      "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+      "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+    },
+    "semantics": "row elapsedSeconds is Python time.monotonic()-began measured when row is emitted; browserNowMs/startup marks are browser performance timestamps. These are different clock domains. No cross-domain subtraction."
+  },
+  "startup": {
+    "startupVerification": {
+      "status": "verified",
+      "freshPage": true,
+      "authVerified": true,
+      "selector": "vacant-only-v1",
+      "startClickMarksBefore": 0,
+      "startClickMarksAfter": 1,
+      "guardedApiRequests": 1
+    },
+    "marksBrowserPerformanceMs": {
+      "start-click": 1968.3,
+      "bootstrap-start": 1969,
+      "bootstrap-ready": 2641.1,
+      "bootstrap-degraded": null,
+      "signal-connected": 5636.4,
+      "first-frame": 8106,
+      "active": 8106
+    },
+    "durationMs": {
+      "clickToBootstrapStart": 0.7,
+      "bootstrapStartToReady": 672.1,
+      "clickToBootstrapReady": 672.8,
+      "bootstrapReadyToSignalConnected": 2995.3,
+      "clickToSignalConnected": 3668.1,
+      "signalConnectedToFirstFrameMark": 2469.6,
+      "clickToFirstFrameMark": 6137.7,
+      "clickToFirstCallback": null
+    },
+    "configurationTimestamp": null,
+    "grantTimestamp": null,
+    "offerTimestamp": null,
+    "peerConnectedTimestamp": null,
+    "firstCallbackTimestamp": null,
+    "nullReason": "No named configuration/grant/offer/peer-connected event timestamps; serverEvents empty. First positive callback row has 12 callbacks and only latest lastFrameAtMs. Root-supplied caller proof shows first-frame/active marks may be stamped by stats/tunnel/rVFC media readiness paths, so exact first callback time remains unestablished.",
+    "firstPositiveCallbackObservation": {
+      "row": 10,
+      "browserNowMs": 8716.100000143051,
+      "callbacks": 12,
+      "lastFrameAtMs": 8675.8
+    },
+    "observationBudget": {
+      "ordinaryTickOuterSeconds": 2,
+      "cancellationSettlementSeconds": 0.1,
+      "hostStatusSeconds": 0.75,
+      "injectedHostStatusSettlementSeconds": 0.075,
+      "finalCleanupOuterSeconds": 1,
+      "note": "These are configured producer bounds, not measured latency. Row elapsedSeconds includes observation work; poll count or row intervals cannot replace event times."
+    }
+  },
+  "inputMetrics": {
+    "inputAckRttMs": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p95": null,
+      "allRowsUnavailableAndNull": true
+    },
+    "inputToPostApplyFrameMs": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p95": null,
+      "allRowsUnavailableAndNull": true
+    },
+    "inputToVisibleEffectMs": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p95": null,
+      "allRowsUnavailableAndNull": true
+    },
+    "hostQueueMs": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p95": null,
+      "allRowsUnavailableAndNull": true
+    },
+    "hostApplyMs": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p95": null,
+      "allRowsUnavailableAndNull": true
+    },
+    "hostAdapterAwaitMs": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p95": null,
+      "allRowsUnavailableAndNull": true
+    }
+  },
+  "businessInput": "NOT_RUN",
+  "nativeAfterGraceQualification": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physicalDisplay": "NOT_RUN",
+  "oldComparison": {
+    "source": "parent-supplied old single probe, not re-read",
+    "oldClickToSignalMs": 4577.8,
+    "oldClickToFirstCallbackMs": 7880.8,
+    "newClickToSignalMs": 3668.1,
+    "signalDifferenceMs": -909.7,
+    "newClickToFirstCallbackMs": null,
+    "newClickToFirstFrameMarkMs": 6137.7,
+    "causalImprovementEstablished": false,
+    "p95Established": false,
+    "limits": "different single probes; no controlled repeated matched experiment. Old callback and new first-frame mark cannot be equated. Global R4 qualification failed."
+  },
+  "confidence": {
+    "persistedMarksAndSubtraction": "high",
+    "firstFrameMarkEqualsFirstCallback": "not established; multiple media-ready caller paths",
+    "startupCausalityOrP95": "not established"
+  },
+  "sourceDefinitionFragments": [
+    "web-client/js/startup-telemetry.js: performance.now() mark producer; import preserves original times",
+    "scripts/ordinary_session_recovery.py: row emission monotonic elapsed and observation budgets"
+  ],
+  "readBoundary": {
+    "uniqueArtifactFiles": 6,
+    "uniqueArtifactBytes": 1188725,
+    "sourceFiles": 2,
+    "noLiveLogsOrCommands": true
+  },
+  "rootSuppliedSourceContext": {
+    "file": "web-client/js/webrtc.js",
+    "sha256": "4fde802193ca0057203a6fdf40a0c9a37ef64626444cb33bcde6bb8f82052924",
+    "viewerPin": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+    "lines": "1175\u20131197; 2050; 5536; 6213; 1161",
+    "semantics": "markMediaAttemptReady stamps both first-frame and active; readiness independent of control ownership. Callers include stats videoWidth/decodedDelta, tunnel rendered frame, rVFC and noteMediaRenderedFrame. Thus first-frame is a general media-ready mark, not a unique first-rVFC event; active is not control grant/input-ready proof.",
+    "provenance": "Provided by root after its targeted source inspection; this agent did not read a third source file."
+  }
+}

@@ -1,0 +1,12 @@
+test_actual_asset_consumer_accepts_valid_snapshot (test_builder_diagnostics.BuilderDiagnostics.test_actual_asset_consumer_accepts_valid_snapshot) ... ok
+test_actual_asset_consumer_missing_failed_malformed_reject (test_builder_diagnostics.BuilderDiagnostics.test_actual_asset_consumer_missing_failed_malformed_reject) ... ok
+test_actual_child_positive_exact_calls_and_lifecycle (test_builder_diagnostics.BuilderDiagnostics.test_actual_child_positive_exact_calls_and_lifecycle) ... ok
+test_actual_child_scan_exceptions_still_fail_unchanged_coverage (test_builder_diagnostics.BuilderDiagnostics.test_actual_child_scan_exceptions_still_fail_unchanged_coverage) ... ok
+test_actual_child_unsupported_and_overflow_veto (test_builder_diagnostics.BuilderDiagnostics.test_actual_child_unsupported_and_overflow_veto) ... ok
+test_consumer_preserves_coverage_and_signals_veto (test_builder_diagnostics.BuilderDiagnostics.test_consumer_preserves_coverage_and_signals_veto) ... ok
+test_supported_state_error_is_event_not_automatic_failure (test_builder_diagnostics.BuilderDiagnostics.test_supported_state_error_is_event_not_automatic_failure) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 2.444s
+
+OK

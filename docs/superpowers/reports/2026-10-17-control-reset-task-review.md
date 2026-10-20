@@ -1,0 +1,13 @@
+# Independent control teardown reset review
+
+2026-10-17. Reviewed commit c3abb2196c34aafad48fd80189ad7b55d8d02b4e against 1b293161f747bfcaff75ac8c887afb4418336c7f in the delegated worktree. Read task brief, reset-reason design and control addendum, adjacent audit, implementation report, supplied diff and actual source/fixture.
+
+Verdict: PASS. No actionable spec or quality findings.
+
+Production changes are exactly the two requested keyboard wire argument mappings: freezeControl uses control-revoked inside the existing non-suspended/reset branch; releaseControl uses deactivated inside the existing !preserveAcquireIntent branch. Original diagnostic reason still reaches pointer release, inactive lifecycle and control-release. Reset remains before lease clearing and before control-release. Conditions, synchronous revoked cleanup, timers, release payload and M6 two-prerequisite gates are unchanged by this commit. No Signal/Host allowlist or Input/controller/transport production code changed.
+
+The added tests invoke the actual recovery button click handler and actual freezeControl through real Input, RemoteKeyboardController and KeyboardTransport in the existing offline VM fixture. They validate the actual emitted envelope with the unchanged pure Signal validator, check lease/epoch/seq/inputIds, original lifecycle/pointer/release reasons, reset-before-release order, null lease/revoked transport and stale late ACK with closed control/input gates. host-offline, control-heartbeat-rejected and default reason are covered. Separate real-method checks preserve signal-disconnect parked lease and ready sequence context, reset=false, and preserveAcquireIntent skip behavior. Pointer observation delegates to the real implementation; keyboard reset is not stubbed. The changed fake element listener storage is adequate for the single click handler under test.
+
+Independent verification: node --test --test-name-pattern='control reset protocol' web-client/js/input-signaling-continuity.test.js passed 5/5. The reported 534/534 broader suite was inspected in the implementation report and was not routinely repeated. These tests establish offline protocol correctness and preservation of the teardown contracts; they do not establish loaded runtime/native input or media-stall recovery. Host validator execution was not added to this review: the task explicitly requires unchanged Signal validation and endpoint parity was established by the linked audit; neither endpoint changed here.
+
+No runtime/native/network/browser/build/dependency actions, source/index mutations or subagents. Only this ignored review artifact was written.

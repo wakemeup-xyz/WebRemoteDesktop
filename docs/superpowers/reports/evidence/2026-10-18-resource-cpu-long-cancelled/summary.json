@@ -1,0 +1,20 @@
+{
+  "status": "INCOMPLETE",
+  "reason": "Root intentionally canceled owned test to implement confirmed duplicate-bootstrap wait; not a production continuity failure",
+  "requestedSeconds": 10800,
+  "actualSampleSpanSeconds": 498.0005226500798,
+  "samples": 499,
+  "maxCompletedFrameGapMs": 1533.3000000000466,
+  "sampleSha256": "766ffd27b67ffffa4694c81822591fab77cc1d4382c004e90a2b18c24c2a7a61",
+  "supervisorFailureType": "KeyboardInterrupt",
+  "workerExitCode": -15,
+  "allRecordedIdentitiesExited": true,
+  "supervisorSignalAttempts": 6,
+  "completeProcessTreeExitEstablished": false,
+  "postEndHealth": true,
+  "postEndHostOnline": true,
+  "postEndViewers": 0,
+  "serviceOrTunnelSignal": false,
+  "activeControl": "NOT_RUN",
+  "visibleEffect": "NOT_RUN"
+}

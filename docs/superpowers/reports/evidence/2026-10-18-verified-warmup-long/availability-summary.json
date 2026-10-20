@@ -1,0 +1,203 @@
+{
+  "defaultClient": {
+    "capturedAt": "2026-10-18T00:04:24.904839+00:00",
+    "sourceCommit": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+    "buildId": "79bf9a5afea0458e",
+    "earlierUnpersistedAttempt": {
+      "localHealthSucceeded": true,
+      "localStatusSucceeded": true,
+      "formalHealthHttpStatus": 403,
+      "client": "Python urllib default opener",
+      "assetChecksNotReached": true
+    },
+    "proxySchemes": [
+      "all",
+      "http",
+      "https",
+      "no"
+    ],
+    "requests": {
+      "localHealth": {
+        "status": 200,
+        "bytes": 54,
+        "sha256": "4e2cd6c9ea27c7f6aff60282f8f415f17829819526374930a36755a6190acd2a",
+        "server": null,
+        "cacheControl": null,
+        "statusOk": true,
+        "elapsedMs": 6.099
+      },
+      "localStatus": {
+        "status": 200,
+        "bytes": 170,
+        "sha256": "9f0ea69949747618e3d97ae1788c5f02a8f5d0068ce53d1f66be388ea1691cd3",
+        "server": null,
+        "cacheControl": null,
+        "statusSummary": {
+          "hostOnline": true,
+          "viewerCount": 0,
+          "relayViewerCount": 0
+        },
+        "elapsedMs": 1.519
+      },
+      "formalHealth": {
+        "status": 403,
+        "errorType": "HTTPError",
+        "server": "cloudflare",
+        "contentType": "text/plain; charset=UTF-8",
+        "elapsedMs": 2097.366
+      },
+      "loginHtml": {
+        "status": 403,
+        "errorType": "HTTPError",
+        "server": "cloudflare",
+        "contentType": "text/plain; charset=UTF-8",
+        "elapsedMs": 2077.186
+      },
+      "viewerHtml": {
+        "status": 403,
+        "errorType": "HTTPError",
+        "server": "cloudflare",
+        "contentType": "text/plain; charset=UTF-8",
+        "elapsedMs": 2223.363
+      },
+      "coreJs": {
+        "status": 403,
+        "errorType": "HTTPError",
+        "server": "cloudflare",
+        "contentType": "text/plain; charset=UTF-8",
+        "elapsedMs": 1951.157
+      }
+    },
+    "scope": "bounded read-only urllib HTTP probes; no browser, authentication or Viewer"
+  },
+  "canonicalHeaderComparison": {
+    "capturedAt": "2026-10-18T00:04:58.508741+00:00",
+    "scope": "read-only formal HTTP comparison, existing canonical checker headers; no authentication/browser/configuration changes",
+    "sourceCommit": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+    "buildId": "79bf9a5afea0458e",
+    "requests": {
+      "healthAcceptOnly": {
+        "status": 403,
+        "errorType": "HTTPError",
+        "server": "cloudflare",
+        "contentType": "application/json; charset=utf-8",
+        "elapsedMs": 1903.468
+      },
+      "healthUserAgentOnly": {
+        "status": 200,
+        "bytes": 54,
+        "sha256": "7789a954e160f2c4c2d0eb8330980b613ff6032256037897aeb781ac0a7cc5a3",
+        "server": "cloudflare",
+        "cacheControl": null,
+        "statusOk": true,
+        "elapsedMs": 2375.184
+      },
+      "healthCanonicalHeaders": {
+        "status": 200,
+        "bytes": 54,
+        "sha256": "92d66f56585b36ec41afd9bec63ab26daa7c5dd35fdb99963a654a56a0a03295",
+        "server": "cloudflare",
+        "cacheControl": null,
+        "statusOk": true,
+        "elapsedMs": 2140.103
+      },
+      "loginHtml": {
+        "status": 200,
+        "bytes": 1347,
+        "sha256": "932d75bc5f28f9b1859ef96e0a01783e223d80724f5c1fc6757a746470867221",
+        "server": "cloudflare",
+        "cacheControl": "no-cache, max-age=0, must-revalidate",
+        "matchesLoadedDist": false,
+        "elapsedMs": 2283.594
+      },
+      "viewerHtml": {
+        "status": 200,
+        "bytes": 27592,
+        "sha256": "c6ee7c938d493fc15bf5a08f7dcb34a676493d69c0684073f79f710b446a0a1a",
+        "server": "cloudflare",
+        "cacheControl": "no-cache, max-age=0, must-revalidate",
+        "matchesLoadedDist": false,
+        "elapsedMs": 2363.858
+      },
+      "coreJs": {
+        "status": 200,
+        "bytes": 498905,
+        "sha256": "b673f8050beafdbf94367f0fc8a1485447493e0283a1d44b4fb13b51aaa78dfa",
+        "server": "cloudflare",
+        "cacheControl": "public, max-age=31536000, immutable",
+        "matchesLoadedDist": true,
+        "elapsedMs": 2740.652
+      }
+    }
+  },
+  "htmlComparison": {
+    "capturedAt": "2026-10-18T00:06:04.872600+00:00",
+    "scope": "HTML response comparison only, no login/browser/Viewer",
+    "pages": {
+      "index.html": {
+        "localBytes": 980,
+        "remoteBytes": 1347,
+        "currentBuildPresent": true,
+        "currentCorePathPresent": null,
+        "differences": [
+          {
+            "operation": "insert",
+            "localBytes": 0,
+            "remoteBytes": 367,
+            "containsCloudflareBeacon": true,
+            "containsChallengePlatform": false,
+            "containsScript": false,
+            "scriptHosts": [
+              "static.cloudflareinsights.com"
+            ]
+          }
+        ]
+      },
+      "viewer.html": {
+        "localBytes": 27225,
+        "remoteBytes": 27592,
+        "currentBuildPresent": true,
+        "currentCorePathPresent": true,
+        "differences": [
+          {
+            "operation": "insert",
+            "localBytes": 0,
+            "remoteBytes": 367,
+            "containsCloudflareBeacon": true,
+            "containsChallengePlatform": false,
+            "containsScript": false,
+            "scriptHosts": [
+              "static.cloudflareinsights.com"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "interpretation": [
+    "Default Python urllib requests received 403 from a response with Server cloudflare. Accept-only also received 403, whereas the existing canonical User-Agent requests received 200. This is a bounded header-dependent observation, not proof of the exact edge rule or historical browser failures.",
+    "Formal HTML responses contain current build and current core asset path. They differ from loaded dist by one 367-byte insertion containing a Cloudflare Insights beacon reference; do not claim raw HTML byte equality. Current core JavaScript is byte-identical to loaded dist.",
+    "No authentication, browser, Viewer, service reload, tunnel configuration or network policy change was made."
+  ],
+  "finalLocalMetadata": {
+    "capturedUTC": "2026-10-18T00:08:05.111026+00:00",
+    "health": true,
+    "status": {
+      "hostOnline": true,
+      "viewerCount": 0,
+      "relayViewerCount": 0,
+      "viewerEpoch": 2
+    },
+    "buildId": "79bf9a5afea0458e",
+    "pids": {
+      "signal": "45287",
+      "host": "94398"
+    },
+    "processes": "  897 Thu Oct  1 15:47:50 2026     /bin/bash\n45287 Sun Oct 18 04:40:06 2026     /Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node\n84671 Fri Oct 16 19:44:27 2026     /Users/macstudio1/.homebrew/bin/cloudflared\n94398 Sun Oct 18 03:29:32 2026     /Users/macstudio1/.homebrew/Cellar/python@3.11/3.11.15_1/Frameworks/Python.framework/Versions/3.11/Resources/Python.app/Contents/MacOS/Python\n",
+    "tools": {
+      "scripts/passive_session_soak.py": "b0a15095651c9147eb451b27eb815ec4ea4cc984f2d293d3617c4cee89a15426",
+      "scripts/passive_session_sampler.js": "f862b739cbe7eb543ccab304203c71c62a43014530fa2da9a7655cba293665d3"
+    },
+    "quickUrlFileExists": false
+  }
+}

@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "kind": "guarded-ordinary-qualification",
+  "scenario": "after-grace",
+  "durationSeconds": 390,
+  "workerDeadlineSeconds": 518,
+  "attemptSHA256": "85d916da547208e9250c7c28b0ddbf65c3694c2b0da95ce10e5e67ed4875b2d9",
+  "sequenceId": "e0d817ad446b77398041d33d404cda2a",
+  "attemptId": "d7b37380c9d7be913a2429734a3bdda0",
+  "productTIP": "dfb15434e79da90b803b763c533836e16c080c71",
+  "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+  "priorFailureSHA256": "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "viewerSourceTIP": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+  "failedHistory": [
+    "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242",
+    "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+    "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+  ],
+  "runtimeManifestSHA256": "dc1f257c00be7c7ef9e6b8bc1c09a759300dd988d0b4cf163256b1e77cddcef5",
+  "qualificationEvidenceScope": "ordinary-functional-playwright-routed-stimulus",
+  "nativeAfterGraceQualification": "NOT_RUN",
+  "sourceEvidence": "root-attested",
+  "workerRegistration": {
+    "registered": true,
+    "registrationErrorClass": null,
+    "deadlineMonotonic": 1509611.393585795,
+    "status": "registered",
+    "exitCode": null,
+    "exitObservedMonotonic": null,
+    "unresolvedChild": false
+  },
+  "workerExitCode": 1,
+  "timedOut": false,
+  "errorClass": null,
+  "cleanupErrorClasses": [],
+  "validationErrorClass": "RuntimeError",
+  "validationStages": {
+    "stages": {
+      "rows": "passed",
+      "worker": "failed",
+      "coverage": "not-evaluated",
+      "signals": "not-evaluated",
+      "diagnostics": "not-evaluated",
+      "source-pins": "not-evaluated",
+      "manifest": "not-evaluated",
+      "runtime-integrity": "not-evaluated",
+      "sticky-observation": "not-evaluated",
+      "terminal-evidence": "not-evaluated"
+    },
+    "firstFailedStage": "worker"
+  },
+  "processDiagnostics": {
+    "worker": {
+      "schemaVersion": 2,
+      "scope": "diagnostic-only",
+      "role": "worker",
+      "events": [],
+      "dropped": 0,
+      "failed": false,
+      "expectedStateExitCounts": {
+        "worker-loop": 1041,
+        "cleanup": 182,
+        "result": 7
+      },
+      "gaps": [],
+      "gapsDropped": 0,
+      "overflow": {
+        "events": false,
+        "gaps": false,
+        "contexts": false,
+        "counters": false
+      },
+      "limits": {
+        "events": 32,
+        "gaps": 32,
+        "contextDepth": 8,
+        "counter": 2147483647
+      }
+    },
+    "sample": {
+      "schemaVersion": 2,
+      "scope": "diagnostic-only",
+      "role": "sample",
+      "events": [],
+      "dropped": 0,
+      "failed": false,
+      "expectedStateExitCounts": {
+        "worker-loop": 0,
+        "cleanup": 0,
+        "result": 0
+      },
+      "gaps": [],
+      "gapsDropped": 0,
+      "overflow": {
+        "events": false,
+        "gaps": false,
+        "contexts": false,
+        "counters": false
+      },
+      "limits": {
+        "events": 32,
+        "gaps": 32,
+        "contextDepth": 8,
+        "counter": 2147483647
+      }
+    }
+  },
+  "observedUnexpectedCoverage": {
+    "worker": [],
+    "sample": []
+  },
+  "owned": {
+    "identities": [
+      {
+        "birth": 1792356639.17811,
+        "parent": null,
+        "firstObservedEpoch": 1792356639.182365,
+        "lastObservedEpoch": 1792356639.182365,
+        "pid": 65372,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356639.377448,
+        "parent": {
+          "pid": 65372,
+          "birth": 1792356639.17811
+        },
+        "firstObservedEpoch": 1792356639.472971,
+        "lastObservedEpoch": 1792357018.538025,
+        "pid": 65373,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356639.783575,
+        "parent": {
+          "pid": 65373,
+          "birth": 1792356639.377448
+        },
+        "firstObservedEpoch": 1792356640.0606961,
+        "lastObservedEpoch": 1792357018.552276,
+        "pid": 65379,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356639.909201,
+        "parent": {
+          "pid": 65379,
+          "birth": 1792356639.783575
+        },
+        "firstObservedEpoch": 1792356640.075684,
+        "lastObservedEpoch": 1792357018.565948,
+        "pid": 65380,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356639.91535,
+        "parent": {
+          "pid": 65379,
+          "birth": 1792356639.783575
+        },
+        "firstObservedEpoch": 1792356640.075953,
+        "lastObservedEpoch": 1792357018.566205,
+        "pid": 65381,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356639.947994,
+        "parent": {
+          "pid": 65379,
+          "birth": 1792356639.783575
+        },
+        "firstObservedEpoch": 1792356640.0762508,
+        "lastObservedEpoch": 1792356642.2095559,
+        "pid": 65382,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356642.372802,
+        "parent": {
+          "pid": 65379,
+          "birth": 1792356639.783575
+        },
+        "firstObservedEpoch": 1792356642.566675,
+        "lastObservedEpoch": 1792357018.5664608,
+        "pid": 65417,
+        "status": "exited"
+      }
+    ],
+    "signals": [],
+    "allRecordedIdentitiesExited": true,
+    "completeProcessTreeExitEstablished": false,
+    "coverage": [
+      "polling-may-miss-fast-orphan",
+      "macos-check-to-signal-race",
+      "no-CDP-no-manager-proxy"
+    ]
+  },
+  "sampleOwned": {
+    "identities": [],
+    "signals": [],
+    "allRecordedIdentitiesExited": true,
+    "completeProcessTreeExitEstablished": false,
+    "coverage": [
+      "polling-may-miss-fast-orphan",
+      "macos-check-to-signal-race",
+      "no-CDP-no-manager-proxy"
+    ]
+  },
+  "sampleTriggered": false,
+  "sampling": {
+    "status": "disabled-for-entire-recovery-scenario",
+    "scope": "no Host sample during baseline, fault, recovery or stability; passive/log evidence only"
+  },
+  "completedRows": 372,
+  "observationFailure": null,
+  "samplingEnabled": false,
+  "qualification": null,
+  "finalRuntimeIntegrity": null,
+  "postCloseOccupancy": null,
+  "nextRunAdmission": "NOT_ESTABLISHED",
+  "strictFreshPreflightRequired": true,
+  "serverMapDrainEstablished": false,
+  "currentReadiness": {
+    "observedAtEpoch": 1792357025.901228,
+    "health": null,
+    "identities": {
+      "signal": {
+        "pid": 33179,
+        "birthEpoch": 1792348311.587397
+      },
+      "host": {
+        "pid": 36877,
+        "birthEpoch": 1792322600.528357
+      }
+    },
+    "preserved": {
+      "identities": {
+        "tunnel": {
+          "pid": 84671,
+          "birthEpoch": 1792151067.803588
+        },
+        "watcher": {
+          "pid": 897,
+          "birthEpoch": 1790840870.948583
+        }
+      },
+      "quickURL": "absent"
+    },
+    "errors": {
+      "health": "RuntimeError"
+    }
+  },
+  "fullProcessTreeExit": "unknown",
+  "classification": "failed-or-indeterminate",
+  "automaticNextRun": false
+}

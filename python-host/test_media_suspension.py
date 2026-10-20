@@ -496,3 +496,38 @@ async def test_media_resume_fails_closed_immediately_when_pc_missing():
     assert called["wait"] == 0
     assert host._media_activity_suspended is True
     assert host.screen_track.suspended is True
+
+
+@pytest.mark.asyncio
+async def test_old_resume_completion_cannot_restore_previous_attempt(monkeypatch):
+    import asyncio
+    import host as host_module
+    entered, release = asyncio.Event(), asyncio.Event()
+    host = _make_media_host(sender=FakeSender(), track=FakeTrack())
+    host._active_input_binding["connectionAttemptSequence"] = 1
+    host._media_activity_suspended = True
+    host.screen_track.suspended = True
+    async def paused_call(fn, *args, **kwargs):
+        entered.set()
+        await release.wait()
+        return fn(*args, **kwargs)
+    monkeypatch.setattr(host_module.asyncio, "to_thread", paused_call)
+    pending = asyncio.create_task(host.on_media_activity_change({
+        "schemaVersion": 1, "state": "active", "reasons": [], "generation": 1,
+        "connectionAttemptId": "wrd-1", "viewerId": "viewer-1",
+        "leaseId": "lease-000000000001", "leaseEpoch": 3,
+    }))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        await host.on_connection_attempt_bind({
+            "viewerId": "viewer-1", "leaseId": "lease-000000000001", "leaseEpoch": 3,
+            "connectionAttemptId": "wrd-2", "connectionAttemptSequence": 2, "networkMode": "tunnel",
+        })
+    finally:
+        release.set()
+        await pending
+    assert host._media_activity_binding["connectionAttemptId"] == "wrd-2"
+    assert host._media_activity_binding["connectionAttemptSequence"] == 2
+    assert host.screen_track.suspended is True
+    assert host.video_sender.tracks[-1] is None
+    assert not any(e == "media-activity-ack" and d.get("applied") and d.get("connectionAttemptId") == "wrd-1" for e, d in host.sio.events)

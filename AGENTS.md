@@ -19,117 +19,33 @@ This file provides guidance to Codex (Codex.ai/code) when working with this repo
   - 执行计划：`docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
 - 如用户以后明确指定其他规划方式，以该次指示为准；仓库外产物仍须同步到仓库再实施。
 
-## 项目目录结构
+## 项目总览与目录
 
+本仓库为 WebRemoteDesktop（页面产品名称：CodeHarness 学习助手），通过浏览器 Viewer、Node.js Signal Server 和 Python Host 提供屏幕投送、远程输入及 Terminal。它不是 StockHub 行情平台；本仓库不使用 AKShare/Qlib、FastAPI 或 Vite 作为服务入口。
+
+```text
+WebRemoteDesktop/
+├── signal-server/     # Node.js/Express/Socket.IO，监听 8080，托管网页及 API
+├── web-client/        # Viewer 源码；dist 为启动时构建的可重建产物
+├── python-host/       # asyncio/aiortc/MSS/Quartz，捕获、编码及原生输入
+├── scripts/           # 启动、诊断、离线测试和显式验收工具
+├── skills/            # 项目内技能及服务管理入口
+├── docs/需求文档/     # 当前需求和功能约束
+├── docs/superpowers/  # specs、plans、reports 与脱敏验收证据
+├── skills-lock.json   # 技能来源锁定
+└── AGENTS.md
 ```
-/Users/macstudio1/AI/Codex/StockHub/
-├── basiclib/         # 基础依赖库（从GitHub拉取）
-│   ├── akshare/     # 金融数据接口库
-│   ├── qlib/        # 量化投资平台
-│   └── tickflow/    # TickFlow Python SDK
-├── backend/          # 后端服务（Python + FastAPI）
-│   └── AGENTS.md    # 后端技术约束文档
-├── frontend/         # Web前端应用
-│   └── AGENTS.md    # 前端技术约束文档
-├── docs/            # 项目文档
-│   └── 需求文档/    # 产品需求文档
-│       ├── 项目总需求.md
-│       ├── 后端模块/
-│       ├── 前端模块/
-│       └── API接口/
-├── demo/            # 网页Demo输出目录
-│   └── YYYY-MM-DD/  # 按日期组织
-└── AGENTS.md        # 本文件 - 项目总入口
-```
-
-## 文档分层说明
-
-| 文档类型 | 位置 | 内容偏向 |
-|---------|------|---------|
-| 根目录 AGENTS.md | ./ | 项目总览 + 目录结构 + 各部分入口链接 |
-| 后端 AGENTS.md | backend/AGENTS.md | 后端技术栈 + 目录结构 + 开发规范 + 编码规范 |
-| 前端 AGENTS.md | frontend/AGENTS.md | 前端技术栈 + 目录结构 + 开发规范 + 编码规范 |
-| 需求文档 | docs/需求文档/ | 产品视角的功能需求、菜单结构、业务逻辑 |
-
-## 项目总览
-
-本项目旨在建设一个专业的股市行情和基本面分析平台，包含以下主要组成部分：
-
-- **akshare/** - 金融数据接口库（获取市场数据）
-- **qlib/** - 量化投资平台（AI驱动的量化分析）
-- **backend/** - 自定义后端服务（Python + FastAPI）
-- **frontend/** - Web前端应用（用户交互界面）
-- **docs/** - 项目文档（需求文档）
-
-它们是互补的关系：AKShare获取数据 → Qlib分析数据 → Backend提供服务 → Frontend展示结果。
 
 ## 快速文档导航
 
-| 文档类型 | 位置 | 说明 |
-|---------|------|------|
-| 项目总需求 | docs/需求文档/项目总需求.md | 业务概述、菜单结构、用户故事 |
-| 后端需求 | docs/需求文档/后端模块/后端总需求.md | 后端模块详细需求（产品视角） |
-| 前端需求 | docs/需求文档/前端模块/前端总需求.md | 前端模块详细需求（产品视角） |
-| 前后端对应关系 | docs/需求文档/前后端模块对应关系.md | 前后端模块和API对应关系 |
-| 指数配置规范 | docs/需求文档/指数配置规范.md | 指数配置文件格式和动态加载机制 |
-| 后端技术约束 | backend/AGENTS.md | 后端技术栈、代码结构、开发规范 |
-| 前端技术约束 | frontend/AGENTS.md | 前端技术栈、代码结构、开发规范 |
-
-## AKShare (basiclib/akshare/)
-
-### 源代码位置
-AKShare源代码位于：`basiclib/akshare/`（项目内 basiclib 目录）
-
-### 常用命令
-
-```bash
-# Install (editable)
-cd basiclib/akshare
-pip install -e .
-
-# Lint/format
-ruff format .
-ruff check .
-```
-
-AKShare是一个全面的金融数据源库，支持股票、期货、债券、期权、外汇、宏观经济等多种数据类型，所有数据都以pandas DataFrame格式返回。
-
-如需查看AKShare的源代码或了解其API实现，请访问 `basiclib/akshare/` 目录。
-
-## Qlib (basiclib/qlib/)
-
-### 源代码位置
-Qlib源代码位于：`basiclib/qlib/`（项目内 basiclib 目录）
-
-### 常用命令
-
-```bash
-# Build Cython extensions (required before first run)
-cd basiclib/qlib
-make prerequisite
-
-# Install
-make install
-
-# Lint
-make lint
-
-# Test
-pytest
-```
-
-Qlib是微软开源的AI导向量化投资平台，提供数据处理、模型训练、回测等全流程支持。
-
-如需查看Qlib的源代码或了解其量化模型实现，请访问 `basiclib/qlib/` 目录。
-
-## TickFlow (basiclib/tickflow/)
-
-### 源代码位置
-TickFlow SDK源代码位于：`basiclib/tickflow/`（项目内 basiclib 目录）
-
-TickFlow 是一个 Python 金融数据 SDK，提供 A股/港股/美股的实时行情、K线、财务数据、盘口深度等接口。
-
-如需查看 TickFlow 的源代码或 API 实现，请访问 `basiclib/tickflow/` 目录。
+| 文档 | 位置 | 用途 |
+|------|------|------|
+| 项目说明 | README.md | 实际组件、入口、依赖和构建 |
+| 需求文档 | docs/需求文档/WebRemoteDesktop-需求文档.md | 功能、交互和性能目标 |
+| 服务操作 | docs/runbook-safe-startup.md | 本地服务与 tunnel 的操作边界 |
+| 稳定性整改设计 | docs/superpowers/specs/2026-10-17-reliability-latency-remediation-design.md | 控制、媒体和网页共同契约 |
+| 稳定性整改计划 | docs/superpowers/plans/2026-10-17-reliability-latency-remediation-plan.md | 任务依赖和验收标准 |
+| 实施记录 | docs/superpowers/reports/2026-10-17-remediation-execution.md | 实际执行、部署和未验收状态 |
 
 ## Skill 管理
 
@@ -164,9 +80,9 @@ TickFlow 是一个 Python 金融数据 SDK，提供 A股/港股/美股的实时�
 - 不得跳过上述文档直接凭记忆执行启动命令；若文档与代码不一致，以最新代码为准，并在任务结束前同步更新文档
 
 ### 服务启动约定
-- 用户会使用独立的终端手动启动**前端服务**和**后端服务**
-- 每次完成任务后，不用主动启动新的服务
-- 如需要测试，请告知用户手动启动服务
+- 默认不因代码修改自行启动服务；用户明确要求启动、恢复或完成运行验收时，按该次授权执行本地服务流程，不重复询问已授权事项
+- 本项目网页由 Signal Server 在 8080 托管，不另起 Vite/5173 或 FastAPI/8000
+- 当前任务若要求服务保持可用，结束前必须核对本地健康、Host 在线及实际授权范围内的连接验收
 - 如需“重启服务”，默认仅重启本地 `signal-server` / Host，**绝对不得**停止、重启、重建 tunnel 服务
 - 即使 safe quick tunnel 当前不可达、URL 失效、`Unauthorized: Tunnel not found`、DNS 失败或 `curl` 失败，也只能诊断并向用户报告；不得因为“恢复公网访问”而自行重建 tunnel
 - 只有用户明确使用“重建 tunnel / 重建 Cloudflare / 重启 tunnel / 重新生成公网地址”等直接措辞时，才允许操作 `trycloudflare`、`scripts/run-safe-quicktunnel.sh` 或对应 `cloudflared` 进程
@@ -177,25 +93,32 @@ TickFlow 是一个 Python 金融数据 SDK，提供 A股/港股/美股的实时�
 - 若 agent 因调试关闭了前端或后端服务，必须在结束前恢复启动，避免用户无法连接
 
 ### 日志文件约定
-- 前端服务的日志文件存放位置：`front-debug.log`
-- 后端服务的日志文件存放位置：`back-debug.log`
-- 服务启动时使用重定向将控制台日志写入上述文件
-- 如需debug，可查看这些日志文件获取相关信息
+- 当前服务 helper 将 Signal Server 日志写入 `/tmp/signal-server.log`；Host 重启脚本将日志写入 `back-debug.log`
+- `front-debug.log`、`host.log` 等历史文件须核对时间范围和运行版本后再作为证据，不能据文件存在推断当前服务状态
+- 统计报告注明实际覆盖窗口、缺失和日志筛选方式；阈值告警不代表完整延迟分布
 
 ### Host 重启约定
 - 重启 Python Host 时，必须使用 `scripts/restart-host.sh`，不要直接用 `kill` + 手工启动方式重启
 - 原因：`host.py` 拉起的 `python-host/overlay_window.py` 子进程需要一并清理，否则会残留孤儿 Python 进程
 - `scripts/restart-host.sh` 会同时清理 `host.py` 和 `overlay_window.py`，等待退出后再启动新实例，并将输出写入 `back-debug.log`
 
-### 启动命令示例
-- 前端：`npm run dev 2>&1 | tee ../front-debug.log`
-- 后端：`python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000 2>&1 | tee ../back-debug.log`
+### 本地服务管理入口
 
-## 数据本地化策略
+先读上述必读文档和 `webremote-service` 技能，再使用：
 
-- **数据尽量落库**：所有可获取的数据优先持久化到 MySQL，即使前端暂不展示
-- **原因**：除网页展示外，后续还要对接大模型进行股票和财务分析，需要本地化存储作为数据基础
-- **原则**：只有极少数实时快照类数据（如盘中实时行情）不落库，其余数据一律同步到 MySQL
+```bash
+python3 skills/webremote-service/scripts/wrd_service.py status
+python3 skills/webremote-service/scripts/wrd_service.py restart-local
+```
+
+`restart-local` 仅限本地 Signal/Host。不得用全链路 safe/tunnel 脚本替代；这些示例本身不构成运行授权。
+
+## 诊断与验收数据
+
+- 诊断仅持久化必要且有界的运行摘要，不写入密码、token、原始输入内容、剪贴板或坐标。
+- 区分 ACK 往返、Host 排队/执行、应用后帧呈现和真实可见效果；缺测保持 `null`/`NOT RUN`，不能互相替代。
+- 离线测试通过、代码提交、生产加载及真实长会话验收分别记录；实际运行不足时不能宣布全部验收完成。
+- 下方历史 memory 是检索线索，不能覆盖当前源码、日志和本轮授权。
 
 
 <claude-mem-context>

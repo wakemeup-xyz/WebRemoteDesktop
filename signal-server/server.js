@@ -43,6 +43,9 @@ const { setupTerminal } = require('./websocket/terminal');
 const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-setup');
 const { createRotatingFileSink, createStructuredLogger } = require('./lib/observability/logger');
 const { createRecentEventStore } = require('./lib/observability/store');
+const { createRuntimeObserver, bindRuntimeObserver } = require('./lib/observability/runtime');
+const { createEntryObserver, bindEntryObserver } = require('./lib/observability/entry');
+const { createViewerHeartbeatRegistry } = require('./lib/observability/viewer-heartbeat');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
 const rateLimit = require('express-rate-limit');
@@ -123,8 +126,22 @@ function createServerApp(options = {}) {
 
   const app = express();
   const server = http.createServer(app);
+  const runtimeObserver = options.runtimeObserver || createRuntimeObserver({
+    // Node normalizes maxRSS to KiB on every supported platform.
+    samplePeakRss: () => process.resourceUsage().maxRSS / 1024,
+  });
+  const viewerHeartbeat = createViewerHeartbeatRegistry({ logger, runtimeSnapshot: () => runtimeObserver.snapshot() });
+  server.on('close', () => viewerHeartbeat.stop());
+  server.on('error', () => viewerHeartbeat.stop());
+  bindRuntimeObserver(server, runtimeObserver);
+
+  const entryObserver = options.entryObserver || createEntryObserver({ structuredLogger, recentEventStore });
 
   app.set('trust proxy', trustLoopbackProxy);
+  app.use((req, res, next) => {
+    try { entryObserver.observeHttp(req, res); } catch { /* Best-effort entry evidence. */ }
+    return next();
+  });
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(compression({
     // Compress HTML/JS/CSS; skip already-tiny or precompressed payloads.
@@ -143,6 +160,7 @@ function createServerApp(options = {}) {
   app.use('/api/auth', createAuthRouter({
     config,
     configMode: 'exact',
+    runtimeContext: signalingRuntime,
     logger,
     terminalAudit,
     terminalMetrics,
@@ -197,7 +215,8 @@ function createServerApp(options = {}) {
     httpCompression: false,
   });
 
-  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
+  bindEntryObserver(server, io.engine, entryObserver);
+  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, observeNamespaceOutcome: outcome => entryObserver.observeNamespaceOutcome(outcome), observeViewerHeartbeat: viewerHeartbeat.attach, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
   const terminal = setupTerminal(io, {
     config,
     logger,
@@ -388,15 +407,17 @@ function createServerApp(options = {}) {
         error: result.error,
       });
     }
-    recentEventStore.append(result.summaryEvent);
-    structuredLogger.info(result.summaryEvent);
+    if (result.summaryEvent) {
+      recentEventStore.append(result.summaryEvent);
+      structuredLogger.info(result.summaryEvent);
+    }
 
-    if (signalingRuntime.connections.host) {
+    if (!result.duplicate && signalingRuntime.connections.host) {
       signalingRuntime.connections.host.emit('diagnostic', result.report);
     }
 
     return res.status(202).json({
-      accepted: true,
+      ...(result.report.diagnosticId ? result.receipt : { accepted: true }),
       connectionAttemptId: result.connectionAttemptId,
     });
   });
@@ -433,7 +454,7 @@ function createServerApp(options = {}) {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
-    return res.json(recentEventStore.summary());
+    return res.json({ ...recentEventStore.summary(), runtime: runtimeObserver.snapshot() });
   });
 
   app.get('/api/admin/observability/recent', requireConfiguredAccessToken, (req, res) => {
@@ -482,8 +503,13 @@ function createServerApp(options = {}) {
     terminalAudit,
     recentEventStore,
     structuredLogger,
+    runtimeObserver,
     signalingRuntime,
+    entryObserver,
     async close(reason = 'system:shutdown') {
+      viewerHeartbeat.stop();
+      runtimeObserver.stop();
+      try { entryObserver.stop(); } catch { /* Best-effort entry evidence. */ }
       if (typeof terminal?.close === 'function') {
         return terminal.close(reason);
       }

@@ -1,5 +1,8 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const test = require('node:test');
 const express = require('express');
@@ -7,6 +10,7 @@ const proxyaddr = require('proxy-addr');
 const authModule = require('../routes/auth');
 const { TerminalMetrics } = require('../lib/terminal/metrics');
 const { createServerApp } = require('../server');
+const { assetDigest } = require('../lib/web-assets');
 const authRoutes = authModule;
 const { createAuthRouter } = authModule;
 
@@ -234,17 +238,29 @@ test('viewer attempts do not consume the five-request admin bucket', async () =>
 });
 
 test('production server trusts forwarded client IP only from loopback proxies', () => {
-  const runtime = createServerApp({
-    logger: { log() {}, info() {}, warn() {}, error() {} },
-  });
+  // Exercise the production app without depending on (or rebuilding) its dist.
+  const distDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-auth-assets-'));
+  const source = 'void 0;';
+  const asset = `assets/auth-test.${assetDigest(source)}.js`;
+  fs.mkdirSync(path.join(distDir, 'assets'));
+  fs.writeFileSync(path.join(distDir, asset), source);
+  fs.writeFileSync(path.join(distDir, 'asset-manifest.json'), JSON.stringify({
+    schemaVersion: 1, assets: { desktopJs: asset },
+  }));
+  let runtime;
   try {
+    runtime = createServerApp({
+      webClientDistPath: distDir,
+      logger: { log() {}, info() {}, warn() {}, error() {} },
+    });
     const trustProxy = runtime.app.get('trust proxy fn');
     assert.equal(trustProxy('127.0.0.1'), true);
     assert.equal(trustProxy('::1'), true);
     assert.equal(trustProxy('198.51.100.10'), false);
     assert.equal(trustProxy('10.0.0.10'), false);
   } finally {
-    runtime.io.close();
+    runtime?.io.close();
+    fs.rmSync(distDir, { recursive: true, force: true });
   }
 });
 

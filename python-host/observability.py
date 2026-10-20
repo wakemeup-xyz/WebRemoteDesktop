@@ -3,9 +3,11 @@ import hashlib
 import logging
 import os
 import re
+import threading
 from datetime import datetime, timezone
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from bounded_log_writer import BoundedLogHandler, OwnedRotatingSink
 
 
 _SENSITIVE_INPUT_KEYS = {"data", "key", "code", "text", "payload", "x", "y"}
@@ -29,6 +31,7 @@ _SAFE_INPUT_REASONS = frozenset({
 })
 DEFAULT_LOG_MAX_BYTES = 10 * 1024 * 1024
 DEFAULT_LOG_BACKUP_COUNT = 3
+_LOG_CONFIGURATION_LOCK = threading.Lock()
 
 
 def _bounded_int(value, default, *, minimum):
@@ -58,28 +61,40 @@ def configure_host_logging(*, logger=None, log_file=None, max_bytes=None, backup
     resolved_log_file.parent.mkdir(parents=True, exist_ok=True)
 
     signature = (str(resolved_log_file), resolved_max_bytes, resolved_backup_count)
-    for handler in target_logger.handlers:
-        if getattr(handler, "_wrd_host_log_signature", None) == signature:
-            target_logger.setLevel(logging.INFO)
-            target_logger.propagate = False
-            return handler
+    with _LOG_CONFIGURATION_LOCK:
+        # Keep ownership on the logger even if a caller detaches its handler.
+        # A detached, blocked writer must never be hidden by handlers.clear().
+        owner = getattr(target_logger, "_wrd_host_log_owner", None)
+        if owner is not None:
+            state = owner.snapshot()
+            if state["writer_alive"]:
+                if not state["accepting"]:
+                    raise RuntimeError("Host log writer is still stopping")
+                if owner._wrd_host_log_signature == signature:
+                    if owner not in target_logger.handlers:
+                        target_logger.addHandler(owner)
+                    target_logger.setLevel(logging.INFO)
+                    target_logger.propagate = False
+                    return owner
+                owner.shutdown()
+                if owner.snapshot()["writer_alive"]:
+                    raise RuntimeError("Host log writer is still stopping")
 
-    for handler in list(target_logger.handlers):
-        target_logger.removeHandler(handler)
-        handler.close()
+        for handler in list(target_logger.handlers):
+            target_logger.removeHandler(handler)
+            handler.close()
 
-    handler = RotatingFileHandler(
-        resolved_log_file,
-        maxBytes=resolved_max_bytes,
-        backupCount=resolved_backup_count,
-        encoding="utf-8",
-    )
-    handler._wrd_host_log_signature = signature
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-    target_logger.addHandler(handler)
-    target_logger.setLevel(logging.INFO)
-    target_logger.propagate = False
-    return handler
+        handler = BoundedLogHandler(lambda: OwnedRotatingSink(
+            resolved_log_file, max_bytes=resolved_max_bytes,
+            backup_count=resolved_backup_count,
+        ))
+        handler._wrd_host_log_signature = signature
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        target_logger._wrd_host_log_owner = handler
+        target_logger.addHandler(handler)
+        target_logger.setLevel(logging.INFO)
+        target_logger.propagate = False
+        return handler
 
 
 def redact_host_value(value, key=""):

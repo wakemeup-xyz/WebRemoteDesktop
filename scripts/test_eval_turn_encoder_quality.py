@@ -355,3 +355,75 @@ class PresetMatrixEvaluatorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LatencyJointCliTest(unittest.TestCase):
+    def test_cli_parses_joint_without_importing_or_running_probe(self):
+        args = MODULE.parse_args(['--matrix', 'latency-joint-v1', '--output', '/tmp/fixture-only.json'])
+        self.assertEqual(args.matrix, 'latency-joint-v1')
+        self.assertEqual(str(args.output), '/tmp/fixture-only.json')
+
+    def test_joint_synthetic_probe_passes_exact_policy_and_pts_to_fake_codec(self):
+        # Execute the real probe function with tiny fake image/codec objects.
+        # AV, NumPy and Host imports are deliberately never executed.
+        import ast
+        import hashlib
+        import math
+        import time
+        from dataclasses import replace
+        from fractions import Fraction
+        from types import SimpleNamespace
+        from media_latency_qualification import JointConfig, build_joint_matrix
+        from h264_encoder_policy import MediaSessionIntent, resolve_h264_policy
+        tree = ast.parse(MODULE.PROBE_PATH.read_text())
+        method = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_scenario_run')
+        source = ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), method], type_ignores=[])
+        observed = []
+        class Pixels:
+            def tobytes(self): return b'fixture pixels'
+            def to_ndarray(self, **kwargs): return self
+        class Encoder:
+            def __init__(self, *, policy, scenario_id):
+                observed.append(policy)
+                self.policy = policy
+                self.codec = SimpleNamespace(name=policy.codec_name, gop_size=policy.periodic_idr_frames)
+                self.codec_creation_records = [{'configuredFps': policy.target_fps}]
+                self.last_requested_keyframe_emitted = False
+                self.count = 0
+            def note_keyframe_request(self, *args): pass
+            def _encode_frame(self, frame, force):
+                observed.append(frame.pts)
+                self.last_requested_keyframe_emitted = force
+                idr = force or self.count == 0
+                self.count += 1
+                return [b'\x65' if idr else b'\x41']
+            def _packetize(self, nals): return nals
+        ns = {'FRAME_RATE': 20, 'replace': replace, 'Fraction': Fraction,
+            'MediaSessionIntent': MediaSessionIntent, 'resolve_h264_policy': resolve_h264_policy,
+            'H264VideoToolboxEncoder': Encoder, 'hashlib': hashlib, 'time': time, 'math': math,
+            'input_contract_for': lambda config: config.input_contract,
+            'make_static_text_frame': lambda *args: Pixels(),
+            'prepare_probe_input': lambda rgb, contract: (rgb, rgb, contract),
+            '_scenario_source': lambda rgb, *args: rgb,
+            'uint8_rgb_quality_metrics': lambda *args: (Pixels(), 1., 0.),
+            'bitstream_contains_idr': lambda stream: stream.endswith(b'\x65'),
+            'serialize_codec_creation_record': lambda record: dict(record),
+            'percentile_95': lambda values: max(values),
+            'av': SimpleNamespace(
+                VideoFrame=SimpleNamespace(from_ndarray=lambda *args, **kw: SimpleNamespace()),
+                CodecContext=SimpleNamespace(create=lambda *args: SimpleNamespace(decode=lambda packet: [Pixels()])),
+                Packet=lambda data: data)}
+        exec(compile(ast.fix_missing_locations(source), 'joint-probe-fixture', 'exec'), ns)
+        for fps in (20, 15, 12):
+            config = JointConfig(next(e for e in build_joint_matrix()
+                if e['tuple']['policy']['target_fps'] == fps and e['tuple']['policy']['codec_name'] == 'libx264'))
+            observed.clear()
+            run, _, _ = ns['_scenario_run'](1152, 720, None, config=config,
+                scenario_id='static-text', session_id='fixture', phase_start_index=0,
+                frame_count=2, request_indices=(1,))
+            self.assertEqual(observed[0].codec_name, 'libx264')
+            self.assertEqual(observed[0].target_fps, fps)
+            self.assertEqual(observed[0].periodic_idr_frames, 0)
+            self.assertEqual(observed[1:], [0, 90000 // fps])
+            self.assertEqual(run['codecCreationRecords'][0]['configuredFps'], fps)
+            self.assertEqual(run['codecCreationRecords'][0]['codecName'], 'libx264')

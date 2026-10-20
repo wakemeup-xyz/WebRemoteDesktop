@@ -354,7 +354,7 @@ test('external transport reset clears controller state before accepting the same
   assert.equal(controller.getSnapshot().pressedKeyCount, 0);
   assert.equal(controller.getSnapshot().state, 'RESET_REQUIRED');
 
-  transport.acceptAck({ schemaVersion: 2, leaseEpoch: 1, appliedSeq: 2, status: 'applied' });
+  transport.acceptAck({ schemaVersion: 2, inputIds: socket.at(-1).inputIds, leaseEpoch: 1, appliedSeq: 2, status: 'applied' });
   assert.equal(controller.getSnapshot().state, 'READY');
   assert.equal(controller.handleDomEvent(keyEvent('keydown', { code: 'KeyR', key: 'r' })), true);
   assert.equal(controller.getSnapshot().pressedKeyCount, 1);

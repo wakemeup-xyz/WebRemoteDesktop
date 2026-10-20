@@ -844,3 +844,167 @@ test('admin observability summary and recent endpoints return structured diagnos
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }
 });
+
+function runtimeFixture() {
+  const { createRuntimeDiagnosticBuilder } = require('../../web-client/js/runtime-diagnostic');
+  const sample = { schemaVersion: 3, windowMs: 5000, scope: { connectionAttemptId: 'RAW_SCOPE_CANARY', generation: 5, leaseEpoch: 8 },
+    metrics: { inputAckRttMs: { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 },
+      inputToVisibleEffectMs: { last: null, p50: null, p95: null, count: 0, available: false, lastSampleAgeMs: null },
+      UNKNOWN_METRIC_CANARY: { text: 'RAW_PAYLOAD_CANARY' } },
+    outcomes: { sent: 4, acked: 3, rejected: 0, timedOut: 1, late: 0, cancelled: 2, dropped: 0, unmatched: 0 } };
+  return createRuntimeDiagnosticBuilder({ nowMs: () => 1000000, wallNow: () => '2026-10-17T00:00:00Z', getLatency: () => sample,
+    getBuild: () => ({ id: '0123456789abcdef', builtAt: 1792195200000 }),
+    getInput: () => ({ inputState: { text: 'RAW_PAYLOAD_CANARY', recentInputEvents: [{ connectionAttemptId: 'RAW_SCOPE_CANARY', text: 'RAW_PAYLOAD_CANARY' }] },
+      inputTrace: { schemaVersion: 3, traceNowMs: 1000000, bootIdHash: 'b'.repeat(32), events: [{ stage: 'ack', at: 999999, connectionAttemptId: 'RAW_SCOPE_CANARY', payload: 'RAW_PAYLOAD_CANARY' }] } }),
+    getStartup: () => ({ marks: [{ name: 'first-frame', atMs: 4, detail: 'https://private.test/?URL_QUERY_CANARY' }, { name: 'URL_QUERY_CANARY', atMs: 8 }],
+      resources: [{ path: 'https://private.test/assets/core.0123456789abcdef.js?URL_QUERY_CANARY' },
+        { path: '/assets/core.0123456789abcdef.js?URL_QUERY_CANARY' }, { path: '/assets/core.0123456789abcdef.js', durationMs: 8 }] }),
+    takeClosedScopeSummaries: () => ({ summaries: [{ endedAtMs: 999999, snapshot: sample }], dropped: 3 }),
+  })({ reason: 'input-ack-timeout' });
+}
+
+test('real runtime redactor+ingest removes canaries and keeps exact M1 whitelist, nulls, ages and outcomes', () => {
+  const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
+  const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data: runtimeFixture(), config: { enableDiagPersist: false } });
+  const report = result.report; const json = JSON.stringify(report);
+  for (const canary of ['RAW_SCOPE_CANARY', 'RAW_PAYLOAD_CANARY', 'UNKNOWN_METRIC_CANARY', 'URL_QUERY_CANARY', 'https://private.test']) assert.equal(json.includes(canary), false, canary);
+  assert.deepEqual(Object.keys(report.latency.metrics), LATENCY_METRIC_NAMES);
+  assert.deepEqual(report.latency.metrics.inputAckRttMs, { last: 42, p50: 41, p95: 90, count: 3, available: true, lastSampleAgeMs: 7 });
+  assert.equal(report.latency.metrics.inputToVisibleEffectMs.last, null);
+  assert.equal(report.latency.metrics.inputToVisibleEffectMs.lastSampleAgeMs, null);
+  assert.equal(report.latency.outcomes.cancelled, 2); assert.equal(report.scopeEnded.events[0].snapshot.outcomes.cancelled, 2);
+  assert.deepEqual(Object.keys(report.latency.scope), ['attemptHash', 'generation', 'leaseEpoch']);
+  assert.equal(report.inputTrace.events[0].at, 999999); assert.equal(report.inputTrace.traceNowMs, 1000000); assert.equal(report.inputTrace.bootIdHash, 'b'.repeat(32));
+  assert.equal(report.startup.resources.length, 1); assert.equal(report.build.builtAt, 1792195200000);
+  assert.equal(result.receipt.accepted, false); assert.deepEqual(result.receipt.eventIdHashes, []);
+});
+
+test('durable receipt ledger dedupes reports and scope events after raw eviction and process-style reload', () => {
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-ledger-'));
+  process.env.WRD_DIAG_DIR = dir;
+  try {
+    const payload = runtimeFixture(); const ingest = data => ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data, config: { enableDiagPersist: true }, logger: {} });
+    const first = ingest(payload); assert.equal(first.persisted, true); assert.equal(first.receipt.eventIdHashes.length, 1);
+    for (const name of fs.readdirSync(path.join(dir, 'raw')).filter(name => name.endsWith('.json'))) fs.unlinkSync(path.join(dir, 'raw', name));
+    const again = ingest(payload); assert.equal(again.duplicate, true); assert.equal(again.summaryEvent, null);
+    assert.deepEqual(again.receipt, first.receipt); assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.endsWith('.json')).length, 0);
+    const next = ingest({ ...payload, diagnosticId: 'f'.repeat(32) }); assert.equal(next.duplicate, false);
+    assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 0); // already persisted, raw intentionally evicted
+    const ledger = require('../lib/diagnostic').loadDiagnosticReceipts();
+    assert.equal(ledger.records.filter(row => row.kind === 'scope-ended').length, 1);
+    assert.equal(JSON.stringify(ledger).includes('RAW_'), false);
+  } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('partial raw persistence failure returns no confirmation and retry completes existing event once', () => {
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-partial-'));
+  process.env.WRD_DIAG_DIR = dir;
+  const writeFile = fs.writeFileSync;
+  try {
+    const payload = runtimeFixture();
+    fs.writeFileSync = function(file, ...args) { if (String(file).includes('runtime_')) throw Error('simulated-raw-write-failure'); return writeFile.call(this, file, ...args); };
+    const options = { role: 'viewer', viewerId: 'unit', data: payload, config: { enableDiagPersist: true }, logger: {} };
+    const failed = ingestDiagnosticPayload(options); assert.equal(failed.persisted, false); assert.equal(failed.receipt.accepted, false); assert.deepEqual(failed.receipt.eventIdHashes, []);
+    fs.writeFileSync = writeFile;
+    const retry = ingestDiagnosticPayload(options); assert.equal(retry.persisted, true); assert.equal(retry.receipt.eventIdHashes.length, 1);
+    assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 1);
+    assert.equal(ingestDiagnosticPayload(options).duplicate, true);
+  } finally { fs.writeFileSync = writeFile; if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('receipt index is bounded to 10k entries and a 24h dedupe horizon', () => {
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-index-'));
+  process.env.WRD_DIAG_DIR = dir;
+  const { loadDiagnosticReceipts, saveDiagnosticReceipts } = require('../lib/diagnostic');
+  try {
+    const now = Date.now(); const records = Array.from({ length: 10005 }, (_, i) => ({ kind: 'scope-ended', key: i.toString(16).padStart(32, '0'), at: now }));
+    saveDiagnosticReceipts({ records }); assert.equal(loadDiagnosticReceipts(now).records.length, 10000);
+    assert.equal(loadDiagnosticReceipts(now + 24 * 60 * 60 * 1000 + 1).records.length, 0);
+  } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('diagnostic socket confirms only persisted IDs and preserves viewer authorization gates', () => {
+  const { setupSignaling } = require('../websocket/signaling');
+  const { createRuntimeContext } = require('../websocket/runtime-context');
+  const { FakeSocket, makeIo } = require('../websocket/signaling-test-fixture');
+  const { loadConfig } = require('../lib/config');
+  const previousDir = process.env.WRD_DIAG_DIR; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3a-socket-'));
+  process.env.WRD_DIAG_DIR = dir;
+  try {
+    const context = createRuntimeContext(); const io = makeIo();
+    setupSignaling(io, { runtimeContext: context, config: { ...loadConfig(), enableDiagPersist: true }, logger: {} });
+    const viewer = new FakeSocket('w3a-active', 'viewer'); io.connect(viewer);
+    const handler = viewer.listeners('diagnostic')[0]; const receipts = []; const payload = runtimeFixture();
+    handler(payload, receipt => receipts.push(receipt)); handler(payload, receipt => receipts.push(receipt));
+    assert.equal(receipts.length, 2); assert.deepEqual(receipts[0], receipts[1]); assert.equal(receipts[0].accepted, true);
+    assert.equal(receipts[0].diagnosticId, payload.diagnosticId); assert.equal(receipts[0].eventIdHashes.length, 1);
+    // HTTP ingress uses this same persistence API with an HTTP-prefixed viewer ID.
+    const fallback = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'http-w3a-active', data: payload,
+      config: { enableDiagPersist: true }, logger: {} });
+    assert.equal(fallback.duplicate, true); assert.deepEqual(fallback.receipt, receipts[0]);
+    assert.equal(fallback.summaryEvent, null);
+    assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 1);
+    assert.equal(viewer.sent.some(message => message.event === 'control-grant'), false); // Diagnostic ACK never grants control.
+    for (const malformed of [null, undefined, 'invalid', []]) {
+      handler(malformed, receipt => assert.deepEqual(receipt, { accepted: false, diagnosticId: null, eventIdHashes: [] }));
+    }
+    const host = new FakeSocket('w3a-host', 'host'); io.connect(host);
+    host.listeners('diagnostic')[0](payload, receipt => assert.deepEqual(receipt,
+      { accepted: false, diagnosticId: null, eventIdHashes: [] }));
+    host.disconnect();
+    viewer.disconnect(); handler(payload, receipt => receipts.push(receipt)); assert.equal(receipts.length, 3);
+    assert.deepEqual(receipts[2], { accepted: false, diagnosticId: null, eventIdHashes: [] });
+    const context2 = createRuntimeContext(); const io2 = makeIo();
+    setupSignaling(io2, { runtimeContext: context2, config: { ...loadConfig(), enableDiagPersist: false }, logger: {} });
+    const noPersist = new FakeSocket('w3a-no-persist', 'viewer'); io2.connect(noPersist);
+    noPersist.listeners('diagnostic')[0](payload, receipt => { assert.equal(receipt.accepted, false); assert.deepEqual(receipt.eventIdHashes, []); });
+    noPersist.disconnect();
+  } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ingress persists only redacted runtime raw and summary and merges one incident by SHA', () => {
+  const { createDiagnosticStore } = require('../lib/diagnostic-store');
+  const previousDir=process.env.WRD_DIAG_DIR,dir=fs.mkdtempSync(path.join(os.tmpdir(),'w3b-private-'));
+  process.env.WRD_DIAG_DIR=dir;
+  try {
+    const payload=runtimeFixture();
+    const result=ingestDiagnosticPayload({role:'viewer',viewerId:'unit',data:payload,config:{enableDiagPersist:true},logger:{}});
+    assert.equal(result.persisted,true);assert.equal(result.receipt.accepted,true);
+    const raw=fs.readdirSync(path.join(dir,'raw')).map(n=>fs.readFileSync(path.join(dir,'raw',n),'utf8')).join('');
+    const summary=fs.readdirSync(path.join(dir,'summary')).map(n=>fs.readFileSync(path.join(dir,'summary',n),'utf8')).join('');
+    for(const text of [raw,summary])for(const canary of ['RAW_SCOPE_CANARY','RAW_PAYLOAD_CANARY','UNKNOWN_METRIC_CANARY','URL_QUERY_CANARY','https://private.test'])assert.equal(text.includes(canary),false,canary);
+    const records=createDiagnosticStore({dir}).listSummary({from:0,to:Date.now()+1}).records;
+    assert.equal(records.length,1);assert.equal(records[0].rawAvailable,true);assert.equal(records[0].sampleCount,3);
+    assert.equal(summary.includes(payload.diagnosticId),false);
+  } finally {if(previousDir===undefined)delete process.env.WRD_DIAG_DIR;else process.env.WRD_DIAG_DIR=previousDir;fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('runtime summary retains actual redacted gate runtime phase and unavailable state', () => {
+  const {createDiagnosticStore}=require('../lib/diagnostic-store');
+  const previousDir=process.env.WRD_DIAG_DIR,dir=fs.mkdtempSync(path.join(os.tmpdir(),'w3b-gate-state-'));
+  process.env.WRD_DIAG_DIR=dir;
+  try {
+    for(const phase of ['active','suspending','suspended','resuming',null]) {
+      const payload=runtimeFixture();payload.inputState={gate:phase===null?{}:{runtimePhase:phase}};
+      const result=ingestDiagnosticPayload({role:'viewer',viewerId:'unit',data:payload,config:{enableDiagPersist:true},logger:{}});
+      assert.equal(result.persisted,true);
+      if(phase!==null)assert.equal(result.report.inputState.gate.runtimePhase,phase);
+      const id=require('node:crypto').createHash('sha256').update(payload.diagnosticId).digest('hex').slice(0,32);
+      const rows=createDiagnosticStore({dir}).listSummary({from:0,to:Date.now()+1}).records;
+      assert.equal(rows.find(row=>row.diagnosticIdHash===id).state,phase);
+    }
+  } finally {if(previousDir===undefined)delete process.env.WRD_DIAG_DIR;else process.env.WRD_DIAG_DIR=previousDir;fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('nullable buffer redactor omits unknown optional scalar and preserves measured zero', () => {
+  for (const value of [null, undefined, '', '0', true, false, {}, NaN, Infinity, -Infinity, -1, 0, 0.1, 725.1]) {
+    const payload = { ...runtimeFixture(), traceSummary: { jitterBufferMs: value, decodedDelta: 19 } };
+    const clean = redactDiagnosticPayload(payload);
+    const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data: payload, config: { enableDiagPersist: false } });
+    assert.deepEqual(result.report.traceSummary, clean.traceSummary);
+    const known = typeof value === 'number' && Number.isFinite(value) && value >= 0;
+    assert.equal(Object.hasOwn(clean.traceSummary, 'jitterBufferMs'), known);
+    if (known) assert.equal(clean.traceSummary.jitterBufferMs, value);
+    assert.equal(clean.traceSummary.decodedDelta, 19);
+  }
+});

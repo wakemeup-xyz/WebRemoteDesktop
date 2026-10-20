@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
+const { createViewerAdmission } = require('../lib/viewer-admission');
 
 /**
  * Per-server signaling state.  Keeping this state in an explicit object makes
@@ -46,6 +47,7 @@ function createRuntimeContext(options = {}) {
 
   return {
     connections,
+    viewerAdmission: createViewerAdmission(options),
     requiresViewerProof() {
       return requireViewerProof;
     },
@@ -93,6 +95,7 @@ function createRuntimeContext(options = {}) {
       proofAdmissions.delete(token);
       if (epoch !== viewerEpoch || connections.viewers.size > 0) return false;
       viewerEpoch += 1;
+      this.viewerAdmission.noteProofAdmission();
       if (typeof socketId === 'string' && socketId) {
         consumedProofViewers.set(token, { epoch, realm, socketId, expiresAt: now() + proofAdmissionTtlMs });
       }
@@ -106,11 +109,21 @@ function createRuntimeContext(options = {}) {
       if (!consumer || consumer.epoch !== epoch || admission.realm !== consumer.realm) return null;
       return { socketId: consumer.socketId };
     },
+    // Historical name: every accepted ordinary admission, including a
+    // vacant-only initial admission, invalidates outstanding proof leases.
     noteHumanViewerAdmission() {
       viewerEpoch += 1;
       proofAdmissions.clear();
       consumedProofViewers.clear();
       return viewerEpoch;
+    },
+    viewerAdmissionContext() {
+      return {
+        viewerEpoch,
+        occupied: connections.viewers.size > 0,
+        relayOccupied: connections.relayViewers.size > 0,
+        hostOnline: connections.host !== null,
+      };
     },
     viewerEpoch() {
       return viewerEpoch;
@@ -142,6 +155,7 @@ function normalizeTurnServerIds(value) {
 
 function normalizeCapabilities(payload = {}, timestamped) {
   return {
+    inputFrameCorrelationVersion: payload.inputFrameCorrelationVersion === 1 ? 1 : null,
     turnReady: Boolean(payload.turnReady),
     turnFingerprint: String(payload.turnFingerprint || '').trim(),
     supportsSessionTurn: Boolean(payload.supportsSessionTurn),

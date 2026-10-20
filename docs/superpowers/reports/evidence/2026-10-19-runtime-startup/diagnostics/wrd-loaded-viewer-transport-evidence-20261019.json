@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "scope": "Additional offline transport/frame extraction from same persisted R4 sample artifact. No new source, log or live operation.",
+  "artifact": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-ff601377b608c2c4b1b51e55123e2f20/attempts/f6e5f8e72e4195767164f168bcbe3550/ordinary-baseline-3eire5u_/session/samples.jsonl",
+    "bytes": 1164155,
+    "sha256": "a96b18e67f05febca112059404495c1db7dd1c24da20f182438a15d852bf25cc"
+  },
+  "versions": {
+    "viewerSourceCommit": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+    "viewerBuildId": "a3671ba674ad7516"
+  },
+  "rows": 312,
+  "rowElapsedSeconds": [
+    0.013160167029127479,
+    309.2589251229074
+  ],
+  "browserNowMs": [
+    945.5,
+    310141.90000009537
+  ],
+  "selectedKeypaths": [
+    {
+      "keypath": "sample.transport.rttMs",
+      "semantics": "raw WebRTC transport RTT snapshot; ms",
+      "numericObservationCount": 304,
+      "min": 28,
+      "max": 161,
+      "latest": 33,
+      "latestRowValue": 33
+    },
+    {
+      "keypath": "sample.transport.bytesReceived",
+      "semantics": "raw cumulative WebRTC transport counter; bytes",
+      "numericObservationCount": 303,
+      "min": 128982,
+      "max": 7467491,
+      "latest": 7467491,
+      "latestRowValue": 7467491
+    },
+    {
+      "keypath": "sample.transport.framesDecoded",
+      "semantics": "raw cumulative decoded-frame counter; frames",
+      "numericObservationCount": 303,
+      "min": 12,
+      "max": 5111,
+      "latest": 5111,
+      "latestRowValue": 5111
+    },
+    {
+      "keypath": "sample.transport.framesDropped",
+      "semantics": "raw cumulative dropped-frame counter; frames",
+      "numericObservationCount": 303,
+      "min": 0,
+      "max": 0,
+      "latest": 0,
+      "latestRowValue": 0
+    },
+    {
+      "keypath": "sample.metrics.candidateRttMs.last",
+      "semantics": "rolling application window latest RTT sample; ms",
+      "numericObservationCount": 303,
+      "min": 28,
+      "max": 161,
+      "latest": 45,
+      "latestRowValue": 45,
+      "availableObservationCount": 303,
+      "producerWindowCount": {
+        "min": 0,
+        "max": 5,
+        "latest": 5,
+        "note": "count is the application window sample count; windows overlap. Do not sum across persisted observations."
+      }
+    },
+    {
+      "keypath": "sample.metrics.jitterBufferMs.last",
+      "semantics": "rolling application window latest jitter-buffer sample; ms",
+      "numericObservationCount": 301,
+      "min": 4.5,
+      "max": 104.3,
+      "latest": 61.4,
+      "latestRowValue": 61.4,
+      "availableObservationCount": 301,
+      "producerWindowCount": {
+        "min": 0,
+        "max": 5,
+        "latest": 5,
+        "note": "count is the application window sample count; windows overlap. Do not sum across persisted observations."
+      }
+    },
+    {
+      "keypath": "sample.metrics.decodeMs.last",
+      "semantics": "rolling application window latest decode sample; ms",
+      "numericObservationCount": 301,
+      "min": 1.0986315789473686,
+      "max": 3.7034000000000233,
+      "latest": 2.4358947368421835,
+      "latestRowValue": 2.4358947368421835,
+      "availableObservationCount": 301,
+      "producerWindowCount": {
+        "min": 0,
+        "max": 5,
+        "latest": 5,
+        "note": "count is the application window sample count; windows overlap. Do not sum across persisted observations."
+      }
+    },
+    {
+      "keypath": "sample.metrics.paintIntervalMs.last",
+      "semantics": "rolling application window latest paint-interval sample; ms",
+      "numericObservationCount": 303,
+      "min": 16.59999999999127,
+      "max": 216.6999999999971,
+      "latest": 50,
+      "latestRowValue": 50,
+      "availableObservationCount": 303,
+      "producerWindowCount": {
+        "min": 0,
+        "max": 97,
+        "latest": 86,
+        "note": "count is the application window sample count; windows overlap. Do not sum across persisted observations."
+      }
+    },
+    {
+      "keypath": "sample.metrics.encoderMs.last",
+      "semantics": "rolling application window latest encoder sample; ms",
+      "numericObservationCount": 0,
+      "min": null,
+      "max": null,
+      "latest": null,
+      "latestRowValue": null,
+      "availableObservationCount": 0,
+      "producerWindowCount": {
+        "min": 0,
+        "max": 0,
+        "latest": 0,
+        "note": "count is the application window sample count; windows overlap. Do not sum across persisted observations."
+      }
+    },
+    {
+      "keypath": "sample.metrics.relayFrameAckRttMs.last",
+      "semantics": "rolling application window latest relay-ACK RTT sample; ms",
+      "numericObservationCount": 0,
+      "min": null,
+      "max": null,
+      "latest": null,
+      "latestRowValue": null,
+      "availableObservationCount": 0,
+      "producerWindowCount": {
+        "min": 0,
+        "max": 0,
+        "latest": 0,
+        "note": "count is the application window sample count; windows overlap. Do not sum across persisted observations."
+      }
+    }
+  ],
+  "transportShape": {
+    "statusObservationCounts": {
+      "observed": 304,
+      "unavailable": 8
+    },
+    "latestLocalType": "relay",
+    "latestRemoteType": "relay",
+    "latestProtocol": "udp",
+    "latestCodec": "video/h264"
+  },
+  "absentEvidence": {
+    "capture": "No capture-time/duration numeric field in persisted transport or metric names.",
+    "relayQueue": "No relay-queue numeric field in persisted transport or metric names.",
+    "packetLoss": "No packets-lost/packet-loss field. framesDropped is a decoded-frame counter and cannot establish packet loss.",
+    "oneWayOrEndToEnd": "Not established. No one-way, capture-to-display, or input-to-visible latency inferred from RTT/rolling metrics."
+  },
+  "semanticsLimits": [
+    "numericObservationCount counts saved rows with numeric values, not unique packets/frames or underlying metric samples.",
+    "Min/max are extrema of saved values, not complete event distributions; no whole-run P95 reconstructed.",
+    "Rolling last values are application five-second window snapshots; their overlapping per-window counts are not added.",
+    "Transport cumulative counters are counters, not durations, rates or packet-loss percentages.",
+    "Browser and Python clocks remain separate. No cross-clock or one-way inference.",
+    "All six input metrics remain unavailable/null; no repeat statistics here. Native after-grace/business input/visible effect/physical display remain NOT_RUN.",
+    "Global R4 qualification remains failed-or-indeterminate at coverage stage."
+  ],
+  "readAccounting": {
+    "additionalSampleReadBytes": 1164155,
+    "sameFileReparsed": true,
+    "uniqueArtifactFiles": 6,
+    "uniqueArtifactBytes": 1188725,
+    "cumulativeArtifactReadBytesBeforeThisSupplement": 3541605,
+    "cumulativeArtifactReadBytesAfterThisSupplement": 4705760,
+    "sourceFilesRemain": 2,
+    "sourceFileActualReadBytesPreviously": 182232,
+    "cumulativeArtifactAndSourceActualReadBytes": 4887992,
+    "note": "Artifact cumulative total includes three earlier samples reads, two earlier reads of each of the other five artifacts, and this fourth read of the same samples file. Existing generated-report reads are separate; no source read added."
+  }
+}

@@ -1,0 +1,25 @@
+# Approved — narrow R2 readiness reconciliation and docs-only derivative
+
+No actionable findings in the reviewed R2 package. Approval is limited to its exact pinned historical case, separate service-readiness observation and exact reviewed docs-only promotion. It does not relabel the R1 reload, approve a lifecycle retry, establish runtime readiness now, or qualify media/browser/native/long-session behavior.
+
+## Scope and record integrity
+
+`readiness_guard.py:37–49` binds eligibility to the exact original failed-record path and SHA256, fixed target/build, old/new service identities and complete recorded facts. The existing record matches those constants: helper exit 0, 29.29 seconds, no recorded helper/cleanup/ownership/health/identity/asset/preservation errors, 30 registered identities exited, zero signal attempts, and the exact historical coverage array whose sole unexpected label is `observation-unavailable`. Its classification remains `failed-or-indeterminate` and full process-tree exit remains unknown. Another failed run or changed artifact cannot be substituted through CLI arguments.
+
+The new readiness result uses a separate classification, retains those historical facts and explicitly leaves browser/native/long qualification `NOT RUN by reconciliation`. There is no helper launch, Registry/supervisor import, service retry, signal method or source-copy call in reconciliation. A separately pinned R2 readiness record is required by docs promotion; its bindings, uncertainty and equal before/after evidence are validated (`readiness_guard.py:106–116`). It cannot bypass fresh admission checks.
+
+## Preservation and mutation
+
+The R1 guard is imported only after its exact source and baseline hashes are checked. The original frozen/apply/before/patch artifacts and immutable candidate copies remain pinned. Current admission retains R1 full source/index/mode/dist coverage and additionally checks exact current pidfiles, Signal listener, sole project Host candidate, new Host/Signal birth/cwd/entry, preserved tunnel/watcher/absent-quick-URL state, assets and healthy Hostonline/Viewer0/relay0. Identities are fenced across the health check, and reconciliation takes two matching snapshots.
+
+`sync-reviewed-host-cadence-docs-with-readiness.py:13–17` retains immutable ancestry and the complete exact documents-only diff/path/hash/type/mode constraints. Runtime paths cannot enter that diff. The only primary mutation is the exact reviewed documents via the unchanged pinned R1 copy helper (`:36–37`). Before publication it reruns fresh full admission and verifies the readiness record. After publication it verifies the full BASE/index union with exact docs overrides, every original frozen runtime row, unchanged assets/processes/health, and both historical/readiness records (`:38–40`; `readiness_guard.py:88–104`). Results preserve lifecycle uncertainty. No unsafe scope expansion or new mutation/preservation defect was found.
+
+## Independent static evidence
+
+Read REPORT.md first and verified SHA256 `c59e783b2dfdd4d9b9afda129f31c1edd2b6a4cea14971aed5e7451b5ccde432`. Verified SHA256SUMS.json SHA256 `00dbf400557bf280786376774637f420fcd05b1d41c06d8223ff941fff3a1564`, all listed package-file hashes and all provenance dependency hashes.
+
+Read the complete focused diff, containing both new readiness files and the R1→R2 docs-sync derivative. Independently regenerated it from the actual files: exact equality and SHA256 `9388a1316b977bf0cb30ecdfafaef904f0d307d9b059e854799c65ed855d8a33`. AST-parsed all three new Python files without imports or function execution. Read the fixed original reload record and verified SHA256 `eb1955ef47bfc6a53af88b32d25da25bc5baf55b406afa522e6ea958808a17a0`; checked its relevant facts against the eligibility constants. Also checked the fixed frozen/apply/before records and both canonical-patch file hashes for the stated linkage.
+
+The reused R1 guard/baselines remain unchanged from the independent Approved R1 review: 629 indexed regular files plus 261 known non-indexed deployed BASE files, union 890 existing regular files; actual filesystem modes; exact eight preserved dirty-doc/W2 exceptions; gitlink metadata only; 14 dist files; node_modules metadata only. R2 additionally covers the 22 frozen increment paths, including the new runtime/test files. No node_modules/gitlink traversal occurred in this review.
+
+No R2/R1 operational script, import/function, Registry, status/process/network/browser/native observation, qualification, test/build/npm, copy or service/tunnel/watcher action was executed. No source/index/package artifact was written; only this review report was created. This is static syntax/hash/record-consistency approval, not behavioral proof. Check-to-use races, the single-writer assumption, per-file rather than package atomicity, possible partial docs publication, no rollback, and historical full-tree uncertainty remain disclosed limits. The separately reported 300-second run's browser-close incompleteness is not repaired by readiness, and long qualification remains outstanding.

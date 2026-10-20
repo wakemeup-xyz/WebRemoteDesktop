@@ -96,20 +96,13 @@ wrd_fixed_start_connector() {
 }
 
 wrd_fixed_wait_formal_health() {
-  local i
-  for i in $(seq 1 "$WRD_FIXED_WAIT_SEC"); do
-    if wrd_fixed_formal_health_ok; then
-      return 0
-    fi
-    # Secondary signal while DNS/edge catches up
-    if "$CLOUDFLARED" tunnel info "$WRD_FIXED_TUNNEL_NAME" 2>/dev/null | grep -qv 'does not have any active connection'; then
-      if wrd_fixed_formal_health_ok; then
-        return 0
-      fi
-    fi
-    sleep 1
-  done
-  return 1
+  # One monotonic budget includes each probe, info command and delay. This
+  # helper performs read-only probes, never connector lifecycle operations.
+  local deadline_helper
+  deadline_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wrd_deadline.py"
+  python3 "$deadline_helper" --timeout "$WRD_FIXED_WAIT_SEC" \
+    --health-url "$WRD_FIXED_FORMAL_HEALTH_URL" \
+    --cloudflared "$CLOUDFLARED" --tunnel-name "$WRD_FIXED_TUNNEL_NAME"
 }
 
 wrd_fixed_parse_cloudflared_version() {

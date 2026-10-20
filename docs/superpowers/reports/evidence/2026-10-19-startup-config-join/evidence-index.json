@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "scope": "bounded-analysis-and-independent-reviews-not-runtime-qualification",
+  "files": [
+    {
+      "file": "startup-critical-path-assessment.md",
+      "sha256": "fc60c0faa031864810af749c357857d31a3f27dffb50cb8c84c22a3d06bfcc87",
+      "bytes": 13280,
+      "originalPath": "/tmp/wrd-r5-startup-critical-path-assessment-20261019.md"
+    },
+    {
+      "file": "startup-ordering-characterization.md",
+      "sha256": "4adce97d74ac23d4d9979d69d49a90e935e01342b25243e4a2b0117fa56e9d1a",
+      "bytes": 13043,
+      "originalPath": "/tmp/wrd-startup-pc-ordering-characterization-20261019.md"
+    },
+    {
+      "file": "startup-ordering-independent-review.md",
+      "sha256": "71adbbd986a9db3cf402889f6c5d636c9bbaa1dc5073d8cf14aa2a8b7eda7abe",
+      "bytes": 10099,
+      "originalPath": "/tmp/wrd-startup-pc-ordering-characterization-independent-review-20261019.md"
+    },
+    {
+      "file": "unsealed-tool-preparation-handoff.md",
+      "sha256": "da7607028fbab48effab943b76c424d3e25645d3b0e82cac74471c624fa41164",
+      "bytes": 5005,
+      "originalPath": "/tmp/wrd-admission-tool-continuation-paused-handoff-20261019.md"
+    },
+    {
+      "file": "rolling72h-v2.md",
+      "sha256": "7592a5a0f04e090b7f112f8c419dc2b2f1e90bdc3e6dbb81e38ade16e8a68fa5",
+      "bytes": 9384,
+      "originalPath": "/tmp/wrd-rolling72h-refresh-20261018-late-v2.md"
+    },
+    {
+      "file": "rolling72h-v2-summary.json",
+      "sha256": "1710c686df8e48813f1541dc5b75d20d0c9697035c493a862d5f3527b01d8aa4",
+      "bytes": 19743,
+      "originalPath": "/tmp/wrd-rolling72h-refresh-20261018-late-v2.json"
+    },
+    {
+      "file": "rolling72h-v2-scoped-review.md",
+      "sha256": "b5f4af717427c1eb0eead83174ecee918fe614564c3582dd58708e93ff30e430",
+      "bytes": 6434,
+      "originalPath": "/tmp/wrd-rolling72h-refresh-late-v2-fix-review-20261018.md"
+    },
+    {
+      "file": "rolling72h-v2-legacy-metadata-note.md",
+      "sha256": "70f687a1d127d0ddb8d9291d5655832454cdc42438d73587af8d784259b1b1ce",
+      "bytes": 1307,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/LATE72H-V2-LEGACY-METADATA-NOTE.md"
+    },
+    {
+      "file": "startup-join-task-report.md",
+      "sha256": "0b426b96ff91a0f93757616878d0d3d9562d832a011447de125a64f29b26c048",
+      "bytes": 4844,
+      "originalPath": ".superpowers/sdd/2026-10-19-startup-config-grant-ordering-plan/task-1-report.md"
+    },
+    {
+      "file": "startup-join-task-review.md",
+      "sha256": "0bbdf8327721d44f5621d4dbfa16c211c003260e671ddeb8146cefc36044d849",
+      "bytes": 9025,
+      "originalPath": "/tmp/wrd-startup-config-grant-task-review-20261019.md"
+    },
+    {
+      "file": "startup-join-ledger.md",
+      "sha256": "b0b6e9a8ccea82a6d4da3e0a3bf15c10d52dffec2a59603f35af343022e7e6c3",
+      "bytes": 1795,
+      "originalPath": ".superpowers/sdd/2026-10-19-startup-config-grant-ordering-plan/progress.md"
+    },
+    {
+      "file": "http-phase-observations-0027.json",
+      "sha256": "18ff679e198449710ef641e2c9de61fee2337939f0a9883d1a9bfd77f9481889",
+      "bytes": 1663,
+      "originalPath": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/HTTP-PHASE-OBSERVATIONS-20261019-0027.json"
+    },
+    {
+      "file": "root-checkpoint-and-rulings.md",
+      "sha256": "5a7581fa798caf92faa648a72f5c0f7e75ca964591e5e343386a34df8578dfcc",
+      "bytes": 1922,
+      "originalPath": null
+    }
+  ],
+  "interpretationRequired": {
+    "rolling72h-v2-summary.json": "Read rolling72h-v2-legacy-metadata-note.md; inherited physical-line snapshot fields are not v2 record results."
+  },
+  "supersedesDiagnosticStatisticsOnly": "previous invalidated late72h-v1 retained in 2026-10-18-runtime-continuation-r5; failures and actualR5 unchanged",
+  "rawLogsOrPrivateCredentialsCopied": false
+}

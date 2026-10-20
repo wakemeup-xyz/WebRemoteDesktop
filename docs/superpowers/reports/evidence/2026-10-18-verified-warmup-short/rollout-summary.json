@@ -1,0 +1,81 @@
+{
+  "target": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+  "oldBuildId": "6b2ad956f6a6cdd8",
+  "newBuildId": "79bf9a5afea0458e",
+  "expectedNewBuildId": "79bf9a5afea0458e",
+  "helperExit": 0,
+  "helperTimedOut": false,
+  "helperErrorClass": null,
+  "helperElapsedSeconds": 4.605,
+  "healthyHostOnlineAndIdle": true,
+  "healthErrorClass": null,
+  "oldIdentity": {
+    "signal": {
+      "pid": "27319",
+      "birthEpoch": 1792267996.416811,
+      "start": "Sun Oct 18 04:13:16 2026",
+      "cwd": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server",
+      "entry": "server.js"
+    },
+    "host": {
+      "pid": "94398",
+      "birthEpoch": 1792265372.467944,
+      "start": "Sun Oct 18 03:29:32 2026",
+      "cwd": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/python-host",
+      "entry": "host.py"
+    }
+  },
+  "newIdentity": {
+    "signal": {
+      "pid": "45287",
+      "birthEpoch": 1792269606.193945,
+      "start": "Sun Oct 18 04:40:06 2026",
+      "cwd": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server",
+      "entry": "server.js"
+    },
+    "host": {
+      "pid": "94398",
+      "birthEpoch": 1792265372.467944,
+      "start": "Sun Oct 18 03:29:32 2026",
+      "cwd": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/python-host",
+      "entry": "host.py"
+    }
+  },
+  "processIdentityErrorClass": null,
+  "htmlMatchedExceptBuiltAt": true,
+  "distMatchedExceptBuiltAt": true,
+  "assetValidationErrorClass": null,
+  "preserved": true,
+  "preservationErrorClass": null,
+  "sourceScope": {
+    "runtimePathCount": 2,
+    "viewerInputCount": 91,
+    "preservedTrackedCount": 625,
+    "trackedCoverage": {
+      "regularFilesSha256": 625,
+      "gitlinkIndexOnly": [
+        {
+          "path": "hapi",
+          "mode": "160000",
+          "objectId": "b44885ae676652db2905e8cab6d8331a67adad6e",
+          "stage": "0"
+        }
+      ]
+    }
+  },
+  "unexpectedCoverage": [],
+  "unexpectedCoverageTruncated": false,
+  "credentialsSaved": false,
+  "classification": "completed",
+  "ownership": {
+    "recordedIdentities": 1,
+    "allRecordedIdentitiesExited": true,
+    "signalCount": 0,
+    "coverage": [
+      "polling-may-miss-fast-orphan",
+      "macos-check-to-signal-race",
+      "no-CDP-no-manager-proxy"
+    ],
+    "completeProcessTreeExitEstablished": false
+  }
+}

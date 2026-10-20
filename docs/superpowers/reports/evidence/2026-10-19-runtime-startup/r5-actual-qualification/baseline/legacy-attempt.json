@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "sequenceDirectory": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a",
+  "sequenceSHA256": "3fece9b738337a73bb7dbcc03507085ddb093c9bc93ea388d7fcf4bea3ab8d61",
+  "sequenceId": "e0d817ad446b77398041d33d404cda2a",
+  "attemptId": "342e69a20f95f82c0b6adbe53e0552d3",
+  "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+  "productTIP": "dfb15434e79da90b803b763c533836e16c080c71",
+  "readinessSHA256": "1064eeaa41ac546ad9bd22d3ee05f5042be75f2423edda82f3f0137f0e60a74c",
+  "decision": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-terminal-proof-static-20261019-qdbxmtgi/root-baseline-decision-2.json",
+    "sha256": "dad4ef95147dac8bb8f7c6117f8b9b6358e05f6e94599f0e02370db0510b9fa7"
+  },
+  "runtimeManifestSHA256": "5c24db736b343e9863d8059c5bb7ca3323c44b7265dfcda5f2dba5ebe8e7f502",
+  "sourceFiles": {
+    "scripts/ordinary_session_recovery.py": "0203396cad0a65871f97604a3dbf275f95331939e4e42bc07e392a248fd85341",
+    "scripts/ordinary_recovery_fault.py": "67f799909c03158012106421a74d80a673949a5380a312c10609de754650c494",
+    "scripts/passive_session_soak.py": "b0a15095651c9147eb451b27eb815ec4ea4cc984f2d293d3617c4cee89a15426",
+    "scripts/passive_session_sampler.js": "f862b739cbe7eb543ccab304203c71c62a43014530fa2da9a7655cba293665d3",
+    "scripts/process_observation_diagnostics.py": "00bd2366d770b9e65b272acadf54027c77cde48050b12106a2fd79338059f82b"
+  },
+  "scenario": "baseline",
+  "mode": "relay",
+  "origin": "https://link.stockhub.wiki",
+  "runNonce": "404eba666e84a03c778fd7df033703b3",
+  "priorFailureSHA256": "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "failedHistory": [
+    "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242",
+    "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+    "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+  ]
+}

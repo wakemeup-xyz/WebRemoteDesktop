@@ -122,9 +122,15 @@
       const Encoder = root?.TextEncoder || (typeof TextEncoder !== 'undefined' ? TextEncoder : null);
       if (Encoder) return new Encoder().encode(value).length;
     } catch (_error) {
-      // Fall back to a conservative UTF-16 bound below.
+      // Fall back to the UTF-8 counter below.
     }
-    return String(value).length;
+    // Match UTF-8 even for malformed surrogate input when TextEncoder is absent.
+    let bytes = 0;
+    for (const character of String(value)) {
+      const code = character.codePointAt(0);
+      bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    }
+    return bytes;
   }
 
   function defaultHashInputIds(ids) {
@@ -157,6 +163,15 @@
 
   function create(options) {
     const config = options || {};
+    const schemaVersion = config.schemaVersion === 3 ? 3 : 1;
+    // Independent from browserSessionId (which survives reload). This trace epoch
+    // travels with both at and traceNowMs, so consumers never subtract new-boot clocks.
+    const bootIdHash = schemaVersion === 3 ? (() => {
+      const words = new Uint32Array(4);
+      if (root.crypto && typeof root.crypto.getRandomValues === 'function') root.crypto.getRandomValues(words);
+      else for (let i = 0; i < words.length; i++) words[i] = Math.floor(Math.random() * 0x100000000);
+      return Array.from(words, word => word.toString(16).padStart(8, '0')).join('');
+    })() : null;
     const now = typeof config.now === 'function'
       ? config.now
       : () => (typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -172,12 +187,18 @@
       : defaultHashInputIds;
     const onIncident = typeof config.onIncident === 'function' ? config.onIncident : () => {};
 
+    // Reserve the fixed envelope, counter growth and schema3 clock/hash fields.
+    // Each entry accounts for its own JSON and a comma (also for the first).
+    const HEADER_RESERVE_BYTES = 2048;
+    const measureBytes = typeof config.byteLength === 'function' ? config.byteLength : byteLength;
+    let cachedBytes = HEADER_RESERVE_BYTES;
     const events = [];
     const pendingHashes = new Map();
     const ackRecords = new Map();
     const counters = {
       droppedEvents: 0,
       sampledEvents: 0,
+      sampledAckEvents: 0,
       hashUnavailable: 0,
       droppedHashCount: 0,
       pendingHashCount: 0,
@@ -198,7 +219,16 @@
       return currentTime(now);
     }
 
+    function traceNowMs() {
+      try {
+        const value = now();
+        return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER
+          ? Math.floor(value) : null;
+      } catch (_error) { return null; }
+    }
+
     function relativeTime() {
+      if (schemaVersion === 3) return traceNowMs();
       const current = safeNow();
       if (traceOrigin === null) traceOrigin = current;
       return Math.max(0, Math.min(MAX_RELATIVE_TIME_MS, Math.round(current - traceOrigin)));
@@ -227,42 +257,38 @@
 
     function snapshotObject() {
       return {
-        schemaVersion: 1,
+        schemaVersion,
+        ...(schemaVersion === 3 ? { traceNowMs: traceNowMs(), bootIdHash } : {}),
         events: events.map(publicEvent),
         counters: publicCounters(),
       };
     }
 
-    function removeHashJobsForEvent(event) {
-      // A ring eviction only removes the public event. The digest promise is
-      // still in flight and must retain its bounded concurrency slot until it
-      // settles; queueHash() will discard the result when the event is gone.
-      void event;
+    function evictOldest() {
+      const entry = events.shift();
+      if (!entry) return;
+      entry.live = false;
+      cachedBytes -= entry.bytes;
+      counters.droppedEvents += 1;
+      // Unsettled digest jobs retain their concurrency slots until completion.
     }
 
     function trimToBounds() {
-      while (events.length > MAX_EVENTS) {
-        removeHashJobsForEvent(events.shift());
-        counters.droppedEvents += 1;
-      }
-      let serialized;
-      try {
-        serialized = JSON.stringify(snapshotObject());
-      } catch (_error) {
-        serialized = '';
-      }
-      while (byteLength(serialized) > MAX_JSON_BYTES && events.length) {
-        removeHashJobsForEvent(events.shift());
-        counters.droppedEvents += 1;
-        try {
-          serialized = JSON.stringify(snapshotObject());
-        } catch (_error) {
-          serialized = '';
-        }
-      }
+      while (events.length > MAX_EVENTS || (cachedBytes > MAX_JSON_BYTES && events.length)) evictOldest();
+    }
+
+    function replaceEntryBytes(entry) {
+      if (!entry.live) return;
+      const nextBytes = measureBytes(JSON.stringify(publicEvent(entry))) + 1;
+      cachedBytes += nextBytes - entry.bytes;
+      entry.bytes = nextBytes;
+      trimToBounds();
     }
 
     function append(event) {
+      event.live = true;
+      event.bytes = measureBytes(JSON.stringify(publicEvent(event))) + 1;
+      cachedBytes += event.bytes;
       events.push(event);
       trimToBounds();
       return event;
@@ -289,9 +315,10 @@
         if (!job) return;
         pendingHashes.delete(jobId);
         counters.pendingHashCount = pendingHashes.size;
-        if (!events.includes(job.event)) return;
+        if (!job.event.live) return;
         if (typeof hash === 'string' && HEX_HASH.test(hash.slice(0, 16).toLowerCase())) {
           job.event.inputIdHash = hash.slice(0, 16).toLowerCase();
+          replaceEntryBytes(job.event);
         } else {
           counters.hashUnavailable += 1;
         }
@@ -300,7 +327,7 @@
         if (!job) return;
         pendingHashes.delete(jobId);
         counters.pendingHashCount = pendingHashes.size;
-        if (events.includes(job.event)) counters.hashUnavailable += 1;
+        if (job.event.live) counters.hashUnavailable += 1;
       });
     }
 
@@ -494,7 +521,22 @@
         const source = meta && typeof meta === 'object' ? meta : {};
         const inputType = safeEnum(source.inputType, INPUT_TYPES);
         const action = safeEnum(source.action, ACTIONS);
-        if (isHighFrequency(inputType, action)) {
+        // ACK sampling is deliberately stricter than DOM/send aggregation.
+        // accepted=false is C's unmatched reliable-ledger result for an
+        // explicitly observed unordered send, not a receiver failure.
+        const inputIds = safeInputIds(source.inputIds);
+        const matchingAcks = stage === 'ack' ? findAckRecords(inputIds, {
+          inputType, leaseEpoch: integer(source.leaseEpoch, 0, 0x7fffffff),
+          connectionAttemptId: safeId(source.connectionAttemptId),
+        }) : [];
+        if (stage === 'ack' && (inputType === 'pointer' || inputType === 'mouse')
+          && isHighFrequency(inputType, action) && source.status === 'applied' && source.reliable === false
+          && source.matchedReliablePending === false && !matchingAcks.length
+          && source.late !== true && source.reason !== 'late-ack') {
+          counters.sampledAckEvents += 1;
+          return integer(source.eventId, 1, Number.MAX_SAFE_INTEGER);
+        }
+        if (stage !== 'ack' && stage !== 'ack-timeout' && isHighFrequency(inputType, action)) {
           counters.sampledEvents += 1;
           if (action === 'move') counters.mouseMoveCount += 1;
           if (action === 'wheel') counters.wheelCount += 1;
@@ -504,18 +546,14 @@
         let eventId = integer(source.eventId, 1, Number.MAX_SAFE_INTEGER);
         if (stage === 'dom-received') eventId = ++eventSequence;
         const event = normalizeEvent(stage, source, eventId);
-        const inputIds = safeInputIds(source.inputIds);
         if (inputIds.length) addHashToEvent(event, inputIds);
-        const matchingAcks = stage === 'ack' ? findAckRecords(inputIds, event) : [];
         if (matchingAcks.length && event.eventId === undefined) {
           event.eventId = matchingAcks[0].eventId || undefined;
         }
-        append(event);
-
         if (stage === 'transport-send') addAckWaiter(event, source, inputIds);
         if (stage === 'ack') {
           const matching = matchingAcks;
-          const late = matching.some((item) => item.timedOut);
+          const late = source.late === true || matching.some((item) => item.timedOut);
           const actualStatus = safeStatus(source.status) || 'unknown';
           event.status = actualStatus;
           event.accepted = typeof source.accepted === 'boolean' ? source.accepted
@@ -532,6 +570,7 @@
           counters.pendingAckCount = pendingAckCount();
           scheduleDeadlineTimer();
         }
+        append(event);
         if (stage === 'gate' && source.accepted === false
           && source.unexpected === true && source.incidentEligible === true) {
           invokeIncident({
@@ -549,12 +588,18 @@
     function snapshot() {
       try {
         trimToBounds();
-        const result = snapshotObject();
+        let result = snapshotObject();
+        // A final full check also covers future header/schema changes; never
+        // return an oversized snapshot even if the reserve becomes insufficient.
+        while (byteLength(JSON.stringify(result)) > MAX_JSON_BYTES && events.length) {
+          evictOldest();
+          result = snapshotObject();
+        }
         // Return a detached structure so consumers cannot mutate the ring or
         // expose internal correlation state through object references.
         return JSON.parse(JSON.stringify(result));
       } catch (_error) {
-        return { schemaVersion: 1, events: [], counters: publicCounters() };
+        return { schemaVersion, ...(schemaVersion === 3 ? { traceNowMs: traceNowMs(), bootIdHash } : {}), events: [], counters: publicCounters() };
       }
     }
 
@@ -563,6 +608,7 @@
         try { clearTimeoutFn(deadlineTimer); } catch (_error) { /* noop */ }
         deadlineTimer = null;
       }
+      events.forEach(event => { event.live = false; });
       pendingHashes.clear();
       ackRecords.clear();
       counters.pendingHashCount = 0;

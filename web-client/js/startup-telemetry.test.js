@@ -70,3 +70,19 @@ test('importMarks preserves original shell timestamps and never overwrites', () 
   assert.equal(snap.marks.find((m) => m.name === 'start-click').atMs, 44);
   assert.equal(snap.marks.find((m) => m.name === 'bootstrap-start').atMs, 45);
 });
+
+test('startup build snapshot whitelists identity/time and strips origins and resource queries', () => {
+  const telemetry = loadTelemetry()({ origin: 'https://link.stockhub.wiki',
+    build: { id: '0123456789abcdef', builtAt: 1234, sourceDir: '/secret/source', token: 'secret' } });
+  telemetry.recordResources([
+    { name: 'https://link.stockhub.wiki/assets/terminal.0123456789abcdef.js?token=secret', duration: 20 },
+    { name: 'https://outside.example/assets/tools.js', duration: 100 },
+  ]);
+  const snapshot = telemetry.snapshot();
+  assert.equal(snapshot.build.id, '0123456789abcdef');
+  assert.equal(snapshot.build.builtAt, 1234);
+  assert.deepEqual(Object.keys(snapshot.build).sort(), ['builtAt', 'id']);
+  assert.equal(snapshot.resources[0].path, '/assets/terminal.0123456789abcdef.js');
+  assert.doesNotMatch(JSON.stringify(snapshot), /secret|https:|outside|sourceDir|token/);
+  assert.equal(loadTelemetry()({ build: { id: 'https://secret', builtAt: 1 } }).snapshot().build, null);
+});

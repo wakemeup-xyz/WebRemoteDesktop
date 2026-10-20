@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "runtimeSourceCommit": "f4202b751b8c22f5b84f1e415e35a7107f5f696d",
+  "toolCommit": "b443475e9a6c40a4a092bd0172aa7acd2a1b47a7",
+  "buildId": "07ad960b331ccc4b",
+  "reportedAtUTC": "2026-10-17T17:01:41.002779+00:00",
+  "run": {
+    "status": "PASS",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 300.2901011388749,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "maxObservedNoProgressMs": 1433.199999999997,
+    "progressAfterBaseline": true,
+    "frameStallThresholdMs": 5000,
+    "frameEvidence": "requestVideoFrameCallback",
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "mode": "relay",
+    "failure": null,
+    "startProof": {
+      "status": "verified",
+      "freshPage": true,
+      "coreInstalled": true,
+      "authVerified": true,
+      "startClickMarksBefore": 0,
+      "startClickMarksAfter": 1
+    },
+    "startupSummary": {
+      "observerAvailable": true,
+      "socketPresent": true,
+      "socketConnected": true,
+      "pcState": "connected",
+      "uiPhase": "connected",
+      "controlState": "ACTIVE",
+      "hostOnline": true,
+      "desiredMediaState": "active",
+      "desiredGeneration": 0,
+      "authState": "verified",
+      "superseded": false,
+      "failureCause": "unknown",
+      "browserNowMs": 10342.399999856949,
+      "inputGate": {
+        "status": "observed",
+        "allowed": true,
+        "inputActive": true,
+        "hasInputLease": true,
+        "viewportSupported": true,
+        "hasPaintedFrame": true,
+        "currentAttemptReady": true,
+        "hasActiveControl": true,
+        "socketConnected": true,
+        "manualDisconnect": false,
+        "superseded": false,
+        "mouseResetPending": false,
+        "draftComposing": false,
+        "draftPending": false,
+        "draftUncertain": false,
+        "firstFrameTimerHandlePresent": false,
+        "uiPhase": "connected",
+        "desiredMediaState": "active",
+        "mediaRuntimePhase": "active",
+        "keyboardControllerState": "READY",
+        "keyboardTransportState": "ready",
+        "surfaceState": "settled",
+        "desktopWriteRecoveryState": "none",
+        "recoveryState": "idle",
+        "blockedReasons": []
+      },
+      "startupMarks": {
+        "start-click": 4193.9,
+        "bootstrap-start": 4194.5,
+        "bootstrap-ready": 4645.8,
+        "bootstrap-degraded": null,
+        "signal-connected": 5818.4,
+        "first-frame": 9727.2,
+        "active": 9727.2
+      }
+    },
+    "startupSnapshot": {
+      "stage": "startup-baseline",
+      "status": "ok",
+      "browserClock": "performance-now",
+      "pythonClock": "monotonic",
+      "browserNowMs": 10342.399999856949,
+      "pythonRequestedMs": 1408631452,
+      "pythonCompletedMs": 1408631463,
+      "state": {
+        "observerAvailable": true,
+        "socketPresent": true,
+        "socketConnected": true,
+        "pcState": "connected",
+        "uiPhase": "connected",
+        "controlState": "ACTIVE",
+        "hostOnline": true,
+        "desiredMediaState": "active",
+        "desiredGeneration": 0,
+        "authState": "verified",
+        "superseded": false,
+        "failureCause": "unknown",
+        "browserNowMs": 10342.399999856949,
+        "inputGate": {
+          "status": "observed",
+          "allowed": true,
+          "inputActive": true,
+          "hasInputLease": true,
+          "viewportSupported": true,
+          "hasPaintedFrame": true,
+          "currentAttemptReady": true,
+          "hasActiveControl": true,
+          "socketConnected": true,
+          "manualDisconnect": false,
+          "superseded": false,
+          "mouseResetPending": false,
+          "draftComposing": false,
+          "draftPending": false,
+          "draftUncertain": false,
+          "firstFrameTimerHandlePresent": false,
+          "uiPhase": "connected",
+          "desiredMediaState": "active",
+          "mediaRuntimePhase": "active",
+          "keyboardControllerState": "READY",
+          "keyboardTransportState": "ready",
+          "surfaceState": "settled",
+          "desktopWriteRecoveryState": "none",
+          "recoveryState": "idle",
+          "blockedReasons": []
+        },
+        "startupMarks": {
+          "start-click": 4193.9,
+          "bootstrap-start": 4194.5,
+          "bootstrap-ready": 4645.8,
+          "bootstrap-degraded": null,
+          "signal-connected": 5818.4,
+          "first-frame": 9727.2,
+          "active": 9727.2
+        }
+      }
+    },
+    "failureSnapshot": {
+      "stage": "post-failure-preclose",
+      "status": "not-reached",
+      "browserClock": "performance-now",
+      "pythonClock": "monotonic",
+      "browserNowMs": null,
+      "pythonRequestedMs": null,
+      "pythonCompletedMs": null,
+      "state": null
+    },
+    "failureObservation": null,
+    "timeoutConsole": {
+      "status": "detached",
+      "installedBeforeStart": true,
+      "attachedMs": 1408623975,
+      "detachedMs": 1408931537,
+      "error": "none",
+      "capped": false,
+      "acceptedCount": 0,
+      "firstEvent": null
+    },
+    "originClass": "formal",
+    "lifecycle": {
+      "file": "lifecycle.json",
+      "captureStatus": "ok",
+      "cleanupStatus": "api-finished-exit-unknown",
+      "writeStatus": "ok",
+      "ownedProcessExitEvidence": "not-observed"
+    }
+  },
+  "supervisor": {
+    "workerExitCode": 0,
+    "deadline": false,
+    "failureType": null,
+    "intervention": false,
+    "elapsedSeconds": 326.6838908751961,
+    "sampleTriggered": false
+  },
+  "registeredProcessCleanup": {
+    "count": 7,
+    "allRecordedIdentitiesExited": true,
+    "signalCount": 0,
+    "completeProcessTreeExitEstablished": false
+  },
+  "postRun": {
+    "hostOnline": true,
+    "viewerCount": 0,
+    "relayViewerCount": 0,
+    "viewerEpoch": 2
+  },
+  "logBounds": {
+    "back-debug.log": {
+      "device": 16777220,
+      "inode": 43654875,
+      "bytes": [
+        951741,
+        1249525
+      ],
+      "sha256": "e38f05f1b3d7d129f323a4697f82a969b08bfb7b1d67a0b71a032f424693bf00"
+    },
+    "signal-server.log": {
+      "device": 16777220,
+      "inode": 31830923,
+      "bytes": [
+        2067251,
+        2077550
+      ],
+      "sha256": "e8cba19e1e23b9f3a9ecdf70f1e7a43250f257710db670ac11810504d2524ae3"
+    },
+    "signal-server.jsonl": {
+      "device": 16777220,
+      "inode": 43620520,
+      "bytes": [
+        502579,
+        522223
+      ],
+      "sha256": "38059d89547bc5cbcc3cb763dffe4a35e6b4bcc47b30af4a560f58026a51a604"
+    }
+  },
+  "note": "Passive short-window only; exact console absence does not prove no timeout; page-first marks are not attempt-scoped; no raw input/clipboard/pixels/credentials retained."
+}

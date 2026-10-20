@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "frozenSHA256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
+  "templateRelativePath": "two-time-template-ue2ctc6z",
+  "templateSHA256": "6b88170a18dc68154244dcdb0727217532dbbeb2c05ebc15ed4cb350328e57c9",
+  "buildResultSHA256": "ce8cfc7b19d8184602cd917648b643e20a51234683e0e79c3642425eb83098ed",
+  "independentReview": {
+    "path": "/tmp/wrd-startup-join-r4f1-actual-assets-review-20261019.md",
+    "sha256": "e055f48a0821ba07562fae66f5dd236ed46d50cc278a37eb44c4136b200325d5"
+  }
+}

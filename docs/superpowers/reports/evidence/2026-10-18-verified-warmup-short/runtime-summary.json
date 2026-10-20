@@ -1,0 +1,681 @@
+{
+  "kind": "verified-warmup-short-bounded-log-audit",
+  "version": 1,
+  "run": "verified-warmup-short-20261018a",
+  "sourceCommit": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+  "buildId": "79bf9a5afea0458e",
+  "boundsUTC": {
+    "start": "2026-10-17T20:40:48.515647+00:00",
+    "end": "2026-10-17T20:46:32.450443+00:00",
+    "elapsedSeconds": 343.9275719381403
+  },
+  "windows": [
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "device": 16777220,
+      "inode": 43654875,
+      "startOffsetInclusive": 5541649,
+      "endOffsetExclusive": 5842616,
+      "bytes": 300967,
+      "lines": 960,
+      "sha256": "151f51ade86ea9bec08fe3de5bafad1802db3e04ef70668539182ca2040ab202",
+      "rotationNeeded": false,
+      "startsAtLineBoundary": true,
+      "endsWithNewline": true
+    },
+    {
+      "path": "/tmp/signal-server.log",
+      "device": 16777220,
+      "inode": 31830923,
+      "startOffsetInclusive": 2323998,
+      "endOffsetExclusive": 2334292,
+      "bytes": 10294,
+      "lines": 353,
+      "sha256": "b4b9b7eccc81d0a2acfe9b155b1440e47a31783e81acbf359214408b46d147c2",
+      "rotationNeeded": false,
+      "startsAtLineBoundary": true,
+      "endsWithNewline": true
+    },
+    {
+      "path": "/tmp/wrd-structured/signal-server.jsonl",
+      "device": 16777220,
+      "inode": 43620520,
+      "startOffsetInclusive": 1174654,
+      "endOffsetExclusive": 1194290,
+      "bytes": 19636,
+      "lines": 13,
+      "sha256": "2679c2010eaa18518d0ce01c50a0f4b08a79eb40d123d28da8c3a06493f30071",
+      "rotationNeeded": false,
+      "startsAtLineBoundary": true,
+      "endsWithNewline": true
+    }
+  ],
+  "processes": {
+    "signalPid": 45287,
+    "hostPid": 94398,
+    "unchangedAcrossBounds": true
+  },
+  "boundaryHealth": {
+    "start": true,
+    "end": true,
+    "startHostOnline": true,
+    "endHostOnline": true,
+    "startViewers": 0,
+    "endViewers": 0
+  },
+  "bootstrap": {
+    "servedCount": 1,
+    "events": [
+      {
+        "ts": "2026-10-17T20:41:00.655Z",
+        "serverProcessMs": 1.06,
+        "hostOnline": true
+      }
+    ],
+    "httpWindows": [
+      {
+        "window": {
+          "start": "2026-10-17T20:40:09.356Z",
+          "end": "2026-10-17T20:41:09.364Z",
+          "elapsedMs": 60007,
+          "missedWindows": 0,
+          "final": false,
+          "empty": false
+        },
+        "coverage": {
+          "startedAt": "2026-10-17T20:40:09.356Z",
+          "endedAt": null,
+          "completionCoverage": true,
+          "clipped": false,
+          "clockUnknown": false,
+          "collectionFailures": 0,
+          "loggerFailures": 0,
+          "storeFailures": 0
+        },
+        "bootstrap": {
+          "started": 1,
+          "completed": 1,
+          "aborted": 0,
+          "closedUnfinished": 0,
+          "untracked": 0,
+          "expiredUnfinished": 0,
+          "stoppedInflight": 0,
+          "inflight": 0,
+          "status": {
+            "1xx": 0,
+            "2xx": 1,
+            "3xx": 0,
+            "4xx": 0,
+            "5xx": 0,
+            "other": 0,
+            "s401": 0,
+            "s403": 0,
+            "s429": 0
+          },
+          "duration": {
+            "le10": 1,
+            "le50": 0,
+            "le100": 0,
+            "le500": 0,
+            "le1000": 0,
+            "le5000": 0,
+            "le15000": 0,
+            "gt15000": 0,
+            "count": 1,
+            "sumMs": 5,
+            "maxMs": 5,
+            "unknown": 0
+          }
+        }
+      }
+    ],
+    "signalHumanCorroboratingCount": 1,
+    "cacheHitProven": false,
+    "interpretation": "Exactly one served event in this same-inode byte window; count alone does not prove cache disposition or causal speedup. serverProcessMs and HTTP duration use different local boundaries; neither is browser transport latency."
+  },
+  "hostLag": {
+    "records": 61,
+    "severityCounts": {
+      "critical": 15,
+      "warning": 28,
+      "normal": 18
+    },
+    "pcStateCounts": {
+      "none": 6,
+      "connecting": 1,
+      "connected": 54
+    },
+    "stats": {
+      "lagMs": {
+        "count": 61,
+        "min": 0.169,
+        "max": 94.644,
+        "mean": 6.787704918032787
+      },
+      "maxLagMs": {
+        "count": 61,
+        "min": 7.856,
+        "max": 130.566,
+        "mean": 69.65004918032787
+      },
+      "sampleCount": {
+        "count": 61,
+        "min": 60,
+        "max": 61,
+        "mean": 60.36065573770492
+      },
+      "taskCount": {
+        "count": 61,
+        "min": 7,
+        "max": 14,
+        "mean": 12.508196721311476
+      },
+      "threadCount": {
+        "count": 61,
+        "min": 6,
+        "max": 8,
+        "mean": 7.786885245901639
+      },
+      "currentRssMiB": {
+        "count": 61,
+        "min": 69.9140625,
+        "max": 422.25390625,
+        "mean": 371.7975794057377
+      },
+      "peakRssMiB": {
+        "count": 61,
+        "min": 473.4453125,
+        "max": 473.4453125,
+        "mean": 473.4453125
+      },
+      "eventLoop.count": {
+        "count": 61,
+        "min": 60,
+        "max": 61,
+        "mean": 60.278688524590166
+      },
+      "eventLoop.max": {
+        "count": 61,
+        "min": 7.856338,
+        "max": 130.565645,
+        "mean": 69.6501754590164
+      },
+      "eventLoop.p50": {
+        "count": 61,
+        "min": 0.452054,
+        "max": 1.768611,
+        "mean": 0.8783884262295082
+      },
+      "eventLoop.p95": {
+        "count": 61,
+        "min": 4.054168,
+        "max": 87.074513,
+        "mean": 19.52097767213115
+      },
+      "eventLoop.p99": {
+        "count": 61,
+        "min": 7.856338,
+        "max": 130.565645,
+        "mean": 69.6501754590164
+      },
+      "eventLoop.missedSampleCount": {
+        "count": 61,
+        "min": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "resources.ageMs": {
+        "count": 61,
+        "min": 891.983673,
+        "max": 4991.396882,
+        "mean": 2934.2282656557377
+      },
+      "resources.swapInBytesPerSec": {
+        "count": 61,
+        "min": 0.0,
+        "max": 1278326.3860519717,
+        "mean": 110408.36495862815
+      },
+      "resources.swapOutBytesPerSec": {
+        "count": 61,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "systemLoad1": {
+        "count": 61,
+        "min": 8.401,
+        "max": 16.033,
+        "mean": 11.746786885245902
+      },
+      "inputEventCount": {
+        "count": 61,
+        "min": 0,
+        "max": 0,
+        "mean": 0
+      }
+    },
+    "completeWindowSampleCountSum": 3682,
+    "missedSampleCountSum": 0,
+    "collectorStates": [
+      {
+        "state": {
+          "busy": false,
+          "cleanupPending": false,
+          "ownerAlive": true,
+          "state": "idle"
+        },
+        "records": 47
+      },
+      {
+        "state": {
+          "busy": true,
+          "cleanupPending": false,
+          "ownerAlive": true,
+          "state": "busy"
+        },
+        "records": 14
+      }
+    ],
+    "resourceStatusCounts": {
+      "ok": 61
+    },
+    "memoryPressureCounts": {
+      "unknown": 61
+    },
+    "captureStateCounts": {
+      "unavailable": 6,
+      "grabbing": 19,
+      "idle": 36
+    },
+    "pairedCaptureLifetimeMaximum": {
+      "scope": "track-lifetime",
+      "maxDurationMs": 245.28,
+      "maxDurationThreadCpuMs": 16.02,
+      "maxDurationNonCpuMs": 229.26,
+      "attempted": 152,
+      "completed": 151,
+      "failed": 0,
+      "clipped": false
+    },
+    "captureNumericStats": {
+      "lastDurationMs": {
+        "count": 55,
+        "min": 26.626,
+        "max": 63.501,
+        "mean": 35.69772727272727
+      },
+      "lastThreadCpuMs": {
+        "count": 55,
+        "min": 7.003,
+        "max": 13.698,
+        "mean": 9.920945454545455
+      },
+      "lastNonCpuMs": {
+        "count": 55,
+        "min": 19.395,
+        "max": 51.891,
+        "mean": 25.77672727272727
+      },
+      "maxDurationMs": {
+        "count": 55,
+        "min": 155.594,
+        "max": 245.28,
+        "mean": 242.60696363636364
+      },
+      "currentGrabAgeMs": {
+        "count": 19,
+        "min": 2.365,
+        "max": 229.82,
+        "mean": 30.571578947368423
+      },
+      "attempted": {
+        "count": 55,
+        "min": 11,
+        "max": 3028,
+        "mean": 1518.909090909091
+      },
+      "completed": {
+        "count": 55,
+        "min": 10,
+        "max": 3027,
+        "mean": 1518.5636363636363
+      },
+      "failed": {
+        "count": 55,
+        "min": 0,
+        "max": 0,
+        "mean": 0
+      }
+    },
+    "timestampCoverage": {
+      "first": "2026-10-17T20:40:50.211227+00:00",
+      "last": "2026-10-17T20:46:29.130765+00:00",
+      "spanSeconds": 338.919538,
+      "maxEventGapSeconds": 6.012173
+    },
+    "scope": "Reported sampled windows only. Per-window p95/p99 and repeated track-lifetime maxima are not whole-session distributions or incident counts. Paired non-CPU is capture wall minus capture thread CPU; no scheduler, OS capture, contention or other cause established."
+  },
+  "captureStats": {
+    "records": 61,
+    "fields": {
+      "fps": {
+        "count": 61,
+        "min": 9.5,
+        "max": 19.6,
+        "mean": 18.88360655737705
+      },
+      "frames": {
+        "count": 61,
+        "min": 50.0,
+        "max": 99.0,
+        "mean": 94.98360655737704
+      },
+      "sleep": {
+        "count": 61,
+        "min": 21.9,
+        "max": 39.6,
+        "mean": 32.27540983606557
+      },
+      "pause_wait": {
+        "count": 61,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "capture_wait": {
+        "count": 61,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "convert": {
+        "count": 61,
+        "min": 1.9,
+        "max": 5.2,
+        "mean": 3.036065573770492
+      },
+      "recv_total": {
+        "count": 61,
+        "min": 39.2,
+        "max": 46.7,
+        "mean": 42.80327868852459
+      },
+      "reuse": {
+        "count": 61,
+        "min": 15.0,
+        "max": 64.0,
+        "mean": 47.59016393442623
+      }
+    },
+    "scope": "Output/recv window FPS can include reused images; callback freshness and FPS do not prove capture-content freshness."
+  },
+  "encoder": {
+    "records": 61,
+    "encode": {
+      "avgMs": {
+        "count": 61,
+        "min": 3.885,
+        "max": 12.208,
+        "mean": 6.484065573770492
+      },
+      "maxMs": {
+        "count": 61,
+        "min": 7.737,
+        "max": 196.138,
+        "mean": 31.104983606557376
+      },
+      "p95Ms": {
+        "count": 61,
+        "min": 6.135,
+        "max": 33.071,
+        "mean": 12.434459016393442
+      },
+      "count": {
+        "count": 61,
+        "min": 82,
+        "max": 99,
+        "mean": 95.59016393442623
+      }
+    },
+    "totalEncodedFramesAcrossWindows": 5831,
+    "bitrateEffective": {
+      "count": 61,
+      "min": 3200000,
+      "max": 3200000,
+      "mean": 3200000
+    },
+    "keyframesTotals": {
+      "initial": 0,
+      "forced": 0,
+      "periodic": 0,
+      "pli": 0,
+      "safety": 1
+    },
+    "codecCounts": {
+      "h264_videotoolbox": 61
+    },
+    "scope": "Per-window metrics; p95 values cannot be pooled into whole-session p95. Counts cover logged windows only."
+  },
+  "startupHostLocal": [
+    {
+      "hostLocalTime": "2026-10-18 04:41:06,118",
+      "event": "early_candidate_buffered"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:41:06,224",
+      "event": "offer_received"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:41:06,277",
+      "event": "ice_gathering"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:41:06,530",
+      "event": "ice_gathered"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:41:06,552",
+      "event": "answer_sent"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:41:08,125",
+      "event": "ice_connected"
+    }
+  ],
+  "control": [
+    {
+      "ts": "2026-10-17T20:46:09.404Z",
+      "event": "viewer_disconnect_grace_started",
+      "meta": {
+        "graceMs": 8000
+      }
+    },
+    {
+      "ts": "2026-10-17T20:46:17.406Z",
+      "event": "control_transition_failed_closed",
+      "meta": {
+        "leaseEpoch": 2,
+        "reason": "controller-disconnect"
+      }
+    },
+    {
+      "ts": "2026-10-17T20:46:18.413Z",
+      "event": "control_reset_retry",
+      "meta": {
+        "leaseEpoch": 2,
+        "attempt": 1,
+        "reason": "controller-disconnect"
+      }
+    },
+    {
+      "ts": "2026-10-17T20:46:18.415Z",
+      "event": "control_reset_completed",
+      "meta": {
+        "leaseEpoch": 2,
+        "state": "FREE",
+        "status": "applied"
+      }
+    }
+  ],
+  "teardown": [
+    {
+      "hostLocalTime": "2026-10-18 04:41:06,226",
+      "reason": "new-offer",
+      "peerClosed": false,
+      "senderReleased": false,
+      "tasks": 0,
+      "track": null
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:46:17,418",
+      "reason": "viewer-disconnected",
+      "peerClosed": false,
+      "senderReleased": false,
+      "tasks": 0,
+      "track": null
+    }
+  ],
+  "lifecycleCounts": {
+    "earlyCandidateBufferingWarning": 1,
+    "closingPeerConnection": 1,
+    "dataChannelClosedWarning": 2
+  },
+  "warningErrorCounts": {
+    "hostErrorOrCriticalLines": 0,
+    "hostLagRecords": 61,
+    "signalStructuredLevels": {
+      "info": 13
+    }
+  },
+  "coverageNotes": [
+    "Only exact same-device/inode [startOffset,endOffset) byte reads; both metadata snapshots and opened current inode checked. No rotation or whole-log scan.",
+    "Dedicated Host JSONL absent at both boundaries; Host structured events parsed only from back-debug.log window. Signal human/JSONL overlap and are not additive.",
+    "Entry aggregate windows can straddle metadata boundaries; no denominator extended to full metadata interval. Zero missed samples applies only to reported windows.",
+    "No raw templates, payloads, tokens, SDP, input contents, coordinates, connection/socket/session IDs, URL queries or event rings persisted.",
+    "No exact cross-clock browser/Host/Signal subtraction, whole-session P95, cache-hit or optimization-causality claim.",
+    "Actual input-to-picture, visible effect and physical display are NOT RUN in this read-only audit; passive continuity is separately evaluated by root.",
+    "Teardown summary presence does not prove a detached prior resource was released: peerClosed=false, senderReleased=false and track=null are reported as-is."
+  ],
+  "teardownReview": {
+    "classification": "observability-gap-with-baseline-recovery; no positive evidence of retained peer/capture resources",
+    "materialLongBlockerEstablished": false,
+    "sourceFacts": [
+      {
+        "path": "python-host/host.py",
+        "line": 3369,
+        "fact": "Each close snapshots current pc/track/sender into locals; values in summary describe objects owned by that invocation."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 3386,
+        "fact": "Ownership is detached synchronously before awaited reset/close. A second close sees empty current fields and can advance authority."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 3415,
+        "fact": "Nonempty close logs Closing peer, awaits pc.close and then track.shutdown before checking owns_peer."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 3431,
+        "fact": "Final resource summary is gated by owns_peer = authority still current and self.pc is None. A completed detached close can lose this summary after another close advances authority."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 3445,
+        "fact": "peerClosed and senderReleased are bool(local captured object), not explicit success tests of closed/released internals. track=null means this invocation captured no track."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 3339,
+        "fact": "Control reset closes existing peer with preserve_authority=True; after await it returns without applied ACK when authority changed."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 3366,
+        "fact": "Control transition catches Exception and rejects; absence of ERROR log cannot prove pc.close/track.shutdown did not throw."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 5450,
+        "fact": "Viewer-status with onlineCount=0 invokes close independently, resets offer state and uses default preserve_authority=False."
+      },
+      {
+        "path": "python-host/host.py",
+        "line": 1524,
+        "fact": "Track shutdown clears capture-running, joins capture thread through to_thread with 2s timeout, shuts process executor wait=False and clears buffers; no dedicated completion event here."
+      }
+    ],
+    "timelineLocal": [
+      {
+        "time": "2026-10-18 04:46:17,416",
+        "event": "nonempty_close_started",
+        "reason": "control-transition"
+      },
+      {
+        "time": "2026-10-18 04:46:17,417",
+        "event": "viewer_status",
+        "onlineCount": 0
+      },
+      {
+        "time": "2026-10-18 04:46:17,418",
+        "event": "empty_current_resource_summary",
+        "reason": "viewer-disconnected",
+        "peerClosed": false,
+        "senderReleased": false,
+        "track": null
+      }
+    ],
+    "baselineAndPostState": [
+      {
+        "ts": "2026-10-17T20:40:50.211227+00:00",
+        "pcState": "none",
+        "captureState": "unavailable",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0
+      },
+      {
+        "ts": "2026-10-17T20:46:12.133856+00:00",
+        "pcState": "connected",
+        "captureState": "grabbing",
+        "threadCount": 8,
+        "taskCount": 13,
+        "inputWaiters": 0
+      },
+      {
+        "ts": "2026-10-17T20:46:18.130852+00:00",
+        "pcState": "none",
+        "captureState": "unavailable",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0
+      },
+      {
+        "ts": "2026-10-17T20:46:23.132344+00:00",
+        "pcState": "none",
+        "captureState": "unavailable",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0
+      },
+      {
+        "ts": "2026-10-17T20:46:29.130765+00:00",
+        "pcState": "none",
+        "captureState": "unavailable",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0
+      }
+    ],
+    "interpretation": "Observed ordering is consistent with nonempty control-transition close detaching resources, followed by viewer-status empty close superseding authority and suppressing first close final summary. Static code still awaits detached pc and track before owner check. Thread/task counts return to pre-session baseline in three reported windows; this argues against retained active work but is not object-specific completion proof. Failed-closed then one reset retry/applied is real teardown behavior, not absence of outliers.",
+    "limits": [
+      "No exact cleanup invocation correlation or captured-object completion event; cannot prove the nonempty close completed solely from empty summary or retry ACK.",
+      "Resource collector cleanupPending=false describes resource collector ownership only, not peer/capture teardown pending state.",
+      "No positive leak, still-active capture, stuck task, failure or unhealthy boundary established in this bounded evidence; absent completion event is not a demonstrated runtime failure.",
+      "No additional post-window bytes read; existing exact window already includes three post-teardown 1s/6s/12s-scale sampled observations.",
+      "Do not present false/null as successful resource release. Future cleanup observability can be improved separately without interrupting fresh long qualification on an unproven defect."
+    ]
+  }
+}

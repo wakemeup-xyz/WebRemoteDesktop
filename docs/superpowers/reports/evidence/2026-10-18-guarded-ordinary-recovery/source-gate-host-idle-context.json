@@ -1,0 +1,94 @@
+{
+  "scope": "bounded131072bytecurrentHosttail-eight-last-rows",
+  "rows": [
+    {
+      "ts": "2026-10-18T10:48:29.966813+00:00",
+      "lagMs": 17.729,
+      "rollingMaxLagMs": 93.435,
+      "loopSampleCount": 60,
+      "missedSampleCount": 0,
+      "systemLoad1": 95.444,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    },
+    {
+      "ts": "2026-10-18T10:48:34.986073+00:00",
+      "lagMs": 39.093,
+      "rollingMaxLagMs": 123.515,
+      "loopSampleCount": 60,
+      "missedSampleCount": 0,
+      "systemLoad1": 89.563,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    },
+    {
+      "ts": "2026-10-18T10:48:40.959727+00:00",
+      "lagMs": 12.365,
+      "rollingMaxLagMs": 123.515,
+      "loopSampleCount": 60,
+      "missedSampleCount": 0,
+      "systemLoad1": 83.512,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    },
+    {
+      "ts": "2026-10-18T10:48:45.967002+00:00",
+      "lagMs": 17.271,
+      "rollingMaxLagMs": 123.515,
+      "loopSampleCount": 60,
+      "missedSampleCount": 0,
+      "systemLoad1": 77.465,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    },
+    {
+      "ts": "2026-10-18T10:48:51.962959+00:00",
+      "lagMs": 14.912,
+      "rollingMaxLagMs": 123.515,
+      "loopSampleCount": 61,
+      "missedSampleCount": 0,
+      "systemLoad1": 72.783,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    },
+    {
+      "ts": "2026-10-18T10:48:57.073398+00:00",
+      "lagMs": 124.234,
+      "rollingMaxLagMs": 124.234,
+      "loopSampleCount": 60,
+      "missedSampleCount": 0,
+      "systemLoad1": 68.315,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    },
+    {
+      "ts": "2026-10-18T10:49:02.969910+00:00",
+      "lagMs": 19.556,
+      "rollingMaxLagMs": 142.715,
+      "loopSampleCount": 60,
+      "missedSampleCount": 0,
+      "systemLoad1": 63.565,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    },
+    {
+      "ts": "2026-10-18T10:49:07.971251+00:00",
+      "lagMs": 23.133,
+      "rollingMaxLagMs": 142.715,
+      "loopSampleCount": 60,
+      "missedSampleCount": 0,
+      "systemLoad1": 59.116,
+      "pcState": "none",
+      "inputEventCount": 0,
+      "inputWaiters": 0
+    }
+  ],
+  "interpretation": "idle Host sampled timing only; not control/input qualification or causal attribution"
+}

@@ -1,0 +1,744 @@
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/bindings.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/bindings.py
+@@ -1,6 +1,17 @@
++"""Definition-only tool continuation history and immutable mixed deployment."""
+ from core import *
+ TOOLS=('scripts/ordinary_session_recovery.py','scripts/test_ordinary_session_recovery.py')
++OLD_TOOL_TIP='59bca14209eed299b0e94da58decb8b85e5ce70c'
++VIEWER_TIP='c802a68362459b46b84593c7e8921575e0783394'
++MODULE_TIP='35c6f972d30b8c225c2d9feac2773ddb21b43cd0'
+ OLD_FAILURE='2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242'
++SECOND_FAILURE='af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6'
++THIRD_FAILURE='5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9'
++FAILURES=[OLD_FAILURE,SECOND_FAILURE,THIRD_FAILURE]
++PRIOR_FAILURE=THIRD_FAILURE
++SCENARIOS=('baseline','within-grace','after-grace','continuity')
++BUDGET={'baseline':300,'within-grace':390,'after-grace':390,'continuity':10800}
++RUNTIME=('scripts/ordinary_session_recovery.py','scripts/ordinary_recovery_fault.py','scripts/passive_session_soak.py','scripts/passive_session_sampler.js','scripts/process_observation_diagnostics.py')
+ 
+ def exact(value,keys):need(type(value) is dict and set(value)==set(keys),'exact keys required')
+ 
+@@ -19,7 +30,7 @@
+  exact(ref,('path','sha256'));need(type(ref['path']) is str and pathlib.Path(ref['path']).is_absolute() and len(ref['path'].encode())<=1024 and valid_sha(ref['sha256']),'absolute bounded reference/hash');data,_=regular(pathlib.Path(ref['path']));need(sha(data)==ref['sha256'],'historical/review reference drift');return data
+ 
+ def base_reference():
+- value=readjson(R/'deployed-reference.json');need(value['productTIP']==PRODUCT and value['docBaseTIP']==DOCBASE,'product reference')
++ value=readjson(R/'legacy-deployed-reference.json');need(value['productTIP']==PRODUCT and value['docBaseTIP']==DOCBASE,'product reference')
+  h={name:loads(check_ref(ref)) for name,ref in value['historical'].items() if name!='oldRows'};check_ref(value['historical']['oldRows'])
+  need(value['historical']['oldFailure']['sha256']==OLD_FAILURE and h['oldFailure']['classification']=='failed-or-indeterminate','historical failure binding')
+  need(h['frozen']['tip']==PRODUCT and h['apply']['tip']==PRODUCT and h['apply']['classification']=='source-applied','historical source binding')
+@@ -46,69 +57,6 @@
+ def validate_no_signals(*evidence):
+  for row in evidence:need(not row.get('signals'),'intervened child cannot qualify')
+ 
+-TOOL_TIP='59bca14209eed299b0e94da58decb8b85e5ce70c'
+-SECOND_FAILURE='af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6'
+-FAILURES=[OLD_FAILURE,SECOND_FAILURE]
+-VIEWER=('web-client/js/input-recovery.test.js','web-client/js/webrtc.js','web-client/js/webrtc.test.js')
+-MODULES=('scripts/process_observation_diagnostics.py','scripts/test_process_observation_diagnostics.py')
+-DOCS=tuple('docs/superpowers/'+kind+'/2026-10-18-'+name+suffix+'.md' for kind,suffix in (('plans','-plan'),('specs','-design')) for name in ('ordinary-startup-sentinel','first-frame-timer-state','process-observation-context','move-quarantine-fallback'))
+-BUILD_INPUTS={'signal-server/scripts/build-web-client.js','signal-server/scripts/web-asset-graph.js','signal-server/lib/web-assets.js','signal-server/package.json','signal-server/package-lock.json'}
+-SCENARIOS=('baseline','within-grace','after-grace','continuity')
+-BUDGET={'baseline':300,'within-grace':390,'after-grace':390,'continuity':10800}
+-RUNTIME=('scripts/ordinary_session_recovery.py','scripts/ordinary_recovery_fault.py','scripts/passive_session_soak.py','scripts/passive_session_sampler.js',MODULES[0])
+-
+-def package_guard():
+- v=private_json(R/'EXECUTION-REVIEW.json',limit=32768);exact(v,('schemaVersion','scope','packageManifestSha256','independentReview'))
+- need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['scope']=='frontend-move-context-operations-r5','new package review required');check_ref(v['independentReview'])
+- sums=private_json(R/'SHA256SUMS.json',v['packageManifestSha256']);need(type(sums) is dict and 1<=len(sums)<=64,'package bound')
+- for name,digest in sums.items():need(sha(checked_file(R,relative(name))[0])==digest,'package drift')
+- return v['packageManifestSha256']
+-
+-def history():
+- b=base_reference();h=readjson(R/'continuation-history.json');records={k:loads(check_ref(v)) for k,v in h['records'].items()};s=records['toolSequence'];p=records['toolPromotion']
+- need(s['productTIP']==PRODUCT and s['toolTIP']==TOOL_TIP and p['classification']=='tools-promoted' and p['sequenceSHA256']==h['records']['toolSequence']['sha256'] and p['copied']==list(TOOLS) and p['servicesReloaded'] is False and p['errorClass'] is None,'actual old tool deployment linkage')
+- need(h['records']['secondFailure']['sha256']==SECOND_FAILURE and records['secondFailure']['classification']=='failed-or-indeterminate' and records['secondFailure']['priorFailureSHA256']==OLD_FAILURE,'both failures binding')
+- need(records['secondMarker']['attemptSHA256']==h['records']['secondAttempt']['sha256']==records['secondFailure']['attemptSHA256'] and records['secondAttempt']['promotionSHA256']==h['records']['toolPromotion']['sha256'],'second attempt deployment linkage')
+- expected=dict(b['regularFiles'])
+- for name,row in s['tools'].items():
+-  need(name in TOOLS and row['oldSha256']==expected[name]['sha256'] and row['sha256']==sha(blob(TOOL_TIP,name)) and row['filesystemMode']==expected[name]['filesystemMode'],'actual tool override')
+-  expected[name]={'sha256':row['sha256'],'filesystemMode':row['filesystemMode']}
+- need(set(s['tools'])==set(TOOLS) and len(expected)==989,'pre-map derivation')
+- b=dict(b,regularFiles=expected);return b,h,records
+-
+-FINAL_TIP='c802a68362459b46b84593c7e8921575e0783394'
+-ARCHIVE_TIP='e684ca494613ba93a7b491042922cf43e97cef31'
+-FINAL_RECEIPT_SHA='1a3531258a8232f0425497d66dc557d2f1e228b6e16a310f281ba6b66a86a7a1'
+-ARCHIVE_PATHS=('docs/superpowers/reports/2026-10-18-guarded-ordinary-runtime-execution.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/capture-pacing-experiment-design.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/context-final-review.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/context-fix1-review.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/context-ledger.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/context-task-report.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/context-task-review.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/evidence-index.json', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/first-frame-final-review.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/first-frame-gate-assessment.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/first-frame-ledger.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/first-frame-task-report.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/first-frame-task-review.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/macos-sleep-official-sources.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/process-coverage-assessment.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/root-rulings.md', 'docs/superpowers/reports/evidence/2026-10-18-ordinary-continuation/second-baseline-performance.md')
+-
+-def source_review(path,digest):
+- need(digest==FINAL_RECEIPT_SHA,'exact final root source receipt required')
+- v=private_json(path,digest,65536)
+- exact(v,('schemaVersion','kind','sourceTIP','viewerSourceTIP','signalSourceTIP','hostSourceTIP','runnerToolTIP','diagnosticModuleTIP','productBaseTIP','canonicalPatchSHA256','canonicalNameStatus','reviewedFiles','applyNameStatus','alreadyDeployedTools','expectedPreRegularCount','expectedPostRegularCount','reviews','archiveCommit','archiveScope','actualRegistryParity','newAssetsBuilt','newRuntimeDeployed','scope','epoch'))
+- need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['kind']=='root-reviewed-frontend-context-source','source receipt schema')
+- need(v['sourceTIP']==v['viewerSourceTIP']==FINAL_TIP and v['archiveCommit']==ARCHIVE_TIP and v['runnerToolTIP']==TOOL_TIP and v['signalSourceTIP']==v['hostSourceTIP']==v['productBaseTIP']==PRODUCT,'mixed component source pins')
+- tip=commit(v['sourceTIP']);need(git(S,'rev-parse','HEAD').decode().strip()==tip,'final source HEAD drift');git(S,'merge-base','--is-ancestor',TOOL_TIP,tip)
+- need(v['alreadyDeployedTools']==list(TOOLS),'already deployed tools exact')
+- exact(v['reviews'],('prior-combined','sentinel-full','sentinel-fixture-fix','timer-full','context-full','move-task','move-full'))
+- for ref in v['reviews'].values():check_ref(ref)
+- full=raw_diff(PRODUCT,tip);actual=[[row['status'],row['path']] for row in full]
+- need(actual==v['canonicalNameStatus'] and set(v['reviewedFiles'])=={row['path'] for row in full},'full canonical path coverage')
+- expected=[row['path'] for row in full if row['path'] not in TOOLS]
+- need(v['applyNameStatus']==[row for row in actual if row[1] not in TOOLS],'exact apply allowlist')
+- archives=[n for n in expected if n not in (*VIEWER,*MODULES,*DOCS)]
+- need(tuple(archives)==ARCHIVE_PATHS and set(expected)==set((*VIEWER,*MODULES,*DOCS,*archives)) and len(full)==32 and len(expected)==30,'reviewed source/archive scope')
+- git(S,'merge-base','--is-ancestor',ARCHIVE_TIP,tip)
+- for name in ARCHIVE_PATHS:need(blob(tip,name)==blob(ARCHIVE_TIP,name),'historical archive payload changed')
+- for row in full:
+-  name=row['path'];old=name in (*VIEWER,*TOOLS);pin=v['reviewedFiles'][name];exact(pin,('sha256','gitMode','status'))
+-  need(row['status']==pin['status']==('M' if old else 'A') and row['oldMode']==('100644' if old else '000000') and row['newMode']==pin['gitMode']=='100644' and sha(blob(tip,name))==pin['sha256'],'reviewed file hash/mode/status')
+- need(sha(git(S,'diff','--binary','--full-index','--no-renames',PRODUCT,tip))==v['canonicalPatchSHA256'],'complete canonical diff hash')
+- need(type(v['expectedPreRegularCount']) is int and v['expectedPreRegularCount']==989 and type(v['expectedPostRegularCount']) is int and v['expectedPostRegularCount']==1016==989+sum(r['status']=='A' for r in full),'derived counts')
+- for name in (*TOOLS,*RUNTIME[1:4],*BUILD_INPUTS):need(blob(tip,name)==blob(TOOL_TIP,name),'backend/build/runtime tool change outside scope')
+- need(git(S,'rev-parse',tip+':signal-server')==git(S,'rev-parse',PRODUCT+':signal-server') and git(S,'rev-parse',tip+':python-host')==git(S,'rev-parse',PRODUCT+':python-host'),'backend component trees changed')
+- for name in MODULES:need(blob(tip,name)==blob(v['diagnosticModuleTIP'],name)==regular(R/pathlib.PurePosixPath(name).name)[0],'approved contextual module pin')
+- return dict(v,copyPaths=expected)
+-
+ def source_map_gate(b,changes=None):
+  need(git(P,'rev-parse','HEAD').decode().strip()==b['head'],'primary HEAD drift');index=pathlib.Path(git(P,'rev-parse','--git-path','index').decode().strip());index=index if index.is_absolute() else P/index
+  need(sha(regular(index)[0])==b['indexSha256'] and sha(git(P,'ls-files','--stage','-z'))==b['indexMetadataSha256'],'index drift')
+@@ -119,4 +67,65 @@
+  return len(expected)
+ 
+ def old_dist_gate(b):need(distmap(P/'web-client/dist')==b['assets']['exactFinalFileMap'] and directory_modes(P/'web-client/dist')==b['directoryModes'],'old exact dist drift')
++
+ def old_service_gate(b):preserved_gate();need(service_set()==b['expectedServices'],'original service identity drift');health();preserved_gate()
++
++def package_guard():
++ v=private_json(R/'EXECUTION-REVIEW.json',limit=32768);exact(v,('schemaVersion','scope','packageManifestSha256','independentReview'))
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['scope']=='viewer-tools-successor-r1','new package review required');check_ref(v['independentReview'])
++ sums=private_json(R/'SHA256SUMS.json',v['packageManifestSha256']);need(type(sums) is dict and 1<=len(sums)<=64,'package bound')
++ for name,digest in sums.items():need(sha(checked_file(R,relative(name))[0])==digest,'package drift')
++ return v['packageManifestSha256']
++
++def history():
++ b=base_reference();h=readjson(R/'legacy-tool-history.json');records={k:loads(check_ref(v)) for k,v in h['records'].items()};s=records['toolSequence'];p=records['toolPromotion']
++ need(s['productTIP']==PRODUCT and s['toolTIP']==OLD_TOOL_TIP and p['classification']=='tools-promoted' and p['sequenceSHA256']==h['records']['toolSequence']['sha256'] and p['copied']==list(TOOLS) and p['servicesReloaded'] is False and p['errorClass'] is None,'actual old tool deployment linkage')
++ need(h['records']['secondFailure']['sha256']==SECOND_FAILURE and records['secondFailure']['classification']=='failed-or-indeterminate' and records['secondFailure']['priorFailureSHA256']==OLD_FAILURE,'first two failures binding')
++ need(records['secondMarker']['attemptSHA256']==h['records']['secondAttempt']['sha256']==records['secondFailure']['attemptSHA256'] and records['secondAttempt']['promotionSHA256']==h['records']['toolPromotion']['sha256'],'second attempt deployment linkage')
++ expected=dict(b['regularFiles'])
++ for name,row in s['tools'].items():
++  need(name in TOOLS and row['oldSha256']==expected[name]['sha256'] and row['sha256']==sha(blob(OLD_TOOL_TIP,name)) and row['filesystemMode']==expected[name]['filesystemMode'],'actual old tool override')
++  expected[name]={'sha256':row['sha256'],'filesystemMode':row['filesystemMode']}
++ need(set(s['tools'])==set(TOOLS) and len(expected)==989,'old tool pre-map derivation')
++ newer=readjson(R/'deployment-history.json');exact(newer,('schemaVersion','records'));need(type(newer['schemaVersion']) is int and newer['schemaVersion']==1,'history schema')
++ records.update({k:loads(check_ref(v)) for k,v in newer['records'].items()});h={'records':dict(h['records'],**newer['records'])}
++ frozen=records['r5Frozen'];applied=records['r5Apply'];reload=records['r5Reload'];ready=records['r5Readiness'];template=records['r5Template'];asset_review=records['r5AssetReview']
++ need(frozen['tip']==VIEWER_TIP and frozen['toolTIP']==OLD_TOOL_TIP and frozen['productTIP']==PRODUCT and frozen['expectedPostCount']==1016,'actual Viewer deployment identity')
++ need(frozen['preMapSHA256']==sha(json.dumps(expected,sort_keys=True,separators=(',',':')).encode()),'historical source pre-map')
++ need(applied['classification']=='source-applied' and applied['errorClass'] is None and applied['frozenSHA256']==h['records']['r5Frozen']['sha256'] and applied['appliedPaths']==list(frozen['candidateFiles']) and applied['assetReviewSHA256']==h['records']['r5AssetReview']['sha256'],'actual Viewer source apply binding')
++ need(reload['classification']=='completed' and reload['errorClass'] is None and reload['operation']=='restart-signal' and reload['frozenSHA256']==h['records']['r5Frozen']['sha256'] and reload['applySHA256']==h['records']['r5Apply']['sha256'] and reload['assetReviewSHA256']==h['records']['r5AssetReview']['sha256'],'actual historical reload binding')
++ need(ready['classification']=='runtime-ready-observed' and ready['errorClass'] is None and ready['reloadSHA256']==h['records']['r5Reload']['sha256'] and ready['frozenSHA256']==h['records']['r5Frozen']['sha256'] and ready['assetReviewSHA256']==h['records']['r5AssetReview']['sha256'] and ready['newIdentity']==reload['newIdentity'],'actual historical readiness binding')
++ for key in ('assets','identities','sourceTIP','frozenSHA256','componentPins'):need(ready['runtimeValidation'][key]==reload['runtimeValidation'][key],'historical runtime evidence drift')
++ need(asset_review['frozenSHA256']==h['records']['r5Frozen']['sha256'] and asset_review['templateSHA256']==h['records']['r5Template']['sha256'],'historical asset approval binding');check_ref(asset_review['independentReview'])
++ for name,row in frozen['candidateFiles'].items():
++  old=expected.get(name);need(row['oldSha256']==(old['sha256'] if old else None) and row['oldMode']==(old['filesystemMode'] if old else None),'historical source copy precondition')
++  need(row['sha256']==sha(blob(VIEWER_TIP,name)) and row['filesystemMode']==(old['filesystemMode'] if old else 0o600),'historical exact source bytes/modes');expected[name]={'sha256':row['sha256'],'filesystemMode':row['filesystemMode']}
++ need(len(expected)==1016 and len(frozen['candidateFiles'])==30,'historical known file coverage')
++ assets=ready['runtimeValidation']['assets'];need(assets['buildId']=='bb581651b422e400' and assets['builtAt']==1792336142126 and len(assets['exactFinalFileMap'])==14,'actual retained Viewer assets')
++ services={'signal':{'pid':33747,'birthEpoch':1792336141.182036},'host':{'pid':36877,'birthEpoch':1792322600.528357}}
++ need(ready['newIdentity']==services and reload['oldIdentity']['host']==services['host'],'same Host and deployed Signal births')
++ need(h['records']['thirdFailure']['sha256']==THIRD_FAILURE and records['thirdFailure']['classification']=='failed-or-indeterminate' and records['thirdFailure']['failedHistory']==FAILURES[:2] and records['thirdFailure']['priorFailureSHA256']==SECOND_FAILURE,'third failure preserved')
++ third=records['thirdAttempt'];marker=records['thirdMarker'];failed=records['thirdFailure'];seq=records['thirdSequence']
++ need(marker['attemptSHA256']==failed['attemptSHA256']==h['records']['thirdAttempt']['sha256'] and third['sequenceSHA256']==h['records']['thirdSequence']['sha256'] and seq['readinessSHA256']==h['records']['r5Readiness']['sha256'],'third attempt deployment lineage')
++ for key in ('sequenceId','attemptId','productTIP','toolTIP','sourceTIP','runtimeManifestSHA256'):need(marker[key]==failed[key]==third[key],'third attempt marker/terminal binding')
++ need(third['runtimeManifestSHA256']==h['records']['thirdRuntimeManifest']['sha256'],'third runtime nonce binding')
++ b=dict(b,regularFiles=expected,expectedServices=services,assets=assets,directoryModes=template['directoryModes'],viewerSourceTIP=VIEWER_TIP)
++ return b,h,records
++
++def reference():return history()[0]
++
++TOOL_TIP='2822441791b59a021556c7e4eb24715df9d5b277'
++from policy import COPY_PATHS,BUILD_INPUTS
++
++def final_binding():
++ v=private_json(R/'FINAL-BINDING.json',limit=32768);exact(v,('schemaVersion','sourceTIP','viewerSourceTIP','toolTIP','sourceReview'))
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['toolTIP']==TOOL_TIP,'final binding schema/tools')
++ for key in ('sourceTIP','viewerSourceTIP'):need(type(v[key]) is str and re.fullmatch('[a-f0-9]{40}',v[key]),'full final source identity required')
++ check_ref(v['sourceReview']);return v
++
++def final_source_tip():return final_binding()['sourceTIP']
++def viewer_source_tip():return final_binding()['viewerSourceTIP']
++
++def source_review(path,digest):
++ from source_review_gate import validate_source_review
++ return validate_source_review(path,digest)
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/continuation_common.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/continuation_common.py
+@@ -1,8 +1,8 @@
+ """Fresh mixed-component continuation; no old promotion/freeze replay."""
+ import argparse,secrets,sys,types
+ from deployment import *
+-# Latest failure remains the immediate predecessor; both are separately bound.
+-PRIOR_FAILURE=SECOND_FAILURE
++# Latest failure remains immediate predecessor; all three are separately bound.
++PRIOR_FAILURE=THIRD_FAILURE
+ 
+ def deployment_args(m):return types.SimpleNamespace(**m['deployment'])
+ 
+@@ -21,7 +21,7 @@
+  pkg=package_guard();folder=pathlib.Path(folder).resolve(strict=True);need(folder.parent==R and folder.name.startswith('sequence-') and stat.S_IMODE(folder.stat().st_mode)==0o700,'new private sequence')
+  m=private_json(folder/'sequence.json',digest)
+  exact(m,('schemaVersion','sequenceId','packageManifestSHA256','productTIP','toolTIP','sourceTIP','deployment','readinessSHA256','rootDecision','offlineIntegrationEvidence','failedHistory'))
+- need(type(m['schemaVersion']) is int and m['schemaVersion']==1 and m['packageManifestSHA256']==pkg and m['productTIP']==PRODUCT and m['toolTIP']==TOOL_TIP and m['sourceTIP']==FINAL_TIP and m['failedHistory']==FAILURES,'mixed sequence pins')
++ need(type(m['schemaVersion']) is int and m['schemaVersion']==1 and m['packageManifestSHA256']==pkg and m['productTIP']==PRODUCT and m['toolTIP']==TOOL_TIP and m['sourceTIP']==final_source_tip() and m['failedHistory']==FAILURES,'mixed sequence pins')
+  hex32(m['sequenceId']);need(folder.name=='sequence-'+m['sequenceId'],'sequence ID')
+  exact(m['deployment'],('frozen_dir','frozen_sha256','asset_review','asset_review_sha256'));ref=ready_context(m)
+  d=private_json(m['rootDecision']['path'],m['rootDecision']['sha256']);validate_sequence_decision(d,pkg,m['deployment'],m['readinessSHA256'],m['offlineIntegrationEvidence'])
+@@ -30,16 +30,17 @@
+ 
+ def integration(reference,ref):
+  v=loads(check_ref(reference));exact(v,('schemaVersion','kind','sourceTIP','toolTIP','viewerBuildId','componentPins','checker','independentReview','result','actualExitCode','classification'))
+- need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['kind']=='root-mixed-native-pure-integration' and v['sourceTIP']==FINAL_TIP and v['toolTIP']==TOOL_TIP and v['viewerBuildId']==ref['assets']['buildId'],'new mixed integration pins')
+- need(v['componentPins']=={'signal':PRODUCT,'host':PRODUCT,'viewer':FINAL_TIP,'tools':TOOL_TIP} and type(v['actualExitCode']) is int and v['actualExitCode']==0 and v['classification']=='passed-offline-only','actual mixed integration receipt')
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['kind']=='root-mixed-native-pure-integration' and v['sourceTIP']==final_source_tip() and v['toolTIP']==TOOL_TIP and v['viewerBuildId']==ref['assets']['buildId'],'new mixed integration pins')
++ need(v['componentPins']=={'signal':PRODUCT,'host':PRODUCT,'viewer':viewer_source_tip(),'tools':TOOL_TIP} and type(v['actualExitCode']) is int and v['actualExitCode']==0 and v['classification']=='passed-offline-only','actual mixed integration receipt')
+  for key in ('checker','independentReview','result'):check_ref(v[key])
+  need(v['checker']['sha256']==sha(regular(R/'mixed-native-integration.py')[0]),'exact prepared checker')
+- result=loads(check_ref(v['result']));need(result=={'result':'pure-native-startup-integration-only','methods':4,'accepted':2,'rejected':10,'rows':1262,'sourceTIP':FINAL_TIP,'viewerBuildId':ref['assets']['buildId'],'componentPins':v['componentPins']},'actual mixed checker result')
++ result=loads(check_ref(v['result']));need(result=={'result':'pure-native-startup-integration-only','methods':4,'accepted':2,'rejected':10,'rows':1262,'sourceTIP':final_source_tip(),'viewerBuildId':ref['assets']['buildId'],'componentPins':v['componentPins']},'actual mixed checker result')
+  return v
+ 
+ def validate_sequence_decision(d,pkg,deployment,readiness_sha,offline):
+  exact(d,('schemaVersion','kind','sequenceId','packageManifestSHA256','sourceTIP','toolTIP','deployment','readinessSHA256','offlineIntegrationEvidence','failedHistory','automaticLaunch'))
+- need(type(d['schemaVersion']) is int and d['schemaVersion']==1 and d['kind']=='root-new-frontend-context-sequence' and d['packageManifestSHA256']==pkg and d['sourceTIP']==FINAL_TIP and d['toolTIP']==TOOL_TIP and d['deployment']==deployment and d['readinessSHA256']==readiness_sha and d['offlineIntegrationEvidence']==offline and d['failedHistory']==FAILURES and d['automaticLaunch'] is False,'explicit new sequence decision');hex32(d['sequenceId'])
++ need(type(d['schemaVersion']) is int and d['schemaVersion']==1 and d['kind']=='root-new-frontend-context-sequence' and d['packageManifestSHA256']==pkg and d['sourceTIP']==final_source_tip() and d['toolTIP']==TOOL_TIP and d['deployment']==deployment and d['readinessSHA256']==readiness_sha and d['offlineIntegrationEvidence']==offline and d['failedHistory']==FAILURES and d['automaticLaunch'] is False,'explicit new sequence decision');hex32(d['sequenceId'])
++ _,_,hist=history();need(d['sequenceId'] not in (hist['secondAttempt']['sequenceId'],hist['thirdAttempt']['sequenceId']),'old sequence reused')
+ 
+ def source_assets_guard(ref,tools=None):
+  a=types.SimpleNamespace(**ref['_deployment']);f,m,b,changes,d,t,ts=asset_context(a,applied=True,dist=False);assets=verify_rendered_dist(d,ts,P/'web-client/dist');need(assets==ref['assets'],'deployed assets changed');return assets
+@@ -66,7 +67,8 @@
+   previous=loads(check_ref(d['previousResult']));index=SCENARIOS.index(d['scenario']);binding=readjson(folder/('attempt-'+SCENARIOS[index-1]+'.json'))
+   need(pathlib.Path(d['previousResult']['path']).resolve()==folder/'attempts'/binding['attemptId']/'qualification-result.json','foreign previous result')
+  validate_attempt_decision(d,m,previous)
+- old=reference()['historical']['oldRuntimeManifest'];_,_,hist=history();need(d['runNonce'] not in (loads(check_ref(old))['runNonce'],hist['secondAttempt']['runNonce']),'old runtime nonce reused')
++ old=reference()['historical']['oldRuntimeManifest'];_,_,hist=history();need(d['runNonce'] not in (loads(check_ref(old))['runNonce'],hist['secondAttempt']['runNonce'],hist['thirdAttempt']['runNonce']),'old runtime nonce reused')
++ need(d['attemptId'] not in (hist['secondAttempt']['attemptId'],hist['thirdAttempt']['attemptId']) and d['sequenceId'] not in (hist['secondAttempt']['sequenceId'],hist['thirdAttempt']['sequenceId']),'old attempt/sequence reused')
+  for scenario in SCENARIOS:
+   p=folder/('attempt-'+scenario+'.json')
+   if p.exists():
+@@ -80,7 +82,7 @@
+  now=int(time.time()*1000);need(manifest['createdAtEpochMs']<=now<=manifest['validUntilEpochMs'] and 0<manifest['validUntilEpochMs']-manifest['createdAtEpochMs']<=43200000,'runtime clock/expiry')
+  if admission:need(now-manifest['createdAtEpochMs']<=900000 and manifest['validUntilEpochMs']-now>=(BUDGET[pins['scenario']]+120)*1000,'fresh runtime admission budget')
+  for name in ('signal','host'):need(manifest[name]=={'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees'][name]},'product/tool identity conflation')
+- need(manifest['viewer']=={'sourceCommit':m['sourceTIP'],'buildId':ref['assets']['buildId']},'Viewer product identity')
++ need(manifest['viewer']=={'sourceCommit':viewer_source_tip(),'buildId':ref['assets']['buildId']},'Viewer product identity')
+  need(manifest['originSource']=='formal-configured' and manifest['originSha256']==sha(pins['origin'].encode()),'formal origin identity')
+  exact(manifest['deploymentEvidence'],('kind','sha256'));need(manifest['deploymentEvidence']['kind']=='root-verified-local-deployment' and valid_sha(manifest['deploymentEvidence']['sha256']) and valid_sha(manifest['originEvidenceSha256']),'attestation hashes')
+  log=manifest['signalLog'];exact(log,('path','device','inode'));need(log['path']==ref['signalLogPath'] and type(log['device']) is int and 0<=log['device']<=9007199254740991 and type(log['inode']) is int and 0<log['inode']<=9007199254740991,'configured log identity schema')
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/deployment.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/deployment.py
+@@ -19,10 +19,10 @@
+  decision=private_json(m['rootDecision']['path'],m['rootDecision']['sha256']);validate_deployment_decision(decision,pkg,m['sourceReview']['sha256'])
+  for key in ('deploymentId','windowLowerMs','windowUpperMs'):need(m[key]==decision[key],'decision drift')
+  b,h,records=history();need(m['preMapSHA256']==sha(json.dumps(b['regularFiles'],sort_keys=True,separators=(',',':')).encode()) and m['oldDistMap']==b['assets']['exactFinalFileMap'],'deployed pre-state lineage')
+- need(list(m['candidateFiles'])==review['copyPaths'],'candidate exact allowlist');changes={}
++ need(list(m['candidateFiles'])==review['copyPaths']==list(COPY_PATHS),'candidate exact four allowlist');changes={}
+  candidate_tree,_=tree(m['tip'])
+  for rel,row in m['candidateFiles'].items():
+-  exact(row,('sha256','filesystemMode','oldSha256','oldMode','gitMode','objectId'));data,mode=checked_file(folder/'candidate',rel);old=b['regularFiles'].get(rel)
++  exact(row,('sha256','filesystemMode','oldSha256','oldMode','gitMode','objectId'));data,mode=checked_file(folder/'candidate',rel);old=b['regularFiles'].get(rel);need(old is not None,'new primary paths forbidden')
+   need(mode==0o600 and sha(data)==row['sha256']==sha(blob(m['tip'],rel)) and row['gitMode']=='100644' and row['objectId']==candidate_tree[rel]['objectId'],'frozen candidate bytes')
+   need(row['oldSha256']==(old['sha256'] if old else None) and row['oldMode']==(old['filesystemMode'] if old else None) and row['filesystemMode']==(old['filesystemMode'] if old else 0o600),'candidate baseline modes')
+   if not applied and old is None:need(nodeinfo(P/rel)=={'type':'absent'},'addition already exists')
+@@ -31,7 +31,7 @@
+  for rel,row in m['buildInputs'].items():
+   data,mode=checked_file(folder/'build-inputs',rel);old=b['regularFiles'].get(rel)
+   need(tr[rel]['kind']=='blob' and tr[rel]['gitMode'] in ('100644','100755') and sha(data)==row['sha256']==sha(blob(m['tip'],rel)) and mode==row['filesystemMode']==(old['filesystemMode'] if old else 0o600),'build input pin/mode')
+- need(m['expectedPostCount']==len(set(b['regularFiles'])|set(changes)),'derived final count')
++ need(m['expectedPostCount']==len(b['regularFiles'])==len(set(b['regularFiles'])|set(changes))==1016,'four replacements preserve known map')
+  source_map_gate(b,changes if applied else None)
+  expected_code={n:dg for n,dg in private_json(R/'SHA256SUMS.json',pkg).items() if n.endswith(('.py','.js'))};need(m['codeHashes']==expected_code,'complete frozen code closure')
+  for name,dg in m['codeHashes'].items():need(sha(checked_file(R,name)[0])==dg,'frozen code pin')
+@@ -62,7 +62,7 @@
+ def runtime_gate(args,expected,*,require_idle=True):
+  f,m,b,changes,d,t,ts=asset_context(args,applied=True,dist=False);preserved_gate();need(service_set()==expected,'current service identities');need(expected['host']==b['expectedServices']['host'],'Host replacement forbidden')
+  assets=verify_rendered_dist(d,ts,P/'web-client/dist');h=health(require_idle=require_idle);preserved_gate();need(service_set()==expected,'service identity raced')
+- return {'health':h,'identities':expected,'assets':assets,'preserved':True,'sourceTIP':m['tip'],'frozenSHA256':args.frozen_sha256,'componentPins':{'signal':PRODUCT,'host':PRODUCT,'viewer':m['tip'],'tools':TOOL_TIP}}
++ return {'health':h,'identities':expected,'assets':assets,'preserved':True,'sourceTIP':m['tip'],'frozenSHA256':args.frozen_sha256,'componentPins':{'signal':PRODUCT,'host':PRODUCT,'viewer':viewer_source_tip(),'tools':TOOL_TIP}}
+ 
+ def applied_record(f,m,frozen_sha,digest):
+  r=private_json(f/'apply-result.json',digest,1048576)
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/freeze-frontend-context.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/freeze-frontend-context.py
+@@ -7,11 +7,11 @@
+  need(decision['windowLowerMs']>=int(time.time()*1000),'future window required');b,h,records=history();source_map_gate(b);old_dist_gate(b);tip=review['sourceTIP'];tr,_=tree(tip)
+  f=R/('deployment-'+decision['deploymentId']);f.mkdir(mode=0o700);jsonwrite(f/'freeze-started.json',{'sourceReviewSHA256':a.source_review_sha256,'rootDecisionSHA256':a.decision_sha256,'primaryMutated':False});candidate={};inputs={}
+  for rel in review['copyPaths']:
+-  data=blob(tip,rel);old=b['regularFiles'].get(rel)
++  data=blob(tip,rel);old=b['regularFiles'].get(rel);need(old is not None,'four existing source paths required')
+   if old is None:need(nodeinfo(P/rel)=={'type':'absent'},'new source already exists')
+   write(f/'candidate'/rel,data);candidate[rel]={'sha256':sha(data),'filesystemMode':old['filesystemMode'] if old else 0o600,'oldSha256':old['sha256'] if old else None,'oldMode':old['filesystemMode'] if old else None,'gitMode':tr[rel]['gitMode'],'objectId':tr[rel]['objectId']}
+  for rel in sorted({n for n in tr if n.startswith('web-client/')}|BUILD_INPUTS):
+-  need(tr[rel]['kind']=='blob' and tr[rel]['gitMode'] in ('100644','100755'),'regular build input');data=blob(tip,rel);old=b['regularFiles'].get(rel);mode=old['filesystemMode'] if old else 0o600;write(f/'build-inputs'/rel,data,mode);inputs[rel]={'sha256':sha(data),'filesystemMode':mode}
++  need(tr[rel]['kind']=='blob' and tr[rel]['gitMode'] in ('100644','100755'),'regular build input');data=blob(tip,rel);old=b['regularFiles'].get(rel);need(old is not None,'four existing source paths required');mode=old['filesystemMode'] if old else 0o600;write(f/'build-inputs'/rel,data,mode);inputs[rel]={'sha256':sha(data),'filesystemMode':mode}
+  for rel,row in b['assets']['exactFinalFileMap'].items():
+   data,mode=checked_file(P/'web-client/dist',rel);need(sha(data)==row['sha256'] and mode==row['filesystemMode'],'old asset changed');write(f/'old-dist'/rel,data,mode)
+  code={n:dg for n,dg in private_json(R/'SHA256SUMS.json',pkg).items() if n.endswith(('.py','.js'))}
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/known_attempt_quiescence.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/known_attempt_quiescence.py
+@@ -73,20 +73,18 @@
+  need(all(now[k]-start[k]<=60 for k in ('epoch','monotonic')),'quiescence receipt stale')
+ 
+ def all_known():
+- b,h,records=history();first_marker=loads(check_ref(b['historical']['oldMarker']));first=loads(check_ref(b['historical']['oldFailure']));left=known_from_closed(first_marker,first)
+- marker=records['secondMarker'];result=records['secondFailure'];attempt=records['secondAttempt']
+- need(marker['oneUse'] is True and marker['scenario']=='baseline' and marker['attemptSHA256']==h['records']['secondAttempt']['sha256']==result['attemptSHA256'] and result['kind']=='guarded-ordinary-qualification' and result['classification']=='failed-or-indeterminate' and type(result['workerExitCode']) is int and result['automaticNextRun'] is False and result['fullProcessTreeExit']=='unknown','second known attempt unclosed')
+- for key in ('sequenceId','attemptId','productTIP','toolTIP','runtimeManifestSHA256'):need(marker[key]==result[key]==attempt[key],'second profile marker/result/attempt mismatch')
+- right=recorded_identities(result);rows=[]
+- for i,group in enumerate((left,right)):
+-  for row in group:rows.append(dict(row,registry=str(i+1)+':'+row['registry']))
+- need(len(rows)==14 and len({(r['pid'],r['birthEpoch']) for r in rows})==14,'exact two-failure14 identity coverage')
+- return sorted(rows,key=lambda r:(r['registry'],r['pid'],r['birthEpoch']))
++ b,h,records=history();groups=[known_from_closed(loads(check_ref(b['historical']['oldMarker'])),loads(check_ref(b['historical']['oldFailure'])))]
++ for prefix in ('second','third'):
++  marker=records[prefix+'Marker'];result=records[prefix+'Failure'];attempt=records[prefix+'Attempt']
++  need(marker['oneUse'] is True and marker['scenario']=='baseline' and marker['attemptSHA256']==h['records'][prefix+'Attempt']['sha256']==result['attemptSHA256'] and result['kind']=='guarded-ordinary-qualification' and result['classification']=='failed-or-indeterminate' and type(result['workerExitCode']) is int and result['automaticNextRun'] is False and result['fullProcessTreeExit']=='unknown','historical known attempt unclosed')
++  for key in ('sequenceId','attemptId','productTIP','toolTIP','runtimeManifestSHA256'):need(marker[key]==result[key]==attempt[key],'historical marker/result/attempt mismatch')
++  groups.append(recorded_identities(result))
++ rows=[dict(row,registry=str(i+1)+':'+row['registry']) for i,group in enumerate(groups) for row in group];need(len(rows)==21 and len({(r['pid'],r['birthEpoch']) for r in rows})==21,'exact three-failure21 identity coverage');return sorted(rows,key=lambda r:(r['registry'],r['pid'],r['birthEpoch']))
+ 
+ def receipt_value(m,frozen_sha,phase,apply_sha,observation):
+  known=all_known();validate_observation(observation,known);need(observation['classification']=='known-identities-quiescent','alive or unknown known attempt')
+  need(phase in ('apply','reload') and (apply_sha is None if phase=='apply' else valid_sha(apply_sha)),'quiescence phase')
+- return {'schemaVersion':1,'kind':'root-two-failure-quiescence','packageManifestSHA256':m['packageManifestSHA256'],'frozenSHA256':frozen_sha,'sourceTIP':m['tip'],'deploymentId':m['deploymentId'],'phase':phase,'applySHA256':apply_sha,'failedHistory':FAILURES,'knownIdentities':known,'observation':observation,'scope':SCOPE,'fullProcessTreeExit':'unknown'}
++ return {'schemaVersion':1,'kind':'root-three-failure-quiescence','packageManifestSHA256':m['packageManifestSHA256'],'frozenSHA256':frozen_sha,'sourceTIP':m['tip'],'deploymentId':m['deploymentId'],'phase':phase,'applySHA256':apply_sha,'failedHistory':FAILURES,'knownIdentities':known,'observation':observation,'scope':SCOPE,'fullProcessTreeExit':'unknown'}
+ 
+ def receipt_file(f,m,frozen_sha,path,digest,phase,apply_sha,*,fresh):
+  need(pathlib.Path(path).resolve(strict=True)==f/('quiescence-'+phase+'.json'),'quiescence exact path');v=private_json(path,digest,65536)
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/mixed-native-integration.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/mixed-native-integration.py
+@@ -7,9 +7,8 @@
+ 
+ SOURCE = Path('/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop')
+ R6 = Path('/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0')
+-TIP = 'c802a68362459b46b84593c7e8921575e0783394'
+ PRODUCT = 'dfb15434e79da90b803b763c533836e16c080c71'
+-TOOL = '59bca14209eed299b0e94da58decb8b85e5ce70c'
++TOOL = '2822441791b59a021556c7e4eb24715df9d5b277'
+ R6_SHA = '4b0ea13281c859ef38ac6ddb62a3bf3f642b3fba14abc61ef6993c0fda0d30b8'
+ FILES = ('scripts/passive_session_soak.py', 'scripts/ordinary_session_recovery.py',
+          'scripts/test_ordinary_session_recovery.py', 'scripts/passive_session_sampler.js')
+@@ -22,9 +21,16 @@
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--tip', required=True)
++    parser.add_argument('--binding-sha256', required=True)
+     parser.add_argument('--viewer-build-id', required=True)
+     parser.add_argument('--r6-manifest-sha256', required=True)
+     args = parser.parse_args()
++    binding_bytes = (Path(__file__).resolve().parent/'FINAL-BINDING.json').read_bytes()
++    require(digest(binding_bytes) == args.binding_sha256)
++    binding = json.loads(binding_bytes)
++    require(set(binding) == {'schemaVersion','sourceTIP','viewerSourceTIP','toolTIP','sourceReview'} and type(binding['schemaVersion']) is int and binding['schemaVersion'] == 1 and binding['toolTIP'] == TOOL)
++    TIP, VIEWER = binding['sourceTIP'], binding['viewerSourceTIP']
++    require(all(type(v) is str and re.fullmatch('[a-f0-9]{40}', v) for v in (TIP, VIEWER)))
+     require(sys.dont_write_bytecode and Path.cwd() == SOURCE)
+     require(re.fullmatch('[a-f0-9]{40}', args.tip) is not None)
+     require(args.tip == TIP and args.r6_manifest_sha256 == R6_SHA)
+@@ -90,7 +96,7 @@
+                 value = fixture_manifest(log, now)
+                 value['signal']['sourceCommit'] = PRODUCT
+                 value['host']['sourceCommit'] = PRODUCT
+-                value['viewer'] = {'sourceCommit': TIP, 'buildId': args.viewer_build_id}
++                value['viewer'] = {'sourceCommit': VIEWER, 'buildId': args.viewer_build_id}
+                 return value
+             def mixed_sample():
+                 value = fixture_sample(); value['buildId'] = args.viewer_build_id
+@@ -113,7 +119,7 @@
+                 summary = json.loads(data['summary.json']); lifecycle = json.loads(data['lifecycle.json'])
+                 runtime_manifest = json.loads(Path(runtime_args.runtime_manifest).read_bytes())
+                 runtime_manifest['_sha'] = runtime_args.runtime_manifest_sha256
+-                require(runtime_manifest['signal']['sourceCommit'] == PRODUCT and runtime_manifest['host']['sourceCommit'] == PRODUCT and runtime_manifest['viewer'] == {'sourceCommit': TIP, 'buildId': args.viewer_build_id})
++                require(runtime_manifest['signal']['sourceCommit'] == PRODUCT and runtime_manifest['host']['sourceCommit'] == PRODUCT and runtime_manifest['viewer'] == {'sourceCommit': VIEWER, 'buildId': args.viewer_build_id})
+                 require(1 <= len(rows) <= 12000)
+                 if expected_accept or name in ('emptyTrue', 'nullTrue'):
+                     require(len(rows) >= 300 and summary['continuity']['elapsedSeconds'] == 300)
+@@ -148,7 +154,7 @@
+             require(counts['accepted'] == 2 and counts['rejected'] == 10)
+     finally:
+         active[0] = False
+-    print(json.dumps({'result': 'pure-native-startup-integration-only', 'methods': 4, **counts, 'sourceTIP': TIP, 'viewerBuildId': args.viewer_build_id, 'componentPins': {'signal': PRODUCT, 'host': PRODUCT, 'viewer': TIP, 'tools': TOOL}}, sort_keys=True))
++    print(json.dumps({'result': 'pure-native-startup-integration-only', 'methods': 4, **counts, 'sourceTIP': TIP, 'viewerBuildId': args.viewer_build_id, 'componentPins': {'signal': PRODUCT, 'host': PRODUCT, 'viewer': VIEWER, 'tools': TOOL}}, sort_keys=True))
+ 
+ if __name__ == '__main__':
+     try: main()
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/ordinary-continuation-supervisor.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/ordinary-continuation-supervisor.py
+@@ -40,6 +40,21 @@
+  terminal_valid(summary,lifecycle,scenario,manifest,gate,pure)
+  return {'summarySHA256':sha(summary_bytes),'lifecycleSHA256':sha(lifecycle_bytes),'qualificationEvidenceScope':SCOPE[scenario],'nativeAfterGraceQualification':'NOT_RUN','sourceEvidence':'root-attested'}
+ 
++def register_worker(worker,registry,factory,deadline,monotonic,sleep):
++ """A created Popen remains observable even when ownership is unavailable."""
++ record={'registered':False,'registrationErrorClass':None,'deadlineMonotonic':deadline,'status':'registering','exitCode':None,'exitObservedMonotonic':None,'unresolvedChild':False}
++ try:registry.add_root(factory(worker.pid))
++ except BaseException as exc:
++  record['registrationErrorClass']=type(exc).__name__
++  while True:
++   code=worker.poll();now=monotonic()
++   if code is not None:
++    record.update(status='created-worker-exit-observed',exitCode=code,exitObservedMonotonic=now);return record
++   if now>=deadline:
++    record.update(status='created-worker-unresolved-at-deadline',unresolvedChild=True);return record
++   sleep(min(.25,deadline-now))
++ record.update(registered=True,status='registered');return record
++
+ def main():
+  os.umask(0o077);args=parser(__doc__).parse_args()
+  f,m,ref,pins,manifest=attempt_context(args,admission=True);scenario=pins['scenario'];duration=BUDGET[scenario];expected=ref['expectedServices'];t={'buildId':ref['assets']['buildId']}
+@@ -50,8 +65,8 @@
+  worker_diag=Diagnostics(psutil.Process,(psutil.NoSuchProcess,psutil.AccessDenied,OSError),'worker',monotonic=time.monotonic,wall=time.time);sample_diag=Diagnostics(psutil.Process,(psutil.NoSuchProcess,psutil.AccessDenied,OSError),'sample',monotonic=time.monotonic,wall=time.time)
+  current_gate(args,expected);source_pins(args,m)
+  out=pathlib.Path(tempfile.mkdtemp(prefix='ordinary-'+scenario+'-',dir=f));out.chmod(0o700)
+- jsonwrite(marker,{'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'scenario':scenario,'epoch':time.time(),'outputDirectory':str(out),'oneUse':True})
+- reg=instrument_registry(owned.Registry,worker_diag);sreg=instrument_registry(owned.Registry,sample_diag);worker=None;sample=None;observation=None;failure=None;timeout=False;triggered=False;result=None;sample_info={'status':'not-triggered'};rows=Rows(out/'session/samples.jsonl');started=time.monotonic();expected_host=expected['host'];row_count=0;gate=ObservationGate(scenario,t['buildId'],pure);sampling_enabled=scenario in ('baseline','continuity')
++ jsonwrite(marker,{'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'viewerSourceTIP':viewer_source_tip(),'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'scenario':scenario,'epoch':time.time(),'outputDirectory':str(out),'oneUse':True})
++ reg=instrument_registry(owned.Registry,worker_diag);sreg=instrument_registry(owned.Registry,sample_diag);worker=None;worker_registration=None;sample=None;observation=None;failure=None;timeout=False;triggered=False;result=None;sample_info={'status':'not-triggered'};rows=Rows(out/'session/samples.jsonl');started=time.monotonic();expected_host=expected['host'];row_count=0;gate=ObservationGate(scenario,t['buildId'],pure);sampling_enabled=scenario in ('baseline','continuity')
+  if not sampling_enabled:sample_info={'status':'disabled-for-entire-recovery-scenario','scope':'no Host sample during baseline, fault, recovery or stability; passive/log evidence only'}
+  def valid_host():
+   try:return process_identity(expected_host['pid'],'host')==expected_host
+@@ -75,8 +90,9 @@
+    if age>=5000 if scenario=='continuity' else age>2000:start_sample(row)
+  reg.tick=sample_tick
+  try:
++  deadline=started+duration+128
+   worker=subprocess.Popen([sys.executable,'-B',str(P/RUNNER),'--origin',pins['origin'],'--mode',pins['mode'],'--scenario',scenario,'--runtime-manifest',str(args.runtime_manifest),'--runtime-manifest-sha256',args.runtime_manifest_sha256,'--runtime-config',str(P/'signal-server/.env'),'--output-dir',str(out/'session')],cwd=P,env=ENV,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+-  reg.add_root(worker_diag.process(worker.pid));deadline=started+duration+128;next_progress=started+30
++  worker_registration=register_worker(worker,reg,worker_diag.process,deadline,time.monotonic,time.sleep);timeout=worker_registration['unresolvedChild'];need(worker_registration['registered'],'worker registration failed');next_progress=started+30
+   while True:
+    reg.scan();sreg.scan();consume();sample_tick();need(valid_host(),'Host replacement during run');preserved_gate()
+    if worker.poll() is not None:consume();break
+@@ -119,7 +135,7 @@
+    with validation.stage('sticky-observation'):need(gate.failure is None,'sticky observation failure')
+    with validation.stage('terminal-evidence'):result=completed_result(out,scenario,manifest,gate,pure)
+   except BaseException as exc:validation_error=type(exc).__name__
+-  final={'schemaVersion':1,'kind':'guarded-ordinary-qualification','scenario':scenario,'durationSeconds':duration,'workerDeadlineSeconds':duration+128,'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'qualificationEvidenceScope':SCOPE[scenario],'nativeAfterGraceQualification':'NOT_RUN','sourceEvidence':'root-attested','workerExitCode':worker.poll() if worker else None,'timedOut':timeout,'errorClass':failure,'cleanupErrorClasses':cleanup_errors,'validationErrorClass':validation_error,'validationStages':validation.snapshot(),'processDiagnostics':{'worker':worker_diag.snapshot(),'sample':sample_diag.snapshot()},'observedUnexpectedCoverage':{'worker':sorted(set(ownership.get('coverage',[]))-INHERENT),'sample':sorted(set(sample_ownership.get('coverage',[]))-INHERENT)},'owned':ownership,'sampleOwned':sample_ownership,'sampleTriggered':triggered,'sampling':sample_info,'completedRows':row_count,'observationFailure':gate.failure,'samplingEnabled':sampling_enabled,'qualification':result,'finalRuntimeIntegrity':final_integrity,'postCloseOccupancy':postclose_occupancy,'nextRunAdmission':'NOT_ESTABLISHED','strictFreshPreflightRequired':True,'serverMapDrainEstablished':False,'currentReadiness':readiness_facts(),'fullProcessTreeExit':'unknown','classification':'observed-qualification-completed' if validation_error is None else 'failed-or-indeterminate','automaticNextRun':False}
++  final={'schemaVersion':1,'kind':'guarded-ordinary-qualification','scenario':scenario,'durationSeconds':duration,'workerDeadlineSeconds':duration+128,'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'viewerSourceTIP':viewer_source_tip(),'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'qualificationEvidenceScope':SCOPE[scenario],'nativeAfterGraceQualification':'NOT_RUN','sourceEvidence':'root-attested','workerRegistration':worker_registration,'workerExitCode':worker.poll() if worker else None,'timedOut':timeout,'errorClass':failure,'cleanupErrorClasses':cleanup_errors,'validationErrorClass':validation_error,'validationStages':validation.snapshot(),'processDiagnostics':{'worker':worker_diag.snapshot(),'sample':sample_diag.snapshot()},'observedUnexpectedCoverage':{'worker':sorted(set(ownership.get('coverage',[]))-INHERENT),'sample':sorted(set(sample_ownership.get('coverage',[]))-INHERENT)},'owned':ownership,'sampleOwned':sample_ownership,'sampleTriggered':triggered,'sampling':sample_info,'completedRows':row_count,'observationFailure':gate.failure,'samplingEnabled':sampling_enabled,'qualification':result,'finalRuntimeIntegrity':final_integrity,'postCloseOccupancy':postclose_occupancy,'nextRunAdmission':'NOT_ESTABLISHED','strictFreshPreflightRequired':True,'serverMapDrainEstablished':False,'currentReadiness':readiness_facts(),'fullProcessTreeExit':'unknown','classification':'observed-qualification-completed' if validation_error is None else 'failed-or-indeterminate','automaticNextRun':False}
+   digest=jsonwrite(resultpath,final);print(json.dumps({'record':str(resultpath),'sha256':digest,'classification':final['classification']}))
+  return 0 if final['classification']=='observed-qualification-completed' else 2
+ if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/policy.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/policy.py
+@@ -0,0 +1,61 @@
++"""Pure four-existing-file policy. No I/O, operational imports or entrypoint."""
++COPY_PATHS = (
++    'scripts/ordinary_session_recovery.py',
++    'scripts/test_ordinary_session_recovery.py',
++    'web-client/js/webrtc.js',
++    'web-client/js/webrtc.test.js',
++)
++BUILD_INPUTS = frozenset({
++    'signal-server/scripts/build-web-client.js',
++    'signal-server/scripts/web-asset-graph.js',
++    'signal-server/lib/web-assets.js',
++    'signal-server/package.json',
++    'signal-server/package-lock.json',
++})
++
++def require(condition, message):
++    if not condition:
++        raise ValueError(message)
++
++def validate_partition(canonical_rows, promoted_paths, not_promoted_paths):
++    """Rows are exact canonical c802..final metadata, supplied by future source gate."""
++    require(type(canonical_rows) is list and canonical_rows, 'canonical rows required')
++    require(type(promoted_paths) is list and promoted_paths == list(COPY_PATHS), 'exact ordered four replacements')
++    paths = []
++    for row in canonical_rows:
++        require(type(row) is dict and set(row) == {'path', 'status', 'oldMode', 'newMode'}, 'canonical row schema')
++        path = row['path']
++        require(type(path) is str and path and not path.startswith('/') and all(p not in ('', '.', '..') for p in path.split('/')), 'relative canonical path')
++        require(path not in paths and row['newMode'] == '100644', 'unique regular canonical path')
++        if path in COPY_PATHS:
++            require(row['status'] == 'M' and row['oldMode'] == '100644', 'only existing replacements')
++        else:
++            require(path.startswith('docs/superpowers/') and row['status'] in ('A', 'M'), 'non-promoted docs only')
++            require(row['oldMode'] == ('000000' if row['status'] == 'A' else '100644'), 'documentation mode/status')
++        paths.append(path)
++    require(set(COPY_PATHS).issubset(paths), 'all four canonical replacements required')
++    require(type(not_promoted_paths) is list and not_promoted_paths == [p for p in paths if p not in COPY_PATHS], 'explicit complete ordered notPromoted partition')
++    return tuple(paths)
++
++def derive_post_map(before, replacements):
++    """Input maps come from pinned historical records and reviewed frozen bytes."""
++    require(type(before) is dict and len(before) == 1016, 'historical known map must contain 1016 regular files')
++    require(type(replacements) is dict and set(replacements) == set(COPY_PATHS), 'four replacements only')
++    after = dict(before)
++    for path in COPY_PATHS:
++        require(path in before, 'new primary paths forbidden')
++        old, new = before[path], replacements[path]
++        require(type(old) is dict and type(new) is dict and set(old) == set(new) == {'sha256', 'filesystemMode'}, 'regular file metadata schema')
++        require(type(new['filesystemMode']) is int and new['filesystemMode'] == old['filesystemMode'], 'preserve actual existing file mode')
++        require(type(new['sha256']) is str and len(new['sha256']) == 64 and all(c in '0123456789abcdef' for c in new['sha256']), 'reviewed replacement digest')
++        after[path] = dict(new)
++    require(set(after) == set(before) and len(after) == 1016, 'no known-map expansion')
++    return after
++
++def build_input_paths(source_tree_paths):
++    """Freeze all Viewer inputs, independent of the four-file publication allowlist."""
++    require(type(source_tree_paths) is set and all(type(p) is str for p in source_tree_paths), 'source tree path set')
++    require(BUILD_INPUTS.issubset(source_tree_paths), 'complete unchanged builder input closure')
++    inputs = {p for p in source_tree_paths if p.startswith('web-client/')} | BUILD_INPUTS
++    require(not any(p.startswith('web-client/dist/') for p in inputs), 'generated dist cannot be a source input')
++    return tuple(sorted(inputs))
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/prepare-attempt.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/prepare-attempt.py
+@@ -35,7 +35,7 @@
+   integrity=deployed_gate(ref,None);origin=attest_origin(ref,d['origin']);originsha=jsonwrite(folder/'origin-evidence.json',origin)
+   deployment={'kind':'root-verified-local-deployment','sourceEvidence':'root-attested','productTIP':PRODUCT,'toolTIP':m['toolTIP'],'sequenceId':m['sequenceId'],'readinessSHA256':m['readinessSHA256'],'sourceTIP':m['sourceTIP'],'failedHistory':FAILURES,'newIdentity':ref['expectedServices'],'viewerBuildId':ref['assets']['buildId'],'actualViewerBuiltAt':ref['assets']['builtAt'],'componentSourceTreeSha256':ref['componentTrees'],'originEvidenceSHA256':originsha,'freshIntegrity':integrity}
+   deploysha=jsonwrite(folder/'deployment-evidence.json',deployment);log=pathlib.Path(ref['signalLogPath']);st=log.lstat();need(stat.S_ISREG(st.st_mode),'configured Signal log not regular');now=int(time.time()*1000)
+-  manifest={'schemaVersion':1,'runNonce':d['runNonce'],'createdAtEpochMs':now,'validUntilEpochMs':now+21600000,'scenario':d['scenario'],'mode':d['mode'],'originSource':'formal-configured','originEvidenceSha256':originsha,'originSha256':sha(d['origin'].encode()),'deploymentEvidence':{'kind':'root-verified-local-deployment','sha256':deploysha},'signal':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['signal']},'host':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['host']},'viewer':{'sourceCommit':m['sourceTIP'],'buildId':ref['assets']['buildId']},'signalLog':{'path':str(log),'device':st.st_dev,'inode':st.st_ino}}
++  manifest={'schemaVersion':1,'runNonce':d['runNonce'],'createdAtEpochMs':now,'validUntilEpochMs':now+21600000,'scenario':d['scenario'],'mode':d['mode'],'originSource':'formal-configured','originEvidenceSha256':originsha,'originSha256':sha(d['origin'].encode()),'deploymentEvidence':{'kind':'root-verified-local-deployment','sha256':deploysha},'signal':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['signal']},'host':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['host']},'viewer':{'sourceCommit':viewer_source_tip(),'buildId':ref['assets']['buildId']},'signalLog':{'path':str(log),'device':st.st_dev,'inode':st.st_ino}}
+   pins={}
+   for rel in RUNTIME:
+    data,_=checked_file(P,rel);need(data==blob(m['sourceTIP'],rel),'runtime tool Git/blob mismatch');pins[rel]=sha(data)
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/prepare-frontend-sequence.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/prepare-frontend-sequence.py
+@@ -4,7 +4,7 @@
+  os.umask(0o077);p=args_parser(__doc__)
+  for key in ('readiness-sha256','decision','decision-sha256','integration-evidence','integration-evidence-sha256'):p.add_argument('--'+key,required=True)
+  a=p.parse_args();pkg=package_guard();dep={k:getattr(a,k) for k in ('frozen_dir','frozen_sha256','asset_review','asset_review_sha256')};offline={'path':str(pathlib.Path(a.integration_evidence).resolve()),'sha256':a.integration_evidence_sha256};d=private_json(a.decision,a.decision_sha256);validate_sequence_decision(d,pkg,dep,a.readiness_sha256,offline)
+- m={'schemaVersion':1,'sequenceId':d['sequenceId'],'packageManifestSHA256':pkg,'productTIP':PRODUCT,'toolTIP':TOOL_TIP,'sourceTIP':FINAL_TIP,'deployment':dep,'readinessSHA256':a.readiness_sha256,'rootDecision':{'path':str(pathlib.Path(a.decision).resolve()),'sha256':a.decision_sha256},'offlineIntegrationEvidence':offline,'failedHistory':FAILURES}
++ m={'schemaVersion':1,'sequenceId':d['sequenceId'],'packageManifestSHA256':pkg,'productTIP':PRODUCT,'toolTIP':TOOL_TIP,'sourceTIP':final_source_tip(),'deployment':dep,'readinessSHA256':a.readiness_sha256,'rootDecision':{'path':str(pathlib.Path(a.decision).resolve()),'sha256':a.decision_sha256},'offlineIntegrationEvidence':offline,'failedHistory':FAILURES}
+  ref=ready_context(m);integration(offline,ref);deployed_gate(ref)
+  folder=R/('sequence-'+m['sequenceId']);folder.mkdir(mode=0o700);digest=jsonwrite(folder/'sequence.json',m);sequence(folder,digest);print(json.dumps({'sequenceDirectory':str(folder),'sequenceSHA256':digest,'automaticLaunch':False}));return 0
+ if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/source_review_gate.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/source_review_gate.py
+@@ -0,0 +1,46 @@
++"""Definition-only final receipt consumer. Absent FINAL-BINDING refuses operation."""
++from bindings import *
++from policy import validate_partition
++
++def validate_source_review(path,digest):
++ binding=final_binding();need({'path':str(path),'sha256':digest}==binding['sourceReview'],'exact final receipt reference')
++ v=private_json(path,digest,131072);need(v.get('status')=='APPROVED_SOURCE_ONLY','draft receipt is never executable')
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['kind']=='root-final-viewer-tools-source-review' and v['scope']=='configured-startup-control-join-plus-ordinary-admission-teardown','final combined receipt kind')
++ tip=binding['sourceTIP'];viewer=binding['viewerSourceTIP']
++ need(v['sourceTIP']==v['archiveCommit']==tip and v['viewerSourceTIP']==v['reviewedCodeTIP']==viewer and v['toolTIP']==TOOL_TIP and v['deployedToolTIP']==OLD_TOOL_TIP and v['deployedViewerSourceTIP']==v['codeReviewBase']==VIEWER_TIP and v['backendTIP']==PRODUCT and v['archiveChangesDocsOnly'] is True,'separate deployed/new component pins')
++ need(commit(tip)==tip and commit(viewer)==viewer and git(S,'rev-parse','HEAD').decode().strip()==tip and v['sourceCheckout']==str(S),'held final checkout')
++ for ancestor,descendant in ((VIEWER_TIP,viewer),(TOOL_TIP,viewer),(viewer,tip)):git(S,'merge-base','--is-ancestor',ancestor,descendant)
++ rows=raw_diff(VIEWER_TIP,tip);validate_partition([{k:r[k] for k in ('path','status','oldMode','newMode')} for r in rows],v['promotionPaths'],v['notPromoted']);need([r['path'] for r in rows]==v['canonicalPaths'],'exact full canonical paths')
++ patch=git(S,'diff','--binary','--full-index','--no-renames',VIEWER_TIP,tip);need(sha(patch)==v['canonicalPatch']['sha256'] and patch==check_ref(v['canonicalPatch']),'canonical binary full-index patch')
++ for row in raw_diff(viewer,tip):need(row['path'].startswith('docs/superpowers/') and row['status'] in ('A','M') and row['newMode']=='100644','archive docs-only')
++ b,h,records=history();need(set(v['fileSources'])==set(COPY_PATHS),'exact four file sources')
++ for name,pin in v['fileSources'].items():
++  exact(pin,('sha256','bytes','gitMode','oldSha256','oldBytes','oldGitMode','oldFilesystemMode','oldSourceTIP','componentTIP'))
++  component=TOOL_TIP if name in TOOLS else viewer;oldtip=OLD_TOOL_TIP if name in TOOLS else VIEWER_TIP;raw=blob(tip,name);old=blob(oldtip,name)
++  need(pin['componentTIP']==component and pin['oldSourceTIP']==oldtip and raw==blob(component,name) and sha(raw)==pin['sha256'] and type(pin['bytes']) is int and len(raw)==pin['bytes'],'reviewed component bytes')
++  need(pin['gitMode']==pin['oldGitMode']=='100644' and pin['oldSha256']==sha(old)==b['regularFiles'][name]['sha256'] and type(pin['oldBytes']) is int and len(old)==pin['oldBytes'] and type(pin['oldFilesystemMode']) is int and pin['oldFilesystemMode']==b['regularFiles'][name]['filesystemMode'],'historical exact preimage/mode')
++ need(type(v['expectedPreRegularCount']) is int and type(v['expectedPostRegularCount']) is int and v['expectedPreRegularCount']==v['expectedPostRegularCount']==len(b['regularFiles'])==1016,'known map no expansion')
++ need(set(v['unchangedComponentTrees'])=={'signal-server','python-host'},'unchanged backend tree coverage')
++ for name,pin in v['unchangedComponentTrees'].items():need(pin['unchangedFromViewerSource'] is True and git(S,'rev-parse',tip+':'+name).decode().strip()==pin['treeOID']==git(S,'rev-parse',VIEWER_TIP+':'+name).decode().strip(),'backend unchanged')
++ need(git(S,'rev-parse',tip+':web-client').decode().strip()==v['viewerTreeOID']==git(S,'rev-parse',viewer+':web-client').decode().strip(),'Viewer exact component tree')
++ for name in (*RUNTIME[1:4],*BUILD_INPUTS):need(blob(tip,name)==blob(PRODUCT,name),'immutable helper/fault/sampler/builder drift')
++ need(blob(tip,RUNTIME[4])==blob(MODULE_TIP,RUNTIME[4])==regular(R/'process_observation_diagnostics.py')[0],'approved diagnostics bytes')
++ tr,_=tree(tip)
++ for name in {n for n in tr if n.startswith('web-client/')}|BUILD_INPUTS:
++  if name not in COPY_PATHS:need(name in b['regularFiles'] and sha(blob(tip,name))==b['regularFiles'][name]['sha256'],'non-published build input differs from deployed source')
++ check_ref({k:v['historicalToolSourceReceipt'][k] for k in ('path','sha256')});need(v['historicalToolSourceReceipt']['executable'] is False,'historical receipt not authority')
++ exact(v['toolReviews'],('taskReview','initialFinalReview','finalFixReview'))
++ for item in v['toolReviews'].values():check_ref({k:item[k] for k in ('path','sha256')})
++ need(v['toolReviews']['initialFinalReview']['classification']=='ChangesRequested-one-P2-closed-by-scoped-fix' and v['toolReviews']['finalFixReview']['classification']=='Approved-scoped-fix-no-new-findings','tool review closure')
++ exact(v['viewerReviews'],('taskReview','finalReview'))
++ for item in v['viewerReviews'].values():check_ref({k:item[k] for k in ('path','sha256')});need(item['classification']=='Approved','Viewer review approval')
++ check_ref(v['actualPreimageObservation']);check_ref(v['finalReviewPackage'])
++ for ref in v['archivedEvidenceIndices']:check_ref(ref)
++ check_ref({k:v['supersedesReceipt'][k] for k in ('path','sha256')})
++ actual=v['actualR5Context'];need(actual['expectedServices']==b['expectedServices'] and actual['runtimeAssets']==b['assets'],'actual retained R5 deployment')
++ for field,name in (('packageManifestSHA256','r5PackageManifest'),('frozenSHA256','r5Frozen'),('assetReviewSHA256','r5AssetReview'),('applySHA256','r5Apply'),('reloadSHA256','r5Reload'),('readinessSHA256','r5Readiness')):need(actual[field]==h['records'][name]['sha256'],'historical deployment lineage')
++ need(v['failedHistory']==FAILURES and v['thirdFailure']['sha256']==THIRD_FAILURE and v['primaryPreserve']['head']==b['head'] and v['primaryPreserve']['indexSHA256']==b['indexSha256'],'history/primary preserved')
++ dirty=b['exceptions'][:4];need(git(S,'diff','--name-only','-z').split(b'\0')[:-1]==[n.encode() for n in dirty] and not git(S,'diff','--cached','--name-only','-z'),'source four dirty/staged guard')
++ for name in dirty:need(sha(checked_file(S,name)[0])==b['regularFiles'][name]['sha256'],'dirty source docs preserved')
++ need(git(S,'ls-files','--others','--exclude-standard','-z').split(b'\0')[:-1]==[b'signal-server/node_modules'] and nodeinfo(S/'signal-server/node_modules')==b['sourceNodeModules'],'source node link metadata only')
++ return dict(v,copyPaths=list(COPY_PATHS))
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/test_continuation_guards.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/test_continuation_guards.py
+@@ -0,0 +1,80 @@
++"""Pure AST-injected schema/lineage checks. No operational package imports."""
++import ast,copy,hashlib,json,math,pathlib,re,types,unittest
++ROOT=pathlib.Path(__file__).resolve().parent
++PRODUCT='d'*40;VIEWER='c'*40;FINAL='a'*40;TOOL='b'*40
++FAILURES=['1'*64,'2'*64,'3'*64]
++def need(value,reason):
++ if not value:raise RuntimeError(reason)
++def exact(value,keys):need(type(value) is dict and set(value)==set(keys),'exact')
++def valid_sha(v):return type(v) is str and re.fullmatch('[a-f0-9]{64}',v) is not None
++def hex32(v):need(type(v) is str and re.fullmatch('[a-f0-9]{32}',v),'id')
++def load(file,names,**injected):
++ source=(ROOT/file).read_bytes();tree=ast.parse(source);nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names];assert len(nodes)==len(names)
++ scope=dict(need=need,exact=exact,valid_sha=valid_sha,hex32=hex32,math=math,time=types.SimpleNamespace(time=lambda:1000.,monotonic=lambda:500.),PRODUCT=PRODUCT,VIEWER_TIP=VIEWER,FINAL_TIP=FINAL,viewer_source_tip=lambda:VIEWER,final_source_tip=lambda:FINAL,TOOL_TIP=TOOL,PRIOR_FAILURE=FAILURES[-1],FAILURES=FAILURES,SCENARIOS=('baseline','within-grace','after-grace','continuity'),BUDGET={'baseline':300,'within-grace':390,'after-grace':390,'continuity':10800},sha=lambda b:hashlib.sha256(b).hexdigest(),**injected)
++ exec(compile(ast.Module(body=nodes,type_ignores=[]),'pure-guard-definitions','exec'),scope);return scope
++class Guards(unittest.TestCase):
++ def runtime(self):
++  manifest=dict(schemaVersion=1,runNonce='a'*32,createdAtEpochMs=1000000,validUntilEpochMs=1600000,scenario='baseline',mode='relay',originSource='formal-configured',originEvidenceSha256='1'*64,originSha256=hashlib.sha256(b'https://link.stockhub.wiki').hexdigest(),deploymentEvidence={'kind':'root-verified-local-deployment','sha256':'2'*64},signal={'sourceCommit':PRODUCT,'sourceTreeSha256':'s'},host={'sourceCommit':PRODUCT,'sourceTreeSha256':'h'},viewer={'sourceCommit':VIEWER,'buildId':'build'},signalLog={'path':'/fake/log','device':1,'inode':2})
++  return manifest,{'sourceTIP':FINAL},{'componentTrees':{'signal':'s','host':'h'},'assets':{'buildId':'build'},'signalLogPath':'/fake/log'},{'runNonce':'a'*32,'scenario':'baseline','mode':'relay','origin':'https://link.stockhub.wiki'}
++ def test_mixed_viewer_commit_stays_deployed_not_new_tool_archive(self):
++  f=load('continuation_common.py',('check_runtime_binding',))['check_runtime_binding'];args=self.runtime();f(*args,admission=True)
++  for wrong in (FINAL,TOOL):
++   bad=copy.deepcopy(args);bad[0]['viewer']['sourceCommit']=wrong
++   with self.assertRaises(RuntimeError):f(*bad,admission=True)
++ def test_runtime_clock_and_immutable_backend(self):
++  f=load('continuation_common.py',('check_runtime_binding',))['check_runtime_binding']
++  for key,value in (('createdAtEpochMs',True),('createdAtEpochMs',1000001),('validUntilEpochMs',1200000)):
++   args=self.runtime();args[0][key]=value
++   with self.assertRaises(RuntimeError):f(*args,admission=True)
++  args=self.runtime();args[0]['host']['sourceCommit']=FINAL
++  with self.assertRaises(RuntimeError):f(*args)
++ def decision(self,scenario='baseline'):
++  return dict(schemaVersion=1,kind='root-one-scenario-attempt',sequenceId='a'*32,attemptId='b'*32,runNonce='c'*32,scenario=scenario,mode='relay',origin='https://link.stockhub.wiki',productTIP=PRODUCT,toolTIP=TOOL,priorFailureSHA256=FAILURES[-1],failedHistory=FAILURES,sourceTIP=FINAL,previousResult=None)
++ def test_new_baseline_binds_all_three_failures(self):
++  f=load('continuation_common.py',('validate_attempt_decision',))['validate_attempt_decision'];m={'sequenceId':'a'*32,'toolTIP':TOOL,'sourceTIP':FINAL};d=self.decision();f(d,m)
++  for change in ({'failedHistory':FAILURES[:2]},{'priorFailureSHA256':FAILURES[1]},{'previousResult':{'path':'old','sha256':'0'*64}},{'runNonce':'b'*32}):
++   with self.assertRaises(RuntimeError):f(d|change,m)
++ def test_next_case_needs_exact_same_sequence_success(self):
++  f=load('continuation_common.py',('validate_attempt_decision',))['validate_attempt_decision'];m={'sequenceId':'a'*32,'toolTIP':TOOL,'sourceTIP':FINAL};d=self.decision('within-grace');d['previousResult']={'path':'/fake/result','sha256':'4'*64};prior={'classification':'observed-qualification-completed','scenario':'baseline','sequenceId':'a'*32,'productTIP':PRODUCT,'toolTIP':TOOL,'sourceTIP':FINAL,'failedHistory':FAILURES};f(d,m,prior)
++  for change in ({'classification':'failed-or-indeterminate'},{'scenario':'after-grace'},{'sequenceId':'f'*32},{'failedHistory':FAILURES[:2]}):
++   with self.assertRaises(RuntimeError):f(d,m,prior|change)
++ def history_fixture(self):
++  refs={'secondAttempt':{'sha256':'2'*64},'thirdAttempt':{'sha256':'3'*64},'thirdMarker':{'sha256':'4'*64}};records={}
++  def result(group):return dict(schemaVersion=1,kind='guarded-ordinary-qualification',scenario='baseline',classification='failed-or-indeterminate',workerExitCode=1,automaticNextRun=False,fullProcessTreeExit='unknown',owned={'allRecordedIdentitiesExited':True,'identities':[{'pid':group*100+i,'birth':float(group*100+i),'status':'exited'} for i in range(1,8)]},sampleOwned={'allRecordedIdentitiesExited':True,'identities':[]})
++  first=result(1);marker={'oneUse':True,'scenario':'baseline','epoch':1.}
++  for key in ('frozenSHA256','sourcePinsSHA256','runtimeManifestSHA256'):marker[key]=first[key]='1'*64
++  b={'historical':{'oldMarker':{'value':marker},'oldFailure':{'value':first}}}
++  for group,prefix in ((2,'second'),(3,'third')):
++   r=result(group);a=dict(sequenceId=str(group)*32,attemptId=str(group+1)*32,productTIP=PRODUCT,toolTIP=TOOL,runtimeManifestSHA256=str(group)*64);r.update(a,attemptSHA256=refs[prefix+'Attempt']['sha256']);records[prefix+'Attempt']=a;records[prefix+'Failure']=r;records[prefix+'Marker']=dict(a,attemptSHA256=refs[prefix+'Attempt']['sha256'],oneUse=True,scenario='baseline')
++  return b,{'records':refs},records
++ def known_scope(self,history):
++  return load('known_attempt_quiescence.py',('finite','known_from_closed','recorded_identities','all_known'),history=lambda:history,loads=lambda b:b,check_ref=lambda ref:ref['value'])
++ def test_exact_21_known_closed_identities_from_three_attempts(self):
++  h=self.history_fixture();s=self.known_scope(h);known=s['all_known']();self.assertEqual(len(known),21);self.assertEqual({r['registry'] for r in known},{'1:owned','2:owned','3:owned'})
++ def test_missing_third_or_unclosed_or_duplicate_identity_refuses(self):
++  for kind in ('missing','unclosed','duplicate'):
++   h=self.history_fixture()
++   if kind=='missing':h[2]['thirdFailure']['owned']['identities'].pop()
++   if kind=='unclosed':h[2]['thirdFailure']['owned']['allRecordedIdentitiesExited']=False
++   if kind=='duplicate':h[2]['thirdFailure']['owned']['identities'][0]=copy.deepcopy(h[2]['secondFailure']['owned']['identities'][0])
++   with self.assertRaises(RuntimeError):self.known_scope(h)['all_known']()
++ def observation(self,status):
++  names=('finite','clock_pair','forward','observe_known','validate_observation','fresh_at');s=load('known_attempt_quiescence.py',names,SCOPE='task-known-recorded-identities-only',STATUSES=('running','zombie','dead'),QUIET=('gone','zombie','nonmatching-birth'));known=[{'registry':'3:owned','pid':7,'birthEpoch':7.}];calls=[]
++  class Gone(Exception):pass
++  def factory(pid):
++   calls.append(pid)
++   if status=='gone':raise Gone()
++   if status=='unknown':raise PermissionError()
++   return types.SimpleNamespace(create_time=lambda:8. if status=='reuse' else 7.,status=lambda:'zombie' if status=='zombie' else 'running')
++  ob=s['observe_known'](known,factory,Gone,(PermissionError,),wall=lambda:100.,monotonic=lambda:50.);s['validate_observation'](ob,known);self.assertEqual(calls,[7]);return s,ob
++ def test_only_known_gone_zombie_reused_are_quiet(self):
++  for status in ('gone','zombie','reuse','alive','unknown'):
++   _,ob=self.observation(status);self.assertEqual(ob['classification'],'known-identities-quiescent' if status in ('gone','zombie','reuse') else 'refused-alive-or-unknown');self.assertEqual(ob['fullProcessTreeExit'],'unknown')
++ def test_receipt_ttl_sixty_and_reversal(self):
++  s,ob=self.observation('gone');receipt={'observation':ob};s['fresh_at'](receipt,{'epoch':160.,'monotonic':110.})
++  for now in ({'epoch':160.01,'monotonic':110.},{'epoch':99.,'monotonic':50.},{'epoch':100.,'monotonic':49.}):
++   with self.assertRaises(RuntimeError):s['fresh_at'](receipt,now)
++ def test_static_signal_only_and_precopy_quiescence(self):
++  deployment=(ROOT/'deployment.py').read_text();apply=(ROOT/'apply-frontend-context.py').read_text();restart=(ROOT/'restart-signal-frontend.py').read_text();self.assertIn('check();before_replace()',deployment);self.assertIn('before_action(',apply);self.assertIn("'restart-signal'",restart);self.assertNotIn("'restart-local'",restart);self.assertNotIn("'restart-host'",restart);self.assertIn('same Host', (ROOT/'readiness_records.py').read_text())
++
++if __name__=='__main__':unittest.main()
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/test_successor_policy.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/test_successor_policy.py
+@@ -0,0 +1,68 @@
++"""Pure actual AST functions with injected historical JSON/clock/process fixtures."""
++import ast,copy,hashlib,json,math,pathlib,re,types,unittest
++ROOT=pathlib.Path(__file__).resolve().parent
++
++def definitions(name,names,scope):
++ tree=ast.parse((ROOT/name).read_bytes());nodes=[n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.ClassDef)) and n.name in names]
++ if len(nodes)!=len(names):raise AssertionError('exact AST definitions')
++ exec(compile(ast.Module(body=nodes,type_ignores=[]),name,'exec'),scope)
++ return scope
++
++def need(ok,why):
++ if not ok:raise ValueError(why)
++
++def exact(v,keys):need(type(v) is dict and set(v)==set(keys),'keys')
++
++class Policy(unittest.TestCase):
++ def setUp(self):
++  tree=ast.parse((ROOT/'policy.py').read_bytes());self.s={};exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n,(ast.Assign,ast.FunctionDef))],type_ignores=[]),'policy-pure','exec'),self.s);self.paths=self.s['COPY_PATHS']
++ def rows(self):return [{'path':'docs/superpowers/reports/new.md','status':'A','oldMode':'000000','newMode':'100644'}]+[{'path':n,'status':'M','oldMode':'100644','newMode':'100644'} for n in self.paths]
++ def test_four_existing_and_docs_complement(self):self.assertEqual(len(self.s['validate_partition'](self.rows(),list(self.paths),['docs/superpowers/reports/new.md'])),5)
++ def test_no_extra_executable_or_missing_docs(self):
++  rows=self.rows();rows[0]['path']='scripts/extra.py'
++  with self.assertRaises(ValueError):self.s['validate_partition'](rows,list(self.paths),['scripts/extra.py'])
++  with self.assertRaises(ValueError):self.s['validate_partition'](self.rows(),list(self.paths),[])
++ def test_no_new_copy_paths_or_duplicate(self):
++  rows=self.rows();rows[1]['status']='A';rows[1]['oldMode']='000000'
++  with self.assertRaises(ValueError):self.s['validate_partition'](rows,list(self.paths),['docs/superpowers/reports/new.md'])
++  rows=self.rows();rows.append(rows[-1])
++  with self.assertRaises(ValueError):self.s['validate_partition'](rows,list(self.paths),['docs/superpowers/reports/new.md'])
++ def test_known_map_1016_same_keys_actual_modes(self):
++  before={n:{'sha256':'a'*64,'filesystemMode':420} for n in self.paths};before.update({str(n):{'sha256':'b'*64,'filesystemMode':384} for n in range(1012)})
++  replacements={n:{'sha256':'c'*64,'filesystemMode':420} for n in self.paths};after=self.s['derive_post_map'](before,replacements);self.assertEqual(set(after),set(before));self.assertEqual(before[self.paths[0]]['sha256'],'a'*64)
++  replacements[self.paths[0]]['filesystemMode']=384
++  with self.assertRaises(ValueError):self.s['derive_post_map'](before,replacements)
++ def test_build_closure_broader_than_publication_rejects_dist(self):
++  paths=set(self.s['BUILD_INPUTS'])|{'web-client/js/webrtc.js','web-client/js/unchanged.js'};self.assertIn('web-client/js/unchanged.js',self.s['build_input_paths'](paths))
++  with self.assertRaises(ValueError):self.s['build_input_paths'](paths|{'web-client/dist/index.html'})
++ def test_unbound_final_refuses_without_git(self):
++  def private_json(*a,**k):raise FileNotFoundError('required final binding absent')
++  s=definitions('bindings.py',{'final_binding','final_source_tip','viewer_source_tip'},dict(private_json=private_json,R=pathlib.Path('/fake'),exact=exact,need=need))
++  with self.assertRaises(FileNotFoundError):s['final_source_tip']()
++
++class HistoricalFixtures(unittest.TestCase):
++ def test_actual_historical_json_map_and_21_known_identities(self):
++  # Load only bounded named immutable JSON evidence. All extracted functions below
++  # consume this in-memory fixture; no operational imports, Git, process or status.
++  files={str(ROOT/n):(ROOT/n).read_bytes() for n in ('legacy-deployed-reference.json','legacy-tool-history.json','deployment-history.json')}
++  base=json.loads(files[str(ROOT/'legacy-deployed-reference.json')]);old=json.loads(files[str(ROOT/'legacy-tool-history.json')]);new=json.loads(files[str(ROOT/'deployment-history.json')])
++  refs=list(base['historical'].values())+list(old['records'].values())+list(new['records'].values())
++  for ref in refs:
++   raw=pathlib.Path(ref['path']).read_bytes();self.assertEqual(hashlib.sha256(raw).hexdigest(),ref['sha256']);files[ref['path']]=raw
++  rec={k:json.loads(files[v['path']]) for k,v in dict(old['records'],**new['records']).items()}
++  review=rec['r5AssetReview']['independentReview'];files[review['path']]=pathlib.Path(review['path']).read_bytes();self.assertEqual(hashlib.sha256(files[review['path']]).hexdigest(),review['sha256'])
++  class Blob:
++   def __init__(self,sha):self.sha=sha
++  hashes={}
++  for n,row in rec['toolSequence']['tools'].items():hashes[(rec['toolSequence']['toolTIP'],n)]=row['sha256']
++  for n,row in rec['r5Frozen']['candidateFiles'].items():hashes[(rec['r5Frozen']['tip'],n)]=row['sha256']
++  def check_ref(v):raw=files[v['path']];need(hashlib.sha256(raw).hexdigest()==v['sha256'],'fixture digest');return raw
++  s=dict(R=ROOT,readjson=lambda p:json.loads(files[str(p)]),check_ref=check_ref,loads=json.loads,sha=lambda b:b.sha if isinstance(b,Blob) else hashlib.sha256(b).hexdigest(),blob=lambda tip,n:Blob(hashes[tip,n]),json=json,need=need,exact=exact)
++  tree=ast.parse((ROOT/'bindings.py').read_bytes());constants=[n for n in tree.body if isinstance(n,ast.Assign) and isinstance(n.value,(ast.Constant,ast.Tuple,ast.List))]
++  exec(compile(ast.Module(body=constants,type_ignores=[]),'constants-only','exec'),s)
++  s.update(PRODUCT=base['productTIP'],DOCBASE=base['docBaseTIP'])
++  definitions('bindings.py',{'base_reference','history'},s);b,h,records=s['history']();self.assertEqual(len(b['regularFiles']),1016);self.assertEqual(len(b['assets']['exactFinalFileMap']),14);self.assertEqual(b['regularFiles']['scripts/ordinary_session_recovery.py']['filesystemMode'],384)
++  s.update(math=math,valid_sha=lambda v:type(v) is str and re.fullmatch('[a-f0-9]{64}',v) is not None)
++  definitions('known_attempt_quiescence.py',{'finite','known_from_closed','recorded_identities','all_known'},s);known=s['all_known']();self.assertEqual(len(known),21);self.assertEqual(len({(r['pid'],r['birthEpoch']) for r in known}),21)
++
++if __name__=='__main__':unittest.main()
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-frontend-move-context-operations-private-r5-wive_sjb/test_supervisor_registration.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/test_supervisor_registration.py
+@@ -0,0 +1,32 @@
++"""Actual new supervisor AST, fake creation/Registry/clock only; no ops imports."""
++import ast,pathlib,types,unittest
++ROOT=pathlib.Path(__file__).resolve().parent
++class Registration(unittest.TestCase):
++ def run_case(self,outcome):
++  raw=(ROOT/'ordinary-continuation-supervisor.py').read_bytes();tree=ast.parse(raw);main=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='main');function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='register_worker');clock=[100.];events=[]
++  class Child:
++   pid=77
++   def poll(self):events.append(('poll',clock[0]));return 0 if outcome=='exit' and clock[0]>=101 else None
++  child=Child()
++  class Registry:
++   def add_root(self,obj):
++    events.append(('register',obj))
++    if outcome!='normal':raise PermissionError('injected')
++   def signal(self,*args):raise AssertionError('unknown child signal forbidden')
++  def sleep(seconds):self.assertGreater(seconds,0);self.assertLessEqual(seconds,.25);clock[0]+=seconds
++  def popen(*args,**kwargs):events.append(('Popen',clock[0]));return child
++  def need(value,reason):
++   if not value:raise RuntimeError(reason)
++  scope=dict(time=types.SimpleNamespace(monotonic=lambda:clock[0],sleep=sleep),subprocess=types.SimpleNamespace(Popen=popen,DEVNULL=-3),worker_diag=types.SimpleNamespace(process=lambda pid:('created-child',pid)),sys=types.SimpleNamespace(executable='/fake/python'),P=pathlib.Path('/fake'),RUNNER='scripts/ordinary_session_recovery.py',pins={'origin':'https://fixture.invalid','mode':'relay'},scenario='baseline',duration=300,started=50.,args=types.SimpleNamespace(runtime_manifest='/fake/runtime',runtime_manifest_sha256='a'*64),out=pathlib.Path('/fake/out'),ENV={},reg=Registry(),need=need,worker=None,worker_registration=None,timeout=False)
++  exec(compile(ast.Module(body=[function],type_ignores=[]),'new-register-worker','exec'),scope)
++  block=next(n for n in ast.walk(main) if isinstance(n,ast.Try) and any(isinstance(x,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='worker' for t in x.targets) for x in n.body));stop=next(i for i,n in enumerate(block.body) if isinstance(n,ast.While))
++  try:exec(compile(ast.Module(body=block.body[:stop],type_ignores=[]),'actual-new-supervisor-creation-block','exec'),scope)
++  except RuntimeError as exc:self.assertEqual(str(exc),'worker registration failed')
++  self.assertIs(scope['worker'],child);self.assertEqual(scope['deadline'],478.);self.assertEqual(events[:2],[('Popen',100.),('register',('created-child',77))]);return scope,clock[0],events
++ def test_registration_failure_eventual_exit(self):
++  s,clock,events=self.run_case('exit');r=s['worker_registration'];self.assertEqual(clock,101.);self.assertEqual(r['registrationErrorClass'],'PermissionError');self.assertEqual(r['status'],'created-worker-exit-observed');self.assertEqual(r['exitCode'],0);self.assertFalse(r['unresolvedChild']);self.assertFalse(s['timeout'])
++ def test_registration_failure_alive_at_original_deadline(self):
++  s,clock,events=self.run_case('alive');r=s['worker_registration'];self.assertEqual(clock,478.);self.assertEqual(r['deadlineMonotonic'],478.);self.assertEqual(r['status'],'created-worker-unresolved-at-deadline');self.assertTrue(r['unresolvedChild']);self.assertTrue(s['timeout'])
++ def test_normal_registration_has_no_added_wait_or_poll(self):
++  s,clock,events=self.run_case('normal');self.assertEqual(clock,100.);self.assertEqual(len(events),2);self.assertTrue(s['worker_registration']['registered']);self.assertIsNone(s['worker_registration']['registrationErrorClass']);self.assertEqual(s['next_progress'],80.)
++if __name__=='__main__':unittest.main()

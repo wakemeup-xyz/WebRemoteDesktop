@@ -1,0 +1,587 @@
+{
+  "schemaVersion": 2,
+  "samplingStartedUtc": "2026-10-18T18:29:39.594713+00:00",
+  "parserVersion": "bounded-current-tail-v2-node-inspect-and-host-json",
+  "verifiedReferenceParserSha256": "f5cf60da046d4a512a43a22e34c676c47f82de5ebe164259f6cb9b4d076c6cba",
+  "referenceParserReadAsSourceOnly": true,
+  "referencePrefixReaderNotExecuted": true,
+  "pureFixturesPassedBeforeAnyLogRead": {
+    "nodeNestedAndQuotedBraces": true,
+    "topLevelExactIndentExtraction": true,
+    "nodeWhitelistedMetaNoNestedLeak": true,
+    "hostOuterTimestampAndCompleteMultilineJson": true,
+    "truncatedHeadAndNodeTail": true,
+    "truncatedHostJsonRejected": true,
+    "separateDirectAndRollingMetrics": true,
+    "rawInputsIdsCoordinatesDropped": true
+  },
+  "sampleVersionFromParent": {
+    "signalPid": 33747,
+    "hostPid": 36877,
+    "oldRuntimeRemainsLive": true,
+    "fefcAnd282NotLoaded": true,
+    "independentlyVerifiedLiveCommit": null
+  },
+  "priorAttemptsPreserved": [
+    {
+      "attempt": "initial",
+      "sampleUtc": "2026-10-18T18:11:34.465739+00:00",
+      "signalReads": 1,
+      "hostReads": 1,
+      "signalBytes": 1048576,
+      "hostBytes": 456941,
+      "result": "metadata only; stdin closure ended memory-only process before event analysis"
+    },
+    {
+      "attempt": "explicit supplemental v1",
+      "sampleUtc": "2026-10-18T18:18:12.944571+00:00",
+      "signalReads": 1,
+      "hostReads": 1,
+      "signalBytes": 1048576,
+      "hostBytes": 650354,
+      "result": "Host root type counts retained, direct and rolling metrics were merged and then removed; Signal format/parser mismatch remained UNKNOWN; old artifacts preserved",
+      "report": "/tmp/wrd-current-runtime-log-summary-20261019.md",
+      "json": "/tmp/wrd-current-runtime-log-summary-20261019.json",
+      "jsonSha256": "75b3369a61faa6194ae2c8afb6c56219d579c4759257edaba5f3033487d007d7"
+    }
+  ],
+  "newBudget": {
+    "authorizedMaxTailReadsEachLog": 1,
+    "actualReads": {
+      "signal": 1,
+      "host": 1
+    },
+    "perReadCapBytes": 1048576,
+    "automaticRetries": 0,
+    "remainingReadsAfterThisRun": 0
+  },
+  "whitelistPolicy": {
+    "root": [
+      "ts",
+      "event",
+      "level"
+    ],
+    "hostMeta": [
+      "lagMs",
+      "maxLagMs",
+      "p95LagMs",
+      "sampleCount",
+      "pcState",
+      "iceState",
+      "inputEventCount",
+      "relayRunning",
+      "captureSeq",
+      "inputWaiters"
+    ],
+    "nodeControlMeta": [
+      "reason",
+      "state",
+      "graceMs",
+      "attempt",
+      "status",
+      "generation"
+    ],
+    "unknownFieldsNotPersisted": true,
+    "rawInputCoordinatesHostIdsTokensMessagesNotPersisted": true,
+    "perSourceRowCap": 4096,
+    "perSourceWhitelistBytesCap": 1048576
+  },
+  "logs": {
+    "signal": {
+      "path": "/tmp/signal-server.log",
+      "device": 16777220,
+      "inode": 31830923,
+      "sizeBefore": 3705391,
+      "sizeAfterOpenedRead": 3705391,
+      "pathSizeAfterRead": 3705391,
+      "openedIdentityUnchanged": true,
+      "pathIdentityUnchanged": true,
+      "mtimeNsBefore": 1792348148322733212,
+      "mtimeNsAfter": 1792348148322733212,
+      "readStartedUtc": "2026-10-18T18:29:39.596208+00:00",
+      "readEndedUtc": "2026-10-18T18:29:39.598924+00:00",
+      "readOffset": 2656815,
+      "capturedBytes": 1048576,
+      "firstCompleteLineOffset": 2656820,
+      "completeBytes": 1048571,
+      "droppedHeadPartialLineBytes": 5,
+      "droppedTailPartialLineBytes": 0,
+      "completePhysicalLines": 43357,
+      "selectionWindowStartUtc": "2026-10-18T17:29:39.598924+00:00",
+      "selectionWindowEndUtc": "2026-10-18T18:29:39.598924+00:00",
+      "framedRootCandidates": 1034,
+      "validFramedRootsAllCapturedTimes": 1034,
+      "framingUnknownFragments": {
+        "orphan_physical_lines": 60
+      },
+      "extractionUnknownFieldsOrRecords": {},
+      "validRootsBeforeWindow": 974,
+      "validRootsAfterWindow": 0,
+      "allValidRootFirstUtc": "2026-10-18T01:56:10.386000+00:00",
+      "allValidRootLastUtc": "2026-10-18T18:29:08.319000+00:00",
+      "selectedRootCount": 60,
+      "selectedFirstUtc": "2026-10-18T17:30:05.621000+00:00",
+      "selectedLastUtc": "2026-10-18T18:29:08.319000+00:00",
+      "leadingRequestedHourOutsideTimestampExtentSeconds": 0,
+      "capturedTimestampExtentReachesWindowStart": true,
+      "fullContinuousHourProven": false,
+      "whitelistRowsPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019-signal-whitelist.jsonl",
+      "whitelistRowBytes": 5400,
+      "whitelistRowSha256": "193796d19e1584be9cee2a6da3236b81defff62c9bb4bb79b66e090583dc66e7",
+      "rowPersistenceCapHit": false,
+      "eventRootCounts": {
+        "entry_window": 60
+      },
+      "levelRootCounts": {
+        "info": 60
+      },
+      "selectorsOnEventNameOnly": {
+        "connectionOpen": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "disconnect": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "reconnectOrRecovery": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "controlGrace": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "controlBlockedOrResetFailure": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "inputProcessingError": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "hostLag": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        }
+      },
+      "errorLevelRootRecords": 0,
+      "lastAllowlistedContext": {
+        "ts": "2026-10-18T18:29:08.319000+00:00",
+        "event": "entry_window",
+        "level": "info",
+        "meta": {}
+      },
+      "uniqueUserFailureIncidents": null,
+      "userVersusAutomaticMaintenanceAttribution": null,
+      "status": "BOUNDED_WHITELIST_SUMMARY",
+      "unknownRecordsOrFragmentsRemain": true,
+      "wholeHourNoConnectionControlInputErrorsProven": false
+    },
+    "host": {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "device": 16777220,
+      "inode": 46264698,
+      "sizeBefore": 948666,
+      "sizeAfterOpenedRead": 948666,
+      "pathSizeAfterRead": 948666,
+      "openedIdentityUnchanged": true,
+      "pathIdentityUnchanged": true,
+      "mtimeNsBefore": 1792348179520765285,
+      "mtimeNsAfter": 1792348179520765285,
+      "readStartedUtc": "2026-10-18T18:29:40.265298+00:00",
+      "readEndedUtc": "2026-10-18T18:29:40.268731+00:00",
+      "readOffset": 0,
+      "capturedBytes": 948666,
+      "firstCompleteLineOffset": 0,
+      "completeBytes": 948666,
+      "droppedHeadPartialLineBytes": 0,
+      "droppedTailPartialLineBytes": 0,
+      "completePhysicalLines": 375,
+      "selectionWindowStartUtc": "2026-10-18T17:29:40.268731+00:00",
+      "selectionWindowEndUtc": "2026-10-18T18:29:40.268731+00:00",
+      "framedRootCandidates": 375,
+      "validFramedRootsAllCapturedTimes": 373,
+      "framingUnknownFragments": {},
+      "extractionUnknownFieldsOrRecords": {
+        "host_timestamp_block_without_complete_json": 2
+      },
+      "validRootsBeforeWindow": 0,
+      "validRootsAfterWindow": 0,
+      "allValidRootFirstUtc": "2026-10-18T17:54:50.703000+00:00",
+      "allValidRootLastUtc": "2026-10-18T18:29:39.518000+00:00",
+      "selectedRootCount": 373,
+      "selectedFirstUtc": "2026-10-18T17:54:50.703000+00:00",
+      "selectedLastUtc": "2026-10-18T18:29:39.518000+00:00",
+      "leadingRequestedHourOutsideTimestampExtentSeconds": 1510.434269,
+      "capturedTimestampExtentReachesWindowStart": false,
+      "fullContinuousHourProven": false,
+      "whitelistRowsPath": "/tmp/wrd-current-runtime-log-summary-v2-20261019-host-whitelist.jsonl",
+      "whitelistRowBytes": 95690,
+      "whitelistRowSha256": "70239e50720f77b6c1f6a8d8e87d70f441af7f130faf6823977481a48b22dfc2",
+      "rowPersistenceCapHit": false,
+      "eventRootCounts": {
+        "host_event_loop_lag": 373
+      },
+      "levelRootCounts": {
+        "info": 56,
+        "warning": 317
+      },
+      "selectorsOnEventNameOnly": {
+        "connectionOpen": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "disconnect": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "reconnectOrRecovery": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "controlGrace": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "controlBlockedOrResetFailure": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "inputProcessingError": {
+          "rootRecords": 0,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null
+        },
+        "hostLag": {
+          "rootRecords": 373,
+          "firstObservedUtc": "2026-10-18T17:54:50.703000+00:00",
+          "lastObservedUtc": "2026-10-18T18:29:39.518000+00:00"
+        }
+      },
+      "errorLevelRootRecords": 0,
+      "lastAllowlistedContext": {
+        "ts": "2026-10-18T18:29:39.518000+00:00",
+        "event": "host_event_loop_lag",
+        "level": "warning",
+        "meta": {
+          "lagMs": 4.065,
+          "maxLagMs": 186.005,
+          "sampleCount": 61,
+          "pcState": "none",
+          "iceState": "none",
+          "inputEventCount": 0,
+          "relayRunning": false,
+          "captureSeq": 0,
+          "inputWaiters": 0
+        }
+      },
+      "uniqueUserFailureIncidents": null,
+      "userVersusAutomaticMaintenanceAttribution": null,
+      "lagMetrics": {
+        "lagMs": {
+          "count": 373,
+          "countMeaning": "number of published root records with a valid field; not native tick count or independent windows",
+          "maxMs": 3733.163,
+          "firstObservedUtc": "2026-10-18T17:54:50.703000+00:00",
+          "lastObservedUtc": "2026-10-18T18:29:39.518000+00:00",
+          "observedSpanSeconds": 2088.815,
+          "latestMs": 4.065,
+          "latestAtUtc": "2026-10-18T18:29:39.518000+00:00",
+          "recordsGe1000Ms": 6,
+          "nativeSampleCount": null,
+          "underlyingRollingWindowDurationSeconds": null
+        },
+        "maxLagMs": {
+          "count": 373,
+          "countMeaning": "number of published root records with a valid field; not native tick count or independent windows",
+          "maxMs": 3733.163,
+          "firstObservedUtc": "2026-10-18T17:54:50.703000+00:00",
+          "lastObservedUtc": "2026-10-18T18:29:39.518000+00:00",
+          "observedSpanSeconds": 2088.815,
+          "latestMs": 186.005,
+          "latestAtUtc": "2026-10-18T18:29:39.518000+00:00",
+          "recordsGe1000Ms": 52,
+          "nativeSampleCount": null,
+          "underlyingRollingWindowDurationSeconds": null
+        },
+        "p95LagMs": {
+          "count": 0,
+          "countMeaning": "number of published root records with a valid field; not native tick count or independent windows",
+          "maxMs": null,
+          "firstObservedUtc": null,
+          "lastObservedUtc": null,
+          "observedSpanSeconds": null,
+          "latestMs": null,
+          "latestAtUtc": null,
+          "recordsGe1000Ms": 0,
+          "nativeSampleCount": null,
+          "underlyingRollingWindowDurationSeconds": null
+        }
+      },
+      "lagMetricKinds": {
+        "lagMs": "direct value at the emission; latest and max over observed direct emissions only",
+        "maxLagMs": "rolling maximum carried by each log record; repeated values are not independent new spikes",
+        "p95LagMs": "rolling percentile carried by each log record; cannot stand for the full direct-sample distribution"
+      },
+      "hostContextLast12": [
+        {
+          "ts": "2026-10-18T18:28:39.630000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 112.703,
+            "maxLagMs": 244.462,
+            "sampleCount": 60,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:28:45.536000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 2.404,
+            "maxLagMs": 244.462,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:28:50.558000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 5.381,
+            "maxLagMs": 244.462,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:28:55.534000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 9.157,
+            "maxLagMs": 244.462,
+            "sampleCount": 60,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:00.559000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 44.969,
+            "maxLagMs": 186.005,
+            "sampleCount": 60,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:06.515000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 4.789,
+            "maxLagMs": 186.005,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:12.510000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 0.537,
+            "maxLagMs": 186.005,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:17.510000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 1.365,
+            "maxLagMs": 186.005,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:22.511000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 1.483,
+            "maxLagMs": 186.005,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:27.567000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 57.615,
+            "maxLagMs": 186.005,
+            "sampleCount": 60,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:33.510000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 0.751,
+            "maxLagMs": 186.005,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        },
+        {
+          "ts": "2026-10-18T18:29:39.518000+00:00",
+          "event": "host_event_loop_lag",
+          "level": "warning",
+          "meta": {
+            "lagMs": 4.065,
+            "maxLagMs": 186.005,
+            "sampleCount": 61,
+            "pcState": "none",
+            "iceState": "none",
+            "inputEventCount": 0,
+            "relayRunning": false,
+            "captureSeq": 0,
+            "inputWaiters": 0
+          }
+        }
+      ],
+      "status": "BOUNDED_WHITELIST_SUMMARY",
+      "knownFieldAbsence": {
+        "p95LagMs": "No valid numeric field observed under this exact allowed name; percentile value and its underlying window are missing."
+      },
+      "unknownRecordsOrFragmentsRemain": true,
+      "wholeHourNoConnectionControlInputErrorsProven": false
+    }
+  },
+  "inputToVisibleSixMetrics": {
+    "ackRoundTripMs": null,
+    "hostQueueMs": null,
+    "hostExecutionMs": null,
+    "appliedToFreshFrameMs": null,
+    "browserFramePresentationMs": null,
+    "inputToTrueVisibleEffectMs": null
+  },
+  "actions": {
+    "healthRequests": 0,
+    "psSamples": 0,
+    "lsofCalls": 0,
+    "netstatCalls": 0,
+    "serviceCommands": 0,
+    "otherLogOrConfigReads": 0,
+    "sourceOrIndexMutations": 0
+  },
+  "samplingCompletedUtc": "2026-10-18T18:29:40.474970+00:00",
+  "finiteArtifactQa": {
+    "signal": {
+      "whitelistRowsValidated": 60,
+      "whitelistBytesValidated": 5400,
+      "allowedKeysOnly": true,
+      "rootAndLevelCountsRecomputed": true,
+      "perMetricCountsMaxLatestRecomputed": false
+    },
+    "host": {
+      "whitelistRowsValidated": 373,
+      "whitelistBytesValidated": 95690,
+      "allowedKeysOnly": true,
+      "rootAndLevelCountsRecomputed": true,
+      "perMetricCountsMaxLatestRecomputed": true
+    }
+  },
+  "interpretation": {
+    "signal": "60 complete entry_window/info roots in the selected hour; these are aggregate telemetry roots, not connections or user incidents;60 leading physical fragments remain framed as unknown",
+    "host": "373 complete host_event_loop_lag roots across about35 minutes,317 warning/56 info; two timestamp blocks without supported complete JSON remain unknown",
+    "directLagMs": "373 published direct-field observations, latest4.065ms, maximum3733.163ms,6 published observations at least1000ms; no full native tick distribution or independent-incident count",
+    "rollingMaxLagMs": "373 published rolling-max observations, latest186.005ms, maximum3733.163ms,52 published records at least1000ms; repeats do not imply52 new spikes",
+    "rollingP95LagMs": "Exact field absent from accepted numeric observations; count0, values and observation window null; no alias inferred",
+    "latestHostContext": "pcState/iceState none, inputEventCount0,relayRunning false,captureSeq0,inputWaiters0 at02:29:39.518 CST; this is an instant, not whole-hour occupancy evidence",
+    "causalLimit": "Seconds-scale direct scheduling lag is a plausible contributor to delayed ACK/reset/rebind/ICE/connection timers, but these passive roots do not establish a real user incident or sole cause. No loaded-fix claim.",
+    "userVersusMaintenance": "Entry-window roots are periodic/aggregate telemetry; traffic actor/source and whole-hour user activity remain unknown",
+    "inputToVisible": "Six correlated browser/physical outcome metrics remain null; no true-visible proof"
+  },
+  "finalizedAtUtc": "2026-10-18T18:31:52.639872+00:00"
+}

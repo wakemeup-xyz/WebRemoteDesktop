@@ -29,7 +29,8 @@
 
   function emptyInputTraceSnapshot() {
     return {
-      schemaVersion: 1,
+      schemaVersion: 3,
+      traceNowMs: null,
       events: [],
       counters: {
         droppedEvents: 0,
@@ -61,6 +62,7 @@
     if (!api) return null;
     try {
       this._inputTrace = api.create({
+        schemaVersion: 3,
         onIncident: (reason, identity) => this._handleInputTraceIncident(reason, identity),
       });
     } catch (_error) {
@@ -70,7 +72,8 @@
   };
 
   Diagnostic._currentInput = function _currentInput() {
-    return global.Input && typeof global.Input === 'object' ? global.Input : null;
+    return typeof Input !== 'undefined' && Input && typeof Input === 'object' ? Input
+      : (global.Input && typeof global.Input === 'object' ? global.Input : null);
   };
 
   Diagnostic._inputTraceIdentityMatches = function _inputTraceIdentityMatches(identity = {}) {
@@ -120,7 +123,7 @@
         ? identity.leaseEpoch : null,
     };
     if (!this._inputTraceIncidentCanSend(safeIdentity)) return false;
-    if (!this.panelReady || typeof this.buildConnectionDiagnostic !== 'function') {
+    if (typeof this.buildConnectionDiagnostic !== 'function') {
       const exists = this._pendingInputIncidents.some((item) => (
         item.reason === reason
         && item.identity.connectionAttemptId === safeIdentity.connectionAttemptId
@@ -325,69 +328,184 @@
     this.lockDiagButton();
   };
 
-  // Queue failures until the full panel module provides sendConnectionDiagnostic.
-  Diagnostic.autoSendFailure = function autoSendFailure(reason) {
-    if (typeof this.buildConnectionDiagnostic === 'function'
-      && typeof this.sendConnectionDiagnostic === 'function'
-      && this.panelReady) {
-      // Full panel owns attempt-id extraction + unified cooldown.
-      if (typeof this.claimAttemptSendSlot === 'function') {
-        // Delegate to full autoSendFailure once assigned; core only queues reasons.
-      }
-      const payload = this.buildConnectionDiagnostic({
-        trigger: 'auto-failure',
-        reason,
-      });
-      const attemptId = String(payload.connectionAttemptId || '').trim() || 'global';
-      const now = Date.now();
-      if (typeof this.claimAttemptSendSlot === 'function') {
-        if (!this.claimAttemptSendSlot(attemptId, now)) {
-          console.log('[Diagnostic] Skip auto send due to cooldown:', reason);
-          if (typeof this.enqueuePendingDiagnostic === 'function') {
-            this.enqueuePendingDiagnostic(payload);
-          }
-          return;
-        }
-      } else {
-        if (typeof this.pruneAutoSendCooldown === 'function') this.pruneAutoSendCooldown(now);
-        const lastSentAt = Number(this.autoSendByAttempt[attemptId] || 0);
-        if (now - lastSentAt < this.autoSendCooldownMs) {
-          console.log('[Diagnostic] Skip auto send due to cooldown:', reason);
-          return;
-        }
-        this.autoSendByAttempt[attemptId] = now;
-      }
-      this.sendConnectionDiagnostic(payload);
-      return;
-    }
-    // Dedupe pending reason strings (core has no attempt id yet).
-    const key = String(reason || 'unknown').slice(0, 128);
-    this._pendingFailureReasons = (this._pendingFailureReasons || []).filter((item) => item !== key);
-    this._pendingFailureReasons.push(key);
-    if (this._pendingFailureReasons.length > 20) {
-      this._pendingFailureReasons.shift();
-    }
+  const runtimeApi = typeof createRuntimeDiagnosticBuilder === 'function'
+    ? createRuntimeDiagnosticBuilder : global.createRuntimeDiagnosticBuilder;
+  const currentRtc = () => typeof WebRTC !== 'undefined' ? WebRTC : global.WebRTC;
+  const collector = () => typeof LatencyMonitor !== 'undefined' ? LatencyMonitor : global.LatencyMonitor;
+  const monoNow = () => global.performance?.now?.() ?? (typeof performance !== 'undefined' ? performance.now() : 0);
+  Diagnostic._runtimeBuilder = runtimeApi({
+    nowMs: monoNow,
+    getScope: () => {
+      const rtc = currentRtc(); const input = Diagnostic._currentInput();
+      if (typeof rtc?.latencyScope === 'function') return rtc.latencyScope();
+      return rtc?.currentConnectionAttemptId && Number.isSafeInteger(input?.activeControlLease?.leaseEpoch)
+        ? { connectionAttemptId: rtc.currentConnectionAttemptId, generation: rtc.connectionAttemptSequence ?? 0,
+          leaseEpoch: input.activeControlLease.leaseEpoch } : null;
+    },
+    getBuild: () => global.__WRD_BUILD__ || globalThis.__WRD_BUILD__ || { id: null, builtAt: null },
+    getInput: () => ({ inputState: Diagnostic._currentInput()?.getDiagnosticState?.() || {},
+      inputTrace: Diagnostic.getInputTraceSnapshot() }),
+    getStartup: () => ({ ...((global.__WRD_STARTUP_SNAPSHOT__ || globalThis.__WRD_STARTUP_SNAPSHOT__)?.() || {}),
+      dataChannelWatchdog: currentRtc()?.getDataChannelWatchdogSnapshot?.(),
+      signalingFailure: currentRtc()?.getSignalingFailureSnapshot?.() }),
+    getResources: () => null,
+    getLatency: context => collector()?.snapshot?.(context) || null,
+    takeClosedScopeSummaries: context => collector()?.takeClosedScopeSummaries?.(context) || null,
+  });
+  Diagnostic.buildRuntimeDiagnostic = function buildRuntimeDiagnostic(meta = {}) { return this._runtimeBuilder(meta); };
+  Diagnostic.buildConnectionDiagnostic = function buildConnectionDiagnostic(meta = {}) {
+    return { type: 'connection-diagnostic', connectionAttemptId: currentRtc()?.currentConnectionAttemptId || null,
+      trigger: meta.trigger || 'manual', ...this.buildRuntimeDiagnostic(meta) };
   };
-
-  Diagnostic.flushPendingAutoSends = function flushPendingAutoSends() {
-    if (typeof this.buildConnectionDiagnostic !== 'function'
-      || typeof this.sendConnectionDiagnostic !== 'function') {
-      return;
+  Diagnostic.getPendingDiagnostics = function getPendingDiagnostics() {
+    if (this._pendingDiagnosticsMemory) return this._pendingDiagnosticsMemory;
+    try { const raw = (global.localStorage || globalThis.localStorage)?.getItem('wrdPendingDiagnostics') || '[]';
+      if (raw.length > 10 * 128 * 1024) return [];
+      const items = JSON.parse(raw);
+      return Array.isArray(items) ? items.filter(item => item && typeof item === 'object').slice(-10) : []; } catch (_) { return []; }
+  };
+  Diagnostic.setPendingDiagnostics = function setPendingDiagnostics(items) {
+    const bounded = []; let size = 0;
+    for (const item of items.slice(-10).reverse()) {
+      const length = runtimeDiagnosticBytes(item);
+      if (length > 128 * 1024 || size + length > 10 * 128 * 1024) continue;
+      bounded.unshift(item); size += length;
     }
-    const pending = this._pendingFailureReasons.splice(0, this._pendingFailureReasons.length);
-    pending.forEach((reason) => {
+    this._pendingDiagnosticsMemory = bounded;
+    const metricNames = typeof LATENCY_METRIC_NAMES !== 'undefined' ? LATENCY_METRIC_NAMES : [];
+    try { (global.localStorage || globalThis.localStorage)?.setItem('wrdPendingDiagnostics', JSON.stringify(bounded.map(item => runtimeDiagnosticForStorage(item, metricNames)))); } catch (_) { /* storage unavailable */ }
+  };
+  Diagnostic.enqueuePendingDiagnostic = function enqueuePendingDiagnostic(payload, prepared = false) {
+    const attempt = payload.connectionAttemptId || 'global';
+    const pending = this.getPendingDiagnostics().slice();
+    // Each transmitted capture owns a retry slot. Multiple failure/manual reports
+    // may share an attempt; only a retransmission of the same ID is coalesced.
+    const alreadyPending = payload.diagnosticId
+      ? pending.some(item => item.diagnosticId === payload.diagnosticId)
+      : pending.some(item => !item.diagnosticId && (item.connectionAttemptId || 'global') === attempt);
+    if (!alreadyPending) pending.push(prepared ? payload : boundRuntimeDiagnostic(payload));
+    this.setPendingDiagnostics(pending);
+  };
+  Diagnostic.pruneAutoSendCooldown = function pruneAutoSendCooldown(now = Date.now()) {
+    for (const id of Object.keys(this.autoSendByAttempt)) if (now - this.autoSendByAttempt[id] >= this.autoSendCooldownMs) delete this.autoSendByAttempt[id];
+  };
+  Diagnostic.claimAttemptSendSlot = function claimAttemptSendSlot(attemptId, now = Date.now()) {
+    const id = attemptId || 'global'; this.pruneAutoSendCooldown(now);
+    if (Object.prototype.hasOwnProperty.call(this.autoSendByAttempt, id) && now - this.autoSendByAttempt[id] < this.autoSendCooldownMs) return false;
+    this.autoSendByAttempt[id] = now; return true;
+  };
+  const validReceipt = (payload, receipt) => (
+    typeof payload?.diagnosticId === 'string' && payload.diagnosticId.trim().length > 0
+    && receipt?.accepted === true && receipt.diagnosticId === payload.diagnosticId
+    && Array.isArray(receipt.eventIdHashes) && receipt.eventIdHashes.length <= 4
+    && Array.from(receipt.eventIdHashes).every(id => typeof id === 'string' && /^[a-f0-9]{16,64}$/.test(id))
+  );
+  const freezePayload = value => {
+    if (value && typeof value === 'object') {
+      Object.values(value).forEach(freezePayload);
+      Object.freeze(value);
+    }
+    return value;
+  };
+  Diagnostic._confirmDiagnostic = function _confirmDiagnostic(payload, receipt) {
+    if (!validReceipt(payload, receipt)) return false;
+    const owned = new Set((payload.scopeEnded?.events || []).map(event => event.eventIdHash));
+    this._runtimeBuilder.acknowledge(receipt.eventIdHashes.filter(id => owned.has(id)));
+    this.setPendingDiagnostics(this.getPendingDiagnostics()
+      .filter(item => item.diagnosticId !== payload.diagnosticId)
+      .map(item => this._runtimeBuilder.prepareReplay(item)));
+    return true;
+  };
+  Diagnostic._diagnosticInFlight = new Map();
+  Diagnostic.sendConnectionDiagnostic = function sendConnectionDiagnostic(payload = this.buildConnectionDiagnostic(), socket = null) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return Promise.resolve(false);
+    const id = payload.diagnosticId;
+    if (this._diagnosticInFlight.has(id)) return this._diagnosticInFlight.get(id);
+    if (this._diagnosticInFlight.size >= 10) return Promise.resolve(false);
+    if (typeof id !== 'string' || !id.trim()) {
+      this.enqueuePendingDiagnostic(payload);
+      return Promise.resolve(false);
+    }
+    const deadline = monoNow() + 8000;
+    let diagnosticPayload; let body;
+    try {
+      diagnosticPayload = freezePayload(this._runtimeBuilder.prepareReplay(boundRuntimeDiagnostic(payload)));
+      body = JSON.stringify(diagnosticPayload);
+      this.enqueuePendingDiagnostic(diagnosticPayload, true);
+    } catch (_) { return Promise.resolve(false); }
+    // Reserve before any synchronous Socket ACK can reenter this sender.
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    this._diagnosticInFlight.set(id, promise);
+    const remainingMs = () => Math.max(0, deadline - monoNow());
+    const socketStage = target => new Promise(done => {
+      const stageStartedMs = monoNow();
+      const stageDeadline = Math.min(deadline, stageStartedMs + 2000);
+      const stageMs = Math.max(0, stageDeadline - stageStartedMs);
+      if (!target?.connected || typeof target.timeout !== 'function' || stageMs <= 0) { done(null); return; }
+      let settled = false; let timer;
+      const finish = receipt => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        target.off?.('disconnect', disconnected);
+        done(receipt);
+      };
+      const disconnected = () => finish(null);
       try {
-        // Use the full implementation path once the panel module is ready.
-        const payload = this.buildConnectionDiagnostic({
-          trigger: 'auto-failure',
-          reason,
+        target.on?.('disconnect', disconnected);
+        timer = setTimeout(() => finish(null), stageMs);
+        // Socket.IO's timeout modifier removes its ACK-table entry on expiry.
+        target.timeout(stageMs).emit('diagnostic', diagnosticPayload, (error, receipt) => {
+          finish(!error && target.connected && monoNow() < stageDeadline
+            && validReceipt(diagnosticPayload, receipt) ? receipt : null);
         });
-        this.sendConnectionDiagnostic(payload);
-      } catch (_error) {
-        // Keep going; diagnostics must not break the desktop session.
-      }
+      } catch (_) { finish(null); }
     });
+    const deliver = async () => {
+      const receipt = await socketStage(socket || currentRtc()?.socket);
+      if (receipt && remainingMs() > 0) return this._confirmDiagnostic(diagnosticPayload, receipt);
+      const send = global.fetch || globalThis.fetch;
+      const boundedFetch = typeof fetchJsonWithin === 'function' ? fetchJsonWithin : global.fetchJsonWithin;
+      if (typeof send !== 'function' || typeof boundedFetch !== 'function' || remainingMs() <= 0) return false;
+      const config = typeof RuntimeConfig !== 'undefined' ? RuntimeConfig : global.RuntimeConfig;
+      const auth = typeof Auth !== 'undefined' ? Auth : global.Auth;
+      const base = config?.getApiBase?.() || global.location?.origin || '';
+      const token = auth?.getToken?.();
+      const response = await boundedFetch(`${base}/api/diagnostics`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body,
+      }, { timeoutMs: remainingMs(), maxResponseBytes: 4096, fetchImpl: send });
+      return response.ok && response.status >= 200 && response.status < 300
+        && remainingMs() > 0
+        && this._confirmDiagnostic(diagnosticPayload, response.data);
+    };
+    deliver().catch(() => false).then(confirmed => {
+      this._diagnosticInFlight.delete(id);
+      resolve(confirmed === true);
+    });
+    return promise;
   };
+  Diagnostic.replayPendingDiagnostics = async function replayPendingDiagnostics(socket = null) {
+    const target = socket || currentRtc()?.socket;
+    if (!target?.connected) return 0;
+    const pending = this.getPendingDiagnostics().slice(); let sent = 0;
+    for (const payload of pending) {
+      if (sent >= 2) break;
+      if (!this.claimAttemptSendSlot(payload.connectionAttemptId || 'global')) continue;
+      // Only the sender prepares this capture; queue updates always use current state.
+      sent++;
+      await this.sendConnectionDiagnostic(payload, target);
+    }
+    return sent;
+  };
+  Diagnostic.autoSendFailure = function autoSendFailure(reason) {
+    const attempt = currentRtc()?.currentConnectionAttemptId || 'global';
+    if (!this.claimAttemptSendSlot(attempt)) return;
+    const payload = this.getPendingDiagnostics().find(item => (item.connectionAttemptId || 'global') === attempt && item.reason === reason)
+      || this.buildConnectionDiagnostic({ trigger: 'auto-failure', reason });
+    return this.sendConnectionDiagnostic(payload);
+  };
+  Diagnostic.flushPendingAutoSends = function flushPendingAutoSends() { /* core already captured and sent; reconnect owns replay */ };
 
   Diagnostic.initCore = function initCore() {
     this.ensureBrowserSessionId();

@@ -1,0 +1,30 @@
+{
+  "kind": "static-read-only-preparation-check",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "canonicalPaths": 57,
+  "copyPaths": 4,
+  "notPromotedPaths": 53,
+  "finalReceiptSHA256": "c5599051dc03bd9fccd076804c1b88167d0841d37b55eb65a34a01a1d0772f73",
+  "historicalR5PackageFilesVerified": 45,
+  "unchangedR5Files": [
+    "validation_stages.py",
+    "private-builder-entry.js",
+    "asset_template.py",
+    "core.py",
+    "qualification_evidence.py",
+    "owned_reload.py",
+    "apply-frontend-context.py",
+    "prepare-deployment-quiescence.py",
+    "process_observation_diagnostics.py",
+    "readiness_records.py",
+    "build_primitives.py",
+    "build-frontend-template.py",
+    "operational_common.py",
+    "readiness-frontend.py",
+    "restart-signal-frontend.py"
+  ],
+  "pythonAST": "PASS",
+  "sourceGateRuntime": "NOT_RUN",
+  "primaryCheck": "root-owned NOT_RUN here",
+  "operations": "NOT_RUN"
+}

@@ -465,8 +465,8 @@ WebRemoteDesktop/
 - Host 已使用单调 90kHz RTP 时钟；Viewer 的 canonical FPS 是区间解码增量推导的 `derivedFps`，浏览器瞬时 FPS 只保留在诊断字段。
 - 关键帧恢复以当前 connection attempt 与 generation 作为 identity。`decodedDelta=0` 而 `receivedDelta>0` 是解码 stall 信号；同一恢复 episode 的请求受合并和冷却限制，暂停期间不触发。
 - 诊断按五秒聚合编码耗时、关键帧原因和字节数，以及 paint interval、最大 paint gap、presented-frame delta 与视频几何。没有直接实测边界的编码、RTP 发送和端到端视频耗时仍显示为 `null`，不能由 RTT 推算。
-- WRD_RELAY_ENCODER_POLICY 默认使用 relay-peak-sliced-v1：已离线通过的标准 20fps 720p intent 为 1280x720 或验证的 1152x720 编码尺寸，固定 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit buffer；标准 20fps 1080p intent 为 1920x1080 或 1728x1080，固定 5Mbps / 7.2Mbps / 1300kbit。两档均为 libx264 superfast、2 slice threads、keyint=1201 safety-net 和显式 forced IDR。其它分辨率或 FPS 会实际回退到 relay-on-demand-v1 ultrafast 单线程策略，不能标为 peak。可显式设为 relay-on-demand-v1 或 relay-legacy-v1 回滚；relay-balanced-v2 仍在 Host 启动时被拒绝。离线通过不等于真实 TURN、Viewer、公网、丢包或物理设备验收。
-- 采集倍率的离线结果未通过浏览器 paint 门禁，生产仍保持 target FPS 的 2 倍。真实 relay、正式公网与物理设备结果不由本节或自动化推断，保持 `NOT RUN`，等待 Task 9 和外部端验收。
+- WRD_RELAY_ENCODER_POLICY 默认使用 relay-peak-sliced-v1：已离线通过的标准 20fps 720p intent 为 1280x720 或验证的 1152x720 编码尺寸，固定 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit buffer；标准 20fps 1080p intent 为 1920x1080 或 1728x1080，固定 5Mbps / 7.2Mbps / 1300kbit。两档当前默认优先使用 VideoToolbox，硬件打开/编码失败时回退 libx264 ultrafast；保留双 slice、keyint=1201 safety-net 和显式 forced IDR。其它分辨率或 FPS 会实际回退到 relay-on-demand-v1 ultrafast 单线程策略，不能标为 peak。可显式设为 relay-on-demand-v1 或 relay-legacy-v1 回滚；relay-balanced-v2 仍在 Host 启动时被拒绝。离线通过不等于真实 TURN、Viewer、公网、丢包或物理设备验收。
+- 当前生产 offer 工厂显式使用 `CaptureExperiment(1.0,1)`，捕获上限按 target FPS 的 1 倍；2 倍仅存在于默认/兼容/实验入口，不能泛化为当前生产链。编码输出可能复用缓存帧，输出 FPS 不等于新采集频率。倍率实验未取得真实浏览器 paint 资格，实际公网和设备结果以本轮[验收记录](docs/superpowers/reports/2026-10-17-live-acceptance.md)为准。
 
 详细门禁和离线证据见 `docs/superpowers/reports/2026-09-05-turn-quality-latency-acceptance.md`。
 
@@ -640,3 +640,11 @@ TURN_CREDENTIAL=你的凭证
 - 本闭环不引入 TURN/VPS/原生 Viewer/固定 UDP 端口；不重启 Cloudflare tunnel。
 
 真实双 Viewer / 普通 Chrome / 公网 tunnel 运行验收见 Task 9 证据表（运行时待补）。
+
+## 网页构建资产保留（2026-10-17）
+
+构建 manifest v2 记录当前 `buildId`、`builtAt` 与有限的历史资产清单，并向登录页和 Viewer 注入 `window.__WRD_BUILD__`。默认保留最多 3 个不同 build：当前、紧邻上一版，以及 72 小时内最多一个更早版本；总空间按唯一内容 hash 计数，上限 64 MiB。当前与上一版不因年龄被删除，若这两版超出预算则发布失败并保留现有目录。旧 schema v1 清单在文件路径与内容 hash 校验通过后迁移为上一版。
+
+HTML 与 manifest 仍要求重新验证，HTML 的 CDN 缓存禁用；当前与保留清单中的 hash 资源使用一年 immutable 缓存。目录替换有失败回滚，但两次 rename 之间仍可能存在短暂间隙。旧页面的延迟资源加载失败后，整页最多查询一次 manifest（含响应正文读取的截止不超过 8 秒）；只有确认当前页面版本已淘汰才阻止继续请求旧 hash，并显示保存草稿后由用户确认的刷新入口。不会自动刷新页面或替换正在运行的 core。
+
+这些行为已用独立临时输出目录验证；生产部署、真实公网故障注入和旧页面跨发布验收仍需维护窗口。

@@ -421,9 +421,13 @@ def _scenario_run(
     from turn_encoder_experiments import submitted_options
 
     resolution_key = f"{width}x{height}"
+    joint = bool(getattr(config, "joint", False))
+    fps = config.fps if joint else FRAME_RATE
+    if joint and config.codec != "libx264":
+        raise ValueError("joint hardware codec producer unsupported")
     if encoder is None:
         policy = resolve_h264_policy(
-            MediaSessionIntent(session_id, 1, "relay", width, height, FRAME_RATE, 0),
+            MediaSessionIntent(session_id, 1, "relay", width, height, fps, 0),
             "relay-legacy-v1",
         )
         policy = replace(
@@ -440,6 +444,8 @@ def _scenario_run(
             force_idr_option=getattr(config, "force_idr_option", False),
             slice_threads=getattr(config, "slice_threads", 1),
         )
+        if joint:
+            policy = replace(config.policy, connection_attempt_id=session_id, generation=1)
         encoder = H264VideoToolboxEncoder(policy=policy, scenario_id=scenario_id)
         decoder = av.CodecContext.create("h264", "r")
     assert decoder is not None
@@ -452,6 +458,7 @@ def _scenario_run(
     previous: np.ndarray | None = None
     frames: list[dict[str, Any]] = []
     request_tokens: list[str] = []
+    source_hashes: list[str] = []
     for phase_index in range(frame_count):
         index = phase_start_index + phase_index
         rendered_rgb = _scenario_source(static_source_rgb, scenario_id, phase_index)
@@ -463,13 +470,14 @@ def _scenario_run(
                 rendered_rgb, input_contract
             )
         source_hash = hashlib.sha256(encoded_source.tobytes()).hexdigest()
+        source_hashes.append(source_hash)
         # Frame construction is intentionally outside direct_encoder_ms: Host's
         # encoderMs begins at _encode_frame, while BGRA-to-YUV conversion happens
         # inside libx264 during that timed call.
         frame = av.VideoFrame.from_ndarray(
             encoded_source, format=input_contract["pixelFormat"]
         )
-        frame.pts = index * (90_000 // FRAME_RATE)
+        frame.pts = index * (90_000 // fps)
         frame.time_base = Fraction(1, 90_000)
         request_token = None
         force = index in request_indices
@@ -532,6 +540,8 @@ def _scenario_run(
             "quality": {"psnr": round(10 * math.log10(255**2 / max(mse, 1e-9)), 3), "changeMAE": round(change_mae, 3)},
             "qp": None,
         })
+        if joint:
+            frames[-1].update(codecInstanceId=session_id, decodeStatus="decoded", timeout=False, dropped=False)
     idr_frames = [frame for frame in frames if frame["idr"]]
     budget = 25.0 if (width, height) == (1152, 720) else 45.0
     on_demand = [frame for frame in idr_frames if frame["idrKind"] == "on-demand"]
@@ -542,6 +552,11 @@ def _scenario_run(
             frame["psnr"] >= 28.0 and frame["changeMAE"] <= 3.0 for frame in safety
         )
     records = [serialize_codec_creation_record(record) for record in encoder.codec_creation_records]
+    if joint:
+        actual_codec = getattr(getattr(encoder, "codec", None), "name", None)
+        for record in records:
+            record.update(instanceId=session_id, codecName=actual_codec,
+                          configuredGopFrames=getattr(getattr(encoder, "codec", None), "gop_size", None))
     return ({
         "scenarioId": scenario_id,
         "sessionId": session_id,
@@ -551,6 +566,7 @@ def _scenario_run(
         "codecCreationRecords": records,
         "configuredOptions": submitted_options(config, (width, height)),
         "frames": frames,
+        **({"sourceHashes": source_hashes} if joint else {}),
         "quality": {
             "status": "PASS" if quality_passed else "FAIL",
             "onDemandIdrPsnr": [frame["psnr"] for frame in on_demand],
@@ -599,7 +615,7 @@ def evaluate_preset_scenario_matrix(config, measurement_hook=None) -> dict[str, 
         ("post-scroll-static", 300, 300, (305, 500)),
         ("safety-net", 0, 1226, ()),
     )
-    for width, height in RESOLUTIONS:
+    for width, height in getattr(config, "resolutions", RESOLUTIONS):
         scenarios = []
         scroll_encoder = None
         scroll_decoder = None
@@ -630,7 +646,7 @@ def evaluate_preset_scenario_matrix(config, measurement_hook=None) -> dict[str, 
         "scope": "offline synthetic encoder experiment; no desktop capture, Host startup, Viewer, or network connection",
         "input": {
             "randomSeed": RANDOM_SEED,
-            "frameRate": FRAME_RATE,
+            "frameRate": config.fps if getattr(config, "joint", False) else FRAME_RATE,
             "timeBase": "1/90000",
             "font": font_metadata,
             "content": "fixed static and deterministic scrolling synthetic text",

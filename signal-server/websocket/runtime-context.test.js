@@ -131,3 +131,27 @@ test('setupSignaling accepts isolated contexts without cross-instance viewers', 
   assert.equal(first.connections.viewers.has('viewer-b'), false);
   assert.equal(second.connections.viewers.has('viewer-a'), false);
 });
+
+test('input frame capability accepts only known version and clears with Host', () => {
+  const context = createRuntimeContext();
+  assert.equal(context.getHostCapabilities().inputFrameCorrelationVersion, null);
+  assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: 1 }).inputFrameCorrelationVersion, 1);
+  assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: '1' }).inputFrameCorrelationVersion, null);
+  assert.equal(context.setHostCapabilities({ inputFrameCorrelationVersion: 2 }).inputFrameCorrelationVersion, null);
+  context.setHostCapabilities({ inputFrameCorrelationVersion: 1 });
+  assert.equal(context.clearHostCapabilities().inputFrameCorrelationVersion, null);
+});
+
+test('ordinary admission context snapshots include grace-retained occupancy and fresh server-only state', () => {
+  const runtime = createRuntimeContext();
+  const initial = runtime.viewerAdmissionContext();
+  assert.deepEqual(initial, { viewerEpoch: 0, occupied: false, relayOccupied: false, hostOnline: false });
+  initial.viewerEpoch = 99;
+  runtime.connections.host = { id: 'host' };
+  runtime.connections.viewers.set('grace', { _wrdDisconnected: true });
+  runtime.connections.relayViewers.set('relay', {});
+  runtime.noteHumanViewerAdmission();
+  assert.deepEqual(runtime.viewerAdmissionContext(), { viewerEpoch: 1, occupied: true, relayOccupied: true, hostOnline: true });
+  runtime.connections.viewers.clear(); runtime.connections.relayViewers.clear(); runtime.connections.host = null;
+  assert.deepEqual(runtime.viewerAdmissionContext(), { viewerEpoch: 1, occupied: false, relayOccupied: false, hostOnline: false });
+});

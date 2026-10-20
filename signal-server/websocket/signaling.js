@@ -1,6 +1,7 @@
 const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
+const { normalizeDisconnectReason } = require('../lib/observability/runtime');
 const { DesktopControlLease } = require('../lib/desktop-control-lease');
 const { ControlTransitionRetry } = require('../lib/control-transition-retry');
 const { createRuntimeContext } = require('./runtime-context');
@@ -14,6 +15,21 @@ const {
   validateMediaActivityRequest,
   summarizeMediaActivity,
 } = require('../lib/media-activity-contract');
+
+function validRelayNonce(value, limit) {
+  return typeof value === 'string' && value.length > 0 && value.length <= limit && !(/[^\x20-\x7e]/.test(value));
+}
+
+function validRelayScope(scope) {
+  return scope && typeof scope === 'object' && !Array.isArray(scope)
+    && Object.keys(scope).length === 5
+    && ['producerId', 'productionGeneration', 'connectionAttemptId', 'mediaGeneration', 'leaseEpoch']
+      .every(key => Object.prototype.hasOwnProperty.call(scope, key))
+    && validRelayNonce(scope.producerId, 64) && validRelayNonce(scope.connectionAttemptId, 128)
+    && Number.isSafeInteger(scope.productionGeneration) && scope.productionGeneration >= 1
+    && Number.isSafeInteger(scope.mediaGeneration) && scope.mediaGeneration >= 0
+    && Number.isSafeInteger(scope.leaseEpoch) && scope.leaseEpoch >= 1;
+}
 
 // Kept deliberately static during the protocol migration. Do not add an
 // environment override: deployment must not silently re-enable v1 after its
@@ -108,8 +124,10 @@ function setupSignaling(io, options = {}) {
   const setHostCapabilities = (payload = {}) => instanceRuntime.setHostCapabilities(payload);
   const clearHostCapabilities = () => instanceRuntime.clearHostCapabilities();
   const getViewerSnapshot = () => instanceRuntime.getViewerSnapshot();
-  const isActiveViewerSocket = (socket) => connections.viewers.get(socket.id) === socket
-    && socket?._wrdDisconnected !== true;
+  const isActiveViewerSocket = (socket) => Boolean(socket
+    && connections.viewers.get(socket.id) === socket
+    && socket._wrdDisconnected !== true
+    && socket._wrdRebindPending !== true);
   const issueProofAdmission = () => instanceRuntime.issueProofAdmission();
   const admitProofViewer = (admission, socketId) => instanceRuntime.admitProofViewer(admission, socketId);
   const noteHumanViewerAdmission = () => instanceRuntime.noteHumanViewerAdmission();
@@ -159,7 +177,24 @@ function setupSignaling(io, options = {}) {
   const clearTimeoutFn = options.scheduler?.clearTimeout || options.clearTimeout || clearTimeout;
   const viewerDisconnectGraceMs = Number.isFinite(Number(options.viewerDisconnectGraceMs))
     ? Math.max(0, Math.min(30_000, Math.floor(Number(options.viewerDisconnectGraceMs))))
-    : 8_000;
+    : 30_000;
+  const configuredRebindAckTimeoutsMs = Array.isArray(options.rebindAckTimeoutsMs)
+    ? options.rebindAckTimeoutsMs
+      .map(value => Number.isFinite(Number(value))
+        ? Math.max(250, Math.min(10_000, Math.floor(Number(value)))) : null)
+      .filter(value => value !== null)
+      .slice(0, 3)
+    : [];
+  let configuredRebindBudgetMs = 0;
+  const boundedRebindAckTimeoutsMs = configuredRebindAckTimeoutsMs.filter(value => {
+    if (configuredRebindBudgetMs + value > 24_000) return false;
+    configuredRebindBudgetMs += value;
+    return true;
+  });
+  // Keep the total rebind wait bounded (1.5s + 3s + 6s by default) while
+  // leaving the 30s lease grace window for a fresh Viewer socket to arrive.
+  const rebindAckTimeoutsMs = boundedRebindAckTimeoutsMs.length > 0
+    ? boundedRebindAckTimeoutsMs : [1_500, 3_000, 6_000];
   const interval = intervalFactory(() => {
     dispatchLeaseEffect(desktopLease.expire());
   }, 1000);
@@ -179,9 +214,27 @@ function setupSignaling(io, options = {}) {
   const mediaActivityProgress = new Map();
 
   function emitControlEvent(type, fields = {}) {
+    // Match the production logger contract: unknown top-level fields are
+    // discarded by normalizeEvent(). Keep an explicit allowlist so adding
+    // credentials or input to an effect cannot accidentally persist them.
+    const correlation = {};
+    for (const key of ['viewerId', 'previousViewerId', 'connectionAttemptId']) {
+      if (typeof fields[key] === 'string') correlation[key] = fields[key];
+    }
+    if (typeof fields.sessionId === 'string') correlation.browserSessionId = fields.sessionId;
+    const meta = {};
+    for (const key of [
+      'reason', 'leaseEpoch', 'attempt', 'graceMs', 'connectionAttemptSequence',
+      'rebound', 'schemaVersion', 'state', 'reasons', 'generation', 'status',
+    ]) {
+      if (Object.prototype.hasOwnProperty.call(fields, key)) meta[key] = fields[key];
+    }
     const payload = {
-      type,
-      ...fields,
+      domain: 'control',
+      event: type,
+      message: type,
+      correlation,
+      meta,
     };
     // Bounded non-secret fields only — never lease tokens, input, SDP, candidates.
     if (structuredLogger && typeof structuredLogger.info === 'function') {
@@ -291,6 +344,8 @@ function setupSignaling(io, options = {}) {
         broadcastControlState('reset-blocked');
       },
     });
+    // Historical event name: this records entry into the fail-closed reset
+    // barrier (including normal release), not proof of failure or timeout.
     emitControlEvent('control_transition_failed_closed', {
       leaseEpoch,
       reason,
@@ -347,7 +402,7 @@ function setupSignaling(io, options = {}) {
       && legacyControllerViewerId === ownerId
       && snapshot.state === 'ACTIVE'
       && snapshot.controllerViewerId === ownerId
-      && connections.viewers.has(ownerId));
+      && isActiveViewerSocket(connections.viewers.get(ownerId)));
   }
 
   function bindLegacyRelayCompanion(companionId) {
@@ -361,7 +416,9 @@ function setupSignaling(io, options = {}) {
 
   function clearLegacyRelayCompanion(ownerId, { stop = false } = {}) {
     if (!ownerId || !legacyRelayCompanionByOwner.delete(ownerId) || !stop || !connections.host) return;
-    connections.host.emit('relay-stream-control', { enabled: false, viewerId: ownerId });
+    const operation = connections.viewers.get(ownerId)?._wrdRebindOperation;
+    const producerOwnerId = operation?.producerOwnerId || ownerId;
+    connections.host.emit('relay-stream-control', { enabled: false, viewerId: producerOwnerId });
   }
 
   function clearAllLegacyRelayCompanions({ stop = false } = {}) {
@@ -402,6 +459,10 @@ function setupSignaling(io, options = {}) {
       || connections.viewers.get(previous.id) !== previous) {
       return false;
     }
+    // An in-flight grant still belongs to the old Host transition. Only an
+    // already active lease can migrate without another reset barrier.
+    const previousLease = withLeaseExpiry(() => desktopLease.getActiveLease(previous.id));
+    if (!previousLease || !connections.host) return false;
 
     if (binding.timer) clearTimeoutFn(binding.timer);
     viewerSessionBindings.delete(sessionId);
@@ -437,12 +498,109 @@ function setupSignaling(io, options = {}) {
       legacyRelayCompanionByOwner.set(nextId, companionId);
     }
     if (reboundLease) {
-      // freezeControl() intentionally disables the browser input gate while
-      // signaling is offline. Re-issue the existing lease after an
-      // authenticated same-session rebind so the client can restore its
-      // heartbeat and input envelope without asking for a new takeover.
-      const activeLease = desktopLease.getActiveLease(nextId);
-      if (activeLease) sendGrant(nextId, activeLease);
+      // Host may still be finishing an asynchronous offer. Keep the new socket
+      // input-inactive until Host confirms it migrated the same authority.
+      socket._wrdRebindPending = true;
+      const operation = {
+        socket, host: connections.host, lease: previousLease, attempt: priorProgress, settled: false,
+        rebindAttempt: 0, activeRebindAttempt: 0,
+        // The index has moved, but Host's actual producer remains with the old
+        // owner until its rebind ACK. This snapshot belongs only to this operation.
+        producerOwnerId: previous._wrdRebindOperation?.producerOwnerId || previousId,
+      };
+      socket._wrdRebindOperation = operation;
+      const clearRebind = () => {
+        // Never release a newer operation's input gate from an old callback.
+        if (socket._wrdRebindOperation !== operation) return;
+        socket._wrdRebindOperation = null;
+        socket._wrdRebindPending = false;
+      };
+      const sendRebind = () => {
+        if (operation.settled || socket._wrdRebindOperation !== operation
+          || connections.host !== operation.host) return;
+        operation.rebindAttempt += 1;
+        const attempt = operation.rebindAttempt;
+        operation.activeRebindAttempt = attempt;
+        operation.host.timeout(rebindAckTimeoutsMs[attempt - 1]).emit('viewer-session-rebind', {
+          previousViewerId: previousId,
+          viewerId: nextId,
+          ...previousLease,
+          ...(priorProgress ? {
+            connectionAttemptId: priorProgress.connectionAttemptId,
+            connectionAttemptSequence: priorProgress.connectionAttemptSequence,
+          } : {}),
+        }, (error, ack) => finishRebind(error
+          ? { status: 'rejected', reason: 'rebind-timeout' }
+          : ack, attempt));
+      };
+      const finishRebind = (ack, attempt) => {
+        if (operation.settled) return;
+        if (attempt !== operation.activeRebindAttempt) return;
+        if (socket._wrdRebindOperation !== operation
+          || connections.viewers.get(nextId) !== operation.socket
+          || socket._wrdDisconnected === true) {
+          operation.settled = true;
+          if (socket._wrdRebindOperation === operation
+            && connections.viewers.get(nextId) === socket) {
+            clearLegacyRelayCompanion(nextId, { stop: true });
+          }
+          clearRebind();
+          return;
+        }
+        const activeLease = withLeaseExpiry(() => desktopLease.getActiveLease(nextId));
+        if (!activeLease || activeLease.leaseId !== operation.lease.leaseId
+          || activeLease.leaseEpoch !== operation.lease.leaseEpoch) {
+          operation.settled = true;
+          clearRebind();
+          return;
+        }
+        if (connections.host !== operation.host
+          || mediaActivityProgress.get(nextId) !== operation.attempt) {
+          operation.settled = true;
+          // A cancelled migration must revoke its still-current authority before
+          // reopening the pending gate, even if a replacement Host reused its ID.
+          const reason = 'rebind-cancelled';
+          clearLegacyRelayCompanion(nextId, { stop: true });
+          const result = desktopLease.beginRelease({ viewerId: nextId, reason });
+          dispatchLeaseEffect(result, reason);
+          clearRebind();
+          emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
+          return;
+        }
+        if (ack?.status === 'applied') {
+          operation.settled = true;
+          const renewed = withLeaseExpiry(() => desktopLease.heartbeat({ viewerId: nextId, ...activeLease }));
+          if (!renewed.ok) {
+            clearRebind();
+            return;
+          }
+          clearRebind();
+          sendGrant(nextId, activeLease);
+          emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, sessionId, leaseEpoch: activeLease.leaseEpoch });
+          return;
+        }
+        if (ack?.reason === 'rebind-timeout'
+          && operation.rebindAttempt < rebindAckTimeoutsMs.length) {
+          emitControlEvent('viewer_rebind_retry', {
+            viewerId: nextId,
+            previousViewerId: previousId,
+            sessionId,
+            leaseEpoch: activeLease.leaseEpoch,
+            attempt: operation.rebindAttempt,
+            reason: 'rebind-timeout',
+          });
+          sendRebind();
+          return;
+        }
+        operation.settled = true;
+        clearLegacyRelayCompanion(nextId, { stop: true });
+        clearRebind();
+        const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
+        const result = desktopLease.beginRelease({ viewerId: nextId, reason });
+        dispatchLeaseEffect(result, reason);
+        emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
+      };
+      sendRebind();
     }
     previous._wrdRemoved = true;
     emitControlEvent('viewer_reconnected', {
@@ -466,7 +624,18 @@ function setupSignaling(io, options = {}) {
       if (!binding || binding.socket !== socket) return;
       viewerSessionBindings.delete(sessionId);
       socket._wrdViewerSessionTimer = null;
-      removeDesktopViewer(socket, 'viewer-disconnect-timeout');
+      const removed = removeDesktopViewer(socket, 'viewer-disconnect-timeout');
+      // Observation follows the identity-checked authority operation. A sink
+      // failure must not change removal or the reset-only barrier.
+      if (removed) {
+        try {
+          const snapshot = desktopLease.snapshot();
+          emitControlEvent('viewer_disconnect_grace_expired', {
+            viewerId: socket.id, sessionId, reason: 'viewer-disconnect-timeout',
+            leaseEpoch: snapshot.leaseEpoch, state: snapshot.state,
+          });
+        } catch (_error) { /* best effort */ }
+      }
     }, viewerDisconnectGraceMs);
     timer?.unref?.();
     viewerSessionBindings.set(sessionId, { socket, timer });
@@ -485,6 +654,7 @@ function setupSignaling(io, options = {}) {
     if (!socket) return null;
     if (connections.viewers.get(socket.id) !== socket) return null;
     clearViewerSessionBinding(socket);
+    clearLegacyRelayCompanion(socket.id, { stop: true });
     connections.viewers.delete(socket.id);
     clearPendingInputs(socket.id);
     mediaActivityProgress.delete(socket.id);
@@ -672,6 +842,13 @@ function setupSignaling(io, options = {}) {
     return prior && isValidConnectionAttemptId(prior.connectionAttemptId)
       ? prior.connectionAttemptId
       : null;
+  }
+
+  function relayScopeHasCurrentOwner(viewerId, scope) {
+    const current = controlSnapshot();
+    return validRelayScope(scope) && current.state === 'ACTIVE'
+      && current.controllerViewerId === viewerId && current.leaseEpoch === scope.leaseEpoch
+      && currentViewerConnectionAttempt(viewerId) === scope.connectionAttemptId;
   }
 
   function resolveViewerRecoveryKey(viewerId, data = {}) {
@@ -871,15 +1048,21 @@ function setupSignaling(io, options = {}) {
     connections.host.emit('offer', forwarded);
     return true;
   }
+  function observeNamespaceOutcome(outcome) {
+    try { options.observeNamespaceOutcome?.(outcome); } catch { /* Observation must not affect authentication. */ }
+  }
+
   // Use default namespace for all connections
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) {
+      observeNamespaceOutcome('missing_auth');
       return next(new Error('Authentication required'));
     }
     let decoded = null;
     try { decoded = verifyRuntimeToken(token); } catch (_error) { decoded = null; }
     if (!decoded) {
+      observeNamespaceOutcome('invalid_auth');
       return next(new Error('Invalid token'));
     }
     socket.user = decoded;
@@ -888,6 +1071,7 @@ function setupSignaling(io, options = {}) {
     socket.userRole = decoded.role === 'viewer' && claimedRole === 'relay-viewer'
       ? 'relay-viewer'
       : decoded.role;
+    observeNamespaceOutcome('accepted');
     next();
   });
 
@@ -948,7 +1132,26 @@ function setupSignaling(io, options = {}) {
         socket.disconnect(true);
         return;
       }
-      if (!isProofViewer) noteHumanViewerAdmission();
+      let humanAdmission = null;
+      if (!isProofViewer) {
+        const session = normalizeViewerSessionId(socket.handshake.auth?.viewerSessionId);
+        humanAdmission = instanceRuntime.viewerAdmission.admit({
+          subject: socket.user?.sub,
+          session,
+          admission: socket.handshake.auth?.viewerAdmission,
+          initialContext: instanceRuntime.viewerAdmissionContext(),
+          occupied: connections.viewers.size > 0,
+          sameSessionOccupancy: [...connections.viewers.values()].every(other =>
+            !other._wrdProofViewer && other._wrdViewerSessionId === session
+            && other.user?.sub === socket.user?.sub),
+        });
+        if (!humanAdmission.ok) {
+          socket.emit('viewer-admission-rejected', { reason: humanAdmission.reason });
+          socket.disconnect(true);
+          return;
+        }
+        noteHumanViewerAdmission();
+      }
       socket._wrdProofViewer = isProofViewer;
       socket._wrdDisconnected = false;
       socket._wrdViewerSessionId = normalizeViewerSessionId(socket.handshake?.auth?.viewerSessionId);
@@ -960,9 +1163,13 @@ function setupSignaling(io, options = {}) {
         supersedeOtherDesktopViewers(socket);
       }
       if (connections.viewers.size > 1) clearAllLegacyRelayCompanions({ stop: true });
+      try {
+        options.observeViewerHeartbeat?.(socket, () => connections.viewers.get(socket.id) === socket);
+      } catch { /* Diagnostics cannot affect Viewer admission or welcome. */ }
       socket.emit('connected', {
         role: 'viewer',
         status: 'ok',
+        ...(humanAdmission ? { viewerAdmission: { mode: 'resume', generation: humanAdmission.generation } } : {}),
         hostOnline: connections.host !== null,
         inputProtocolVersion: socket.inputProtocolVersion,
         hostInputProtocolVersion: hostInputProtocolVersion(),
@@ -989,7 +1196,15 @@ function setupSignaling(io, options = {}) {
     }
 
     socket.on('control-acquire', (data = {}) => {
-      if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
+      if (role !== 'viewer' || connections.viewers.get(socket.id) !== socket || socket._wrdDisconnected) return;
+      if (socket._wrdRebindPending) {
+        const snapshot = controlSnapshot();
+        socket.emit('control-acquire-result', {
+          state: snapshot.state, reason: 'reset-in-progress', leaseEpoch: snapshot.leaseEpoch,
+          requestId: data.requestId || null,
+        });
+        return;
+      }
       if (!connections.host) {
         socket.emit('control-acquire-result', { state: 'FREE', reason: 'host-offline', requestId: data.requestId || null });
         return;
@@ -1086,16 +1301,34 @@ function setupSignaling(io, options = {}) {
     socket.on('control-transition-ack', (data = {}) => {
       if (role !== 'host' || connections.host !== socket) return;
       const status = data.status === 'applied' ? 'applied' : 'rejected';
-      const result = withLeaseExpiry(() => (status === 'applied'
-        ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
-        : desktopLease.failTransition({
-          leaseEpoch: data.leaseEpoch,
-          reason: data.reason || 'transition-failed',
-        })));
+      let completedResetEpoch = null;
+      const result = withLeaseExpiry(() => {
+        // Expiry may replace a candidate with a reset-only barrier. Inspect the
+        // actual pending transition after expiry, immediately before the ACK.
+        const pending = desktopLease.snapshot();
+        const effect = status === 'applied'
+          ? desktopLease.confirmTransition({ leaseEpoch: data.leaseEpoch })
+          : desktopLease.failTransition({
+            leaseEpoch: data.leaseEpoch,
+            reason: data.reason || 'transition-failed',
+          });
+        if (status === 'applied' && isResetOnlyPending(pending)
+          && pending.leaseEpoch === data.leaseEpoch && effect.state === 'FREE') {
+          completedResetEpoch = pending.leaseEpoch;
+        }
+        return effect;
+      });
       if (status === 'applied' && result.state === 'FREE') {
         cancelResetRetry();
       } else if (status === 'applied' && result.lease) {
         cancelResetRetry();
+      }
+      if (completedResetEpoch !== null) {
+        emitControlEvent('control_reset_completed', {
+          leaseEpoch: completedResetEpoch,
+          status: 'applied',
+          state: 'FREE',
+        });
       }
       if (result.lease) {
         if (legacyControllerViewerId) clearLegacyRelayCompanion(legacyControllerViewerId, { stop: true });
@@ -1140,8 +1373,12 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (data?.schemaVersion === 2
-        && (socket.inputProtocolVersion !== 2 || !hostSupportsV2Input())) {
+        && (socket.inputProtocolVersion !== 2 || (connections.host && !hostSupportsV2Input()))) {
         socket.emit('input-protocol-error', { reason: v2ProtocolError(socket) });
+        return;
+      }
+      if (data?.schemaVersion === 2 && !connections.host) {
+        console.warn(`[OFFER] No host connected, dropping offer from ${socket.id} epoch=${data.epoch}`);
         return;
       }
       if (data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
@@ -1214,9 +1451,13 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (data?.schemaVersion === 2
-        && (socket.inputProtocolVersion !== 2 || !hostSupportsV2Input())) {
+        && (socket.inputProtocolVersion !== 2 || (connections.host && !hostSupportsV2Input()))) {
         socket.emit('input-protocol-error', { reason: v2ProtocolError(socket) });
         emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'protocol-too-old' });
+        return;
+      }
+      if (data?.schemaVersion === 2 && !connections.host) {
+        emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'host-unavailable' });
         return;
       }
       if (data?.schemaVersion !== 2) {
@@ -1279,7 +1520,14 @@ function setupSignaling(io, options = {}) {
       const viewerSocket = connections.viewers.get(String(data.viewerId || ''));
       if (!viewerSocket) return;
       const inputIds = Array.isArray(data.inputIds) ? data.inputIds.slice(0, 64) : [];
-      const hostExecuteMs = Math.max(0, Number(data.hostExecuteMs || 0));
+      const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+      const hostExecuteMs = duration(data.hostExecuteMs);
+      const timing = data.timingSchemaVersion === 1 ? {
+        timingSchemaVersion: 1,
+        hostAdapterAwaitMs: duration(data.hostAdapterAwaitMs),
+        hostQueueMs: duration(data.hostQueueMs),
+        hostApplyMs: duration(data.hostApplyMs),
+      } : {};
       if (data.schemaVersion === 2) {
         const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
         const validStatus = V2_INPUT_ACK_STATUSES.has(data.status);
@@ -1305,6 +1553,7 @@ function setupSignaling(io, options = {}) {
           ...(independentAck ? {} : { pressedKeyCount: data.pressedKeyCount, modifierMask: data.modifierMask }),
           inputIds,
           hostExecuteMs,
+          ...timing,
           transport: 'socket',
         });
         return;
@@ -1314,20 +1563,25 @@ function setupSignaling(io, options = {}) {
         schemaVersion: 1,
         inputIds,
         hostExecuteMs,
+        ...timing,
         transport: 'socket',
       });
     });
 
     // Diagnostic logs relay (viewer -> host) + persist to disk
-    socket.on('diagnostic', (data) => {
+    socket.on('diagnostic', (data, acknowledge) => {
+      const rejectDiagnostic = () => {
+        if (typeof acknowledge === 'function') acknowledge({ accepted: false, diagnosticId: null, eventIdHashes: [] });
+      };
       if (role !== 'viewer') {
         console.warn(`Diagnostic rejected: role=${role} from ${socket.id}`);
-        return;
+        rejectDiagnostic(); return;
       }
       if (!isActiveViewerSocket(socket)) {
         console.warn(`Diagnostic rejected: disconnected viewer ${socket.id}`);
-        return;
+        rejectDiagnostic(); return;
       }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) { rejectDiagnostic(); return; }
       const logCount = data.logs?.length || 0;
       logger.log?.(`[DIAGNOSTIC] Received ${logCount} lines from viewer ${socket.id}`);
       const result = ingestDiagnosticPayload({
@@ -1344,8 +1598,10 @@ function setupSignaling(io, options = {}) {
         structuredLogger?.info(result.summaryEvent);
       }
 
+      if (typeof acknowledge === 'function') acknowledge(result.receipt || { accepted: false, diagnosticId: null, eventIdHashes: [] });
+
       // Also relay to host for real-time analysis
-      if (result.accepted && connections.host) {
+      if (result.accepted && !result.duplicate && connections.host) {
         connections.host.emit('diagnostic', result.report);
       }
     });
@@ -1361,9 +1617,12 @@ function setupSignaling(io, options = {}) {
       }
       const recoveryKey = resolveViewerRecoveryKey(socket.id, data);
       if (!recoveryKey) return;
+      const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
       if (connections.host) {
         connections.host.emit('viewer-stats', {
           ...data,
+          rttMs: duration(data.rttMs),
+          jitterBufferMs: duration(data.jitterBufferMs),
           ...recoveryKey,
           viewerId: socket.id,
         });
@@ -1529,7 +1788,7 @@ function setupSignaling(io, options = {}) {
       const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
       if (!viewerId) return;
       const viewerSocket = connections.viewers.get(viewerId);
-      if (!viewerSocket) return;
+      if (!isActiveViewerSocket(viewerSocket)) return;
       releaseRejectedMediaProgress(viewerId, data);
       viewerSocket.emit('media-activity-ack', {
         schemaVersion: 1,
@@ -1582,12 +1841,21 @@ function setupSignaling(io, options = {}) {
         && !authorizeViewer(socket, data, { legacy: false })) {
         return;
       }
+      if (role === 'viewer' && !isMediaControl && data.enabled && 'relayFrameSchemaVersion' in data) {
+        if (data.schemaVersion !== 2 || !authorizeViewer(socket, data, { legacy: false })
+          || data.relayFrameSchemaVersion !== 1 || !validRelayNonce(data.relayStartRequestId, 64)
+          || !isValidConnectionAttemptId(data.connectionAttemptId) || !validRelayNonce(data.connectionAttemptId, 128)
+          || currentViewerConnectionAttempt(socket.id) !== data.connectionAttemptId
+          || !Number.isSafeInteger(data.relayMediaGeneration) || data.relayMediaGeneration < 0) {
+          socket.emit('relay-stream-control-rejected', { reason: 'invalid-relay-start' });
+          return;
+        }
+      }
       let viewerId = socket.id;
       if (role === 'relay-viewer') {
+        if (connections.relayViewers.get(socket.id) !== socket) return;
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
-        if (boundOwnerId && !hasActiveLegacyRelayOwner(boundOwnerId)) {
-          clearLegacyRelayCompanion(boundOwnerId, { stop: true });
-        }
+        if (boundOwnerId && !hasActiveLegacyRelayOwner(boundOwnerId)) return;
         viewerId = hasActiveLegacyRelayOwner(boundOwnerId)
           ? boundOwnerId
           : bindLegacyRelayCompanion(socket.id);
@@ -1615,7 +1883,7 @@ function setupSignaling(io, options = {}) {
       const viewerId = typeof data.viewerId === 'string' ? data.viewerId : null;
       if (!viewerId) return;
       const viewerSocket = connections.viewers.get(viewerId);
-      if (!viewerSocket) return;
+      if (!isActiveViewerSocket(viewerSocket)) return;
       releaseRejectedMediaProgress(viewerId, data);
       const ack = {
         schemaVersion: 1,
@@ -1624,6 +1892,16 @@ function setupSignaling(io, options = {}) {
         connectionAttemptId: typeof data.connectionAttemptId === 'string' ? data.connectionAttemptId : null,
         applied: data.applied === true,
       };
+      if ('relayFrameSchemaVersion' in data) {
+        if (data.relayFrameSchemaVersion !== 1 || !relayScopeHasCurrentOwner(viewerId, data.relayScope)) return;
+        ack.relayFrameSchemaVersion = 1;
+        ack.relayScope = { ...data.relayScope };
+      }
+      if (data.relayControlKind === 'start') {
+        if (!validRelayNonce(data.relayStartRequestId, 64)) return;
+        ack.relayControlKind = 'start';
+        ack.relayStartRequestId = data.relayStartRequestId;
+      }
       if (typeof data.reason === 'string' && data.reason) {
         ack.reason = data.reason.slice(0, 64);
       }
@@ -1633,10 +1911,12 @@ function setupSignaling(io, options = {}) {
     });
 
     socket.on('relay-frame', (data) => {
-      if (role !== 'host') {
+      if (role !== 'host' || connections.host !== socket) {
         console.warn(`Relay frame rejected: role=${role} from ${socket.id}`);
         return;
       }
+      if ('relayFrameSchemaVersion' in data
+        && (data.relayFrameSchemaVersion !== 1 || !relayScopeHasCurrentOwner(data.viewerId, data.relayScope))) return;
       if (legacyRelayOwnerIds.has(data.viewerId)) {
         const companionId = hasActiveLegacyRelayOwner(data.viewerId)
           ? legacyRelayCompanionByOwner.get(data.viewerId)
@@ -1645,10 +1925,29 @@ function setupSignaling(io, options = {}) {
         if (companionSocket) companionSocket.volatile.emit('relay-frame', data);
         return;
       }
-      const viewerSocket = connections.relayViewers.get(data.viewerId) || connections.viewers.get(data.viewerId);
-      if (viewerSocket) {
+      const viewerSocket = connections.viewers.get(data.viewerId);
+      if (isActiveViewerSocket(viewerSocket)) {
         viewerSocket.volatile.emit('relay-frame', data);
       }
+    });
+
+    socket.on('relay-frame-feedback', (data = {}) => {
+      if (role !== 'host' || connections.host !== socket || data.relayFrameSchemaVersion !== 1
+        || !relayScopeHasCurrentOwner(data.viewerId, data.relayScope)) return;
+      const viewer = connections.viewers.get(data.viewerId);
+      if (!isActiveViewerSocket(viewer)) return;
+      const counters = ['feedbackSequence', 'pendingCount', 'expiredCount', 'unmatchedAckCount', 'timeoutCount', 'coalescedCount'];
+      if (!counters.every(k => Number.isSafeInteger(data[k]) && data[k] >= (k === 'feedbackSequence' ? 1 : 0))) return;
+      const ages = ['oldestPendingAgeMs', 'lastSentAgeMs', 'lastAckAgeMs'];
+      if (!ages.every(k => data[k] === null || (typeof data[k] === 'number' && Number.isFinite(data[k]) && data[k] >= 0))) return;
+      const sample = data.sample;
+      if (sample !== null && (!sample || !Number.isSafeInteger(sample.sampleSequence) || sample.sampleSequence < 1
+        || typeof sample.relayFrameAckRttMs !== 'number' || !Number.isFinite(sample.relayFrameAckRttMs)
+        || sample.relayFrameAckRttMs < 0 || sample.relayFrameAckRttMs >= 2000)) return;
+      const forwarded = { relayFrameSchemaVersion: 1, relayScope: { ...data.relayScope }, viewerId: data.viewerId,
+        sample: sample === null ? null : { sampleSequence: sample.sampleSequence, relayFrameAckRttMs: sample.relayFrameAckRttMs } };
+      for (const key of [...counters, ...ages]) forwarded[key] = data[key];
+      viewer.emit('relay-frame-feedback', forwarded);
     });
 
     socket.on('relay-frame-ack', (data) => {
@@ -1656,7 +1955,12 @@ function setupSignaling(io, options = {}) {
         return;
       }
       if (connections.host) {
+        if (role === 'relay-viewer' && connections.relayViewers.get(socket.id) !== socket) return;
+        if (role === 'viewer' && !isActiveViewerSocket(socket)) return;
         if (role === 'viewer' && data?.schemaVersion === 2 && !authorizeViewer(socket, data, { legacy: false })) return;
+        if ('relayFrameSchemaVersion' in data && (role !== 'viewer' || data.schemaVersion !== 2
+          || data.relayFrameSchemaVersion !== 1 || !authorizeViewer(socket, data, { legacy: false })
+          || !relayScopeHasCurrentOwner(socket.id, data.relayScope))) return;
         const boundOwnerId = legacyRelayOwnerForCompanion(socket.id);
         const viewerId = role === 'relay-viewer' && hasActiveLegacyRelayOwner(boundOwnerId)
           ? boundOwnerId
@@ -1708,7 +2012,15 @@ function setupSignaling(io, options = {}) {
       });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
+      const disconnectEvent = {
+        domain: 'signaling', event: 'signal_socket_disconnected',
+        message: 'Signaling socket disconnected',
+        meta: { role, reason: normalizeDisconnectReason(reason) },
+      };
+      // Observability failures must never interrupt the existing authority cleanup.
+      try { structuredLogger?.info?.(disconnectEvent); } catch (_error) { /* best effort */ }
+      try { recentEventStore?.append?.(disconnectEvent); } catch (_error) { /* best effort */ }
       console.log(`Disconnected: ${role} - ${socket.id}`);
       if (role === 'host') {
         if (connections.host && connections.host.id === socket.id) {

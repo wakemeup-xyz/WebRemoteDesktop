@@ -1,0 +1,211 @@
+{
+  "started": "2026-10-18T04:34:05.959+08:00",
+  "finished": "2026-10-18T04:34:15.325+08:00",
+  "logical_cores": 12,
+  "physical_cores": 6,
+  "method": "3 OS snapshots ~3 seconds apart. Process CPU is delta(user+system) keyed by PID and exact create_time; percentage uses one logical core=100%. RSS is end-of-interval sum. New/exited/unreadable process CPU is not imputed. Process groups use name only; target roles require exact provided PID and local birth second. No argv/env/open-files read. Browser grouping is name-based and approximate. No active probe, runtime imports, native input, service operations, or signals. This snapshot cannot establish cause of earlier latency. WindowServer had no readable matching process and its CPU/RSS is unknown, not zero. The collecting Python process is included in Other node/python. Snapshot timestamps mark sweep start; process reads within each sweep are sequential and not atomic.",
+  "intervals": [
+    {
+      "start": "2026-10-18T04:34:05.959+08:00",
+      "end": "2026-10-18T04:34:10.782+08:00",
+      "wall_seconds": 4.822951563866809,
+      "groups": {
+        "Host": {
+          "cpu_seconds": 0.042795,
+          "cpu_percent_one_core": 0.887,
+          "rss_end_bytes": 71704576,
+          "processes_end": 1,
+          "cpu_measured_processes": 1
+        },
+        "Signal": {
+          "cpu_seconds": 0.003869,
+          "cpu_percent_one_core": 0.08,
+          "rss_end_bytes": 53178368,
+          "processes_end": 1,
+          "cpu_measured_processes": 1
+        },
+        "WindowServer": {
+          "cpu_seconds": null,
+          "cpu_percent_one_core": null,
+          "rss_end_bytes": null,
+          "processes_end": 0,
+          "cpu_measured_processes": 0,
+          "status": "unknown_absent_or_unreadable"
+        },
+        "Browsers": {
+          "cpu_seconds": 1.477137,
+          "cpu_percent_one_core": 30.627,
+          "rss_end_bytes": 910008320,
+          "processes_end": 15,
+          "cpu_measured_processes": 15
+        },
+        "Other node/python": {
+          "cpu_seconds": 6.818147,
+          "cpu_percent_one_core": 141.369,
+          "rss_end_bytes": 9452584960,
+          "processes_end": 198,
+          "cpu_measured_processes": 197
+        },
+        "Others": {
+          "cpu_seconds": 23.054519,
+          "cpu_percent_one_core": 478.017,
+          "rss_end_bytes": 6234464256,
+          "processes_end": 282,
+          "cpu_measured_processes": 282
+        }
+      },
+      "system_cpu_delta_seconds": {
+        "user": 18.68999999994412,
+        "nice": 0.0,
+        "system": 17.71999999997206,
+        "idle": 10.320000000298023
+      },
+      "system_busy_percent_all_logical_capacity": 77.916,
+      "system_busy_cpu_seconds": 36.40999999991618,
+      "new_process_keys_unmeasured": 1,
+      "exited_or_unreadable_keys": 0,
+      "swap_delta": {
+        "sin": 278528,
+        "sout": 0
+      }
+    },
+    {
+      "start": "2026-10-18T04:34:10.782+08:00",
+      "end": "2026-10-18T04:34:14.728+08:00",
+      "wall_seconds": 3.9458039740566164,
+      "groups": {
+        "Host": {
+          "cpu_seconds": 0.020283,
+          "cpu_percent_one_core": 0.514,
+          "rss_end_bytes": 71704576,
+          "processes_end": 1,
+          "cpu_measured_processes": 1
+        },
+        "Signal": {
+          "cpu_seconds": 0.003442,
+          "cpu_percent_one_core": 0.087,
+          "rss_end_bytes": 53178368,
+          "processes_end": 1,
+          "cpu_measured_processes": 1
+        },
+        "WindowServer": {
+          "cpu_seconds": null,
+          "cpu_percent_one_core": null,
+          "rss_end_bytes": null,
+          "processes_end": 0,
+          "cpu_measured_processes": 0,
+          "status": "unknown_absent_or_unreadable"
+        },
+        "Browsers": {
+          "cpu_seconds": 0.552273,
+          "cpu_percent_one_core": 13.996,
+          "rss_end_bytes": 918085632,
+          "processes_end": 15,
+          "cpu_measured_processes": 15
+        },
+        "Other node/python": {
+          "cpu_seconds": 8.098932,
+          "cpu_percent_one_core": 205.254,
+          "rss_end_bytes": 9509093376,
+          "processes_end": 198,
+          "cpu_measured_processes": 198
+        },
+        "Others": {
+          "cpu_seconds": 21.750891,
+          "cpu_percent_one_core": 551.241,
+          "rss_end_bytes": 6144696320,
+          "processes_end": 282,
+          "cpu_measured_processes": 282
+        }
+      },
+      "system_cpu_delta_seconds": {
+        "user": 17.740000000223517,
+        "nice": 0.0,
+        "system": 19.209999999962747,
+        "idle": 5.699999999254942
+      },
+      "system_busy_percent_all_logical_capacity": 86.635,
+      "system_busy_cpu_seconds": 36.950000000186265,
+      "new_process_keys_unmeasured": 0,
+      "exited_or_unreadable_keys": 0,
+      "swap_delta": {
+        "sin": 90112,
+        "sout": 0
+      }
+    }
+  ],
+  "snapshots": [
+    {
+      "timestamp": "2026-10-18T04:34:05.959+08:00",
+      "access_denied": 201,
+      "disappeared_during_read": 2,
+      "targets": {
+        "Host": {
+          "pid": 94398,
+          "expected_birth": "2026-10-18 03:29:32",
+          "observed_birth": "2026-10-18 03:29:32",
+          "status": "matched"
+        },
+        "Signal": {
+          "pid": 27319,
+          "expected_birth": "2026-10-18 04:13:16",
+          "observed_birth": "2026-10-18 04:13:16",
+          "status": "matched"
+        }
+      },
+      "load_1_5_15": [
+        138.76171875,
+        91.14697265625,
+        75.83837890625
+      ]
+    },
+    {
+      "timestamp": "2026-10-18T04:34:10.782+08:00",
+      "access_denied": 201,
+      "disappeared_during_read": 2,
+      "targets": {
+        "Host": {
+          "pid": 94398,
+          "expected_birth": "2026-10-18 03:29:32",
+          "observed_birth": "2026-10-18 03:29:32",
+          "status": "matched"
+        },
+        "Signal": {
+          "pid": 27319,
+          "expected_birth": "2026-10-18 04:13:16",
+          "observed_birth": "2026-10-18 04:13:16",
+          "status": "matched"
+        }
+      },
+      "load_1_5_15": [
+        141.90380859375,
+        92.5888671875,
+        76.4365234375
+      ]
+    },
+    {
+      "timestamp": "2026-10-18T04:34:14.728+08:00",
+      "access_denied": 201,
+      "disappeared_during_read": 2,
+      "targets": {
+        "Host": {
+          "pid": 94398,
+          "expected_birth": "2026-10-18 03:29:32",
+          "observed_birth": "2026-10-18 03:29:32",
+          "status": "matched"
+        },
+        "Signal": {
+          "pid": 27319,
+          "expected_birth": "2026-10-18 04:13:16",
+          "observed_birth": "2026-10-18 04:13:16",
+          "status": "matched"
+        }
+      },
+      "load_1_5_15": [
+        143.9130859375,
+        93.82373046875,
+        76.966796875
+      ]
+    }
+  ]
+}

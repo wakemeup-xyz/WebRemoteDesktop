@@ -1,0 +1,174 @@
+# Review package: b6570f7..HEAD
+
+## Commits
+55e006d fix(recovery): validate final continuity against qualified history
+
+## Files changed
+ scripts/ordinary_session_recovery.py      | 10 ++++-
+ scripts/test_ordinary_session_recovery.py | 75 +++++++++++++++++++++++++++++++
+ 2 files changed, 84 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/scripts/ordinary_session_recovery.py b/scripts/ordinary_session_recovery.py
+index ed0b9c2..20af47c 100644
+--- a/scripts/ordinary_session_recovery.py
++++ b/scripts/ordinary_session_recovery.py
+@@ -1,16 +1,17 @@
+ #!/usr/bin/env python3
+ """Bounded read-only recovery evidence primitives. No runtime/browser imports."""
+ from __future__ import annotations
+ 
+ import argparse
+ import asyncio
++import copy
+ import inspect
+ from datetime import datetime
+ import hashlib
+ import json
+ import math
+ import os
+ import re
+ import stat
+ import time
+ import secrets
+@@ -1099,21 +1100,21 @@ def validate_summary(value):
+         raise ValueError('schema-rejected')
+     if r['status']=='PASS':
+         expected='within-grace-rebind' if value['scenario']=='within-grace' else 'after-grace-reset'
+         host=value['hostObservation']
+         if (failure is not None or r['reason']!='none' or r['classification']!=expected or r['serverCoverage']!='complete'
+             or r['recoverySeconds'] is None or r['recoverySeconds']>60 or r['recoveredStableSeconds']<30
+             or lifecycle['cleanupStatus']!='api-finished-exit-unknown' or lifecycle['captureStatus']!='ok' or lifecycle['writeStatus']!='ok'
+             or host['status']!='stable' or host['coverage']!='complete' or host['hostDisconnectObserved']): raise ValueError('schema-rejected')
+     # Continuity is generated solely by the unchanged reducer. Validate every
+     # emitted key and scalar against its fixed result schema before persistence.
+-    c=value['continuity']; template=passive.ContinuitySummary(duration_s=10800 if value['scenario']=='continuity' else 300,mode=value['mode']).result(elapsed_s=0)
++    c=value['continuity']; template=passive.ContinuitySummary(duration_s=10800 if value['scenario']=='continuity' else 300,mode=value['mode']).result(elapsed_s=0.0)
+     _keys(c,template)
+     for key,expected in template.items():
+         item=c[key]
+         if key=='status': _enum(item,('PASS','FAIL','INCOMPLETE'))
+         elif type(expected) is bool:
+             if type(item) is not bool: raise ValueError('schema-rejected')
+         elif type(expected) in (int,float):
+             _number(item,9999999999999)
+             if type(expected) is int: _int(item,9999999999999)
+         elif item!=expected: raise ValueError('schema-rejected')
+@@ -1227,20 +1228,27 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
+                 if model.identity is not None and any(identity[k]!=model.identity[k] for k in ('sessionHash','admissionHash')):
+                     raise ValueError('ordinary-owner-changed')
+                 if model.failure is None and model.triggered is None and (events or sample['diagnostics']['firstDisconnectEvent'] is not None):
+                     raise ValueError('baseline-failed')
+                 if model.failure is None and model.triggered is None and model.identity is not None and identity['socketHash']!=model.identity['socketHash']:
+                     raise ValueError('ordinary-owner-changed')
+                 if model.failure is None and model.triggered is not None and (events or _recovered_identity(identity,sample)!=model.stable_identity):
+                     raise ValueError('recovery-gates-unmet')
+                 if model.failure is None and not _gates(sample,args.mode,recovery=model.triggered is not None):
+                     raise ValueError('recovery-gates-unmet' if model.triggered is not None else 'baseline-failed')
++                if model.failure is None and model.triggered is None:
++                    # Validate against the qualified history, without advancing
++                    # its duration, sample count, identity or counter baselines.
++                    final_continuity=copy.copy(model.continuity)
++                    final_continuity.observe(dict(elapsedSeconds=model.elapsed,status='observed',sample=sample))
++                    if final_continuity.result(elapsed_s=model.elapsed)['status']!='PASS':
++                        raise ValueError('baseline-failed')
+         except BaseException as exc:
+             if isinstance(exc,CancellationCooperationError): observation_poisoned=True
+             if isinstance(exc,(TimeoutError,CancellationCooperationError)) or sample is None:
+                 host._fail('host-observation-unavailable')
+             if log is not None: model.server_coverage=log.snapshot()['coverage']
+             fail(ValueError('sampling-gap') if isinstance(exc,TimeoutError) else exc)
+             raise
+         finally:
+             # Even a rejected page/status observation must not hide a Host
+             # disconnect. Drain once using only the last validated identities.
+diff --git a/scripts/test_ordinary_session_recovery.py b/scripts/test_ordinary_session_recovery.py
+index 58b87e2..62c917e 100644
+--- a/scripts/test_ordinary_session_recovery.py
++++ b/scripts/test_ordinary_session_recovery.py
+@@ -1277,10 +1277,85 @@ class FinalCoverageTests(unittest.IsolatedAsyncioTestCase):
+             m=h.model('after-grace'); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
+             observer=HostContinuityObserver(SALT); observer.observe_status(dict(hostOnline=True,hostId='original'),0)
+             if kind=='replacement': observer.observe_status(dict(hostOnline=True,hostId='replacement'),1000)
+             else: observer.observe_host_disconnect()
+             host=observer.observe_status(dict(hostOnline=True,hostId='original'),2000)
+             row=model_row(m,303,socket='e'*16,sample=ready_sample(500,5),events=h.events(True)); row['hostObservation']=host
+             m.observe(row); result=m.result(cleanup_complete=True)
+             self.assertEqual(result['ordinaryRecovery']['status'],'INCOMPLETE')
+             self.assertEqual(result['hostObservation']['coverage'],'incomplete')
+             self.assertTrue(row['sample']['inputAllowed']); self.assertEqual(row['identity']['admissionHash'],'d'*16)
++
++
++class FinalQualifiedContinuityTests(unittest.IsolatedAsyncioTestCase):
++    setUp=RuntimeRunTests.setUp
++    status=RuntimeRunTests.status
++    summary=RuntimeRunTests.summary
++
++    async def test_fully_qualified_baseline_final_export_must_keep_continuity(self):
++        # Advance only the runner's scheduling clock. The original reducer still
++        # observes every one-second baseline row and the actual final run path;
++        # no prequalified state, shortened duration or fake PASS is injected.
++        class QualifiedPage(RuntimePage):
++            def __init__(self,change):
++                super().__init__(); self.change=change; self.final_before=None
++            async def evaluate(self,script):
++                if 'window.__wrdPassiveSampler.sample()' not in script:
++                    return await super().evaluate(script)
++                self.samples+=1
++                state=ui_state(); state['startClickMarks']=int(self.clicks>0)
++                state.update(sessionId='session-canary',socketId='socket-canary',admissionId='admission-canary')
++                sample=ready_sample(10+self.samples); sample.pop('attemptHash'); sample['attempt']='attempt-canary'
++                result=dict(state=state,sample=sample)
++                if 'finalize' in script:
++                    self.final_before=json.loads((Path(self.output)/'samples.jsonl').read_text().splitlines()[-1])
++                    if self.change=='lease': sample['leaseEpoch']+=1
++                    elif self.change=='path': sample['transport']['pathIdentity']='path-2'
++                    elif self.change=='counter': sample['callbacks']=1
++                    elif self.change=='pc': sample['pcIdentity']+=1
++                    elif self.change=='attempt': sample['attempt']='changed-attempt-canary'
++                    elif self.change=='generation': sample['generation']+=1
++                    result['diagnostic']=runner.empty_diagnostic()
++                return result
++
++        original_sleep=asyncio.sleep
++        original_time=runner.time
++        for change in ('unchanged','lease','path','counter','pc','attempt','generation'):
++            with self.subTest(change=change):
++                self.args.output_dir=str(self.root/change)
++                page=QualifiedPage(change); page.output=self.args.output_dir; manager=RuntimeManager(page)
++                clock=[0.125]
++                async def sleep(delay):
++                    clock[0]+=delay
++                    await original_sleep(0)
++                async_proxy=SimpleNamespace(**{name:getattr(asyncio,name) for name in dir(asyncio)})
++                async_proxy.sleep=sleep
++                with patch.object(runner,'time',SimpleNamespace(monotonic=lambda:clock[0],time=original_time.time)), patch.object(runner,'asyncio',async_proxy):
++                    result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
++                summary=self.summary()
++                rows=[json.loads(line) for line in (Path(self.args.output_dir)/'samples.jsonl').read_text().splitlines()]
++                qualified=[row for row in rows[:-1] if row['phase']=='baseline']
++                self.assertGreaterEqual(len(qualified),300)
++                self.assertEqual(summary['continuity']['elapsedSeconds'],300)
++                # The first ready row transitions from startup into baseline;
++                # the persisted wrapper keeps its actual observation phase.
++                self.assertEqual(summary['continuity']['samples'],len(qualified)+1)
++                self.assertEqual(page.final_before,rows[-2])
++                self.assertEqual(page.clicks,1)
++                self.assertEqual(summary['ordinaryRecovery']['status'],'NOT_RUN')
++                if change=='unchanged':
++                    self.assertEqual(result,0); self.assertEqual(summary['continuity']['status'],'PASS')
++                    self.assertIsNone(summary['failure'])
++                    self.assertEqual(summary['lifecycle']['cleanupStatus'],'api-finished-exit-unknown')
++                else:
++                    self.assertEqual(result,1)
++                    self.assertNotEqual(summary['continuity']['status'],'PASS')
++                    self.assertEqual(summary['failure'],{'phase':'baseline','reason':'baseline-failed'})
++                self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
++
++    def test_fractional_elapsed_seconds_allowed_but_counts_stay_integer(self):
++        value=runner.OrdinaryRecoverySummary('baseline','stun').result(cleanup_complete=False)
++        value['continuity']['elapsedSeconds']=300.125
++        self.assertIs(runner.validate_summary(value),value)
++        for field in ('samples','missingSamples','failedObservations','identityChangeObservations'):
++            changed=json.loads(json.dumps(value)); changed['continuity'][field]=1.5
++            with self.subTest(field=field), self.assertRaises(ValueError): runner.validate_summary(changed)

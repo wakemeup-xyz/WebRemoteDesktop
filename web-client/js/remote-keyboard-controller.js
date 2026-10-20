@@ -281,6 +281,7 @@
     function setLease(leaseOrNull) {
       if (transport && typeof transport.setLease === 'function') transport.setLease(leaseOrNull || null);
       leaseActive = Boolean(leaseOrNull && typeof leaseOrNull === 'object');
+      if (leaseActive) syncTransportState(transport?.getSnapshot?.());
       if (!leaseActive) {
         pressed.clear();
         resetRequired = false;
@@ -288,6 +289,14 @@
         pendingMode = null;
       }
       reconcilePendingMode();
+      notify();
+    }
+
+    function suspend() {
+      // Stop every controller entry point without revoking the transport's
+      // sequence identity. A later authenticated same-session grant resumes it.
+      leaseActive = false;
+      pressed.clear();
       notify();
     }
 
@@ -460,7 +469,7 @@
       };
     }
 
-    return { setLease, setMode, setVirtualModifier, handleDomEvent, sendChord, sendText, reset, park, getSnapshot };
+    return { setLease, suspend, setMode, setVirtualModifier, handleDomEvent, sendChord, sendText, reset, park, getSnapshot };
   }
 
   return { create };

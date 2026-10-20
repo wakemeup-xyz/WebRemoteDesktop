@@ -1,0 +1,55 @@
+# Registered-process scan exit assessment — 2026-10-19
+
+A narrowly proved terminal-race branch is defensible for a future private successor within the existing polling-coverage model. It cannot be described as literal acceptance equivalence to the old implementation, which intentionally marks every scan exception unknown. Its defensible equivalence is to the already accepted case where the same registered identity is observed terminal immediately before children() and the scanner skips it. This is conditional design advice, not implementation or execution approval. The actual baseline remains FAILED and its sequence must not advance.
+
+## Actual evidence and what it establishes
+
+Reviewed immutable qualification-result SHA256 `5ebf46ff9919847f0be320f7f55df255928b6e4b8c9b22c0f9059364909f0dfd` under R4-fix1 sequence `ff601377b608c2c4b1b51e55123e2f20`, attempt `f6e5f8e72e4195767164f168bcbe3550`. The worker exited0, no timeout/worker error/cleanup errors, no signals, seven recorded identities exited. Validation passed rows and worker, failed coverage, and did not evaluate signals/diagnostics/source-pins/manifest/runtime-integrity/sticky-observation/terminal-evidence. qualification, finalRuntimeIntegrity and postCloseOccupancy are null; nextRunAdmission is NOT_ESTABLISHED and automaticNextRun false.
+
+The exact veto is now attributable: worker diagnostic event1, scan457, stage worker-loop, context scan, operation children, PID36482, NoSuchProcess at wall1792348969.156626 / monotonic1501423.362168074. Its directly associated observation-unavailable gap was recorded at wall1792348969.156712. No diagnostic drop/overflow occurred. This establishes the operation/exception which produced the coverage veto. It does not by itself establish the stronger proposed terminal-race proof.
+
+PID36482 is in the registry with birth1792348652.844396 and parent PID36476/birth1792348650.059264; its last recorded observation is1792348968.989262. The error event's birth is null because the new children-call proxy did not first read create_time. There is no retained event-local before/after terminal observation. A later final exited status is not a substitute. The browser-close/manager-stop metadata is temporally compatible with shutdown (managerStop monotonic1501423335–1501423364ms), but it does not prove this process's terminal identity at the failed call. No historical failure or gap may be removed on that basis.
+
+The helper summary SHA256 `5898c37279fb3105301d53ab6b3426016055450605fd16c37bb266bf1e246e4d` records passive continuity PASS for300.40683215111494s,301 samples, no missing/late/failed/identity-change observations, maxObservedNoProgressMs533.312. The supervisor consumed312 total rows; these are different counts. Helper lifecycle still says api-finished-exit-unknown/not-observed. Neither helper passive success nor final seven-exited cleanup establishes whole-run qualification or native/business effects.
+
+## Why a future local correction is possible, and its limit
+
+Verified immutable SUP SHA256 `d03cc2025f41d26c0079d3f820fdb2cd5479ae14448fb1c6f91c4589d6bd5c7b`. Registry.scan skips an identity whenever state(pid) is not alive. Registry.state already treats NoSuchProcess and same-birth zombie as exited, and changed birth as reused. Therefore an exit just before state() is a skipped scan, while an exit between the alive check and children() becomes an observation-unavailable gap. That is a concrete timing boundary in the current classifier.
+
+A post-error terminal observation can justify skipping that old identity under the same declared model, but cannot recover a lost child list or prove that no descendant was orphaned during exit. A process can spawn an unobserved child then exit in either timing case. The existing polling-may-miss-fast-orphan limitation must remain and completeProcessTreeExitEstablished must stay false/fullProcessTreeExit unknown. If the intended requirement were complete descendant discovery, neither old skipped-terminal scanning nor the proposed branch could satisfy it. Do not infer authority to inspect or signal an orphan, replacement process or unregistered child.
+
+## Minimum prospective proof and unchanged vetoes
+
+The change must occur only at the registered parent's direct children(recursive=False) exception boundary in a separately reviewed private adapter/subclass; do not edit SUP, change the generic diagnostics module's diagnostic-only authority, relax the final coverage consumer, or globally suppress observation-unavailable/NoSuchProcess. The current SUP catch encloses both children enumeration and subsequent child/edge operations, so changing that broad catch by exception class alone is unsafe.
+
+Require all of the following before classifying this one event as an expected terminal observation:
+
+1. Snapshot an existing registry entry with exact positive integer PID, finite positive birth, ownership provenance and an unchanged entry identity/generation. It must be the queued registered parent; no on-error registration, PID discovery or replacement lookup is allowed.
+2. Retain a same-event before observation that the original registered birth was verified alive immediately before the direct children call. Use an explicit fresh process observation, not only old lastObservedEpoch or a previously cached boolean. Preserve scan ID/role/stage, operation and ordered monotonic/wall clocks. Any failure obtaining this evidence keeps the original gap; a NoSuchProcess from process construction/create_time/status is not silently relabeled as a children error.
+3. Catch only the direct children NoSuchProcess, before processing any returned child. The exception/call association must identify this exact registered parent; missing/contradictory target metadata fails closed. Preserve the original exception fact and its event association. AccessDenied, OSError, unsupported exceptions and NoSuchProcess in child create_time/ppid/_add or other scan operations retain the original veto.
+4. Perform one bounded, immediate fresh observation of that same numeric PID against the saved birth. Accept only absent old identity, same-birth zombie, or a stable finite different birth proving the old identity has been replaced. Same-birth alive, unreadable/AccessDenied/OSError, invalid clocks/identity, contradictory/reordered observations, changed registry entry or missing proof keep the gap. Do not poll until a favorable outcome, sleep/retry, enumerate the replacement's children or signal it. An explicit tight proof interval should be fixed before execution (conservatively no longer than the existing polling interval); elapsed/scheduling overrun refuses instead of extending any original worker/cleanup deadline.
+5. Record a bounded before/error/after proof linked one-to-one to this exact event and old PID/birth, with the terminal subtype and unchanged authority. Missing/truncated/overflowed/ambiguous evidence must be sticky failure, not a reason to omit the record and continue. Preserve all other events/gaps: one proved event cannot clear the set-valued coverage reason produced by another unproved event. Prefer deciding this local branch before adding the generic gap; never delete an already recorded historical gap because cleanup later succeeded. Final consumers must validate the exact prospective evidence schema and coverage correspondence, not trust an unchecked resolved flag.
+
+A reused identity is distinct from exited. It may justify skipping the old identity's local scan and never grants authority over the replacement, but original Registry.result requires every recorded status to equal exited. Persistent reused at final result must still fail the unchanged allRecordedIdentitiesExited gate; no status normalization or registry deletion should turn it into a pass. Similarly, no final all-exited result can erase an earlier unknown, signal, timeout, registration/cleanup error, diagnostic overflow, source/runtime failure, or admission failure.
+
+## Focused prospective examples
+
+| Case | Required outcome |
+|---|---|
+| Registered birth alive → direct children NoSuchProcess → immediate same-PID absent or same-birth zombie, complete bounded proof | Local expected terminal classification; no new process authority; all later gates still required |
+| Same error → stable different birth | Old-identity scan skipped only; replacement untouched; final reused veto unchanged |
+| Parent remains same-birth alive after children error | Original observation-unavailable veto |
+| NoSuchProcess in child ppid/create_time/_add, unknown/unregistered target, wrong or absent birth association | Original veto |
+| children AccessDenied/OSError, or re-observation unreadable/unknown | Original veto even if final cleanup later exits |
+| One resolved event plus any unrelated gap, signal, overflow, broken clocks or expired proof budget | Failure remains sticky |
+| Lost descendant spawned immediately before parent exit | Cannot establish complete tree closure; retain inherent polling limitation, never claim the child absent or signal it |
+
+A future focused fake-process test should exercise the actual adapter plus unchanged SUP, compare original process-call/registration/signal behavior on all unaffected cases, and prove every negative above. This assessment ran no test and supplies no new successful receipt. Actual historic scan457 lacks the proposed proof and cannot be replayed through a new policy.
+
+## Separate currentReadiness health uncertainty
+
+At1792348976.442784, currentReadiness has health=null and errors.health=RuntimeError. It retained service identities and preserved tunnel/watcher facts, but no health response or viewer counts. core.health raises RuntimeError for several distinct cases: failed HTTP command, oversized/malformed/invalid status data, unhealthy/offline Host, invalid occupancy values, or nonzero strict-idle occupancy. The generic class cannot identify which occurred. The failed coverage stage also prevented finalRuntimeIntegrity and postCloseOccupancy from running.
+
+Source signaling.js has a default8000ms authenticated viewer-disconnect grace that can retain an entry in connections.viewers; getConnectionStatus reports map sizes. The browser-close timestamps are compatible with grace still being relevant, but there is no retained server grace event/count at the health observation. Thus disconnect grace is a hypothesis, not the established cause, and a later fresh healthy/idle probe would establish later state rather than retroactively proving this error's cause. Do not weaken strict idle or declare next admission based on elapsed grace time alone. No fresh runtime query was performed here.
+
+All old FAIL records/markers and the present failed sequence remain unchanged. No pacing run or later scenario is authorized by this assessment. SUP/source/package/runtime were not modified; only existing bounded artifacts and source were read, and this0600 report was written. No Git, operational import, test, browser, service, process or network operation ran.

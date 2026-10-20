@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "scope": "viewer-tools-successor-r1",
+  "packageManifestSha256": "bcd09baaa0b0936e7424cd0dea5e51fb067503399ca49d3a236e789fc0fa6861",
+  "independentReview": {
+    "path": "/tmp/wrd-startup-viewer-tools-successor-r4-fix1-operations-review-20261019.md",
+    "sha256": "3b76da80be85825dea439aa2673cf842800875f5eeddf3a1a4c09d54865d0156"
+  }
+}

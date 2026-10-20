@@ -1,0 +1,14 @@
+{
+  "observedAtEpoch": 1792320412.875536,
+  "loadAverage": [
+    179.31982421875,
+    67.52392578125,
+    30.15869140625
+  ],
+  "logicalCpuCount": 12,
+  "systemCpuPercentShortSample": 70.5,
+  "memoryPercent": 63.7,
+  "swapUsedBytes": 8539078656,
+  "scope": "brief-system-context-not-cause-or-latency-distribution",
+  "note": "Observed during final isolated API regression; comparison with prior timings is not a controlled experiment."
+}

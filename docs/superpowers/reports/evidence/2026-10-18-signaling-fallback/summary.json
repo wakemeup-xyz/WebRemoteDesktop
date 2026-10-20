@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "runtimeSourceCommit": "f4202b751b8c22f5b84f1e415e35a7107f5f696d",
+  "viewerBuildId": "07ad960b331ccc4b",
+  "originClass": "formal",
+  "mode": "relay",
+  "result": "INCOMPLETE",
+  "targetSeconds": 300,
+  "helperElapsedSeconds": 134.96205636998639,
+  "sampleCount": 133,
+  "sampleWindowCst": {
+    "start": "2026-10-18T00:01:57.451+08:00",
+    "end": "2026-10-18T00:04:09.451+08:00",
+    "clockNote": "browser timeOrigin mapping; not optical synchronization"
+  },
+  "missingSamples": 0,
+  "lateSamples": 0,
+  "failedObservations": 21,
+  "identityChangeObservations": 1,
+  "maxFrameGapMs": 11766.231999999989,
+  "inputAllowedTrueSamples": 0,
+  "gateBlockerEvidence": "NOT_CAPTURED",
+  "failureReason": "session-changed-or-disconnected",
+  "hostSignalDisconnect": {
+    "atCst": "2026-10-18T00:04:08.169+08:00",
+    "reason": "ping timeout"
+  },
+  "viewerSignalBeforeCleanup": {
+    "socketDisconnectCount": 0,
+    "managerCloseCount": 0,
+    "engineCloseCount": 0,
+    "connectErrorCount": 0,
+    "coverage": "partial"
+  },
+  "longestFrameGapCst": {
+    "start": "2026-10-18T00:03:43.984+08:00",
+    "end": "2026-10-18T00:03:55.750+08:00"
+  },
+  "nativeSample": {
+    "triggerFrameAgeMs": 2316.2000000476837,
+    "outputBytes": 242346,
+    "exitCode": 0,
+    "coversLongestStall": false,
+    "coversTriggerStall": "NOT_ESTABLISHED",
+    "namedGilWaitPresent": true,
+    "causalAttribution": "unknown"
+  },
+  "hostLateWindow": {
+    "wallSeconds": 22.012,
+    "cpuSeconds": 0.687,
+    "resourceFresh": false,
+    "memoryPressure": "unknown"
+  },
+  "supervisor": {
+    "elapsedSeconds": 188.17305882112123,
+    "workerExitCode": 1,
+    "deadline": false,
+    "intervention": false,
+    "recordedWorkerCount": 7,
+    "recordedWorkersExited": true,
+    "completeProcessTreeExitEstablished": false,
+    "browserClose": "timeout",
+    "cleanup": "incomplete"
+  },
+  "startupSummaryWarning": "failure cleanup overwrote startup snapshot; final value is not startup evidence",
+  "activeInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "threeHourContinuity": false,
+  "logRanges": {
+    "host": {
+      "inode": 43654875,
+      "device": 16777220,
+      "start": 76517,
+      "end": 222428,
+      "sha256": "b5b9c370797ff246f9961b2f5db13ab9f5d949c9f07b46ceaa9eb9a3b0d74540"
+    },
+    "signal": {
+      "inode": 31830923,
+      "device": 16777220,
+      "start": 2007283,
+      "end": 2014618,
+      "sha256": "469ee84726a2bce4213567468e6b52505bfa64a4287e1b4eef6f4da006f4e7cb"
+    }
+  }
+}

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import host as host_module
 import observability
+from runtime_observability import RuntimeObservability
 
 from adapters import InputAdapter
 from host import WebRemoteHost, build_ice_servers
@@ -266,6 +267,10 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
 
     assert len(sent) == 1
     ack = __import__("json").loads(sent[0])
+    assert ack["hostExecuteMs"] >= 0
+    assert ack["hostAdapterAwaitMs"] == ack["hostExecuteMs"]
+    assert ack["hostQueueMs"] is None
+    assert ack["hostApplyMs"] is None
     assert ack == {
         "type": "input_ack",
         "schemaVersion": 2,
@@ -276,7 +281,11 @@ async def test_host_sends_independent_input_ack_without_waiting_for_screen_track
         "pressedKeyCount": 1,
         "modifierMask": 0x100000,
         "inputIds": ["input-1"],
-        "hostExecuteMs": 9.0,
+        "hostExecuteMs": ack["hostAdapterAwaitMs"],
+        "timingSchemaVersion": 1,
+        "hostAdapterAwaitMs": ack["hostAdapterAwaitMs"],
+        "hostQueueMs": None,
+        "hostApplyMs": None,
         "transport": "datachannel",
     }
     assert "key" not in ack
@@ -653,6 +662,8 @@ def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
     host.input_handler = SimpleNamespace(_lock_waiters=2)
     host.relay_streamer = SimpleNamespace(pending_frame_count=lambda: 1, running=True)
     host._input_event_count = 44
+    host._runtime_observability = RuntimeObservability(
+        read_current_rss=lambda: 32.0, read_peak_rss=lambda: 64.0)
     host._last_input_at_monotonic = 90.0
     monkeypatch.setattr(host_module.time, "perf_counter", lambda: 100.0)
     monkeypatch.setattr(host_module.os, "getloadavg", lambda: (2.5, 2.0, 1.5))
@@ -679,6 +690,10 @@ def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
         "pcState": "connected",
         "iceState": "connected",
         "captureSeq": 321,
+        "capture": {"scope": "track-lifetime", "state": "unavailable",
+                    "attempted": None, "completed": None, "failed": None,
+                    "currentGrabAgeMs": None, "lastCompletionAgeMs": None,
+                    "lastDurationMs": None, "maxDurationMs": None, "clipped": False},
         "inputEventCount": 44,
         "lastInputAgeMs": 10000.0,
         "inputWaiters": 2,
@@ -687,7 +702,14 @@ def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
         "taskCount": 17,
         "threadCount": host_module.threading.active_count(),
         "processCpuSeconds": 16.0,
-        "rssMiB": 64.0,
+        "currentRssMiB": 32.0,
+        "peakRssMiB": 64.0,
+        "eventLoop": {"count": 0, "last": None, "max": None, "p50": None,
+                      "p95": None, "p99": None, "missedSampleCount": 0},
+        "queues": {"inputReliable": None, "inputUnordered": None, "relayFrames": None},
+        "resources": {"available": False, "ageMs": None, "status": "unavailable",
+                      "swapInBytesPerSec": None, "swapOutBytesPerSec": None,
+                      "memoryPressure": "unknown"},
         "systemLoad1": 2.5,
     }
     assert "payload" not in context

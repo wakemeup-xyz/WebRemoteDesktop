@@ -1,5 +1,7 @@
 # 稳定性与端到端延迟整改 Implementation Plan
 
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在保留现有网络模式和控制协议的前提下，消除可复现的失控/恢复缺口与无界积压，建立可信延迟测量和可解释的网页故障恢复。
@@ -12,7 +14,7 @@
 
 ## Global Constraints
 
-1. 本轮仅诊断和文档；业务代码、运行配置、服务、tunnel 均不修改或重启。
+1. 用户后续已明确授权本轮开发、验收、启动本地 Signal/Host 并保持可用；不得停止、重启或重建 tunnel。生产 Viewer 仍须避开正在使用的会话。
 2. 后续实施沿用严格单桌面 Viewer、控制租约和 fail-closed reset 屏障；不重放投递结果不确定的点击、文本或命令。
 3. 不自动切换网络模式、TURN 节点或公网地址；保留 Quality Lock，不自动降低用户选择的分辨率。
 4. 生产 Viewer 验收必须有明确维护窗口；普通检查不得创建会抢占用户控制的 Viewer。
@@ -23,7 +25,7 @@
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-当前状态：**仅规划完成，以下实施复选框全部未执行**。用户确认默认使用superpowers规划，不等于授权本次实施、部署或tunnel操作。后续实施授权到达后从I0开始，不再询问规划路径。
+执行状态：实现、测试、独立复核及提交记录见实施记录；以下步骤保留为审查版计划，复选框不作为执行账本。真实验收逐项登记，未运行项不因离线测试通过而关闭。
 
 ## 文件结构与任务所有权
 
@@ -141,4 +143,4 @@ flowchart TD
 
 ## 当前review与交付状态
 
-本轮只完成文档与证据复查。所有子任务代码步骤、I0–I2运行步骤未勾选。审查记录见[文档review](../reports/2026-10-17-remediation-document-review.md)，并以总spec作为共同契约，后续任何接口变更应同步四份spec及调用方plan。
+本计划保留原审查版步骤，复选框不代表当前执行状态；实现、I1 回归与 I2 部署/验收分别记录在实施报告。审查记录见[文档review](../reports/2026-10-17-remediation-document-review.md)，并以总spec作为共同契约，后续任何接口变更应同步四份spec及调用方plan。

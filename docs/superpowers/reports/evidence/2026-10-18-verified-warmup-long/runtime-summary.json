@@ -1,0 +1,1443 @@
+{
+  "kind": "verified-warmup-long-bounded-log-audit",
+  "version": 1,
+  "run": "verified-warmup-long-20261018a",
+  "sourceCommit": "53ed5d72e331b808245b7d650a6c4ff7b2969c85",
+  "buildId": "79bf9a5afea0458e",
+  "boundsUTC": {
+    "start": "2026-10-17T20:58:16.951824+00:00",
+    "end": "2026-10-17T23:58:59.981203+00:00",
+    "elapsedSeconds": 10843.029381275177
+  },
+  "windows": [
+    {
+      "log": "host-rotated-segment",
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+      "device": 16777220,
+      "inode": 43654875,
+      "startOffsetInclusive": 6029429,
+      "endOffsetExclusive": 10485726,
+      "bytes": 4456297,
+      "lines": 14206,
+      "sha256": "3cd484d0cfd6c9b8694bf123d8a32f5db4cae87cc0ddb1b20e5f2429ad0429d3",
+      "rotationNeeded": true,
+      "startsAtLineBoundary": true,
+      "endsWithNewline": true
+    },
+    {
+      "log": "host-current-segment",
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "device": 16777220,
+      "inode": 44252455,
+      "startOffsetInclusive": 0,
+      "endOffsetExclusive": 5661908,
+      "bytes": 5661908,
+      "lines": 18026,
+      "sha256": "669536657fdf03ab3f0bd46300211c0ad2e34654e2bf38455cf96968820afe59",
+      "rotationNeeded": true,
+      "startsAtLineBoundary": true,
+      "endsWithNewline": true
+    },
+    {
+      "log": "signal-human",
+      "path": "/tmp/signal-server.log",
+      "device": 16777220,
+      "inode": 31830923,
+      "startOffsetInclusive": 2346676,
+      "endOffsetExclusive": 2536692,
+      "bytes": 190016,
+      "lines": 7835,
+      "sha256": "c332a7987a6670452d7ec5660a06bffc6e7120ad130af3f4685ba7d47a517dd8",
+      "rotationNeeded": false,
+      "startsAtLineBoundary": true,
+      "endsWithNewline": true
+    },
+    {
+      "log": "signal-jsonl",
+      "path": "/tmp/wrd-structured/signal-server.jsonl",
+      "device": 16777220,
+      "inode": 43620520,
+      "startOffsetInclusive": 1229318,
+      "endOffsetExclusive": 1756859,
+      "bytes": 527541,
+      "lines": 187,
+      "sha256": "9487d4d3ed0fbdf6361e102ec23eca5665e455cb3513ba340168dba27b4b5b1a",
+      "rotationNeeded": false,
+      "startsAtLineBoundary": true,
+      "endsWithNewline": true
+    }
+  ],
+  "rotation": {
+    "hostSegmentsInChronologicalOrder": [
+      0,
+      1
+    ],
+    "oneRotationObserved": true,
+    "continuousByRecordedDeviceInode": true,
+    "intermediateRotationMissing": false,
+    "hostWindowBytes": 10118205,
+    "hostWindowLines": 32232,
+    "dedicatedHostJsonlAvailable": false
+  },
+  "processes": {
+    "signalPid": 45287,
+    "hostPid": 94398,
+    "unchangedAcrossBounds": true
+  },
+  "boundaryHealth": {
+    "start": true,
+    "end": true,
+    "startHostOnline": true,
+    "endHostOnline": true,
+    "startViewers": 0,
+    "endViewers": 0,
+    "startRelayViewers": 0,
+    "endRelayViewers": 0
+  },
+  "bootstrap": {
+    "servedCount": 1,
+    "events": [
+      {
+        "ts": "2026-10-17T20:58:27.582Z",
+        "serverProcessMs": 0.24,
+        "hostOnline": true
+      }
+    ],
+    "signalHumanCorroboratingCount": 1,
+    "httpNonemptyBootstrapWindows": [
+      {
+        "window": {
+          "start": "2026-10-17T20:58:09.478Z",
+          "end": "2026-10-17T20:59:09.482Z",
+          "elapsedMs": 60002,
+          "missedWindows": 0,
+          "final": false,
+          "empty": false
+        },
+        "coverage": {
+          "startedAt": "2026-10-17T20:40:09.356Z",
+          "endedAt": null,
+          "completionCoverage": true,
+          "clipped": false,
+          "clockUnknown": false,
+          "collectionFailures": 0,
+          "loggerFailures": 0,
+          "storeFailures": 0
+        },
+        "bootstrap": {
+          "started": 1,
+          "completed": 1,
+          "aborted": 0,
+          "closedUnfinished": 0,
+          "untracked": 0,
+          "expiredUnfinished": 0,
+          "stoppedInflight": 0,
+          "inflight": 0,
+          "status": {
+            "1xx": 0,
+            "2xx": 1,
+            "3xx": 0,
+            "4xx": 0,
+            "5xx": 0,
+            "other": 0,
+            "s401": 0,
+            "s403": 0,
+            "s429": 0
+          },
+          "duration": {
+            "le10": 1,
+            "le50": 0,
+            "le100": 0,
+            "le500": 0,
+            "le1000": 0,
+            "le5000": 0,
+            "le15000": 0,
+            "gt15000": 0,
+            "count": 1,
+            "sumMs": 1,
+            "maxMs": 1,
+            "unknown": 0
+          }
+        }
+      }
+    ],
+    "cacheHitProven": false,
+    "interpretation": "Single served request is consistent with one verified preload being reused, but request count alone does not prove cache disposition or optimization causality. Local handler serverProcessMs and HTTP completion duration have different boundaries and neither is public browser transport latency."
+  },
+  "entry": {
+    "records": 180,
+    "windowElapsedMs": {
+      "count": 180,
+      "min": 59999,
+      "max": 60092,
+      "mean": 60003.36666666667
+    },
+    "reportedMissedWindowsSum": 0,
+    "coverageFlags": {
+      "completionCoverage": {
+        "true": 180
+      },
+      "clipped": {
+        "false": 180
+      },
+      "clockUnknown": {
+        "false": 180
+      }
+    },
+    "failureCounterMax": {
+      "collectionFailures": 0,
+      "loggerFailures": 0,
+      "storeFailures": 0
+    },
+    "httpRouteAggregates": {
+      "viewer_login": {
+        "started": 1,
+        "completed": 1,
+        "aborted": 0,
+        "closedUnfinished": 0,
+        "untracked": 0,
+        "expiredUnfinished": 0,
+        "stoppedInflight": 0,
+        "inflightSnapshotMax": 0,
+        "status": {
+          "1xx": 0,
+          "2xx": 1,
+          "3xx": 0,
+          "4xx": 0,
+          "5xx": 0,
+          "other": 0,
+          "s401": 0,
+          "s403": 0,
+          "s429": 0
+        },
+        "duration": {
+          "le10": 1,
+          "le50": 0,
+          "le100": 0,
+          "le500": 0,
+          "le1000": 0,
+          "le5000": 0,
+          "le15000": 0,
+          "gt15000": 0,
+          "count": 1,
+          "sumMs": 2,
+          "maxMs": 2,
+          "unknown": 0
+        }
+      },
+      "auth_verify": {
+        "started": 1,
+        "completed": 1,
+        "aborted": 0,
+        "closedUnfinished": 0,
+        "untracked": 0,
+        "expiredUnfinished": 0,
+        "stoppedInflight": 0,
+        "inflightSnapshotMax": 0,
+        "status": {
+          "1xx": 0,
+          "2xx": 1,
+          "3xx": 0,
+          "4xx": 0,
+          "5xx": 0,
+          "other": 0,
+          "s401": 0,
+          "s403": 0,
+          "s429": 0
+        },
+        "duration": {
+          "le10": 1,
+          "le50": 0,
+          "le100": 0,
+          "le500": 0,
+          "le1000": 0,
+          "le5000": 0,
+          "le15000": 0,
+          "gt15000": 0,
+          "count": 1,
+          "sumMs": 1,
+          "maxMs": 1,
+          "unknown": 0
+        }
+      },
+      "viewer_admission": {
+        "started": 0,
+        "completed": 0,
+        "aborted": 0,
+        "closedUnfinished": 0,
+        "untracked": 0,
+        "expiredUnfinished": 0,
+        "stoppedInflight": 0,
+        "inflightSnapshotMax": 0,
+        "status": {
+          "1xx": 0,
+          "2xx": 0,
+          "3xx": 0,
+          "4xx": 0,
+          "5xx": 0,
+          "other": 0,
+          "s401": 0,
+          "s403": 0,
+          "s429": 0
+        },
+        "duration": {
+          "le10": 0,
+          "le50": 0,
+          "le100": 0,
+          "le500": 0,
+          "le1000": 0,
+          "le5000": 0,
+          "le15000": 0,
+          "gt15000": 0,
+          "count": 0,
+          "sumMs": 0,
+          "maxMs": 0,
+          "unknown": 0
+        }
+      },
+      "diagnostics": {
+        "started": 0,
+        "completed": 0,
+        "aborted": 0,
+        "closedUnfinished": 0,
+        "untracked": 0,
+        "expiredUnfinished": 0,
+        "stoppedInflight": 0,
+        "inflightSnapshotMax": 0,
+        "status": {
+          "1xx": 0,
+          "2xx": 0,
+          "3xx": 0,
+          "4xx": 0,
+          "5xx": 0,
+          "other": 0,
+          "s401": 0,
+          "s403": 0,
+          "s429": 0
+        },
+        "duration": {
+          "le10": 0,
+          "le50": 0,
+          "le100": 0,
+          "le500": 0,
+          "le1000": 0,
+          "le5000": 0,
+          "le15000": 0,
+          "gt15000": 0,
+          "count": 0,
+          "sumMs": 0,
+          "maxMs": 0,
+          "unknown": 0
+        }
+      },
+      "viewer_html": {
+        "started": 3,
+        "completed": 3,
+        "aborted": 0,
+        "closedUnfinished": 0,
+        "untracked": 0,
+        "expiredUnfinished": 0,
+        "stoppedInflight": 0,
+        "inflightSnapshotMax": 0,
+        "status": {
+          "1xx": 0,
+          "2xx": 3,
+          "3xx": 0,
+          "4xx": 0,
+          "5xx": 0,
+          "other": 0,
+          "s401": 0,
+          "s403": 0,
+          "s429": 0
+        },
+        "duration": {
+          "le10": 3,
+          "le50": 0,
+          "le100": 0,
+          "le500": 0,
+          "le1000": 0,
+          "le5000": 0,
+          "le15000": 0,
+          "gt15000": 0,
+          "count": 3,
+          "sumMs": 5,
+          "maxMs": 2,
+          "unknown": 0
+        }
+      },
+      "viewer_bootstrap": {
+        "started": 1,
+        "completed": 1,
+        "aborted": 0,
+        "closedUnfinished": 0,
+        "untracked": 0,
+        "expiredUnfinished": 0,
+        "stoppedInflight": 0,
+        "inflightSnapshotMax": 0,
+        "status": {
+          "1xx": 0,
+          "2xx": 1,
+          "3xx": 0,
+          "4xx": 0,
+          "5xx": 0,
+          "other": 0,
+          "s401": 0,
+          "s403": 0,
+          "s429": 0
+        },
+        "duration": {
+          "le10": 1,
+          "le50": 0,
+          "le100": 0,
+          "le500": 0,
+          "le1000": 0,
+          "le5000": 0,
+          "le15000": 0,
+          "gt15000": 0,
+          "count": 1,
+          "sumMs": 1,
+          "maxMs": 1,
+          "unknown": 0
+        }
+      }
+    },
+    "scope": "Aggregate only 180 logged completion windows; first/last windows can straddle byte-bound timestamps. Inflight snapshots are not additive. No public transport latency or full-session percentile."
+  },
+  "hostLag": {
+    "records": 1948,
+    "severityCounts": {
+      "critical": 55,
+      "normal": 1357,
+      "warning": 536
+    },
+    "pcStateCounts": {
+      "connected": 1942,
+      "none": 6
+    },
+    "iceStateCounts": {
+      "completed": 1942,
+      "none": 6
+    },
+    "stats": {
+      "lagMs": {
+        "count": 1948,
+        "min": 0.065,
+        "max": 117.532,
+        "mean": 2.3580903490759755
+      },
+      "maxLagMs": {
+        "count": 1948,
+        "min": 2.963,
+        "max": 135.785,
+        "mean": 21.78963244353172
+      },
+      "sampleCount": {
+        "count": 1948,
+        "min": 60,
+        "max": 61,
+        "mean": 60.389630390143736
+      },
+      "taskCount": {
+        "count": 1948,
+        "min": 7,
+        "max": 15,
+        "mean": 13.093429158110883
+      },
+      "threadCount": {
+        "count": 1948,
+        "min": 6,
+        "max": 9,
+        "mean": 8.004106776180699
+      },
+      "processCpuSeconds": {
+        "count": 1948,
+        "min": 821.877,
+        "max": 4791.563,
+        "mean": 2799.4878844969235
+      },
+      "currentRssMiB": {
+        "count": 1948,
+        "min": 304.46484375,
+        "max": 516.94140625,
+        "mean": 442.11610666388606
+      },
+      "peakRssMiB": {
+        "count": 1948,
+        "min": 473.4453125,
+        "max": 521.79296875,
+        "mean": 505.45834670174537
+      },
+      "eventLoop.count": {
+        "count": 1948,
+        "min": 60,
+        "max": 61,
+        "mean": 60.25564681724846
+      },
+      "eventLoop.max": {
+        "count": 1948,
+        "min": 2.963082,
+        "max": 135.784644,
+        "mean": 21.789621096509084
+      },
+      "eventLoop.p50": {
+        "count": 1948,
+        "min": 0.397923,
+        "max": 2.129442,
+        "mean": 0.5537575816221754
+      },
+      "eventLoop.p95": {
+        "count": 1948,
+        "min": 1.7918,
+        "max": 24.835412,
+        "mean": 5.8886553649897415
+      },
+      "eventLoop.p99": {
+        "count": 1948,
+        "min": 2.963082,
+        "max": 135.784644,
+        "mean": 21.789621096509084
+      },
+      "eventLoop.missedSampleCount": {
+        "count": 1948,
+        "min": 0,
+        "max": 0,
+        "mean": 0.0
+      },
+      "resources.ageMs": {
+        "count": 1948,
+        "min": 568.849015,
+        "max": 5007.953084,
+        "mean": 2988.1083569070815
+      },
+      "resources.elapsedMs": {
+        "count": 1948,
+        "min": 4594.970904,
+        "max": 5416.489556,
+        "mean": 4999.725972686341
+      },
+      "resources.swapInBytesPerSec": {
+        "count": 1948,
+        "min": 0.0,
+        "max": 27604889.542926185,
+        "mean": 60658.8333295983
+      },
+      "resources.swapOutBytesPerSec": {
+        "count": 1948,
+        "min": 0.0,
+        "max": 78457648.23225734,
+        "mean": 50090.520631783045
+      },
+      "systemLoad1": {
+        "count": 1948,
+        "min": 2.76,
+        "max": 17.064,
+        "mean": 6.734623716632454
+      },
+      "inputEventCount": {
+        "count": 1948,
+        "min": 0,
+        "max": 0,
+        "mean": 0.0
+      },
+      "inputWaiters": {
+        "count": 1948,
+        "min": 0,
+        "max": 0,
+        "mean": 0.0
+      },
+      "pendingRelayFrames": {
+        "count": 1948,
+        "min": 0,
+        "max": 0,
+        "mean": 0.0
+      }
+    },
+    "reportedWindowSampleCountSum": 117378,
+    "reportedSampleCountSum": 117639,
+    "missedSampleCountSum": 0,
+    "windowP95Above50MsRecords": 0,
+    "windowMaxAbove250MsRecords": 0,
+    "collectorStates": [
+      {
+        "state": {
+          "busy": false,
+          "cleanupPending": false,
+          "ownerAlive": true,
+          "state": "idle"
+        },
+        "records": 1539
+      },
+      {
+        "state": {
+          "busy": true,
+          "cleanupPending": false,
+          "ownerAlive": true,
+          "state": "busy"
+        },
+        "records": 409
+      }
+    ],
+    "resourceStatusCounts": {
+      "ok": 1948
+    },
+    "memoryPressureCounts": {
+      "unknown": 1948
+    },
+    "captureStateCounts": {
+      "grabbing": 486,
+      "idle": 1456,
+      "unavailable": 6
+    },
+    "pairedCaptureLifetimeMaximum": {
+      "firstObservedTs": "2026-10-17T22:23:28.254153+00:00",
+      "scope": "track-lifetime",
+      "maxDurationMs": 310.232,
+      "maxDurationThreadCpuMs": 16.225,
+      "maxDurationNonCpuMs": 294.007,
+      "attempted": 42720,
+      "completed": 42719,
+      "failed": 0,
+      "clipped": false
+    },
+    "captureNumericStats": {
+      "lastDurationMs": {
+        "count": 1942,
+        "min": 21.49,
+        "max": 212.292,
+        "mean": 30.927972708547884
+      },
+      "lastThreadCpuMs": {
+        "count": 1942,
+        "min": 4.762,
+        "max": 16.683,
+        "mean": 8.73905561277034
+      },
+      "lastNonCpuMs": {
+        "count": 1942,
+        "min": 14.289,
+        "max": 202.117,
+        "mean": 22.18891349124615
+      },
+      "maxDurationMs": {
+        "count": 1942,
+        "min": 107.868,
+        "max": 310.232,
+        "mean": 264.47051287333153
+      },
+      "maxDurationThreadCpuMs": {
+        "count": 1942,
+        "min": 8.105,
+        "max": 16.225,
+        "mean": 13.720598352213885
+      },
+      "maxDurationNonCpuMs": {
+        "count": 1942,
+        "min": 98.164,
+        "max": 294.007,
+        "mean": 250.74991452110805
+      },
+      "currentGrabAgeMs": {
+        "count": 486,
+        "min": 0.261,
+        "max": 175.985,
+        "mean": 20.03233127572014
+      },
+      "lastCompletionAgeMs": {
+        "count": 1942,
+        "min": 0.289,
+        "max": 231.013,
+        "mean": 72.94240216271893
+      },
+      "attempted": {
+        "count": 1942,
+        "min": 15,
+        "max": 88321,
+        "mean": 44415.25798146241
+      },
+      "completed": {
+        "count": 1942,
+        "min": 14,
+        "max": 88321,
+        "mean": 44415.00772399588
+      },
+      "failed": {
+        "count": 1942,
+        "min": 0,
+        "max": 0,
+        "mean": 0.0
+      }
+    },
+    "captureFirstAndLastCounterSnapshot": [
+      {
+        "ts": "2026-10-17T20:58:35.157515+00:00",
+        "scope": "track-lifetime",
+        "state": "grabbing",
+        "attempted": 15,
+        "completed": 14,
+        "failed": 0,
+        "clipped": false
+      },
+      {
+        "ts": "2026-10-17T23:58:42.868020+00:00",
+        "scope": "track-lifetime",
+        "state": "idle",
+        "attempted": 88321,
+        "completed": 88321,
+        "failed": 0,
+        "clipped": false
+      }
+    ],
+    "timestampCoverage": {
+      "first": "2026-10-17T20:58:18.145467+00:00",
+      "last": "2026-10-17T23:58:58.870258+00:00",
+      "spanSeconds": 10840.724791,
+      "maxEventGapSeconds": 6.097122
+    },
+    "thirtyMinuteGroups": [
+      {
+        "relativeMinuteStart": 0,
+        "relativeMinuteEnd": 30,
+        "records": 323,
+        "tsFirst": "2026-10-17T20:58:18.145467+00:00",
+        "tsLast": "2026-10-17T21:28:13.183398+00:00",
+        "connectedRecords": 320,
+        "stats": {
+          "threadCount": {
+            "count": 323,
+            "min": 6,
+            "max": 9,
+            "mean": 7.9907120743034055
+          },
+          "taskCount": {
+            "count": 323,
+            "min": 7,
+            "max": 14,
+            "mean": 13.058823529411764
+          },
+          "currentRssMiB": {
+            "count": 323,
+            "min": 304.46484375,
+            "max": 470.6953125,
+            "mean": 411.8237712848297
+          },
+          "systemLoad1": {
+            "count": 323,
+            "min": 3.868,
+            "max": 9.094,
+            "mean": 6.014904024767801
+          },
+          "eventLoop.max": {
+            "count": 323,
+            "min": 2.963082,
+            "max": 74.430971,
+            "mean": 14.621989191950483
+          },
+          "eventLoop.p95": {
+            "count": 323,
+            "min": 2.093381,
+            "max": 14.286999,
+            "mean": 4.98633125696595
+          },
+          "resources.ageMs": {
+            "count": 323,
+            "min": 865.035619,
+            "max": 5007.953084,
+            "mean": 3011.94895539319
+          }
+        }
+      },
+      {
+        "relativeMinuteStart": 30,
+        "relativeMinuteEnd": 60,
+        "records": 323,
+        "tsFirst": "2026-10-17T21:28:19.185743+00:00",
+        "tsLast": "2026-10-17T21:58:11.235275+00:00",
+        "connectedRecords": 323,
+        "stats": {
+          "threadCount": {
+            "count": 323,
+            "min": 8,
+            "max": 9,
+            "mean": 8.006191950464396
+          },
+          "taskCount": {
+            "count": 323,
+            "min": 13,
+            "max": 15,
+            "mean": 13.13312693498452
+          },
+          "currentRssMiB": {
+            "count": 323,
+            "min": 388.171875,
+            "max": 502.25390625,
+            "mean": 473.6174051857585
+          },
+          "systemLoad1": {
+            "count": 323,
+            "min": 4.369,
+            "max": 14.125,
+            "mean": 6.7751207430340585
+          },
+          "eventLoop.max": {
+            "count": 323,
+            "min": 3.886704,
+            "max": 112.286021,
+            "mean": 22.09049984520125
+          },
+          "eventLoop.p95": {
+            "count": 323,
+            "min": 2.857841,
+            "max": 18.575474,
+            "mean": 5.914817900928789
+          },
+          "resources.ageMs": {
+            "count": 323,
+            "min": 568.849015,
+            "max": 5002.511072,
+            "mean": 2949.682599281731
+          }
+        }
+      },
+      {
+        "relativeMinuteStart": 60,
+        "relativeMinuteEnd": 90,
+        "records": 323,
+        "tsFirst": "2026-10-17T21:58:17.221489+00:00",
+        "tsLast": "2026-10-17T22:28:14.260032+00:00",
+        "connectedRecords": 323,
+        "stats": {
+          "threadCount": {
+            "count": 323,
+            "min": 8,
+            "max": 9,
+            "mean": 8.012383900928793
+          },
+          "taskCount": {
+            "count": 323,
+            "min": 13,
+            "max": 15,
+            "mean": 13.130030959752322
+          },
+          "currentRssMiB": {
+            "count": 323,
+            "min": 310.5078125,
+            "max": 460.9765625,
+            "mean": 426.52482827012386
+          },
+          "systemLoad1": {
+            "count": 323,
+            "min": 5.894,
+            "max": 17.064,
+            "mean": 9.368922600619197
+          },
+          "eventLoop.max": {
+            "count": 323,
+            "min": 6.23907,
+            "max": 135.784644,
+            "mean": 33.02910011455112
+          },
+          "eventLoop.p95": {
+            "count": 323,
+            "min": 2.906289,
+            "max": 24.835412,
+            "mean": 8.086042095975221
+          },
+          "resources.ageMs": {
+            "count": 323,
+            "min": 887.280089,
+            "max": 5001.918758,
+            "mean": 2864.5672155417965
+          }
+        }
+      },
+      {
+        "relativeMinuteStart": 90,
+        "relativeMinuteEnd": 120,
+        "records": 323,
+        "tsFirst": "2026-10-17T22:28:20.266646+00:00",
+        "tsLast": "2026-10-17T22:58:12.301331+00:00",
+        "connectedRecords": 323,
+        "stats": {
+          "threadCount": {
+            "count": 323,
+            "min": 8,
+            "max": 9,
+            "mean": 8.006191950464396
+          },
+          "taskCount": {
+            "count": 323,
+            "min": 13,
+            "max": 15,
+            "mean": 13.095975232198143
+          },
+          "currentRssMiB": {
+            "count": 323,
+            "min": 373.6640625,
+            "max": 516.94140625,
+            "mean": 466.562693498452
+          },
+          "systemLoad1": {
+            "count": 323,
+            "min": 4.606,
+            "max": 11.801,
+            "mean": 7.143585139318879
+          },
+          "eventLoop.max": {
+            "count": 323,
+            "min": 5.112484,
+            "max": 104.540154,
+            "mean": 25.014704563467475
+          },
+          "eventLoop.p95": {
+            "count": 323,
+            "min": 3.637623,
+            "max": 13.074205,
+            "mean": 6.080516681114542
+          },
+          "resources.ageMs": {
+            "count": 323,
+            "min": 880.850269,
+            "max": 5001.9757,
+            "mean": 3067.0298944334386
+          }
+        }
+      },
+      {
+        "relativeMinuteStart": 120,
+        "relativeMinuteEnd": 150,
+        "records": 324,
+        "tsFirst": "2026-10-17T22:58:18.296890+00:00",
+        "tsLast": "2026-10-17T23:28:12.334415+00:00",
+        "connectedRecords": 324,
+        "stats": {
+          "threadCount": {
+            "count": 324,
+            "min": 8,
+            "max": 9,
+            "mean": 8.012345679012345
+          },
+          "taskCount": {
+            "count": 324,
+            "min": 13,
+            "max": 14,
+            "mean": 13.074074074074074
+          },
+          "currentRssMiB": {
+            "count": 324,
+            "min": 327.9609375,
+            "max": 494.36328125,
+            "mean": 439.626350308642
+          },
+          "systemLoad1": {
+            "count": 324,
+            "min": 2.794,
+            "max": 10.488,
+            "mean": 5.882388888888888
+          },
+          "eventLoop.max": {
+            "count": 324,
+            "min": 3.862538,
+            "max": 117.531866,
+            "mean": 20.692390583333292
+          },
+          "eventLoop.p95": {
+            "count": 324,
+            "min": 1.7918,
+            "max": 12.57032,
+            "mean": 5.177699533950618
+          },
+          "resources.ageMs": {
+            "count": 324,
+            "min": 885.404802,
+            "max": 4994.08268,
+            "mean": 2937.488961901236
+          }
+        }
+      },
+      {
+        "relativeMinuteStart": 150,
+        "relativeMinuteEnd": 180,
+        "records": 324,
+        "tsFirst": "2026-10-17T23:28:17.334604+00:00",
+        "tsLast": "2026-10-17T23:58:15.873850+00:00",
+        "connectedRecords": 324,
+        "stats": {
+          "threadCount": {
+            "count": 324,
+            "min": 8,
+            "max": 9,
+            "mean": 8.015432098765432
+          },
+          "taskCount": {
+            "count": 324,
+            "min": 13,
+            "max": 14,
+            "mean": 13.126543209876543
+          },
+          "currentRssMiB": {
+            "count": 324,
+            "min": 328.79296875,
+            "max": 474.71875,
+            "mean": 434.75043402777777
+          },
+          "systemLoad1": {
+            "count": 324,
+            "min": 2.76,
+            "max": 9.077,
+            "mean": 5.240191358024696
+          },
+          "eventLoop.max": {
+            "count": 324,
+            "min": 3.854248,
+            "max": 49.730846,
+            "mean": 15.673869503086415
+          },
+          "eventLoop.p95": {
+            "count": 324,
+            "min": 2.083975,
+            "max": 20.652634,
+            "mean": 5.125800737654322
+          },
+          "resources.ageMs": {
+            "count": 324,
+            "min": 900.952359,
+            "max": 5000.552161,
+            "mean": 3125.9273505061724
+          }
+        }
+      },
+      {
+        "relativeMinuteStart": 180,
+        "relativeMinuteEnd": 210,
+        "records": 8,
+        "tsFirst": "2026-10-17T23:58:21.867205+00:00",
+        "tsLast": "2026-10-17T23:58:58.870258+00:00",
+        "connectedRecords": 5,
+        "stats": {
+          "threadCount": {
+            "count": 8,
+            "min": 6,
+            "max": 8,
+            "mean": 7.25
+          },
+          "taskCount": {
+            "count": 8,
+            "min": 7,
+            "max": 13,
+            "mean": 10.75
+          },
+          "currentRssMiB": {
+            "count": 8,
+            "min": 432.8046875,
+            "max": 436.17578125,
+            "mean": 434.916015625
+          },
+          "systemLoad1": {
+            "count": 8,
+            "min": 6.121,
+            "max": 6.626,
+            "mean": 6.326624999999999
+          },
+          "eventLoop.max": {
+            "count": 8,
+            "min": 5.718458,
+            "max": 7.3589,
+            "mean": 7.153844749999999
+          },
+          "eventLoop.p95": {
+            "count": 8,
+            "min": 4.326943,
+            "max": 4.967621,
+            "mean": 4.4871125
+          },
+          "resources.ageMs": {
+            "count": 8,
+            "min": 963.237811,
+            "max": 2966.688652,
+            "mean": 1846.9169191249998
+          }
+        }
+      }
+    ],
+    "connectedRssLinearSlopeMiBPerHour": 3.6842850412418784,
+    "connectedRssSlopeScope": "Least-squares trend of logged connected snapshots, not proof of memory growth or leak; RSS is variable and can be reclaimed/reallocated. No raw allocation history.",
+    "scope": "Rolling 60-second sampled windows overlap and are emitted at least 5 seconds apart. Sum of counts is window memberships, not unique loop samples or total coverage. Initial rolling window can include pre-bound samples. Severity labels and repeated track-lifetime maxima are not incident counts. Window P95/max ranges cannot become whole-session percentiles. Paired non-CPU equals capture wall minus same capture thread CPU; no OS/scheduler/capture-call cause established.",
+    "rollingWindowDefinition": {
+      "windowSeconds": 60,
+      "samplingPeriodSeconds": 1,
+      "emitMinimumIntervalSeconds": 5,
+      "source": "python-host/runtime_observability.py WINDOW_NS / INTERVAL_NS and python-host/host.py monitor_event_loop_lag",
+      "windowsOverlap": true,
+      "windowMembershipCountsAreNotUniqueSamples": true,
+      "initialWindowMayIncludePreBoundSamples": true
+    },
+    "captureCounterDerivedThroughput": {
+      "startTs": "2026-10-17T20:58:35.157515+00:00",
+      "endTs": "2026-10-17T23:58:42.868020+00:00",
+      "elapsedSeconds": 10807.710505,
+      "completedDelta": 88307,
+      "completedPerSecond": 8.17074069102298,
+      "scope": "Difference of two same-track, unclipped observed completed counters divided by logged timestamp span. Does not measure content novelty, display presentation or input responsiveness; not full-session raw capture latency distribution."
+    }
+  },
+  "captureStats": {
+    "records": 2151,
+    "fields": {
+      "fps": {
+        "count": 2151,
+        "min": 12.7,
+        "max": 19.8,
+        "mean": 19.458251975824965
+      },
+      "frames": {
+        "count": 2151,
+        "min": 64.0,
+        "max": 100.0,
+        "mean": 97.78707577870757
+      },
+      "sleep": {
+        "count": 2151,
+        "min": 17.1,
+        "max": 41.3,
+        "mean": 36.11668991166904
+      },
+      "pause_wait": {
+        "count": 2151,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "capture_wait": {
+        "count": 2151,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "convert": {
+        "count": 2151,
+        "min": 1.5,
+        "max": 6.2,
+        "mean": 2.404974430497447
+      },
+      "recv_total": {
+        "count": 2151,
+        "min": 36.3,
+        "max": 47.4,
+        "mean": 43.68628544862846
+      },
+      "reuse": {
+        "count": 2151,
+        "min": 19.0,
+        "max": 74.0,
+        "mean": 57.75546257554626
+      },
+      "width": {
+        "count": 2151,
+        "min": 1152.0,
+        "max": 1152.0,
+        "mean": 1152.0
+      },
+      "height": {
+        "count": 2151,
+        "min": 720.0,
+        "max": 720.0,
+        "mean": 720.0
+      }
+    },
+    "reportedFramesSum": 210340.0,
+    "reportedReuseSum": 124232.0,
+    "windowFpsBelow15Records": 1,
+    "scope": "Each logged output/recv window can include reused capture content; output FPS and fresh callbacks do not prove captured-content freshness.",
+    "reportedReuseFraction": 0.590624702862033,
+    "reportedNonReuseOutputs": 86108.0,
+    "interpretation": "About 59% of reported output frames reused a prior image. Output around 19.46 FPS therefore does not establish 19.46 fresh MSS completions or visually new updates per second. Counter-derived MSS completion throughput is about 8.17/s in its own sampled counter interval. Underlying pacing, lock wait, OS capture, scheduling and image-content novelty are not isolated by these metrics."
+  },
+  "encoder": {
+    "records": 2150,
+    "encode": {
+      "avgMs": {
+        "count": 2150,
+        "min": 3.033,
+        "max": 14.284,
+        "mean": 5.067549767441856
+      },
+      "maxMs": {
+        "count": 2150,
+        "min": 5.422,
+        "max": 152.69,
+        "mean": 18.711195348837204
+      },
+      "p95Ms": {
+        "count": 2150,
+        "min": 4.667,
+        "max": 58.472,
+        "mean": 9.162633023255806
+      },
+      "count": {
+        "count": 2150,
+        "min": 72,
+        "max": 100,
+        "mean": 97.79813953488372
+      }
+    },
+    "totalEncodedFramesAcrossWindows": 210266,
+    "bitrateEffective": {
+      "count": 2150,
+      "min": 3200000,
+      "max": 3200000,
+      "mean": 3200000.0
+    },
+    "targetFps": {
+      "count": 2150,
+      "min": 20,
+      "max": 20,
+      "mean": 20.0
+    },
+    "size": {
+      "width": {
+        "count": 2150,
+        "min": 1152,
+        "max": 1152,
+        "mean": 1152.0
+      },
+      "height": {
+        "count": 2150,
+        "min": 720,
+        "max": 720,
+        "mean": 720.0
+      }
+    },
+    "keyframesTotals": {
+      "initial": 0,
+      "forced": 0,
+      "periodic": 0,
+      "pli": 0,
+      "safety": 1
+    },
+    "codecCounts": {
+      "h264_videotoolbox": 2150
+    },
+    "windowP95Above25MsRecords": 9,
+    "scope": "Five-second local encode windows; reported counts may omit final partial window. P95 ranges/counts of window P95 exceedances are not a pooled session P95."
+  },
+  "startupHostLocal": [
+    {
+      "hostLocalTime": "2026-10-18 04:58:33,376",
+      "event": "early_candidate_buffered"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:58:33,377",
+      "event": "offer_received"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:58:33,425",
+      "event": "ice_gathering"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:58:33,728",
+      "event": "ice_gathered"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:58:33,729",
+      "event": "answer_sent"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:58:34,574",
+      "event": "ice_connected"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:58:35,006",
+      "event": "webrtc_connected"
+    }
+  ],
+  "control": [
+    {
+      "ts": "2026-10-17T23:58:35.934Z",
+      "event": "signal_socket_disconnected",
+      "meta": {
+        "role": "viewer",
+        "reason": "transport close"
+      }
+    },
+    {
+      "ts": "2026-10-17T23:58:35.935Z",
+      "event": "viewer_disconnect_grace_started",
+      "meta": {
+        "graceMs": 8000
+      }
+    },
+    {
+      "ts": "2026-10-17T23:58:43.937Z",
+      "event": "control_transition_failed_closed",
+      "meta": {
+        "leaseEpoch": 4,
+        "reason": "controller-disconnect"
+      }
+    },
+    {
+      "ts": "2026-10-17T23:58:44.939Z",
+      "event": "control_reset_retry",
+      "meta": {
+        "leaseEpoch": 4,
+        "attempt": 1,
+        "reason": "controller-disconnect"
+      }
+    },
+    {
+      "ts": "2026-10-17T23:58:44.940Z",
+      "event": "control_reset_completed",
+      "meta": {
+        "leaseEpoch": 4,
+        "state": "FREE",
+        "status": "applied"
+      }
+    }
+  ],
+  "teardown": [
+    {
+      "hostLocalTime": "2026-10-18 04:58:33,377",
+      "reason": "new-offer",
+      "peerClosed": false,
+      "senderReleased": false,
+      "tasks": 0,
+      "track": null
+    },
+    {
+      "hostLocalTime": "2026-10-18 07:58:43,942",
+      "reason": "viewer-disconnected",
+      "peerClosed": false,
+      "senderReleased": false,
+      "tasks": 0,
+      "track": null
+    }
+  ],
+  "lifecycleCounts": {
+    "earlyCandidateBufferingWarning": 1,
+    "closingPeerConnection": 1,
+    "dataChannelClosedWarning": 2
+  },
+  "warningErrorCounts": {
+    "hostErrorOrCriticalLines": 0,
+    "warningLines": 594,
+    "hostLagWindowWarningLines": 591,
+    "earlyCandidateBuffering": 1,
+    "dataChannelClosed": 2,
+    "unclassifiedWarning": 0,
+    "signalStructuredLevels": {
+      "info": 187
+    }
+  },
+  "teardownReview": {
+    "classification": "observability gap; empty overlapping-close summary is not proof of detached resource release",
+    "sourceFactsReference": "/tmp/wrd-verified-warmup-short-log-audit.json teardownReview; same Host source/process unchanged",
+    "timelineLocal": [
+      {
+        "hostLocalTime": "2026-10-18 04:58:31,476",
+        "event": "viewer_status",
+        "onlineCount": 1
+      },
+      {
+        "hostLocalTime": "2026-10-18 04:58:33,377",
+        "event": "resource_summary",
+        "reason": "new-offer",
+        "peerClosed": false,
+        "senderReleased": false,
+        "track": null
+      },
+      {
+        "hostLocalTime": "2026-10-18 07:58:43,941",
+        "event": "nonempty_close_started",
+        "reason": "control-transition"
+      },
+      {
+        "hostLocalTime": "2026-10-18 07:58:43,941",
+        "event": "viewer_status",
+        "onlineCount": 0
+      },
+      {
+        "hostLocalTime": "2026-10-18 07:58:43,942",
+        "event": "resource_summary",
+        "reason": "viewer-disconnected",
+        "peerClosed": false,
+        "senderReleased": false,
+        "track": null
+      }
+    ],
+    "baselineAndPostState": [
+      {
+        "ts": "2026-10-17T20:58:18.145467+00:00",
+        "pcState": "none",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0,
+        "currentRssMiB": 324.86328125,
+        "captureState": "unavailable"
+      },
+      {
+        "ts": "2026-10-17T20:58:23.145510+00:00",
+        "pcState": "none",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0,
+        "currentRssMiB": 324.86328125,
+        "captureState": "unavailable"
+      },
+      {
+        "ts": "2026-10-17T20:58:29.174342+00:00",
+        "pcState": "none",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0,
+        "currentRssMiB": 324.86328125,
+        "captureState": "unavailable"
+      },
+      {
+        "ts": "2026-10-17T23:58:42.868020+00:00",
+        "pcState": "connected",
+        "threadCount": 8,
+        "taskCount": 13,
+        "inputWaiters": 0,
+        "currentRssMiB": 436.16796875,
+        "captureState": "idle"
+      },
+      {
+        "ts": "2026-10-17T23:58:47.869216+00:00",
+        "pcState": "none",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0,
+        "currentRssMiB": 432.859375,
+        "captureState": "unavailable"
+      },
+      {
+        "ts": "2026-10-17T23:58:53.868550+00:00",
+        "pcState": "none",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0,
+        "currentRssMiB": 432.828125,
+        "captureState": "unavailable"
+      },
+      {
+        "ts": "2026-10-17T23:58:58.870258+00:00",
+        "pcState": "none",
+        "threadCount": 6,
+        "taskCount": 7,
+        "inputWaiters": 0,
+        "currentRssMiB": 432.8046875,
+        "captureState": "unavailable"
+      }
+    ],
+    "positiveResourceLeakEvidenceEstablished": false,
+    "interpretation": "Current fields detach before awaited old-resource close. A second close can observe empty state and advance authority, suppressing the first completion summary. Logged thread/task/capture state returning to baseline is supporting evidence only, not object-level completion proof. Collector cleanupPending describes collector ownership only."
+  },
+  "coverageNotes": [
+    "Only exact recorded device/inode byte ranges were read, using the known one-rotation chain; no historical full scan. Raw lines remained in memory only.",
+    "All output fields are bounded allowlists. No raw templates, payloads, opaque connection IDs, token, credentials, SDP, input contents, coordinates, URL queries or event rings persisted.",
+    "Host structured events are embedded in back-debug.log; dedicated Host JSONL absent at both boundaries. Signal human/JSONL duplicate views are not additive.",
+    "No tests, builds, npm, Host imports, browser, network, service operations, or process sampling performed by this audit.",
+    "No raw complete latency distribution or exact cross-clock subtraction; no whole-session P95, causal claim, or cache-hit proof.",
+    "Actual input-to-picture, ACK round trip, visible effect and physical display NOT RUN in this read-only audit. Passive continuity/three-hour sampling acceptance is independently evaluated by root.",
+    "Host event loop snapshots are overlapping rolling 60-second windows sampled at 1 Hz and emitted about every 5–6 seconds. Summed sample counts are repeated memberships, not unique observations; first rolling window may include pre-bound samples."
+  ]
+}

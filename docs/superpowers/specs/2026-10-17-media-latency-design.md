@@ -1,6 +1,8 @@
 # 媒体、输入背压与真实延迟测量设计
 
-日期：2026-10-17。状态：设计与执行计划已编写，尚未实施。按用户授权采用 superpowers brainstorming 6.3.0 的 architectural 路径；总设计及本子项目由用户授权直接形成文档和复审，不重复询问流程。当前不改源码、配置或服务，不启动 Viewer、抓屏或真实输入。
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
+
+日期：2026-10-17。状态：设计已审查并实施，真实验收进行中。默认采用 superpowers brainstorming + writing-plans；用户已授权本轮实现及本地部署，不重复询问规划流程。
 
 上位约束：[整改总设计](2026-10-17-reliability-latency-remediation-design.md) §3、§5–7、§9。实现计划：[媒体与延迟计划](../plans/2026-10-17-media-latency-plan.md)。本文只拥有 M1–M5；C 拥有控制权、reset 和 authority，W 拥有网页诊断消费及系统资源采样。
 
@@ -57,7 +59,7 @@ takeClosedScopeSummaries({nowMs:number}): {summaries:Array<{endedAtMs:number,sna
 ]
 ```
 
-recvBytes是字节，elapsedMs是对应采样时长，不把它们当延迟。rtpApiAwaitMs仅为Host一个RTP包调用发送API到成功返回的同钟区间，不能称整帧发完。freshFrameAgeMs是Viewer同钟自最后确认新captureSeq帧的呈现到当前快照的年龄；它不减Host的时钟。该项为即时gauge：有同scope有效关联时count=1、p50/p95=last仅作共享schema占位，暂停或未知则unavailable；UI/报告只展示当前年龄，禁止把这两个占位值当采样分位分布。其他项为5秒事件样本。
+recvBytes是字节，elapsedMs是对应采样时长，不把它们当延迟。rtpApiAwaitMs仅为Host一个RTP包调用发送API到成功返回的同钟区间，不能称整帧发完。freshFrameAgeMs是Viewer同钟自最后确认新captureSeq帧的呈现到当前快照的年龄；它不减Host的时钟。该项为即时gauge：有同scope有效关联时count=1、p50/p95=last仅作共享schema占位，暂停或未知则unavailable；UI/报告只展示当前年龄，禁止把这两个占位值当采样分位分布。其他项为5秒事件样本。M2成功关联时保留原始rVFC Viewer时间，以同scope/video stream的captureSeq高水位去重；暂停清空gauge但保留高水位，恢复后拒绝暂停前/期间已呈现的迟到关联，换scope清空高水位。普通paint、ACK、frame_timing及无身份标量均不能更新该gauge。
 
 ### 3.2 统计生命周期与容量
 
@@ -70,7 +72,7 @@ recvBytes是字节，elapsedMs是对应采样时长，不把它们当延迟。rt
 
 ### 3.3 Host、Signal与relay边界
 
-新增纯 `python-host/input_timing.py` 的 `InputTiming` 记录 queued_ns、started_ns、finished_ns；键盘/桌面输入在真正入队、executor开始及结束分别打点。hostAdapterAwaitMs仍由Host围住adapter调用；hostQueueMs覆盖内部等待至原生调用开始，hostApplyMs覆盖原生调用至返回。失败或缺hook的子段为null。
+新增纯 `python-host/input_timing.py` 的 `InputTiming` 记录 queued_ns、started_ns、finished_ns；键盘/桌面输入在真正入队、executor开始及结束分别打点。hostAdapterAwaitMs仍由Host围住adapter调用；hostQueueMs覆盖内部等待至原生调用开始，hostApplyMs覆盖原生调用至返回。失败或缺hook的子段为null。M3外层Host准入队列等待发生在adapter入口之前，不计入这三个阶段；保留既有队列数量/字节/inflight/drop/frozen遥测。业务RTT减adapter总段后的剩余量仍含此准入等待及其他调度，不能称为网络耗时。
 
 ACK v2控制字段不变；新增可选 `timingSchemaVersion:1, hostAdapterAwaitMs, hostQueueMs, hostApplyMs`，各值为有限非负数或null；`hostExecuteMs`作为兼容别名只对应真实adapter-await。Signal `input-ack` 显式允许并转发这些字段，绝不补0。**输入v2 envelope不加字段**，内部时间和authority都走旁路状态。legacy Host只提供旧字段时不声称可拆queue/apply。数据缺失不改变ACK业务校验顺序。
 
@@ -180,7 +182,7 @@ captureSeq只在实际新抓屏成功时递增。重复输出保持旧captureSeq
 
 ### 7.2 代码完成与真实资格分开
 
-先完成纯fixture、选择器和禁用默认行为并独立review/提交；真实资格未取得时本任务代码可以完成，但扩展自适应仍disabled，真实矩阵和3小时连续验收保留NOT RUN。不能把未获本轮授权的真实编码/抓屏/输入验收作为文档或纯代码提交的前置条件。
+先完成纯fixture、选择器和禁用默认行为并独立review/提交；真实资格未取得时本任务代码可以完成，但扩展自适应仍disabled，真实矩阵和3小时连续验收保留NOT RUN。真实编码/抓屏/输入验收须满足既有维护窗口与隔离 guard；条件不足不影响纯代码提交，但不得把未运行项写成通过。
 
 维护窗口下才运行同内容、同分辨率、同码率预算与资源条件的实际矩阵；不同codec现有日志均值不能当A/B，不以跨钟relay latency降档。原生重开codec走既有coordinator且idempotent。真实inputToVisibleEffect用受控内容，150–200ms只是历史稳态目标。各路径短时通过后至少3小时连续会话，不抢占人工Viewer。buffer上限、采样成本和资源占用必须记录，若观测扰动目标则缩小诊断采样，不牺牲控制正确性。
 
@@ -194,4 +196,4 @@ captureSeq只在实际新抓屏成功时递增。重复输出保持旧captureSeq
 | M4 | L12/N13及capture语义 | M2；真实generator阶段、reuse和暂停计数 |
 | M5 | N3 | M1–M4、W完整loop/资源采样；资格门禁与真实验收 |
 
-本轮只保存spec/plan和证据，不改变需求的完成勾选。后续每任务有红绿行为测试、独立review和精确提交；任何未知原生安全退出、协议兼容或真实性能结果都不得写成已解决。
+实现按任务保存红绿行为测试、独立 review 和精确提交；未知原生安全退出、协议兼容或真实性能结果不得写成已解决。

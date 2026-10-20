@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "operations": "NOT_RUN",
+  "corrections": [
+    {
+      "kind": "receipt-mode-and-fixture-expectation",
+      "evidence": "pure-successor-run-1.log",
+      "observed": "historical tool mode384 vs initial pure assertion420; root independently confirmed all4mode384",
+      "rootInvalidReceiptSHA256": "df7e45749a679231ae87e6a8941915706212f545eae39e3d68a5c418f56f8505",
+      "resolution": "historical fixture assertion384; root new immutable fix1 receipt; no primary chmod"
+    },
+    {
+      "kind": "canonical-full-index-format",
+      "evidence": "static read-only comparison; first differing line3 index0000000..2231877 vs full40hex",
+      "shortPatchSHA256": "4a7373179af512c55b67e6cfba7580edaeb1797ef78d55f649943e0f3a50fe98",
+      "fullIndexPatchSHA256": "a6436f4951d25075101d730a21ed49a715f69e1116e219cce27c0067413966b1",
+      "invalidFix1ReceiptSHA256": "4b67f4e4c270d792a83c851c6cd4b3467942a16b42e349e40db8cd15a4f7b33f",
+      "resolution": "root immutable fix2 receipt; original patch and receipt retained"
+    }
+  ]
+}

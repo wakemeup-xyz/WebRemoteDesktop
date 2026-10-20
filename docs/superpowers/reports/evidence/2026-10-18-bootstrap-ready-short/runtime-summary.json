@@ -1,0 +1,641 @@
+{
+  "kind": "bootstrap-ready-short-bounded-log-audit",
+  "version": 1,
+  "run": "bootstrap-ready-short-20261018a",
+  "boundsUTC": {
+    "start": "2026-10-17T20:15:13.626912+00:00",
+    "end": "2026-10-17T20:21:00.226627+00:00",
+    "elapsedSeconds": 346.59243301604874
+  },
+  "windows": [
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "device": 16777220,
+      "inode": 43654875,
+      "startOffsetInclusive": 4905565,
+      "endOffsetExclusive": 5219849,
+      "bytes": 314284,
+      "lines": 1041,
+      "sha256": "8302f6bdd57e0aa37c8d8986534ca5fbcb84e15f03e6e18495f138a54d2a7f22",
+      "rotationNeeded": false,
+      "endsWithNewline": true
+    },
+    {
+      "path": "/tmp/signal-server.log",
+      "device": 16777220,
+      "inode": 31830923,
+      "startOffsetInclusive": 2292427,
+      "endOffsetExclusive": 2303024,
+      "bytes": 10597,
+      "lines": 365,
+      "sha256": "855a3bf42f73a9ceabca95998106bfcca23e0cfb2cf793e7d029501c431c2274",
+      "rotationNeeded": false,
+      "endsWithNewline": true
+    },
+    {
+      "path": "/tmp/wrd-structured/signal-server.jsonl",
+      "device": 16777220,
+      "inode": 43620520,
+      "startOffsetInclusive": 1096331,
+      "endOffsetExclusive": 1116253,
+      "bytes": 19922,
+      "lines": 14,
+      "sha256": "c75640f1cab0fe29b82bdb8d34983e2cd407ad676568187da38fa2e29bbcadc2",
+      "rotationNeeded": false,
+      "endsWithNewline": true
+    }
+  ],
+  "runSummary": {
+    "status": "PASS",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 303.4607789469883,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN"
+  },
+  "buildId": "6b2ad956f6a6cdd8",
+  "processes": {
+    "signalPid": 27319,
+    "signalBirthLocal": "2026-10-18 04:13:16",
+    "hostPid": 94398,
+    "unchangedAcrossBounds": true
+  },
+  "startupMarksBrowserMs": {
+    "start-click": 5297.2,
+    "bootstrap-start": 5298.6,
+    "bootstrap-ready": 6143.8,
+    "bootstrap-degraded": null,
+    "signal-connected": 8110,
+    "first-frame": 13246.7,
+    "active": 13246.7
+  },
+  "startupComparison": {
+    "currentClickToMs": {
+      "bootstrapReady": 846.6,
+      "signalConnected": 2812.8,
+      "firstFrame": 7949.5
+    },
+    "priorBaselineClickToMs": {
+      "bootstrapReady": 1678.1,
+      "signalConnected": 4151.7,
+      "firstFrame": 9156.8
+    },
+    "differenceCurrentMinusPriorMs": {
+      "bootstrapReady": -831.5,
+      "signalConnected": -1338.9,
+      "firstFrame": -1207.3
+    },
+    "scope": "single short run comparison only; no causal attribution or repeated-run latency distribution"
+  },
+  "bootstrap": {
+    "servedCount": 2,
+    "events": [
+      {
+        "ts": "2026-10-17T20:15:28.248Z",
+        "serverProcessMs": 2.66,
+        "hostOnline": true
+      },
+      {
+        "ts": "2026-10-17T20:15:31.021Z",
+        "serverProcessMs": 0.48,
+        "hostOnline": true
+      }
+    ],
+    "httpWindows": [
+      {
+        "window": {
+          "start": "2026-10-17T20:15:20.837Z",
+          "end": "2026-10-17T20:16:20.857Z",
+          "elapsedMs": 60019,
+          "missedWindows": 0,
+          "final": false,
+          "empty": false
+        },
+        "coverage": {
+          "startedAt": "2026-10-17T20:13:20.695Z",
+          "endedAt": null,
+          "completionCoverage": true,
+          "clipped": false,
+          "clockUnknown": false,
+          "collectionFailures": 0,
+          "loggerFailures": 0,
+          "storeFailures": 0
+        },
+        "bootstrap": {
+          "started": 2,
+          "completed": 2,
+          "aborted": 0,
+          "closedUnfinished": 0,
+          "untracked": 0,
+          "expiredUnfinished": 0,
+          "stoppedInflight": 0,
+          "inflight": 0,
+          "status": {
+            "1xx": 0,
+            "2xx": 2,
+            "3xx": 0,
+            "4xx": 0,
+            "5xx": 0,
+            "other": 0,
+            "s401": 0,
+            "s403": 0,
+            "s429": 0
+          },
+          "duration": {
+            "le10": 0,
+            "le50": 1,
+            "le100": 1,
+            "le500": 0,
+            "le1000": 0,
+            "le5000": 0,
+            "le15000": 0,
+            "gt15000": 0,
+            "count": 2,
+            "sumMs": 83,
+            "maxMs": 59,
+            "unknown": 0
+          }
+        }
+      }
+    ],
+    "cacheHitProven": false,
+    "warmupStartMapping": "First served precedes approximate browser Start UTC anchor; second follows it. No direct warmup/request correlation ID or cache disposition in bounded evidence; 3s TTL plus proof/admission cost can expire cache before Start uses it. Do not assume hit.",
+    "approximateBrowserStartUTC": "2026-10-17T20:15:30.630200+00:00"
+  },
+  "hostLag": {
+    "records": 62,
+    "severityCounts": {
+      "critical": 52,
+      "warning": 10
+    },
+    "pcStateCounts": {
+      "none": 6,
+      "connected": 56
+    },
+    "stats": {
+      "lagMs": {
+        "count": 62,
+        "min": 0.241,
+        "max": 591.335,
+        "mean": 28.16974193548387
+      },
+      "maxLagMs": {
+        "count": 62,
+        "min": 80.166,
+        "max": 591.335,
+        "mean": 232.87738709677419
+      },
+      "sampleCount": {
+        "count": 62,
+        "min": 60,
+        "max": 61,
+        "mean": 60.435483870967744
+      },
+      "taskCount": {
+        "count": 62,
+        "min": 7,
+        "max": 15,
+        "mean": 12.774193548387096
+      },
+      "threadCount": {
+        "count": 62,
+        "min": 6,
+        "max": 8,
+        "mean": 7.806451612903226
+      },
+      "currentRssMiB": {
+        "count": 62,
+        "min": 85.3125,
+        "max": 396.640625,
+        "mean": 321.3223916330645
+      },
+      "peakRssMiB": {
+        "count": 62,
+        "min": 473.4453125,
+        "max": 473.4453125,
+        "mean": 473.4453125
+      },
+      "eventLoop.count": {
+        "count": 62,
+        "min": 60,
+        "max": 61,
+        "mean": 60.33870967741935
+      },
+      "eventLoop.max": {
+        "count": 62,
+        "min": 80.166011,
+        "max": 591.334756,
+        "mean": 232.87741617741935
+      },
+      "eventLoop.p50": {
+        "count": 62,
+        "min": 0.679967,
+        "max": 23.856401,
+        "mean": 8.6127395
+      },
+      "eventLoop.p95": {
+        "count": 62,
+        "min": 10.872242,
+        "max": 133.756881,
+        "mean": 76.14808630645162
+      },
+      "eventLoop.p99": {
+        "count": 62,
+        "min": 80.166011,
+        "max": 591.334756,
+        "mean": 232.87741617741935
+      },
+      "eventLoop.missedSampleCount": {
+        "count": 62,
+        "min": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "resources.ageMs": {
+        "count": 62,
+        "min": 323.611095,
+        "max": 4954.204248,
+        "mean": 2835.7108641290324
+      },
+      "resources.swapInBytesPerSec": {
+        "count": 62,
+        "min": 0.0,
+        "max": 940630.1031889134,
+        "mean": 167511.57278718485
+      },
+      "resources.swapOutBytesPerSec": {
+        "count": 62,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "systemLoad1": {
+        "count": 62,
+        "min": 20.193,
+        "max": 174.258,
+        "mean": 94.52354838709677
+      }
+    },
+    "completeWindowSampleCountSum": 3741,
+    "missedSampleCountSum": 0,
+    "collectorStates": [
+      {
+        "state": {
+          "busy": false,
+          "cleanupPending": false,
+          "ownerAlive": true,
+          "state": "idle"
+        },
+        "records": 49
+      },
+      {
+        "state": {
+          "busy": true,
+          "cleanupPending": false,
+          "ownerAlive": true,
+          "state": "busy"
+        },
+        "records": 13
+      }
+    ],
+    "resourceStatusCounts": {
+      "ok": 62
+    },
+    "memoryPressureCounts": {
+      "unknown": 62
+    },
+    "captureStateCounts": {
+      "unavailable": 6,
+      "grabbing": 56
+    },
+    "pairedCaptureLifetimeMaximum": {
+      "scope": "track-lifetime",
+      "maxDurationMs": 779.08,
+      "maxDurationThreadCpuMs": 31.093,
+      "maxDurationNonCpuMs": 747.987,
+      "attempted": 498,
+      "completed": 497,
+      "failed": 0,
+      "clipped": false
+    },
+    "captureNumericStats": {
+      "lastDurationMs": {
+        "count": 56,
+        "min": 93.334,
+        "max": 723.382,
+        "mean": 245.77746428571427
+      },
+      "lastThreadCpuMs": {
+        "count": 56,
+        "min": 17.049,
+        "max": 30.689,
+        "mean": 22.635428571428573
+      },
+      "lastNonCpuMs": {
+        "count": 56,
+        "min": 73.267,
+        "max": 693.08,
+        "mean": 223.14207142857143
+      },
+      "maxDurationMs": {
+        "count": 56,
+        "min": 713.005,
+        "max": 779.08,
+        "mean": 760.1792142857144
+      },
+      "currentGrabAgeMs": {
+        "count": 56,
+        "min": 2.191,
+        "max": 395.823,
+        "mean": 117.70857142857143
+      },
+      "attempted": {
+        "count": 56,
+        "min": 13,
+        "max": 1278,
+        "mean": 641.2857142857143
+      },
+      "completed": {
+        "count": 56,
+        "min": 12,
+        "max": 1277,
+        "mean": 640.2857142857143
+      },
+      "failed": {
+        "count": 56,
+        "min": 0,
+        "max": 0,
+        "mean": 0
+      }
+    },
+    "topLagRecords": [
+      {
+        "ts": "2026-10-17T20:17:42.686068+00:00",
+        "lagMs": 591.335,
+        "pcState": "connected",
+        "captureState": "grabbing",
+        "captureLastDurationMs": 723.382,
+        "captureLastThreadCpuMs": 30.303,
+        "captureLastNonCpuMs": 693.08
+      },
+      {
+        "ts": "2026-10-17T20:19:00.219518+00:00",
+        "lagMs": 123.572,
+        "pcState": "connected",
+        "captureState": "grabbing",
+        "captureLastDurationMs": 118.821,
+        "captureLastThreadCpuMs": 18.043,
+        "captureLastNonCpuMs": 100.778
+      },
+      {
+        "ts": "2026-10-17T20:16:46.212478+00:00",
+        "lagMs": 119.347,
+        "pcState": "connected",
+        "captureState": "grabbing",
+        "captureLastDurationMs": 464.857,
+        "captureLastThreadCpuMs": 18.567,
+        "captureLastNonCpuMs": 446.29
+      },
+      {
+        "ts": "2026-10-17T20:18:55.193603+00:00",
+        "lagMs": 97.733,
+        "pcState": "connected",
+        "captureState": "grabbing",
+        "captureLastDurationMs": 183.724,
+        "captureLastThreadCpuMs": 21.549,
+        "captureLastNonCpuMs": 162.175
+      },
+      {
+        "ts": "2026-10-17T20:17:31.169945+00:00",
+        "lagMs": 74.792,
+        "pcState": "connected",
+        "captureState": "grabbing",
+        "captureLastDurationMs": 261.522,
+        "captureLastThreadCpuMs": 22.416,
+        "captureLastNonCpuMs": 239.106
+      }
+    ],
+    "scope": "62 reported complete sampled windows; field p95/p99 are per-window sample statistics, not full session distribution; lifetime maxima may repeat and do not count incidents; snapshots do not establish cause",
+    "timestampCoverage": {
+      "first": "2026-10-17T20:15:17.092686+00:00",
+      "last": "2026-10-17T20:20:56.144408+00:00",
+      "spanSeconds": 339.051722,
+      "maxEventGapSeconds": 6.111633
+    },
+    "captureNonCpuInterpretation": "Reported non-CPU time is paired capture wall time minus measured capture thread CPU time; it does not identify scheduler, OS capture, contention or other cause."
+  },
+  "captureStats": {
+    "records": 61,
+    "fields": {
+      "fps": {
+        "count": 61,
+        "min": 3.6,
+        "max": 18.6,
+        "mean": 13.055737704918032
+      },
+      "frames": {
+        "count": 61,
+        "min": 18.0,
+        "max": 93.0,
+        "mean": 65.93442622950819
+      },
+      "sleep": {
+        "count": 61,
+        "min": 1.1,
+        "max": 15.4,
+        "mean": 9.181967213114755
+      },
+      "pause_wait": {
+        "count": 61,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "capture_wait": {
+        "count": 61,
+        "min": 0.0,
+        "max": 0.0,
+        "mean": 0.0
+      },
+      "convert": {
+        "count": 61,
+        "min": 6.5,
+        "max": 75.0,
+        "mean": 13.408196721311475
+      },
+      "recv_total": {
+        "count": 61,
+        "min": 32.5,
+        "max": 190.0,
+        "mean": 49.21311475409836
+      },
+      "reuse": {
+        "count": 61,
+        "min": 7.0,
+        "max": 69.0,
+        "mean": 45.49180327868852
+      }
+    }
+  },
+  "encoder": {
+    "records": 61,
+    "encode": {
+      "avgMs": {
+        "count": 61,
+        "min": 13.327,
+        "max": 88.958,
+        "mean": 23.796573770491804
+      },
+      "maxMs": {
+        "count": 61,
+        "min": 36.721,
+        "max": 585.972,
+        "mean": 151.0819344262295
+      },
+      "p95Ms": {
+        "count": 61,
+        "min": 19.569,
+        "max": 461.796,
+        "mean": 77.03304918032786
+      },
+      "count": {
+        "count": 61,
+        "min": 18,
+        "max": 94,
+        "mean": 66.54098360655738
+      }
+    },
+    "totalEncodedFramesAcrossWindows": 4059,
+    "bitrateEffective": {
+      "count": 61,
+      "min": 3200000,
+      "max": 3200000,
+      "mean": 3200000
+    },
+    "keyframesTotals": {
+      "initial": 0,
+      "forced": 0,
+      "periodic": 0,
+      "pli": 0,
+      "safety": 1
+    },
+    "codecCounts": {
+      "h264_videotoolbox": 61
+    },
+    "rateNoOpRecords": 58,
+    "scope": "Per-log-window metrics; summary of p95 values is not a pooled session p95. Summed encode counts/keyframes reflect reported records only; unlogged boundary work is not asserted."
+  },
+  "startupHostLocal": [
+    {
+      "hostLocalTime": "2026-10-18 04:15:34,799",
+      "event": "buffered_early_candidate"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:15:34,903",
+      "event": "offer"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:15:35,339",
+      "event": "ice_gathering"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:15:35,502",
+      "event": "ice_gathered"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:15:35,537",
+      "event": "answer_sent"
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:15:37,196",
+      "event": "ice_connected"
+    }
+  ],
+  "control": [
+    {
+      "ts": "2026-10-17T20:20:39.381Z",
+      "event": "viewer_disconnect_grace_started",
+      "meta": {
+        "graceMs": 8000
+      }
+    },
+    {
+      "ts": "2026-10-17T20:20:47.384Z",
+      "event": "control_transition_failed_closed",
+      "meta": {
+        "reason": "controller-disconnect",
+        "leaseEpoch": 2
+      }
+    },
+    {
+      "ts": "2026-10-17T20:20:48.387Z",
+      "event": "control_reset_retry",
+      "meta": {
+        "reason": "controller-disconnect",
+        "leaseEpoch": 2,
+        "attempt": 1
+      }
+    },
+    {
+      "ts": "2026-10-17T20:20:48.428Z",
+      "event": "control_reset_completed",
+      "meta": {
+        "leaseEpoch": 2,
+        "state": "FREE",
+        "status": "applied"
+      }
+    }
+  ],
+  "teardown": [
+    {
+      "hostLocalTime": "2026-10-18 04:15:34,924",
+      "reason": "new-offer",
+      "peerClosed": false,
+      "senderReleased": false,
+      "tasks": 0
+    },
+    {
+      "hostLocalTime": "2026-10-18 04:20:47,745",
+      "reason": "viewer-disconnected",
+      "peerClosed": true,
+      "senderReleased": true,
+      "tasks": 0,
+      "track": {
+        "captureRunning": false,
+        "captureThreadAlive": false,
+        "captureSeq": 1281,
+        "targetGeneration": 0,
+        "pendingInputIds": 0,
+        "executorShutdown": true
+      }
+    }
+  ],
+  "warningErrorCounts": {
+    "hostErrorOrCriticalLines": 0,
+    "hostEventLoopLagWarnings": 62,
+    "hostEarlyCandidateBufferingWarning": 1,
+    "hostDataChannelClosedWarnings": 2,
+    "signalStructuredLevels": {
+      "info": 14
+    },
+    "signalHumanBootstrapEventCount": 2,
+    "signalHumanExplicitErrorTokens": 0
+  },
+  "coverageNotes": [
+    "Exact same-inode [startOffset,endOffset) byte reads only; current inode checked against both metadata snapshots. No whole-log scan; no rotation needed.",
+    "Host JSON events parsed from back-debug.log; dedicated /tmp/wrd-structured/host.jsonl absent in both metadata captures.",
+    "Signal human log and JSONL are overlapping evidence; bootstrap count uses JSONL canonical events, corroborated by human log.",
+    "Entry windows emitted during byte interval include a leading aggregate beginning before metadata start; last aggregate ends 20:20:20.984Z, before final capture at 20:21:00.226627Z. Do not extend aggregate denominator to the full interval.",
+    "No raw tokens, SDP, inputs, coordinates, socket identifiers, attempt identifiers or passwords in report JSON.",
+    "No exact browser/Host/Signal cross-clock subtraction. Browser marks are same-clock deltas; wall-clock alignment is approximate and ordering only.",
+    "Short run PASS does not establish 10800s continuity, visible effect, physical display, active-control latency or causal optimization benefit.",
+    "Reload operation remains indeterminate because Registry observation unavailable; independent fresh loaded-state evidence does not change operation classification.",
+    "Window boundary lines are complete (newlines at all ends); metadata byte windows cover 346.592s. Host lag timestamps cover a narrower span; zero missed samples refers to reported windows only."
+  ]
+}

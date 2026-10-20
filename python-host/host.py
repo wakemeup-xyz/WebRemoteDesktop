@@ -5,6 +5,8 @@ Captures screen using MSS and streams via aiortc (WebRTC)
 """
 
 import asyncio
+import uuid
+from input_timing import relay_ack_duration_ms
 import contextvars
 import hashlib
 import json
@@ -16,6 +18,7 @@ import time
 import re
 import subprocess
 import io
+import math
 import os
 import inspect
 import resource
@@ -46,11 +49,14 @@ from h264_encoder_policy import (
     PolicySelection,
     policy_version_from_environment,
     resolve_h264_policy,
+    select_measured_media_policy,
 )
 from media_apply_coordinator import MediaApplyCoordinator, MediaApplyIdentity
+from dc_diagnostic_admission import DiagnosticAdmission
 from media_timing import RtpFrameClock
-from media_stage_metrics import FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
+from media_stage_metrics import FrameKey, FrameTraceRegistry, SenderFrameTraceContext, StageMetrics
 from rtp_frame_observer import RtpFrameObserver, install_aiortc_observer
+from input_frame_causality import InputFrameCausality
 from observability import (
     configure_host_logging,
     emit_host_event,
@@ -60,9 +66,18 @@ from observability import (
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 from capture_experiment import CaptureExperiment
+from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
+from capture_resource_owner import CaptureResourceOwner
+from peer_cleanup_observation import PeerCleanupObservation, SEQUENCE_CAP, peer_cleanup_json
+from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
+from relay_frame_worker import RelayFrameWorker
+from runtime_observability import (
+    RuntimeObservability, ResourceSampler, snapshot_relay_queue,
+    CaptureObservation, unavailable_capture_observation,
+)
 
 if __name__ == "__main__":
-    configure_host_logging()
+    host_log_handler = configure_host_logging()
 else:
     logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -129,14 +144,11 @@ try:
     _aiortc_rtcrtpsender.get_encoder = _patched_get_encoder
     _aiortc_rtcrtpsender.RTCRtpSender._next_encoded_frame = _patched_next_encoded_frame
 
-    # Detailed trace is an explicit Lab opt-in. Production's counter-only
-    # media path does not install private aiortc wrappers at all.
-    _rtp_frame_observer = None
-    if os.environ.get("WRD_FRAME_TRACE_DETAIL") == "1":
-        _rtp_frame_observer = RtpFrameObserver()
-        _rtp_observer_ready, _rtp_observer_reason = install_aiortc_observer(_rtp_frame_observer)
-        if not _rtp_observer_ready:
-            logger.warning("RTP frame trace observer unavailable: %s", _rtp_observer_reason)
+    # Basic input correlation is sparse and ABI checked; detailed stages stay opt-in.
+    _rtp_frame_observer = RtpFrameObserver()
+    _rtp_observer_ready, _rtp_observer_reason = install_aiortc_observer(_rtp_frame_observer)
+    if not _rtp_observer_ready:
+        logger.warning("RTP frame observer unavailable: %s", _rtp_observer_reason)
 
     # Reorder video codecs so H.264 is preferred over VP8 in SDP negotiation
     video_codecs = _aiortc_codecs.CODECS["video"]
@@ -584,26 +596,108 @@ class OverlayNotifier:
             pass
 
 
+class RelayOutputBuffer(io.BytesIO):
+    def write(self, data):
+        if self.tell() + len(data) > 16 * 1024 * 1024:
+            raise ValueError('relay output exceeds buffer budget')
+        return super().write(data)
+
+
+class RelayJpegProcessor:
+    """All capture objects and image buffers belong exclusively to the worker."""
+    def __init__(self):
+        self.sct = None
+        self.monitor = None
+
+    def __call__(self, request):
+        if self.sct is None:
+            self.sct = MSS()
+            self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
+        width, height = self.monitor['width'], self.monitor['height']
+        if width > 8192 or height > 8192 or width * height * 4 > 256 * 1024 * 1024:
+            raise ValueError('relay source exceeds buffer budget')
+        if request['width'] * request['height'] * 3 > 64 * 1024 * 1024:
+            raise ValueError('relay target exceeds buffer budget')
+        started = time.monotonic()
+        shot = self.sct.grab(self.monitor)
+        # asarray is a view of MSS BGRA, avoiding a second full BGRA allocation.
+        img = np.asarray(shot)
+        h, w = img.shape[:2]
+        factor = 1
+        for f in (2, 3, 4):
+            if w // f <= request['width'] and h // f <= request['height']:
+                factor = f
+                break
+        if factor > 1:
+            img = img[::factor, ::factor]
+        if img.shape[0] * img.shape[1] * 3 > 64 * 1024 * 1024:
+            raise ValueError('relay image exceeds target buffer budget')
+        image = Image.fromarray(img[:, :, 2::-1])
+        try:
+            buffer = RelayOutputBuffer()
+            image.save(buffer, format='JPEG', quality=request['quality'], optimize=False, subsampling=2)
+            if buffer.tell() > 16 * 1024 * 1024:
+                raise ValueError('relay output exceeds buffer budget')
+            return {'data': buffer.getvalue(), 'width': image.width, 'height': image.height,
+                    'encodeMs': (time.monotonic() - started) * 1000}
+        finally:
+            image.close()
+
+    def close(self):
+        if self.sct is not None:
+            self.sct.close()
+            self.sct = None
+
+
+RELAY_FRAME_SLOT_TTL_MS = 2000
+RELAY_SAFE_INTEGER = 9007199254740991
+
+
+def valid_relay_nonce(value, limit):
+    return isinstance(value, str) and 0 < len(value) <= limit and all(32 <= ord(c) <= 126 for c in value)
+
+
+def valid_relay_integer(value, minimum=0):
+    return type(value) is int and minimum <= value <= RELAY_SAFE_INTEGER
+
+
+def valid_relay_scope(scope):
+    return (isinstance(scope, dict)
+            and set(scope) == {'producerId', 'productionGeneration', 'connectionAttemptId', 'mediaGeneration', 'leaseEpoch'}
+            and valid_relay_nonce(scope.get('producerId'), 64)
+            and valid_relay_nonce(scope.get('connectionAttemptId'), 128)
+            and valid_relay_integer(scope.get('productionGeneration'), 1)
+            and valid_relay_integer(scope.get('mediaGeneration'))
+            and valid_relay_integer(scope.get('leaseEpoch'), 1))
+
+
 class TunnelRelayStreamer:
     """Low-FPS JPEG stream over Socket.IO/Cloudflare for networks where WebRTC ICE fails."""
+    _retiring_worker = None
 
     def __init__(self, sio):
         self.sio = sio
         self.task = None
+        self._jpeg_worker = None
         self.viewer_id = None
         self.enabled = False
         self.suspended = False
         self.production_generation = 0
+        self._lifecycle_generation = 0
         self.width = 960
         self.height = 540
         self.fps = 8
         self.profile_name = "medium"
         self.jpeg_quality = 26
         self.frame_id = 0
+        self.producer_id = None
+        self._relay_binding = None
+        self._authority_is_current = None
+        self._reset_relay_observation()
         self.ack_event = asyncio.Event()
         self.last_acked_frame_id = 0
         self.inflight_frames = {}
-        self.stats_started_at = time.time()
+        self.stats_started_at = time.monotonic()
         self.stats_frames = 0
         self.stats_acked = 0
         self.stats_bytes = 0
@@ -687,6 +781,161 @@ class TunnelRelayStreamer:
     def should_wait_before_capture(self):
         return self.pending_frame_count() >= self.max_in_flight_frames
 
+    @property
+    def relay_scope(self):
+        if not self.producer_id or not self._relay_binding:
+            return None
+        scope = {**self._relay_binding, 'producerId': self.producer_id,
+                 'productionGeneration': self.production_generation}
+        return scope if valid_relay_scope(scope) else None
+
+    def _reset_relay_observation(self):
+        self.expired_frame_count = 0
+        self.unmatched_ack_count = 0
+        self.timeout_count = 0
+        self.coalesced_count = 0
+        self.feedback_sequence = 0
+        self.sample_sequence = 0
+        self._pending_feedback_sample = None
+        self._last_feedback_at_ms = None
+        self._last_sent_at_ms = None
+        self._last_ack_at_ms = None
+        self._feedback_unavailable = False
+
+    def bind_media_scope(self, binding):
+        previous = self.relay_scope
+        self._relay_binding = dict(binding) if binding else None
+        if self.relay_scope != previous:
+            self.inflight_frames.clear()
+            self.ack_event.set()
+            self._reset_relay_observation()
+
+    def _increment(self, name, amount=1):
+        setattr(self, name, min(RELAY_SAFE_INTEGER, getattr(self, name) + amount))
+
+    def expire_inflight(self, now_ms):
+        expired = [fid for fid, meta in self.inflight_frames.items()
+                   if now_ms - meta['sent_at_ms'] >= RELAY_FRAME_SLOT_TTL_MS]
+        for fid in expired:
+            self.inflight_frames.pop(fid, None)
+        if expired:
+            self._increment('expired_frame_count', len(expired))
+            self.ack_event.set()
+        return len(expired)
+
+    def drop_inflight_for_backpressure(self, reason):
+        """Release stale delivery slots after a bounded ACK wait.
+
+        A timed-out frame is no longer useful to a latest-frame relay. Keeping
+        it in ``inflight_frames`` until the normal two-second TTL makes the
+        next capture wait behind an old packet and turns a short transport
+        stall into a long tail. The late ACK remains safely unmatched because
+        the frame metadata is removed here.
+        """
+        dropped = len(self.inflight_frames)
+        if dropped:
+            # Keep the newest slot for feedback/diagnostics. It is the only
+            # candidate that can still represent the latest frame; older
+            # slots are the backlog that causes the long tail.
+            newest_id = max(self.inflight_frames)
+            newest = self.inflight_frames[newest_id]
+            self.inflight_frames.clear()
+            if dropped > 1:
+                self.inflight_frames[newest_id] = newest
+                dropped -= 1
+            # These frames were intentionally coalesced by the latest-frame
+            # policy; they did not expire by age and must not look like a
+            # transport timeout in the feedback summary.
+            self._increment('coalesced_count', dropped)
+            self.ack_event.set()
+            logger.debug(
+                "Tunnel relay dropped stale frames viewer=%s count=%s reason=%s",
+                self.viewer_id, dropped, reason,
+            )
+        return dropped
+
+    async def emit_feedback_if_due(self, now_ms):
+        scope = self.relay_scope
+        if not scope or self.suspended or self._feedback_unavailable:
+            return
+        if self._last_feedback_at_ms is not None and now_ms - self._last_feedback_at_ms < 1000:
+            return
+        if self.feedback_sequence >= RELAY_SAFE_INTEGER:
+            self._feedback_unavailable = True
+            logger.warning('Tunnel relay feedback sequence exhausted; observation unavailable')
+            return
+        self.feedback_sequence += 1
+        self._last_feedback_at_ms = now_ms
+        sample = self._pending_feedback_sample
+        self._pending_feedback_sample = None
+        ages = [now_ms - meta['sent_at_ms'] for meta in self.inflight_frames.values()]
+        payload = {
+            'relayFrameSchemaVersion': 1, 'relayScope': scope, 'viewerId': self.viewer_id,
+            'feedbackSequence': self.feedback_sequence, 'sample': sample,
+            'pendingCount': self.pending_frame_count(),
+            'oldestPendingAgeMs': max(ages) if ages else None,
+            'expiredCount': self.expired_frame_count, 'unmatchedAckCount': self.unmatched_ack_count,
+            'timeoutCount': self.timeout_count, 'coalescedCount': self.coalesced_count,
+            'lastSentAgeMs': None if self._last_sent_at_ms is None else max(0, now_ms - self._last_sent_at_ms),
+            'lastAckAgeMs': None if self._last_ack_at_ms is None else max(0, now_ms - self._last_ack_at_ms),
+        }
+        try:
+            await self.sio.emit('relay-frame-feedback', payload)
+        except Exception:
+            # Diagnostics never stop or queue the media producer.
+            logger.debug('Tunnel relay feedback emit failed')
+
+    def _production_is_current(self, generation, scope):
+        return (self.enabled and not self.suspended and generation == self.production_generation
+                and scope == self.relay_scope
+                and (self._authority_is_current is None or self._authority_is_current()))
+
+    def _capture_transport_token(self):
+        """Freeze producer identity and the exact transport accounting owner."""
+        try:
+            scope = self.relay_scope
+            sio = self.sio
+            eio = sio.eio
+            return (asyncio.current_task(), self.production_generation,
+                    dict(scope) if scope is not None else None,
+                    sio, eio, eio.queue, eio.write_loop_task)
+        except Exception:
+            return None
+
+    def _transport_token_is_current(self, token):
+        try:
+            task, generation, scope, sio, eio, queue, writer = token
+            return bool(
+                self.enabled and not self.suspended and self.viewer_id
+                and self.task is task and asyncio.current_task() is task
+                and self._production_is_current(generation, scope)
+                and self.sio is sio and sio.eio is eio
+                and eio.queue is queue and eio.write_loop_task is writer
+                and sio.connected and eio.state == 'connected'
+                and writer is not None and not writer.done()
+                and callable(queue.join)
+            )
+        except Exception:
+            return False
+
+    async def _wait_for_transport_admission(self, token):
+        # qsize misses packets already held by the writer. Only join includes
+        # those unfinished packets; its timeout never grants admission.
+        if not self._transport_token_is_current(token):
+            await asyncio.sleep(0.25)
+            return False
+        try:
+            await asyncio.wait_for(token[5].join(), timeout=0.25)
+        except asyncio.TimeoutError:
+            return False
+        except Exception:
+            await asyncio.sleep(0.25)
+            return False
+        if not self._transport_token_is_current(token):
+            await asyncio.sleep(0.25)
+            return False
+        return True
+
     def _record_ack_feedback(self, latency_ms):
         try:
             latency_ms = float(latency_ms)
@@ -711,15 +960,24 @@ class TunnelRelayStreamer:
         else:
             self.good_ack_streak = 0
 
-    async def start(self, viewer_id, width=960, height=540, fps=8):
-        await self.stop()
+    async def start(self, viewer_id, width=960, height=540, fps=8, *, authority_is_current=None, media_scope=None):
+        operation = await self.stop()
+        # stop() reserves its generation before awaiting the old producer. A
+        # newer stop/start invalidates this continuation even on a detached relay.
+        if operation != self._lifecycle_generation or (
+            authority_is_current is not None and not authority_is_current()
+        ):
+            return False
+        retiring = TunnelRelayStreamer._retiring_worker
+        if retiring is not None and not retiring.stopped:
+            return False
         self.viewer_id = viewer_id
         self._apply_profile(self._pick_initial_profile(width, height, fps), reason="start", log=False)
         self.frame_id = 0
         self.last_acked_frame_id = 0
         self.inflight_frames = {}
         self.ack_event.clear()
-        self.stats_started_at = time.time()
+        self.stats_started_at = time.monotonic()
         self.stats_frames = 0
         self.stats_acked = 0
         self.stats_bytes = 0
@@ -731,6 +989,10 @@ class TunnelRelayStreamer:
         self.last_ack_latency_ms = None
         self.suspended = False
         self.production_generation += 1
+        self.producer_id = str(uuid.uuid4())
+        self._relay_binding = dict(media_scope) if media_scope else None
+        self._authority_is_current = authority_is_current
+        self._reset_relay_observation()
         self.enabled = True
         self.task = asyncio.create_task(self._run())
         logger.info(
@@ -745,18 +1007,37 @@ class TunnelRelayStreamer:
         )
 
     async def stop(self):
+        self._lifecycle_generation = getattr(self, "_lifecycle_generation", 0) + 1
+        operation = self._lifecycle_generation
+        self.production_generation += 1
         self.enabled = False
         self.suspended = False
         self.inflight_frames = {}
-        if self.task:
-            self.task.cancel()
+        self.ack_event.set()
+        self._relay_binding = None
+        self._reset_relay_observation()
+        closing_task = self.task
+        worker = getattr(self, '_jpeg_worker', None)
+        if worker is not None:
+            TunnelRelayStreamer._retiring_worker = worker
+            worker.invalidate(self.production_generation)
+        self.task = None
+        if closing_task:
+            closing_task.cancel()
             try:
-                await self.task
+                await closing_task
             except asyncio.CancelledError:
                 pass
-            self.task = None
+        if worker is not None:
+            if await worker.stop():
+                if TunnelRelayStreamer._retiring_worker is worker:
+                    TunnelRelayStreamer._retiring_worker = None
+                if self._jpeg_worker is worker:
+                    self._jpeg_worker = None
+        # A timed-out worker stays retained and forbids another native thread.
+        return operation
 
-    def set_suspended(self, suspended):
+    def set_suspended(self, suspended, *, media_scope=None, authority_is_current=None):
         """Pause production without tearing down the relay task lifecycle."""
         suspended = bool(suspended)
         self.suspended = suspended
@@ -768,26 +1049,56 @@ class TunnelRelayStreamer:
         else:
             self.production_generation += 1
             self.ack_event.set()
+        if media_scope is not None:
+            self._relay_binding = dict(media_scope)
+        if authority_is_current is not None:
+            self._authority_is_current = authority_is_current
+        self.inflight_frames.clear()
+        self._reset_relay_observation()
+        worker = getattr(self, '_jpeg_worker', None)
+        if worker is not None:
+            worker.invalidate(self.production_generation)
         return self.production_generation
 
-    def ack(self, frame_id, latency_ms=None):
-        try:
-            frame_id = int(frame_id)
-        except Exception:
-            return
-        if frame_id > self.last_acked_frame_id:
-            frame_meta = self.inflight_frames.pop(frame_id, None)
-            self.last_acked_frame_id = frame_id
-            self.stats_acked += 1
-            self.ack_event.set()
-            measured_ms = latency_ms
-            if measured_ms is None and frame_meta and frame_meta.get("sent_at_ms") is not None:
-                measured_ms = time.monotonic() * 1000.0 - frame_meta["sent_at_ms"]
-            if measured_ms is not None:
-                self._record_ack_feedback(measured_ms)
+    def ack(self, frame_id, latency_ms=None, *, relay_scope=None, relay_frame_schema_version=None):
+        now_ms = time.monotonic() * 1000.0
+        self.expire_inflight(now_ms)
+        if (self.relay_scope is not None and (
+                type(relay_frame_schema_version) is not int or relay_frame_schema_version != 1
+                or not valid_relay_scope(relay_scope) or relay_scope != self.relay_scope)):
+            self._increment('unmatched_ack_count')
+            return False
+        if not valid_relay_integer(frame_id, 1):
+            self._increment('unmatched_ack_count')
+            return False
+        meta = self.inflight_frames.get(frame_id)
+        if not meta or meta.get('generation') != self.production_generation or meta.get('relayScope') != self.relay_scope:
+            self._increment('unmatched_ack_count')
+            return False
+        self.inflight_frames.pop(frame_id, None)
+        self.ack_event.set()
+        self.last_acked_frame_id = max(self.last_acked_frame_id, frame_id)
+        measured_ms = relay_ack_duration_ms(meta.get('sent_at_ms'), now_ms)
+        if measured_ms is None:
+            return False
+        self.stats_acked += 1
+        self._last_ack_at_ms = now_ms
+        self._record_ack_feedback(measured_ms)
+        if self.relay_scope and not self._feedback_unavailable:
+            if self.sample_sequence >= RELAY_SAFE_INTEGER:
+                self._feedback_unavailable = True
+                logger.warning('Tunnel relay sample sequence exhausted; observation unavailable')
+            else:
+                self.sample_sequence += 1
+                if self._pending_feedback_sample is not None:
+                    self._increment('coalesced_count')
+                self._pending_feedback_sample = {'sampleSequence': self.sample_sequence,
+                                                'relayFrameAckRttMs': measured_ms}
+        return True
 
     def note_ack_timeout(self, reason):
         self.stats_timeout_count += 1
+        self._increment('timeout_count')
         self.good_ack_streak = 0
         self.step_down_profile(reason)
 
@@ -795,130 +1106,152 @@ class TunnelRelayStreamer:
         return (self.frame_id - self.last_acked_frame_id) > self.max_in_flight_frames
 
     async def _run(self):
-        with MSS() as sct:
-            monitor = select_capture_monitor(sct.monitors, fallback_monitors=get_screeninfo_monitors())
-            while self.enabled and self.viewer_id:
-                frame_interval = 1 / max(1, self.fps)
-                ack_timeout = max(0.35, min(1.5, frame_interval * 4))
-                if self.suspended:
-                    # No new capture/encode/emit while media is intentionally suspended.
-                    await asyncio.sleep(max(0.05, frame_interval))
-                    continue
-                if self.should_wait_before_capture():
-                    try:
-                        await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
-                        self.ack_event.clear()
-                        continue
-                    except asyncio.TimeoutError:
-                        self.ack_event.clear()
-                        logger.debug(
-                            "Tunnel relay backpressure timeout viewer=%s pending=%s profile=%s",
-                            self.viewer_id,
-                            self.pending_frame_count(),
-                            self.profile_name,
-                        )
-                        self.note_ack_timeout("pre-capture-backpressure")
-                        continue
-
-                started = time.time()
-                production_generation = self.production_generation
+        self._jpeg_worker = RelayFrameWorker(RelayJpegProcessor())
+        self._jpeg_worker.invalidate(self.production_generation)
+        while self.enabled and self.viewer_id and self.task is asyncio.current_task():
+            frame_interval = 1 / max(1, self.fps)
+            ack_timeout = max(0.35, min(1.5, frame_interval * 4))
+            if self.suspended:
+                # No new capture/encode/emit while media is intentionally suspended.
+                await asyncio.sleep(max(0.05, frame_interval))
+                continue
+            self.expire_inflight(time.monotonic() * 1000.0)
+            try:
+                authority_current = self._authority_is_current is None or self._authority_is_current()
+            except Exception:
+                authority_current = False
+            if not authority_current:
+                self.inflight_frames.clear()
+                self.ack_event.set()
+                await asyncio.sleep(max(0.05, frame_interval))
+                continue
+            token = self._capture_transport_token()
+            if not await self._wait_for_transport_admission(token):
+                continue
+            await self.emit_feedback_if_due(time.monotonic() * 1000.0)
+            if not self._transport_token_is_current(token):
+                await asyncio.sleep(0.25)
+                continue
+            if self.should_wait_before_capture():
                 try:
-                    if self.suspended:
-                        continue
-                    shot = sct.grab(monitor)
-                    if self.suspended or production_generation != self.production_generation:
-                        continue
-                    # Fast path: numpy stride downsample then PIL JPEG encode
-                    img = np.array(shot)  # BGRA
-                    h, w = img.shape[:2]
-                    # Pick integer stride factor for fast downsample
-                    factor = 1
-                    for f in (2, 3, 4):
-                        if w // f <= self.width and h // f <= self.height:
-                            factor = f
-                            break
-                    if factor > 1:
-                        img = img[::factor, ::factor]
-                    # Convert BGRA to RGB for JPEG
-                    rgb = img[:, :, 2::-1]
-                    image = Image.fromarray(rgb)
-                    buffer = io.BytesIO()
-                    image.save(buffer, format="JPEG", quality=self.jpeg_quality, optimize=False, subsampling=2)
-                    jpeg_bytes = buffer.getvalue()
-                    encode_ms = (time.time() - started) * 1000
-                    self.frame_id += 1
-                    frame_id = self.frame_id
-                    sent_at_ms = time.monotonic() * 1000.0
-                    self.inflight_frames[frame_id] = {
-                        "sent_at_ms": sent_at_ms,
+                    await asyncio.wait_for(self.ack_event.wait(), timeout=ack_timeout)
+                    self.ack_event.clear()
+                    continue
+                except asyncio.TimeoutError:
+                    self.ack_event.clear()
+                    logger.debug(
+                        "Tunnel relay backpressure timeout viewer=%s pending=%s profile=%s",
+                        self.viewer_id,
+                        self.pending_frame_count(),
+                        self.profile_name,
+                    )
+                    self.note_ack_timeout("pre-capture-backpressure")
+                    self.drop_inflight_for_backpressure("pre-capture-timeout")
+                    self.expire_inflight(time.monotonic() * 1000.0)
+                    continue
+
+            started = time.monotonic()
+            production_generation, relay_scope = token[1:3]
+            try:
+                if not self._transport_token_is_current(token):
+                    await asyncio.sleep(0.25)
+                    continue
+                frame = await self._jpeg_worker.submit_latest({
+                    'generation': production_generation, 'relayScope': relay_scope, 'width': self.width,
+                    'height': self.height, 'quality': self.jpeg_quality,
+                })
+                if frame is None or not self._transport_token_is_current(token):
+                    await asyncio.sleep(0.25)
+                    continue
+                jpeg_bytes = frame['data']
+                encode_ms = frame['encodeMs']
+                self.frame_id += 1
+                frame_id = self.frame_id
+                sent_at_ms = time.monotonic() * 1000.0
+                self.inflight_frames[frame_id] = {
+                    "sent_at_ms": sent_at_ms,
+                    "generation": production_generation,
+                    "relayScope": relay_scope,
+                    "profile": self.profile_name,
+                    "quality": self.jpeg_quality,
+                    "width": frame['width'],
+                    "height": frame['height'],
+                }
+                if not self._transport_token_is_current(token):
+                    self.inflight_frames.pop(frame_id, None)
+                    await asyncio.sleep(0.25)
+                    continue
+                try:
+                    await token[3].emit("relay-frame", {
+                        **({"relayFrameSchemaVersion": 1, "relayScope": relay_scope} if relay_scope else {}),
+                        "viewerId": self.viewer_id,
+                        "frameId": frame_id,
+                        "width": frame['width'],
+                        "height": frame['height'],
+                        "timestamp": int(time.time() * 1000),
+                        "mime": "image/jpeg",
+                        "bytes": len(jpeg_bytes),
                         "profile": self.profile_name,
                         "quality": self.jpeg_quality,
-                        "width": image.width,
-                        "height": image.height,
-                    }
-                    if self.suspended or production_generation != self.production_generation:
-                        self.inflight_frames.pop(frame_id, None)
-                        continue
-                    try:
-                        await self.sio.emit("relay-frame", {
-                            "viewerId": self.viewer_id,
-                            "frameId": frame_id,
-                            "width": image.width,
-                            "height": image.height,
-                            "timestamp": int(time.time() * 1000),
-                            "mime": "image/jpeg",
-                            "bytes": len(jpeg_bytes),
-                            "profile": self.profile_name,
-                            "quality": self.jpeg_quality,
-                            "maxInFlightFrames": self.max_in_flight_frames,
-                            "productionGeneration": production_generation,
-                            "data": jpeg_bytes,
-                        })
-                        self.stats_frames += 1
-                        self.stats_bytes += len(jpeg_bytes)
-                        self.stats_encode_ms += encode_ms
-                    except Exception:
-                        self.inflight_frames.pop(frame_id, None)
-                        raise
-                except asyncio.TimeoutError:
-                    logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
-                    self.note_ack_timeout("post-send-backpressure")
-                except Exception as e:
-                    logger.warning(f"Tunnel relay frame failed: {e}")
+                        "maxInFlightFrames": self.max_in_flight_frames,
+                        "productionGeneration": production_generation,
+                        "data": jpeg_bytes,
+                    })
+                    if self._production_is_current(production_generation, relay_scope):
+                        self._last_sent_at_ms = sent_at_ms
+                    self.stats_frames += 1
+                    self.stats_bytes += len(jpeg_bytes)
+                    self.stats_encode_ms += encode_ms
+                except Exception:
+                    self.inflight_frames.pop(frame_id, None)
+                    self.ack_event.set()
+                    raise
+            except asyncio.TimeoutError:
+                logger.debug("Tunnel relay frame ack timeout viewer=%s frame=%s", self.viewer_id, self.frame_id)
+                self.note_ack_timeout("post-send-backpressure")
+                self.drop_inflight_for_backpressure("post-send-timeout")
+            except ValueError:
+                # Buffer limits stop this media task; never silently resize.
+                self.enabled = False
+                logger.warning('Tunnel relay stopped: buffer budget exceeded')
+            except Exception as e:
+                logger.warning('Tunnel relay frame failed: %s', type(e).__name__)
+            finally:
+                frame = jpeg_bytes = None
 
-                elapsed = time.time() - started
-                now = time.time()
-                if now - self.stats_started_at >= 5:
-                    duration = max(0.001, now - self.stats_started_at)
-                    avg_kb = (self.stats_bytes / max(1, self.stats_frames)) / 1024
-                    avg_encode = self.stats_encode_ms / max(1, self.stats_frames)
-                    avg_ack_latency = self.stats_ack_latency_ms / max(1, self.stats_ack_samples)
-                    logger.info(
-                        "TUNNEL_RELAY_STATS viewer=%s profile=%s fps=%.1f sent=%s acked=%s pending=%s timeouts=%s avg_kb=%.1f avg_encode_ms=%.1f avg_ack_ms=%.1f size=%sx%s quality=%s max_in_flight=%s",
-                        self.viewer_id,
-                        self.profile_name,
-                        self.stats_frames / duration,
-                        self.stats_frames,
-                        self.stats_acked,
-                        self.pending_frame_count(),
-                        self.stats_timeout_count,
-                        avg_kb,
-                        avg_encode,
-                        avg_ack_latency,
-                        self.width,
-                        self.height,
-                        self.jpeg_quality,
-                        self.max_in_flight_frames,
-                    )
-                    self.stats_started_at = now
-                    self.stats_frames = 0
-                    self.stats_acked = 0
-                    self.stats_bytes = 0
-                    self.stats_encode_ms = 0.0
-                    self.stats_ack_latency_ms = 0.0
-                    self.stats_ack_samples = 0
-                    self.stats_timeout_count = 0
-                await asyncio.sleep(max(0.001, frame_interval - elapsed))
+            elapsed = time.monotonic() - started
+            now = time.monotonic()
+            if now - self.stats_started_at >= 5:
+                duration = max(0.001, now - self.stats_started_at)
+                avg_kb = (self.stats_bytes / max(1, self.stats_frames)) / 1024
+                avg_encode = self.stats_encode_ms / max(1, self.stats_frames)
+                avg_ack_latency = self.stats_ack_latency_ms / max(1, self.stats_ack_samples)
+                logger.info(
+                    "TUNNEL_RELAY_STATS viewer=%s profile=%s fps=%.1f sent=%s acked=%s pending=%s timeouts=%s avg_kb=%.1f avg_encode_ms=%.1f avg_ack_ms=%.1f size=%sx%s quality=%s max_in_flight=%s",
+                    self.viewer_id,
+                    self.profile_name,
+                    self.stats_frames / duration,
+                    self.stats_frames,
+                    self.stats_acked,
+                    self.pending_frame_count(),
+                    self.stats_timeout_count,
+                    avg_kb,
+                    avg_encode,
+                    avg_ack_latency,
+                    self.width,
+                    self.height,
+                    self.jpeg_quality,
+                    self.max_in_flight_frames,
+                )
+                self.stats_started_at = now
+                self.stats_frames = 0
+                self.stats_acked = 0
+                self.stats_bytes = 0
+                self.stats_encode_ms = 0.0
+                self.stats_ack_latency_ms = 0.0
+                self.stats_ack_samples = 0
+                self.stats_timeout_count = 0
+            await asyncio.sleep(max(0.001, frame_interval - elapsed))
 
 
 def format_keyboard_command(action, payload):
@@ -1050,9 +1383,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
         if capture_strategy is not None and not isinstance(capture_strategy, CaptureExperiment):
             raise TypeError("capture_strategy must be a CaptureExperiment or None")
         self.sct = MSS()
+        self._capture_resource_owner = CaptureResourceOwner(self.sct)
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
-        self.last_time = time.time()
+        self.last_time = time.monotonic()
         self._frame_clock = RtpFrameClock()
         self._last_frame_time = 0
         self._target_fps = target_fps
@@ -1076,6 +1410,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._process_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="imgproc")
         self._timing_totals = {
             "sleep": 0.0,
+            "pause_wait": 0.0,
             "capture_wait": 0.0,
             "convert": 0.0,
             "total": 0.0,
@@ -1094,13 +1429,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._activity_condition = threading.Condition()
         self._suspended = False
         self._capture_generation = 0
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._capture_thread.start()
+        self._capture_observation = CaptureObservation()
+        self._capture_cadence = CaptureCadenceObserver()
 
         # Cache last processed frame for reuse when capture starves
         self._last_img = None
         self._last_img_shape = (0, 0)
         self._last_img_target_generation = -1
+        self._last_img_capture = (0, None)
         self._reuse_count = 0
         self._total_reuse = 0
 
@@ -1118,6 +1454,25 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "cpuStartedNs": time.process_time_ns(),
         }
         self._trace_interval_lock = threading.Lock()
+        self._host_ref = None
+        self._capture_shutdown_join = 'not-requested'
+        self._executor_shutdown_requested = False
+        # Every field visible to a fast worker exists before Thread.start().
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        try:
+            self._capture_thread.start()
+        except BaseException:
+            # A start failure can race a late worker entry. Stop first, then
+            # atomically claim fallback closure only if no worker owns it.
+            with self._activity_condition:
+                self._capture_running = False
+                self._capture_generation += 1
+                self._activity_condition.notify_all()
+            self._capture_resource_owner.close_unclaimed()
+            self.sct = None
+            self._executor_shutdown_requested = True
+            self._process_executor.shutdown(wait=False)
+            raise
 
         logger.info(
             "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s",
@@ -1127,48 +1482,150 @@ class ScreenCaptureTrack(VideoStreamTrack):
             max_height,
             HAS_CV2,
         )
-        self._host_ref = None
 
     def _capture_loop(self):
-        """Continuously capture screenshots in background thread.
-        Capture pacing follows the current media profile to avoid wasted work."""
-        while self._capture_running:
-            with self._activity_condition:
-                while self._capture_running and self._suspended:
-                    self._activity_condition.wait(timeout=0.2)
-                if not self._capture_running:
-                    break
-            with self._target_lock:
-                target_fps = self._target_fps
-            _min_interval = 1.0 / self.capture_fps_for_target(target_fps, capture_strategy=self._capture_strategy)
-            grab_started_ns = time.monotonic_ns()
+        """Continuously capture screenshots with unchanged media-profile pacing."""
+        cadence = getattr(self, '_capture_cadence', None)
+
+        def observe(observer, name, *args, **kwargs):
+            # Only instrumentation is fail-open; native/business exceptions keep
+            # their original behavior, including the existing 5ms error retry.
             try:
-                # Gate again immediately before MSS grab.
-                if self._suspended or not self._capture_running:
-                    continue
-                shot = self.sct.grab(self.monitor)
-                grab_finished_ns = time.monotonic_ns()
-                captured = False
-                with self._capture_lock:
-                    if self._suspended:
-                        continue
-                    self._capture_buffer = shot
-                    self._capture_seq += 1
-                    self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
-                    captured = True
-                    while len(self._capture_bounds_ns) > 2048:
-                        self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
-                if captured and self._frame_trace_context is not None:
-                    self._increment_trace_interval(captures=1)
-                with self._activity_condition:
-                    self._activity_condition.notify_all()
+                if observer is not None:
+                    return getattr(observer, name)(*args, **kwargs)
             except Exception:
-                time.sleep(0.005)
-                continue
-            elapsed = (time.monotonic_ns() - grab_started_ns) / 1_000_000_000
-            sleep_time = max(0.0, _min_interval - elapsed)
-            if sleep_time > 0.001:
-                time.sleep(sleep_time)
+                pass
+
+        def cadence_now():
+            if cadence is not None:
+                try:
+                    return time.monotonic_ns()
+                except Exception:
+                    return None
+            return None
+
+        def phase(name):
+            if cadence is not None:
+                observe(cadence, 'phase', name, cadence_now())
+
+        def difference(end, start):
+            return end - start if type(end) is int and type(start) is int else None
+
+        def current_thread_cpu_ns():
+            try:
+                return time.thread_time_ns()
+            except Exception:
+                return None
+
+        owner = self._capture_resource_owner
+        resource = owner.claim_worker()
+        if resource is None:
+            return
+        try:
+            while self._capture_running:
+                phase('activity-gate')
+                with self._activity_condition:
+                    while self._capture_running and self._suspended:
+                        observe(cadence, 'break_continuity', 'suspended')
+                        phase('suspended')
+                        self._activity_condition.wait(timeout=0.2)
+                    if not self._capture_running:
+                        break
+                phase('target-config')
+                with self._target_lock:
+                    target_fps = self._target_fps
+                    target_generation = getattr(self, '_target_generation', 0)
+                capture_generation = getattr(self, '_capture_generation', 0)
+                _min_interval = 1.0 / self.capture_fps_for_target(target_fps, capture_strategy=self._capture_strategy)
+                grab_completed = False
+                captured = False
+                publish_wait_started_ns = publish_entered_ns = publish_exited_ns = None
+                # Mark the phase before the original wall/CPU grab bracket. Cycle
+                # aggregation is deferred until that bracket has finished, so its
+                # CPU belongs to postGrab rather than grab/non-CPU time.
+                phase('grab')
+                grab_started_ns = time.monotonic_ns()
+                try:
+                    # Gate again immediately before MSS grab.
+                    if self._suspended or not self._capture_running:
+                        observe(cadence, 'break_continuity', 'suspended' if self._suspended else 'stopped')
+                        continue
+                    cpu_started_ns = current_thread_cpu_ns()
+                    observe(self._capture_observation, 'begin', grab_started_ns, thread_cpu_ns=cpu_started_ns)
+                    try:
+                        shot = resource.grab(self.monitor)
+                    except Exception:
+                        cpu_finished_ns = current_thread_cpu_ns()
+                        grab_finished_ns = time.monotonic_ns()
+                        observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=False,
+                                thread_cpu_ns=cpu_finished_ns)
+                        observe(cadence, 'start', grab_started_ns,
+                            capture_generation=capture_generation, target_generation=target_generation,
+                            min_interval_ns=int(_min_interval * 1_000_000_000))
+                        raise
+                    cpu_finished_ns = current_thread_cpu_ns()
+                    grab_finished_ns = time.monotonic_ns()
+                    grab_completed = True
+                    observe(self._capture_observation, 'finish', grab_finished_ns, succeeded=True,
+                            thread_cpu_ns=cpu_finished_ns)
+                    observe(cadence, 'start', grab_started_ns,
+                        capture_generation=capture_generation, target_generation=target_generation,
+                        min_interval_ns=int(_min_interval * 1_000_000_000))
+                    phase('publish')
+                    publish_wait_started_ns = cadence_now()
+                    with self._capture_lock:
+                        publish_entered_ns = cadence_now()
+                        if (not self._capture_running or self._suspended or
+                                capture_generation != self._capture_generation):
+                            observe(cadence, 'break_continuity', 'discarded')
+                            continue
+                        self._capture_buffer = shot
+                        self._capture_seq += 1
+                        self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
+                        captured = True
+                        while len(self._capture_bounds_ns) > 2048:
+                            self._capture_bounds_ns.pop(next(iter(self._capture_bounds_ns)))
+                        publish_exited_ns = cadence_now()
+                    phase('post-publish')
+                    if captured and self._frame_trace_context is not None:
+                        self._increment_trace_interval(captures=1)
+                    with self._activity_condition:
+                        self._activity_condition.notify_all()
+                except Exception:
+                    if cadence is not None and grab_completed and captured:
+                        # Publication already happened even if trace/notification
+                        # failed. Count its outcome, then break before any interval
+                        # can be admitted across the existing error retry.
+                        failed_post_ns = cadence_now()
+                        observe(cadence, 'finish', grab_finished_ns=grab_finished_ns,
+                            post_grab_finished_ns=failed_post_ns, sleep_started_ns=failed_post_ns,
+                            sleep_finished_ns=failed_post_ns, sleep_requested_ns=0,
+                            publish_lock_wait_ns=difference(publish_entered_ns, publish_wait_started_ns),
+                            publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=True)
+                    observe(cadence, 'break_continuity', 'publish-error' if grab_completed else 'error')
+                    phase('error')
+                    time.sleep(0.005)
+                    continue
+                # This is the original elapsed endpoint and >1ms pacing policy.
+                post_grab_finished_ns = time.monotonic_ns()
+                elapsed = (post_grab_finished_ns - grab_started_ns) / 1_000_000_000
+                sleep_time = max(0.0, _min_interval - elapsed)
+                phase('pacing')
+                sleep_started_ns = cadence_now()
+                if sleep_time > 0.001:
+                    time.sleep(sleep_time)
+                sleep_finished_ns = cadence_now() if sleep_time > 0.001 else sleep_started_ns
+                if cadence is not None:
+                    observe(cadence, 'finish', grab_finished_ns=grab_finished_ns,
+                        post_grab_finished_ns=post_grab_finished_ns,
+                        sleep_started_ns=sleep_started_ns, sleep_finished_ns=sleep_finished_ns,
+                        sleep_requested_ns=int(sleep_time * 1_000_000_000) if sleep_time > 0.001 else 0,
+                        publish_lock_wait_ns=difference(publish_entered_ns, publish_wait_started_ns),
+                        publish_critical_ns=difference(publish_exited_ns, publish_entered_ns), published=captured)
+        finally:
+            observe(cadence, 'break_continuity', 'stopped')
+            phase('stopped')
+            owner.close_worker()
 
     def set_suspended(self, suspended):
         """Gate MSS capture/conversion. Returns capture_seq baseline at transition."""
@@ -1177,6 +1634,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             was = self._suspended
             self._suspended = suspended
             if was != suspended:
+                self._release_input_frame_reservations()
                 self._capture_generation += 1
             self._activity_condition.notify_all()
         if suspended:
@@ -1185,6 +1643,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 getattr(self, "_capture_bounds_ns", {}).clear()
                 self._last_img = None
                 self._last_img_target_generation = -1
+                self._last_img_capture = (0, None)
             with self._pending_input_lock:
                 self._pending_input_ids.clear()
                 self._pending_input_data.clear()
@@ -1204,40 +1663,67 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
     async def shutdown(self):
         """Async shutdown: never blocks the event loop."""
+        self._release_input_frame_reservations()
         with self._activity_condition:
             self._capture_running = False
             self._suspended = False
             self._capture_generation += 1
             self._activity_condition.notify_all()
-        if self._capture_thread and self._capture_thread.is_alive():
-            try:
-                await asyncio.to_thread(self._capture_thread.join, timeout=2.0)
-            except Exception:
-                pass
-        self._process_executor.shutdown(wait=False)
-        if self.sct:
-            try:
-                await asyncio.to_thread(self.sct.close)
-            except Exception:
-                pass
-        # Release the last captured image and correlation buffers after the
-        # worker has stopped.  A reconnect creates a fresh track; retaining
-        # these references on the old track needlessly keeps a large BGRA
-        # frame and pending input metadata alive across offers.
-        with self._capture_lock:
-            self._capture_buffer = None
-            self._capture_bounds_ns.clear()
-        with self._pending_input_lock:
-            self._pending_input_ids.clear()
-            self._pending_input_data.clear()
-        self._last_img = None
-        self._last_img_shape = (0, 0)
-        self._frame_trace_context = None
-        self.sct = None
+        thread = getattr(self, '_capture_thread', None)
+        try:
+            if thread is not None and thread.is_alive():
+                self._capture_shutdown_join = 'pending'
+                try:
+                    await asyncio.to_thread(thread.join, timeout=2.0)
+                except asyncio.CancelledError:
+                    self._capture_shutdown_join = 'unknown'
+                    raise
+                except Exception:
+                    self._capture_shutdown_join = 'unknown'
+                else:
+                    self._capture_shutdown_join = 'pending' if thread.is_alive() else 'returned'
+        finally:
+            # Request-only executor evidence; wait=False proves no termination.
+            self._executor_shutdown_requested = True
+            self._process_executor.shutdown(wait=False)
+            # A late grab keeps its worker-local native resource, but cannot
+            # publish after the stop flag/generation changed. No caller close.
+            with self._capture_lock:
+                self._capture_buffer = None
+                self._capture_bounds_ns.clear()
+            with self._pending_input_lock:
+                self._pending_input_ids.clear()
+                self._pending_input_data.clear()
+            self._last_img = None
+            self._last_img_shape = (0, 0)
+            self._last_img_capture = (0, None)
+            self._frame_trace_context = None
+            self.sct = None
+
+    def capture_observation_snapshot(self, now_ns):
+        """Read scalar operation evidence without waiting for capture or output."""
+        observation = getattr(self, '_capture_observation', None)
+        if observation is None:
+            return unavailable_capture_observation()
+        thread = getattr(self, '_capture_thread', None)
+        running = bool(getattr(self, '_capture_running', False))
+        suspended = bool(getattr(self, '_suspended', False))
+        thread_alive = bool(thread is not None and thread.is_alive())
+        thread_started = thread is not None and thread.ident is not None
+        result = observation.snapshot(now_ns, running=running, suspended=suspended,
+                                      thread_alive=thread_alive, thread_started=thread_started)
+        cadence = getattr(self, '_capture_cadence', None)
+        try:
+            result['cadence'] = cadence.snapshot(now_ns) if cadence is not None else unavailable_capture_cadence()
+        except Exception:
+            result['cadence'] = unavailable_capture_cadence()
+        return result
 
     def resource_snapshot(self) -> dict:
         """Return bounded lifecycle counters for disconnect/reconnect audits."""
         executor = getattr(self, "_process_executor", None)
+        owner = getattr(self, '_capture_resource_owner', None)
+        close_state = owner.snapshot()['state'] if owner is not None else 'unknown'
         return {
             "captureRunning": bool(getattr(self, "_capture_running", False)),
             "captureThreadAlive": bool(
@@ -1246,11 +1732,25 @@ class ScreenCaptureTrack(VideoStreamTrack):
             "captureSeq": int(getattr(self, "_capture_seq", 0) or 0),
             "targetGeneration": int(getattr(self, "_target_generation", 0) or 0),
             "pendingInputIds": len(getattr(self, "_pending_input_ids", ()) or ()),
+            "captureCloseState": close_state,
+            "captureShutdownJoin": getattr(self, '_capture_shutdown_join', 'not-requested'),
+            # Both executor fields mean shutdown requested, never released.
             "executorShutdown": bool(getattr(executor, "_shutdown", False)),
+            "executorShutdownRequested": bool(getattr(self, '_executor_shutdown_requested', False)
+                or getattr(executor, '_shutdown', False)),
         }
 
     async def next_timestamp(self):
         return self._frame_clock.next_timestamp()
+
+    async def _wait_while_suspended(self):
+        """Return only intentional pause wait, on the recv duration clock."""
+        if not self._suspended:
+            return 0.0
+        started = time.perf_counter()
+        while self._suspended and self._capture_running:
+            await asyncio.sleep(0.05)
+        return time.perf_counter() - started
 
     async def recv(self):
         loop = asyncio.get_event_loop()
@@ -1259,24 +1759,22 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
         # Suspended: block until resumed/stop. Do not return blank frames that
         # would still be encoded and inflate RTP while media is paused.
-        while self._suspended and self._capture_running:
-            await asyncio.sleep(0.05)
+        pause_wait = await self._wait_while_suspended()
         if not self._capture_running:
             raise MediaStreamError
 
         # Frame-rate control
-        now = time.time()
+        now = time.monotonic()
         elapsed = now - self._last_frame_time
         if elapsed < self._frame_interval:
             sleep_time = self._frame_interval - elapsed
             await asyncio.sleep(sleep_time)
         # Re-check after pacing sleep: suspension may have started mid-wait.
         if self._suspended:
-            while self._suspended and self._capture_running:
-                await asyncio.sleep(0.05)
+            pause_wait += await self._wait_while_suspended()
             if not self._capture_running:
                 raise MediaStreamError
-        self._last_frame_time = time.time()
+        self._last_frame_time = time.monotonic()
 
         # Zero-wait: grab latest capture from background thread
         with self._capture_lock:
@@ -1287,6 +1785,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 screenshot = self._capture_buffer
                 seq = self._capture_seq
                 self._capture_buffer = None
+            selected_grab_bounds = self._capture_bounds_ns.get(seq)
+        selected_host = getattr(self, "_host_ref", None)
+        selected_scope = selected_host._input_observation_scope() if hasattr(selected_host, "_input_observation_scope") else None
 
         capture_wait = 0.0  # never block — capture runs independently
 
@@ -1309,6 +1810,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
             if getattr(self, "_last_img_target_generation", -1) == target_generation
             else None
         )
+        # Cache pixels and their source identity are selected together before
+        # awaiting the worker. A failed new capture may return these old pixels.
+        fallback_capture = getattr(self, "_last_img_capture", (0, None)) if fallback_img is not None else (0, None)
         selected_at_ns = time.monotonic_ns()
         queued_at = selected_at_ns
         try:
@@ -1344,16 +1848,26 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._last_img = cached_img
             self._last_img_shape = cached_img.shape[:2]
             self._last_img_target_generation = target_generation
+            self._last_img_capture = (seq, selected_grab_bounds)
             self._reuse_count = 0
         elif reused:
             self._reuse_count += 1
             self._total_reuse += 1
+        fresh_output = cached_img is not None and fresh and not reused
+        if fresh_output:
+            output_capture_seq, output_grab_bounds = seq, selected_grab_bounds
+        elif worker_timing["source"] == "cache":
+            output_capture_seq, output_grab_bounds = fallback_capture
+        else:
+            # Blank frames carry no capture evidence, including when they were
+            # built after a failed fresh capture or an invalid cached image.
+            output_capture_seq, output_grab_bounds = 0, None
 
         trace_context = getattr(self, "_frame_trace_context", None)
         # aiortc encodes the prior recv result before asking this track for the
         # next one. Cut before registering this output, so every completed
         # encoder stage stays with its own registered output window.
-        if trace_context is not None and time.time() - self.last_time >= 5:
+        if trace_context is not None and time.monotonic() - self.last_time >= 5:
             logger.info("WRD_FRAME_TRACE_SUMMARY %s", json.dumps(
                 self._frame_trace_summary(trace_context),
                 separators=(",", ":"), sort_keys=True,
@@ -1363,45 +1877,56 @@ class ScreenCaptureTrack(VideoStreamTrack):
         frame.pts = pts
         frame.time_base = time_base
         if trace_context is not None:
-            capture_seq = seq if fresh else self._last_consumed_seq
-            with self._capture_lock:
-                grab_bounds = self._capture_bounds_ns.get(capture_seq)
             encoder_timestamp = int(round(float(pts * time_base * 90_000))) & 0xFFFFFFFF
-            trace_key = trace_context.key(capture_seq, encoder_timestamp)
+            trace_key = trace_context.key(output_capture_seq, encoder_timestamp)
             self._record_output_trace(
-                trace_context, trace_key, pts, grab_bounds, selected_at_ns, worker_timing,
-                fresh=fresh, reused=reused,
+                trace_context, trace_key, pts, output_grab_bounds, selected_at_ns, worker_timing,
+                fresh=fresh_output, reused=reused,
             )
             self._send_frame_trace_batch()
+        if fresh_output and selected_scope is not None and selected_grab_bounds is not None:
+            try:
+                key = FrameKey(selected_scope[0], selected_scope[1], "video", seq,
+                               int(round(float(pts * time_base * 90_000))) & 0xffffffff)
+                selected_host._input_frame_causality.reserve_for_capture(
+                    key, capture_started_ns=selected_grab_bounds[0], reused=reused or not fresh,
+                    scope=selected_scope)
+            except Exception:
+                pass  # observation must never interrupt capture
         convert_time = worker_timing["construct"]
-        total_time = time.perf_counter() - recv_start
+        # Pacing is active recv work; intentional pause wait has its own label.
+        total_time = max(0.0, time.perf_counter() - recv_start - pause_wait)
 
         self._timing_totals["sleep"] += sleep_time
+        self._timing_totals["pause_wait"] = self._timing_totals.get("pause_wait", 0.0) + pause_wait
         self._timing_totals["capture_wait"] += capture_wait
         self._timing_totals["convert"] += convert_time
         self._timing_totals["total"] += total_time
         self._timing_count += 1
 
         self.frame_count += 1
-        current_time = time.time()
+        current_time = time.monotonic()
         if current_time - self.last_time >= 5:
-            fps = self.frame_count / (current_time - self.last_time)
+            interval_reuse = self._total_reuse
+            interval_frames = self.frame_count
+            fps = interval_frames / (current_time - self.last_time)
             if self._timing_count:
                 avg = {
                     key: value / self._timing_count * 1000
                     for key, value in self._timing_totals.items()
                 }
                 logger.info(
-                    "CAPTURE_STATS fps=%.1f frames=%d avg_ms sleep=%.1f capture_wait=%.1f convert=%.1f recv_total=%.1f frame=%dx%d reuse=%d",
+                    "CAPTURE_STATS fps=%.1f frames=%d avg_ms sleep=%.1f pause_wait=%.1f capture_wait=%.1f convert=%.1f recv_total=%.1f frame=%dx%d reuse=%d",
                     fps,
-                    self.frame_count,
+                    interval_frames,
                     avg["sleep"],
+                    avg["pause_wait"],
                     avg["capture_wait"],
                     avg["convert"],
                     avg["total"],
                     frame.width,
                     frame.height,
-                    self._total_reuse,
+                    interval_reuse,
                 )
                 for key in self._timing_totals:
                     self._timing_totals[key] = 0.0
@@ -1412,20 +1937,15 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self.last_time = current_time
             self._total_reuse = 0
             # Send capture stats to viewer via DataChannel for FPS/latency display
-            host = getattr(self, '_host_ref', None)
-            if host is not None:
-                dc = host.get_input_datachannel()
-                if dc is not None and hasattr(dc, 'send'):
-                    try:
-                        dc.send(json.dumps({
-                            "type": "capture_stats",
-                            "fps": round(fps, 1),
-                            "width": frame.width,
-                            "height": frame.height,
-                            "reuse": self._total_reuse,
-                        }))
-                    except Exception:
-                        pass
+            self._send_disposable_diagnostic({
+                "type": "capture_stats",
+                "fps": round(fps, 1),
+                "width": frame.width,
+                "height": frame.height,
+                "reuse": interval_reuse,
+                "frames": interval_frames,
+            })
+            logger.info("DC_DIAGNOSTIC_ADMISSION %s", self._diagnostic_admission.snapshot())
 
         self._send_frame_timing(
             capture_prepare_ms=worker_timing["prepare"] * 1000,
@@ -1436,14 +1956,18 @@ class ScreenCaptureTrack(VideoStreamTrack):
 
         return frame
 
-    def _send_frame_timing(self, *, capture_prepare_ms, frame_convert_ms, imgproc_queue_ms=None, imgproc_build_ms=None):
-        host = getattr(self, '_host_ref', None)
-        if host is None:
-            return
-        dc = host.get_input_datachannel()
-        if dc is None or not hasattr(dc, 'send'):
-            return
+    def _send_disposable_diagnostic(self, payload):
+        # One event-loop turn: no await, retries, retained payloads or fallback.
+        if not hasattr(self, "_diagnostic_admission"):
+            self._diagnostic_admission = DiagnosticAdmission()
+        host = getattr(self, "_host_ref", None)
+        try:
+            dc = host.get_input_datachannel() if host is not None else None
+        except Exception:
+            dc = None
+        return self._diagnostic_admission.send(host, dc, payload)
 
+    def _send_frame_timing(self, *, capture_prepare_ms, frame_convert_ms, imgproc_queue_ms=None, imgproc_build_ms=None):
         with self._pending_input_lock:
             input_ids = list(self._pending_input_ids)
             self._pending_input_ids.clear()
@@ -1470,10 +1994,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
             timing["inputs"] = input_data_list
 
         self._timing_seq += 1
-        try:
-            dc.send(json.dumps(timing))
-        except Exception as e:
-            logger.debug("Frame timing send failed: %s", e)
+        if not self._send_disposable_diagnostic(timing):
+            self._diagnostic_admission.note_legacy_drop(len(input_ids), len(input_data_list))
 
     def _send_frame_trace_batch(self):
         """Best-effort diagnostics every 100ms; media never waits for this channel."""
@@ -1486,23 +2008,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._last_trace_send_ns = now_ns
         batch = context.registry.take_frame_trace_batch(limit=64)
         loss_batch = context.registry.take_loss_lab_trace_batch(limit=64)
-        if not batch["traces"] and not loss_batch["events"]:
-            return
         batch["droppedTraceCount"] = context.registry.snapshot()["droppedTraceCount"]
-        host = getattr(self, "_host_ref", None)
-        dc = host.get_input_datachannel() if host is not None else None
-        if dc is None or not hasattr(dc, "send"):
+        if batch["traces"] and not self._send_disposable_diagnostic(batch):
             context.registry.note_dropped_trace(len(batch["traces"]))
-            context.registry.note_dropped_loss_lab_events(len(loss_batch["events"]))
-            return
-        try:
-            if batch["traces"]:
-                dc.send(json.dumps(batch))
-            if loss_batch["events"]:
-                dc.send(json.dumps(loss_batch))
-        except Exception:
-            context.registry.note_dropped_trace(len(batch["traces"]))
-            context.registry.note_dropped_loss_lab_events(len(loss_batch["events"]))
+        if loss_batch["events"] or loss_batch["droppedEventCount"]:
+            if not self._send_disposable_diagnostic(loss_batch):
+                # take_loss_lab_trace_batch drains its count; return it exactly once.
+                context.registry.note_dropped_loss_lab_events(
+                    len(loss_batch["events"]) + loss_batch["droppedEventCount"])
 
     def _frame_trace_summary(self, context):
         """Return one bounded five-second evidence window without cross-clock math."""
@@ -1569,6 +2082,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                     context.metrics.record(trace_key, "age_at_recv", grab_bounds[1], selected_at_ns)
                 context.metrics.record(trace_key, "worker_queue", worker_timing["queued_ns"], worker_timing["started_ns"])
                 context.metrics.record(trace_key, "prepare", worker_timing["started_ns"], worker_timing["prepared_ns"])
+                context.metrics.record(trace_key, "convert", worker_timing["prepared_ns"], worker_timing["finished_ns"])
                 context.metrics.record(trace_key, "build", worker_timing["started_ns"], worker_timing["finished_ns"])
             self._increment_trace_interval_unlocked(
                 outputs=1,
@@ -1590,15 +2104,18 @@ class ScreenCaptureTrack(VideoStreamTrack):
         started_ns = time.monotonic_ns()
         cached_img = None
         reused = False
+        source = "blank"
         try:
             if fresh:
                 img = self._process_screenshot(screenshot, max_width, max_height)
                 if not isinstance(img, np.ndarray) or img.ndim != 3 or img.shape[2] < 3:
                     raise ValueError("invalid processed screenshot")
+                source = "capture"
             elif isinstance(fallback_img, np.ndarray):
                 # Keep the ndarray cache; copy only for this independently-owned frame.
                 img = fallback_img.copy()
                 reused = True
+                source = "cache"
             else:
                 img = np.zeros((max_height, max_width, 4), dtype=np.uint8)
         except Exception as exc:
@@ -1606,6 +2123,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             reused = True
             if isinstance(fallback_img, np.ndarray):
                 img = fallback_img.copy()
+                source = "cache"
             else:
                 img = np.zeros((max_height, max_width, 4), dtype=np.uint8)
         prepared_ns = time.monotonic_ns()
@@ -1620,14 +2138,17 @@ class ScreenCaptureTrack(VideoStreamTrack):
             try:
                 if isinstance(fallback_img, np.ndarray):
                     frame = self._video_frame_from_image(fallback_img.copy())
+                    source = "cache"
                 else:
                     raise ValueError("no valid cached frame")
             except Exception:
                 frame = self._video_frame_from_image(
                     np.zeros((max_height, max_width, 4), dtype=np.uint8)
                 )
+                source = "blank"
         finished_ns = time.monotonic_ns()
         return frame, cached_img, reused, {
+            "source": source,
             "queue": max(0.0, started_ns - queued_at) / 1_000_000_000,
             "prepare": max(0.0, prepared_ns - started_ns) / 1_000_000_000,
             "construct": max(0.0, finished_ns - prepared_ns) / 1_000_000_000,
@@ -1647,25 +2168,38 @@ class ScreenCaptureTrack(VideoStreamTrack):
         bgr = np.ascontiguousarray(img[:, :, :3], dtype=np.uint8)
         return av.VideoFrame.from_ndarray(bgr[:, :, ::-1], format="rgb24")
 
+    def _release_input_frame_reservations(self):
+        host = getattr(self, "_host_ref", None)
+        if host is not None and getattr(host, "screen_track", None) is self:
+            causality = getattr(host, "_input_frame_causality", None)
+            if causality is not None: causality.release_all()
+
     def set_max_resolution(self, width, height):
         ABSOLUTE_MAX_WIDTH = 1920
         ABSOLUTE_MAX_HEIGHT = 1080
         width = max(320, min(int(width), self.monitor["width"], ABSOLUTE_MAX_WIDTH))
         height = max(180, min(int(height), self.monitor["height"], ABSOLUTE_MAX_HEIGHT))
+        # This epoch fences image dimensions, not pacing or bitrate updates.
         with self._target_lock:
-            self._max_width = width
-            self._max_height = height
-            self._target_generation += 1
+            changed = (width, height) != (self._max_width, self._max_height)
+            if changed:
+                self._max_width = width
+                self._max_height = height
+                self._target_generation += 1
+        if changed:
+            self._release_input_frame_reservations()
         logger.info("Screen stream max resolution set to %sx%s (requested capped at %sx%s, monitor=%sx%s)",
                     width, height, ABSOLUTE_MAX_WIDTH, ABSOLUTE_MAX_HEIGHT,
                     self.monitor["width"], self.monitor["height"])
+        return {"sizeChanged": changed, "width": width, "height": height}
 
     def set_target_fps(self, target_fps):
         target_fps = max(5, min(int(target_fps), 30))
         with self._target_lock:
+            if target_fps == self._target_fps:
+                return
             self._target_fps = target_fps
             self._frame_interval = 1.0 / target_fps
-            self._target_generation += 1
         logger.info("Screen stream target FPS set to %s", target_fps)
 
     @staticmethod
@@ -1683,10 +2217,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
         prev_h = getattr(self, "_max_height", None)
         next_w = int(profile.get("width") or prev_w or 1280)
         next_h = int(profile.get("height") or prev_h or 720)
-        size_changed = prev_w != next_w or prev_h != next_h
-        self.set_max_resolution(next_w, next_h)
+        result = self.set_max_resolution(next_w, next_h)
         self.set_target_fps(profile["target_fps"])
-        return {"sizeChanged": size_changed, "width": next_w, "height": next_h}
+        return result
 
     def _scale_image_array(self, img, max_width=None, max_height=None):
         if max_width is None or max_height is None:
@@ -1738,6 +2271,7 @@ class WebRemoteHost:
         self._policy_selection = self._create_policy_selection()
         self._h264_policy_version = self._policy_selection.policy_id
         self._h264_policy_provider = H264SessionPolicyProvider(resolver=self._policy_selection.resolver)
+        self._input_frame_causality = InputFrameCausality()
         self._frame_trace_detail_enabled = detailed_frame_trace_enabled()
         self._lab_loss_trace_enabled = os.environ.get("WRD_LAB_LOSS_TRACE") == "1" and os.environ.get("WRD_LAB_HOST_ENTRY") == "1"
         self._frame_trace_registry = FrameTraceRegistry(lab_loss_trace=self._lab_loss_trace_enabled) if self._frame_trace_detail_enabled else None
@@ -1767,6 +2301,12 @@ class WebRemoteHost:
         self._input_move_datachannel = None
         self._active_input_binding = None
         self._connection_generation = 0
+        self._authority_revision = 0
+        self._control_operation = None
+        self._authority_input_lock = asyncio.Lock()
+        self._signal_ready = False
+        self._signal_generation = 0
+        self._signal_authenticated_generation = None
         self._input_lifecycle_tasks = set()
         self._control_transition_lock = asyncio.Lock()
         self._offer_lock = asyncio.Lock()
@@ -1797,6 +2337,10 @@ class WebRemoteHost:
         # ``applied`` result and next-frame reopen.
         self._media_apply_coordinator = MediaApplyCoordinator()
         self._media_apply_last_decision = None
+        # Local-only offline authority. No qualifying joint matrix is installed;
+        # no Socket/DC handler may populate these fields.
+        self._adaptive_qualification_context = None
+        self._adaptive_local_qualification = None
         self._media_profile_sequence = 0
 
     def _create_policy_selection(self):
@@ -1823,8 +2367,8 @@ class WebRemoteHost:
         """Create a bounded Relay capture pipeline.
 
         Capturing twice as fast as the negotiated media rate wasted work while
-        the encoder was CPU-bound.  One capture per output plus a single frame
-        of headroom keeps the latest-frame semantics without starving encode.
+        the encoder was CPU-bound. The current 1x strategy requests one capture
+        per negotiated output interval; it adds no extra capture headroom.
         """
         return ScreenCaptureTrack(target_fps=self.media_profile["target_fps"],
                                   max_width=self.media_profile["width"], max_height=self.media_profile["height"],
@@ -1860,23 +2404,36 @@ class WebRemoteHost:
 
     def _build_socket_client(self):
         sio = socketio.AsyncClient(reconnection=False, ssl_verify=should_verify_tls(SERVER_URL))
-        sio.on('connected', self.on_connected)
-        sio.on('offer', self.on_offer)
-        sio.on('host-status', self.on_host_status)
-        sio.on('disconnect', self.on_disconnect)
-        sio.on('input', self.on_input)
-        sio.on('control-transition', self.on_control_transition)
-        sio.on('ice-candidate', self.on_ice_candidate)
-        sio.on('diagnostic', self.on_diagnostic)
-        sio.on('viewer-status', self.on_viewer_status)
-        sio.on('viewer-stats', self.on_viewer_stats)
-        sio.on('resolution-change', self.on_resolution_change)
-        sio.on('media-profile-change', self.on_media_profile_change)
-        sio.on('request-keyframe', self.on_request_keyframe)
-        sio.on('media-activity-change', self.on_media_activity_change)
-        sio.on('relay-stream-control', self.on_relay_stream_control)
-        sio.on('connection-attempt-bind', self.on_connection_attempt_bind)
-        sio.on('relay-frame-ack', self.on_relay_frame_ack)
+        def register(event, handler):
+            async def current_client(*args):
+                if self.sio is not sio:
+                    return {"status": "rejected"}
+                result = handler(*args)
+                return await result if inspect.isawaitable(result) else result
+            sio.on(event, current_client)
+        register('connected', self.on_connected)
+        register('offer', self.on_offer)
+        register('host-status', self.on_host_status)
+        register('disconnect', self.on_disconnect)
+        # Socket.IO invokes this synchronous callback without retaining one
+        # waiting coroutine per message; on_input performs admission immediately.
+        def admit_current_input(data):
+            if self.sio is sio:
+                self.on_input(data)
+        sio.on('input', admit_current_input)
+        register('control-transition', self.on_control_transition)
+        register('viewer-session-rebind', self.on_viewer_session_rebind)
+        register('ice-candidate', self.on_ice_candidate)
+        register('diagnostic', self.on_diagnostic)
+        register('viewer-status', self.on_viewer_status)
+        register('viewer-stats', self.on_viewer_stats)
+        register('resolution-change', self.on_resolution_change)
+        register('media-profile-change', self.on_media_profile_change)
+        register('request-keyframe', self.on_request_keyframe)
+        register('media-activity-change', self.on_media_activity_change)
+        register('relay-stream-control', self.on_relay_stream_control)
+        register('connection-attempt-bind', self.on_connection_attempt_bind)
+        register('relay-frame-ack', self.on_relay_frame_ack)
         return sio
 
     async def connect(self):
@@ -1894,6 +2451,7 @@ class WebRemoteHost:
             logger.info("Connected to signaling server")
             try:
                 capability = self._host_turn_capability() if hasattr(self, "_host_turn_capability") else get_host_turn_capability()
+                capability["inputFrameCorrelationVersion"] = 1 if (globals().get("_rtp_observer_ready", False) and getattr(globals().get("_rtp_frame_observer"), "enabled", False)) else None
                 await self.sio.emit("host-capabilities", capability)
                 logger.info(
                     "Host capabilities reported turnReady=%s multi=%s default=%s fingerprint=%s ids=%s",
@@ -2021,7 +2579,73 @@ class WebRemoteHost:
         )
         return True
 
-    async def on_input(self, data):
+    def _get_input_admission(self):
+        queue = getattr(self, '_input_admission', None)
+        if queue is None:
+            queue = self._input_admission = InputAdmissionQueue(self._execute_input, self._authority_matches)
+        return queue
+
+    def on_input(self, data):
+        """Synchronous admission, before retaining payload or creating work."""
+        if not isinstance(data, dict) or 'controlledScene' in data or data.get('type') == 'dc_keepalive':
+            return completed_future(AdmissionResult('cancelled', None))
+        # Do not stamp inactive/foreign input with the authority currently
+        # being established. In particular, a reset-to-bind gap has no owner.
+        binding = getattr(self, '_active_input_binding', None)
+        stale_safety_release = False
+        if binding is None and hasattr(self, '_active_input_binding'):
+            return completed_future(AdmissionResult('cancelled', None))
+        if data.get('schemaVersion') == 2:
+            lease_ok = isinstance(binding, dict) and all(
+                data.get(field) == binding.get(field) for field in ('viewerId', 'leaseId', 'leaseEpoch'))
+            if not lease_ok:
+                # Retain the existing same-viewer safety release, but it must
+                # never change admission state when a transition/overload blocks it.
+                stale_safety_release = (isinstance(binding, dict)
+                    and data.get('viewerId') == binding.get('viewerId')
+                    and data.get('type') == 'mouse' and data.get('action') in ('up', 'reset'))
+                if not stale_safety_release:
+                    self._emit_input_observation('host_input_rejected', data,
+                                                 status='stale-lease', reason='stale-lease')
+                    return completed_future(AdmissionResult('cancelled', None))
+        elif (data.get('viewerId') and getattr(self, 'current_viewer_id', None)
+              and data['viewerId'] != self.current_viewer_id):
+            self._emit_input_observation('host_input_rejected', data,
+                                         status='stale-lease', reason='stale-lease')
+            return completed_future(AdmissionResult('cancelled', None))
+        authority = self._capture_authority()
+        try:
+            byte_count = len(json.dumps(data, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
+        except (TypeError, ValueError):
+            return completed_future(AdmissionResult('cancelled', None))
+        queue = self._get_input_admission()
+        if stale_safety_release:
+            snapshot = queue.snapshot()
+            if (snapshot['frozen'] or byte_count > 65536
+                    or snapshot['pendingCount'] >= queue.max_pending
+                    or snapshot['pendingBytes'] + byte_count > queue.max_pending_bytes):
+                return completed_future(AdmissionResult('cancelled', None))
+        future = queue.submit(data, authority=authority, byte_count=byte_count)
+        if future.done() and future.result().outcome == 'resync-required':
+            # One notification per frozen scope, not one task/ACK per rejected
+            # message. The rejected payload is never retained by the queue.
+            if (getattr(self, '_input_overload_authority', None) != authority
+                    and (getattr(self, '_input_rejection_task', None) is None
+                         or self._input_rejection_task.done())):
+                self._input_overload_authority = authority
+                notice = {key: data[key] for key in (
+                    'schemaVersion', 'type', 'leaseEpoch', 'viewerId', 'transport', 'seq'
+                ) if key in data and (type(data[key]) is int
+                                      or isinstance(data[key], str) and len(data[key]) <= 128)}
+                ids = data.get('inputIds')
+                notice['inputIds'] = [v for v in ids[:64] if isinstance(v, str) and len(v) <= 128] if isinstance(ids, list) else []
+                async def reject_once():
+                    if self._authority_matches(authority):
+                        await self._send_input_ack(notice, {'status': 'resync-required', 'inputIds': notice['inputIds']}, None)
+                self._input_rejection_task = self._schedule_input_lifecycle(reject_once())
+        return future
+
+    async def _execute_input(self, data, authority):
         """Handle input commands from viewer while recording safe outcomes."""
         accepted = False
         result = None
@@ -2134,6 +2758,8 @@ class WebRemoteHost:
                 })
 
             input_adapter = getattr(self, "input_adapter", None) or getattr(self, "input_handler", None)
+            if not self._authority_matches(authority):
+                return
             adapter_started = time.perf_counter()
             try:
                 if input_type == "keyboard":
@@ -2152,7 +2778,14 @@ class WebRemoteHost:
                 logger.error("Input adapter failed: %s", type(exc).__name__)
                 return
 
+            if not self._authority_matches(authority):
+                return
             local_execute_ms = (time.perf_counter() - adapter_started) * 1000
+            applied_ns = time.monotonic_ns()
+            try:
+                self._note_input_applied(result, authority, applied_ns, input_type=input_type, action=action)
+            except Exception:
+                pass  # optional observation cannot change ACK or authority
             result_data = dict(data)
             if isinstance(result, dict) and isinstance(result.get("inputIds"), (list, tuple)):
                 result_data["inputIds"] = result["inputIds"]
@@ -2166,17 +2799,10 @@ class WebRemoteHost:
                 local_execute_ms=local_execute_ms,
             )
             if isinstance(result, dict):
-                wire_execute_ms = self._wire_execute_ms(result, fallback=local_execute_ms)
-                await self._send_input_ack(data, result, wire_execute_ms)
-            if result and isinstance(result, dict) and result.get("inputIds"):
-                if self.screen_track:
-                    with self.screen_track._pending_input_lock:
-                        self.screen_track._pending_input_ids.update(result["inputIds"])
-                        self.screen_track._pending_input_data.append({
-                            "ids": result["inputIds"],
-                            "receiveTime": result.get("receiveTime"),
-                            "executeTime": result.get("executeTime"),
-                        })
+                await self._send_input_ack(data, result, local_execute_ms)
+                if not self._authority_matches(authority):
+                    return
+            return result
         except Exception as exc:
             if accepted:
                 self._emit_input_observation(
@@ -2214,7 +2840,7 @@ class WebRemoteHost:
                 **({"appliedSeq": result["appliedSeq"]} if result.get("appliedSeq") is not None else {}),
                 "status": "applied" if result.get("status") == "unordered" else (result.get("status") or "applied"),
                 "inputIds": list(input_ids),
-                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }
         elif data.get("schemaVersion") == 2:
@@ -2239,7 +2865,7 @@ class WebRemoteHost:
                 "pressedKeyCount": max(0, pressed_key_count),
                 "modifierMask": max(0, modifier_mask),
                 "inputIds": list(input_ids),
-                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }
         else:
@@ -2247,9 +2873,15 @@ class WebRemoteHost:
                 "type": "input_ack",
                 "schemaVersion": 1,
                 "inputIds": list(input_ids),
-                "hostExecuteMs": round(max(0.0, float(local_execute_ms or 0.0)), 3),
+                "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }
+        ack.update({
+            "timingSchemaVersion": 1,
+            "hostAdapterAwaitMs": ack["hostExecuteMs"],
+            **{name: result.get(name) if relay_ack_duration_ms(0, result.get(name)) is not None else None
+               for name in ("hostQueueMs", "hostApplyMs")},
+        })
         accepted = False
         try:
             if transport == "datachannel":
@@ -2279,12 +2911,43 @@ class WebRemoteHost:
             )
         return accepted
 
+    async def _initialize_signal_authority(self, connection):
+        """Retry the authenticated connection's actual reset before opening input."""
+        if (connection != getattr(self, "_signal_generation", 0)
+                or connection != getattr(self, "_signal_authenticated_generation", None)):
+            return False
+        authority = self._capture_authority()
+        try:
+            reset = await self._reset_keyboard_lifecycle("signal-connected")
+        except Exception:
+            return False
+        if (connection != getattr(self, "_signal_generation", 0)
+                or not self._authority_matches(authority)
+                or not isinstance(reset, dict) or reset.get("status") != "applied"):
+            return False
+        self._control_operation = None
+        self._signal_ready = True
+        return True
+
     async def on_connected(self, data):
-        logger.info(f"Connected: {data}")
+        previous = getattr(self, "_signal_init_event", None)
+        if previous is not None:
+            previous.set()
+        self._signal_generation = getattr(self, "_signal_generation", 0) + 1
+        connection = self._signal_generation
+        self._signal_authenticated_generation = connection
+        initialized = self._signal_init_event = asyncio.Event()
+        self._advance_authority()
+        self._signal_ready = False
+        self._active_input_binding = None
+        try:
+            await self._initialize_signal_authority(connection)
+        finally:
+            initialized.set()
+        logger.info("Authenticated signaling connection initialization finished")
 
     def build_event_loop_lag_context(self, *, lag_ms, sample_count, max_lag_ms, task_count):
         usage = resource.getrusage(resource.RUSAGE_SELF)
-        rss_divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
         try:
             system_load_1 = round(float(os.getloadavg()[0]), 3)
         except (AttributeError, OSError):
@@ -2300,8 +2963,24 @@ class WebRemoteHost:
         profile = getattr(self, "media_profile", {}) or {}
         pc = getattr(self, "pc", None)
         screen_track = getattr(self, "screen_track", None)
+        capture = unavailable_capture_observation()
+        try:
+            capture_reader = getattr(screen_track, 'capture_observation_snapshot', None)
+            if callable(capture_reader):
+                capture = capture_reader(time.monotonic_ns())
+        except Exception:
+            capture = unavailable_capture_observation()
         input_handler = getattr(self, "input_handler", None)
-        severity = "critical" if float(max_lag_ms) >= 100 else "warning"
+        observer = getattr(self, '_runtime_observability', None)
+        runtime_context = observer.snapshot() if observer is not None else RuntimeObservability().snapshot()
+        sampler = getattr(self, '_resource_sampler', None)
+        resources = sampler.snapshot() if sampler is not None else {
+            "available": False, "ageMs": None, "status": "unavailable",
+            "swapInBytesPerSec": None, "swapOutBytesPerSec": None,
+            "memoryPressure": "unknown",
+        }
+        severity = "critical" if float(max_lag_ms) >= 100 else (
+            "warning" if float(max_lag_ms) > 20 else "normal")
         return {
             "lagMs": round(max(0.0, float(lag_ms)), 3),
             "maxLagMs": round(max(0.0, float(max_lag_ms)), 3),
@@ -2312,6 +2991,7 @@ class WebRemoteHost:
             "pcState": str(getattr(pc, "connectionState", "none") or "none"),
             "iceState": str(getattr(pc, "iceConnectionState", "none") or "none"),
             "captureSeq": int(getattr(screen_track, "_capture_seq", 0) or 0),
+            "capture": capture,
             "inputEventCount": int(getattr(self, "_input_event_count", 0) or 0),
             "lastInputAgeMs": last_input_age_ms,
             "inputWaiters": int(getattr(input_handler, "_lock_waiters", 0) or 0),
@@ -2320,7 +3000,8 @@ class WebRemoteHost:
             "taskCount": int(task_count),
             "threadCount": threading.active_count(),
             "processCpuSeconds": round(float(usage.ru_utime + usage.ru_stime), 3),
-            "rssMiB": round(float(usage.ru_maxrss) / rss_divisor, 3),
+            **runtime_context,
+            "resources": resources,
             "systemLoad1": system_load_1,
         }
 
@@ -2492,6 +3173,84 @@ class WebRemoteHost:
         task.add_done_callback(tasks.discard)
         return task
 
+    def _input_observation_scope(self):
+        binding = getattr(self, "_active_input_binding", None) or {}
+        attempt = binding.get("connectionAttemptId")
+        generation = binding.get("connectionAttemptSequence")
+        epoch = binding.get("leaseEpoch")
+        if not isinstance(attempt, str) or not attempt or not isinstance(generation, int) or not isinstance(epoch, int):
+            return None
+        return (attempt, generation, epoch)
+
+    def _note_input_applied(self, result, authority, applied_ns, *, input_type=None, action=None):
+        if not self._authority_matches(authority) or not isinstance(result, dict): return
+        scope = self._input_observation_scope()
+        if (scope is None or not globals().get("_rtp_observer_ready", False)
+                or not getattr(globals().get("_rtp_frame_observer"), "enabled", False)): return
+        causality = getattr(self, "_input_frame_causality", None)
+        if causality is None:
+            causality = self._input_frame_causality = InputFrameCausality()
+        causality.reset_scope(scope)
+        status = result.get("status")
+        if status == "unordered" and (input_type, action) != ("mouse", "move"): return
+        causality.note_applied(result.get("inputIds") or (), scope=scope, applied_ns=applied_ns,
+                              status="applied" if status == "unordered" else status)
+
+    def _commit_input_frame(self, key, scope, ssrc, timestamp):
+        if scope != self._input_observation_scope(): return
+        ids = self._input_frame_causality.commit_first_packet(key, wire_timestamp=timestamp, ssrc=ssrc, scope=scope)
+        if not ids: return
+        dc = self.get_input_datachannel()
+        if dc is not None and hasattr(dc, "send"):
+            dc.send(json.dumps({"type": "input_frame_binding", "schemaVersion": 1,
+                "scope": {"connectionAttemptId": scope[0], "generation": scope[1], "leaseEpoch": scope[2]},
+                "streamId": key.stream_id, "captureSeq": key.capture_seq,
+                "encoderTimestamp": key.encoder_timestamp, "wireTimestamp": timestamp, "ssrc": ssrc,
+                "captureFresh": True, "captureAfterApplied": True, "inputIds": ids}))
+
+    def _advance_authority(self):
+        causality = getattr(self, "_input_frame_causality", None)
+        if causality is not None: causality.reset_scope(None)
+        queue = getattr(self, '_input_admission', None)
+        if queue is not None:
+            queue.freeze(self._capture_authority(), 'authority-transition')
+        self._authority_revision = int(getattr(self, "_authority_revision", 0)) + 1
+
+    def _capture_authority(self):
+        """Immutable scope shared by control, media and input queue admission."""
+        binding = getattr(self, "_active_input_binding", None) or {}
+        return (getattr(self, "_authority_revision", 0), *(binding.get(key) for key in (
+            "viewerId", "leaseId", "leaseEpoch", "connectionAttemptId",
+            "connectionAttemptSequence", "connectionGeneration")))
+
+    def _authority_matches(self, snapshot):
+        return snapshot == self._capture_authority()
+
+    def _authority_input_queue(self):
+        # This queue orders adapter rebinding against reset. The adapters' own
+        # queues drain native in-flight work before reset returns (M3 may replace
+        # that wait with reset_after_quiescent, using this same authority).
+        if not hasattr(self, "_authority_input_lock"):
+            self._authority_input_lock = asyncio.Lock()
+        return self._authority_input_lock
+
+    async def _bind_input_authority(self, binding, authority):
+        async with self._authority_input_queue():
+            if not self._authority_matches(authority):
+                return False
+            result = await self.input_handler.transition_keyboard(
+                connection_generation=binding["connectionGeneration"],
+                lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+            )
+            if not self._authority_matches(authority):
+                return False
+            desktop = await self._transition_desktop_writes(
+                lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
+            )
+            return (self._authority_matches(authority)
+                    and isinstance(result, dict) and result.get("status") == "applied"
+                    and getattr(desktop, "status", None) == "applied")
+
     async def _transition_desktop_writes(self, *, lease_id, lease_epoch):
         """Use the serialized desktop transition when the handler provides it."""
         transition_async = getattr(self.input_handler, "transition_desktop_writes_async", None)
@@ -2533,20 +3292,37 @@ class WebRemoteHost:
             self._reset_keyboard_lifecycle(
                 "datachannel-closed",
                 lease_epoch=active_epoch,
+                authority=self._capture_authority(),
             )
         )
 
-    async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None):
+    async def _reset_keyboard_lifecycle(self, reason, lease_epoch=None, authority=None):
         handler = getattr(self, "input_handler", None)
         if handler is None:
             return None
-        result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
-        reset_desktop = getattr(handler, "reset_desktop_writes", None)
-        if callable(reset_desktop):
-            await reset_desktop(reason=reason)
-        else:
-            handler.release_all_mouse_buttons(reason=reason)
-        return result
+        authority = self._capture_authority() if authority is None else authority
+        async with self._authority_input_queue():
+            if not self._authority_matches(authority):
+                return {"status": "rejected"}
+            async def apply_reset():
+                result = await handler.reset_keyboard(reason=reason, lease_epoch=lease_epoch)
+                # Both native queues must finish before C can grant new authority.
+                reset_desktop = getattr(handler, "reset_desktop_writes", None)
+                if callable(reset_desktop):
+                    desktop = await reset_desktop(reason=reason)
+                    if isinstance(desktop, dict) and desktop.get('status') != 'applied':
+                        return {'status': 'rejected'}
+                else:
+                    handler.release_all_mouse_buttons(reason=reason)
+                return result
+            queue = getattr(self, '_input_admission', None)
+            if queue is not None:
+                result = await queue.reset_after_quiescent(authority, apply_reset)
+                if (result.get('status') == 'applied' and self._authority_matches(authority)
+                        and getattr(self, '_active_input_binding', None) is not None):
+                    queue.resume()
+                return result
+            return await apply_reset()
 
     async def _emit_control_transition_ack(self, lease_epoch, status, reason=None):
         sio = getattr(self, "sio", None)
@@ -2562,114 +3338,193 @@ class WebRemoteHost:
         lock = getattr(self, "_control_transition_lock", None)
         if lock is None:
             lock = self._control_transition_lock = asyncio.Lock()
+        connection = getattr(self, "_signal_generation", 0)
+        initialized = getattr(self, "_signal_init_event", None)
+        if initialized is not None:
+            await initialized.wait()
         async with lock:
+            if connection != getattr(self, "_signal_generation", 0):
+                return
+            if not getattr(self, "_signal_ready", True):
+                # Failed initialization is retryable by the next current Signal
+                # operation. Never admit input or acknowledge applied before it.
+                ready = initialized is not None and await self._initialize_signal_authority(connection)
+                if not ready:
+                    if connection == getattr(self, "_signal_generation", 0) and isinstance(data, dict):
+                        epoch = data.get("leaseEpoch")
+                        if type(epoch) is int and epoch >= 1:
+                            await self._emit_control_transition_ack(epoch, "rejected", reason="initialization-reset-failed")
+                    return
             await self._apply_control_transition(data)
 
-    async def _apply_control_transition(self, data):
+    async def on_viewer_session_rebind(self, data):
+        authority = self._capture_authority()
+        lock = getattr(self, "_offer_lock", None)
+        if lock is None:
+            lock = self._offer_lock = asyncio.Lock()
+        async with lock:
+            if not self._authority_matches(authority):
+                return {"status": "rejected"}
+            media_lock = getattr(self, "_media_activity_lock", None)
+            if media_lock is None:
+                media_lock = self._media_activity_lock = asyncio.Lock()
+            # Offer processing never takes the media lock, and media handlers
+            # never take the offer lock. Finish old media writes before moving
+            # their viewer identity so they cannot restore the old socket later.
+            async with media_lock:
+                if not self._authority_matches(authority):
+                    return {"status": "rejected"}
+                return self._apply_viewer_session_rebind(data)
+
+    def _apply_viewer_session_rebind(self, data):
+        """Move an authenticated page's socket identity without resetting input.
+
+        Only Signal emits this event after validating its reconnect grace. The
+        lease and attempt must already belong to the old socket on this Host;
+        this event cannot establish authority or adopt a different attempt.
+        Keep validation and mutation together without yielding to input work.
+        """
         if not isinstance(data, dict):
+            return {"status": "rejected"}
+        binding = getattr(self, "_active_input_binding", None)
+        previous = data.get("previousViewerId")
+        viewer = data.get("viewerId")
+        if (
+            not isinstance(binding, dict)
+            or not isinstance(previous, str) or not previous
+            or not isinstance(viewer, str) or not viewer or viewer == previous
+            or binding.get("viewerId") != previous
+            or not isinstance(data.get("leaseId"), str)
+            or len(data["leaseId"]) < 16
+            or data["leaseId"] != binding.get("leaseId")
+            or type(data.get("leaseEpoch")) is not int
+            or data["leaseEpoch"] < 1
+            or data["leaseEpoch"] != binding.get("leaseEpoch")
+            or getattr(self, "current_viewer_id", None) not in (None, previous)
+        ):
+            return {"status": "rejected"}
+
+        media = getattr(self, "_media_activity_binding", None)
+        if isinstance(media, dict) and media.get("viewerId") not in (None, previous):
+            return {"status": "rejected"}
+        # A control re-grant may replace the input binding while retaining its
+        # peer. Media demand retains the peer's attempt authority in that case.
+        for field in ("connectionAttemptId", "connectionAttemptSequence"):
+            expected = binding.get(field)
+            media_value = media.get(field) if isinstance(media, dict) else None
+            if expected is not None and media_value is not None and expected != media_value:
+                return {"status": "rejected"}
+            expected = expected if expected is not None else media_value
+            received = data.get(field)
+            if received != expected or type(received) is not type(expected):
+                return {"status": "rejected"}
+
+        relay = getattr(self, "relay_streamer", None)
+        relay_viewer = getattr(relay, "viewer_id", None)
+        if relay_viewer not in (None, previous):
+            return {"status": "rejected"}
+        queue = getattr(self, '_input_admission', None)
+        if queue is not None and (queue.snapshot()['inFlightCount'] or queue.snapshot()['pendingCount']
+                                  or queue.unordered_snapshot()['inFlightCount'] or queue.unordered_snapshot()['pendingCount']
+                                  or queue.snapshot()['frozen']):
+            return {'status': 'rejected'}
+        self._advance_authority()
+        binding["viewerId"] = viewer
+        if queue is not None:
+            queue.resume()
+        if getattr(self, "pc", None) is not None:
+            self.pc._wrd_owner = (viewer, binding["leaseId"], binding["leaseEpoch"])
+        if getattr(self, "current_viewer_id", None) == previous:
+            self.current_viewer_id = viewer
+        if isinstance(media, dict) and media.get("viewerId") == previous:
+            media["viewerId"] = viewer
+        if relay_viewer == previous:
+            relay.viewer_id = viewer
+        logger.info("Viewer session rebound without input reset epoch=%s", data["leaseEpoch"])
+        return {"status": "applied"}
+
+    async def _apply_control_transition(self, data):
+        if not isinstance(data, dict) or not getattr(self, "_signal_ready", True):
             return
         lease_epoch = data.get("leaseEpoch")
-        if not isinstance(lease_epoch, int) or lease_epoch < 1:
+        if type(lease_epoch) is not int or lease_epoch < 1:
             return
-        lease_id = data.get("leaseId")
-        viewer_id = data.get("viewerId")
-        has_binding_identity = (
-            isinstance(lease_id, str)
-            and len(lease_id) >= 16
-            and isinstance(viewer_id, str)
-            and bool(viewer_id)
-        )
-        active_binding = getattr(self, "_active_input_binding", None)
-        active_epoch = active_binding.get("leaseEpoch") if isinstance(active_binding, dict) else None
-        is_stale = isinstance(active_epoch, int) and (
-            lease_epoch < active_epoch
-            or (lease_epoch == active_epoch and has_binding_identity)
-        )
-        if is_stale:
-            logger.warning(
-                "Ignoring stale control transition epoch=%s active_epoch=%s",
-                lease_epoch,
-                active_epoch,
-            )
-            return
-        # Freeze the previous authority before yielding to the reset queue so
-        # no old Socket.IO or DataChannel input remains executable mid-handoff.
+        viewer_id, lease_id = data.get("viewerId"), data.get("leaseId")
+        grant = isinstance(viewer_id, str) and bool(viewer_id)
+        kind = "grant" if grant else "reset"
+        active = getattr(self, "_active_input_binding", None) or {}
+        operation = getattr(self, "_control_operation", None)
+        if operation is None and active.get("leaseEpoch"):
+            operation = (active["leaseEpoch"], "grant", "applied")
+        if operation:
+            epoch, previous_kind, outcome = operation
+            if lease_epoch < epoch or (lease_epoch == epoch and kind != previous_kind):
+                return
+            if lease_epoch == epoch and outcome == "applied":
+                if kind == "reset":
+                    await self._emit_control_transition_ack(lease_epoch, "applied")
+                return
+        self._control_operation = (lease_epoch, kind, "pending")
+        self._advance_authority()
         self._active_input_binding = None
-        self._connection_generation = int(getattr(self, "_connection_generation", 0) or 0) + 1
+        self._connection_generation = int(getattr(self, "_connection_generation", 0)) + 1
+        authority = self._capture_authority()
 
-        async def reject_transition():
-            self._active_input_binding = None
-            logger.warning("Rejecting keyboard control transition epoch=%s", lease_epoch)
-            await self._emit_control_transition_ack(
-                lease_epoch,
-                "rejected",
-                reason="reset-failed",
-            )
+        async def reject():
+            if self._authority_matches(authority):
+                self._control_operation = (lease_epoch, kind, "rejected")
+                await self._emit_control_transition_ack(lease_epoch, "rejected", reason="reset-failed")
 
         try:
-            reset_result = await self._reset_keyboard_lifecycle(
-                data.get("reason") or "pending-reset"
-            )
+            # Trusted authority reset owns the actual producer, even when Signal
+            # already moved its Viewer index. Freeze it before any input/PC wait.
+            relay = getattr(self, "relay_streamer", None)
+            if relay is not None:
+                self.relay_streamer = None
+                await relay.stop()
+                if not self._authority_matches(authority):
+                    return
+            reset = await self._reset_keyboard_lifecycle(data.get("reason") or "pending-reset")
+            if not self._authority_matches(authority):
+                return
+            if not isinstance(reset, dict) or reset.get("status") != "applied":
+                await reject()
+                return
+            # A fresh grant cannot inherit the previous owner's peer. Detach
+            # resources before awaiting close, so old cleanup owns only old PC.
+            if getattr(self, "pc", None) is not None:
+                await self._close_peer_connection(reason="control-transition", reset_offer_state=True,
+                                                  preserve_authority=True, reset_input=False)
+                if not self._authority_matches(authority):
+                    return
+            if grant:
+                binding = {
+                    "viewerId": viewer_id,
+                    "leaseId": lease_id if isinstance(lease_id, str) and len(lease_id) >= 16 else f"legacy-host-{lease_epoch}-{viewer_id}",
+                    "leaseEpoch": lease_epoch,
+                    "connectionGeneration": self._connection_generation,
+                }
+                accepted = await self._bind_input_authority(binding, authority)
+                if not self._authority_matches(authority):
+                    return
+                if not accepted:
+                    await reject()
+                    return
+                queue = getattr(self, '_input_admission', None)
+                if queue is not None and not queue.resume():
+                    await reject()
+                    return
+                # Reopening and publishing the binding form one no-await commit.
+                self._active_input_binding = binding
+            self.current_viewer_id = viewer_id if grant else None
+            self._media_activity_binding = None
+            self._control_operation = (lease_epoch, kind, "applied")
+            await self._emit_control_transition_ack(lease_epoch, "applied")
         except Exception:
-            await reject_transition()
-            return
-        if not isinstance(reset_result, dict) or reset_result.get("status") != "applied":
-            await reject_transition()
-            return
-        if has_binding_identity:
-            binding = {
-                "viewerId": viewer_id,
-                "leaseId": lease_id,
-                "leaseEpoch": lease_epoch,
-                "connectionGeneration": self._connection_generation,
-            }
-            try:
-                result = await self.input_handler.transition_keyboard(
-                    connection_generation=binding["connectionGeneration"],
-                    lease_id=binding["leaseId"],
-                    lease_epoch=binding["leaseEpoch"],
-                )
-                desktop_result = await self._transition_desktop_writes(
-                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
-                )
-            except Exception:
-                await reject_transition()
-                return
-            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
-                await reject_transition()
-                return
-            self._active_input_binding = binding
-        elif isinstance(viewer_id, str) and viewer_id:
-            # Signal deliberately withholds the v2 token during transition.
-            # Legacy input gets an opaque Host-internal lease until its offer
-            # arrives; it is never sent to the viewer or accepted as v2 input.
-            binding = {
-                "viewerId": viewer_id,
-                "leaseId": f"legacy-host-{lease_epoch}-{viewer_id}",
-                "leaseEpoch": lease_epoch,
-                "connectionGeneration": self._connection_generation,
-            }
-            try:
-                result = await self.input_handler.transition_keyboard(
-                    connection_generation=binding["connectionGeneration"],
-                    lease_id=binding["leaseId"],
-                    lease_epoch=binding["leaseEpoch"],
-                )
-                desktop_result = await self._transition_desktop_writes(
-                    lease_id=binding["leaseId"], lease_epoch=binding["leaseEpoch"],
-                )
-            except Exception:
-                await reject_transition()
-                return
-            if not isinstance(result, dict) or result.get("status") != "applied" or desktop_result.status != "applied":
-                await reject_transition()
-                return
-            self._active_input_binding = binding
-        else:
-            self._active_input_binding = None
-        await self._emit_control_transition_ack(lease_epoch, "applied")
+            await reject()
 
-    async def _close_peer_connection(self, reason="manual", reset_offer_state=False):
+    async def _close_peer_connection(self, reason="manual", reset_offer_state=False,
+                                     preserve_authority=False, reset_input=True):
         closing_pc = getattr(self, "pc", None)
         closing_track = getattr(self, "screen_track", None)
         closing_sender = getattr(self, "video_sender", None)
@@ -2682,62 +3537,139 @@ class WebRemoteHost:
             if isinstance(closing_binding, dict) else None
         )
 
-        # Freeze this connection's lease before yielding to the reset worker.
-        self._active_input_binding = None
-        if getattr(self, "_input_datachannel", None) is closing_channel:
-            self._input_datachannel = None
-        if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
-            self._input_move_datachannel = None
-        await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
+        # Sequence and old-object presence belong to this invocation, before awaits.
+        sequence = getattr(self, '_peer_cleanup_sequence', 0)
+        if type(sequence) is not int or sequence < 0:
+            sequence = 0
+        self._peer_cleanup_sequence = min(sequence + 1, SEQUENCE_CAP)
 
-        if closing_pc:
-            logger.info("Closing peer connection reason=%s", reason)
-            await closing_pc.close()
-        owns_peer = self.pc is closing_pc
-        if owns_peer and self.pc is closing_pc:
+        def observe(read):
+            try:
+                return read()
+            except BaseException:
+                # A diagnostic getter cannot replace an in-flight business error.
+                return None
+
+        def emit(cleanup_record):
+            try:
+                logger.info('WRD_PEER_CLEANUP %s', peer_cleanup_json(cleanup_record))
+            except BaseException:
+                # Only diagnostic emission fails open; business errors still propagate.
+                pass
+
+        record = PeerCleanupObservation(self._peer_cleanup_sequence, reason,
+            peer_present=closing_pc is not None, track_present=closing_track is not None,
+            sender_present=closing_sender is not None, now_ns=observe(time.monotonic_ns))
+        emit(record.start_record())
+        outcome, active_stage, authority = 'failed', None, None
+        try:
+            if not preserve_authority:
+                self._advance_authority()
+                self._active_input_binding = None
+            # Remove ownership synchronously. A second cleanup must never await or
+            # clear these detached objects on behalf of a newer grant.
             self.pc = None
-
-        if closing_track:
-            await closing_track.shutdown()
-        if self.screen_track is closing_track:
-            self.screen_track = None
-        if getattr(self, "video_sender", None) is closing_sender:
-            self.video_sender = None
-        media_sender = getattr(self, "media_sender", None)
-        if media_sender is not None and closing_sender is not None:
-            bound_sender = getattr(media_sender, "sender", None)
-            if bound_sender is closing_sender:
-                invalidate = getattr(media_sender, "invalidate", None)
-                if callable(invalidate):
-                    invalidate()
-        if getattr(self, "capture_adapter", None) is not None and closing_track is not None:
-            if getattr(self.capture_adapter, "track", None) is closing_track:
+            if getattr(self, "_input_datachannel", None) is closing_channel:
+                self._input_datachannel = None
+            if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
+                self._input_move_datachannel = None
+            if getattr(self, "screen_track", None) is closing_track:
+                self.screen_track = None
+            if getattr(self, "video_sender", None) is closing_sender:
+                self.video_sender = None
+            media_sender = getattr(self, "media_sender", None)
+            if media_sender is not None and getattr(media_sender, "sender", None) is closing_sender:
+                self.media_sender = None
+                if callable(getattr(media_sender, "invalidate", None)):
+                    media_sender.invalidate()
+            capture_adapter = getattr(self, "capture_adapter", None)
+            if capture_adapter is not None and getattr(capture_adapter, "track", None) is closing_track:
                 self.capture_adapter = None
-
-        # Drop recovery and trace references after the owner closes.  Keeping
-        # these objects alive across a new offer retains old generation state
-        # and makes task/resource leaks look like a control failure.
-        if owns_peer:
-            self._keyframe_recovery_state = {}
-            self._frame_trace_context = None
-            coordinator = getattr(self, "_media_apply_coordinator", None)
-            if coordinator is not None:
-                coordinator.cancel_pending()
-            logger.info(
-                "WRD_MEDIA_RESOURCES reason=%s peerClosed=%s senderReleased=%s track=%s tasks=%s",
-                reason,
-                bool(closing_pc),
-                bool(closing_sender),
-                closing_track.resource_snapshot() if closing_track and hasattr(closing_track, "resource_snapshot") else None,
-                len(getattr(self, "_input_lifecycle_tasks", ()) or ()),
-            )
-
-        if getattr(self, "pending_candidates", None) is closing_candidates:
+            if closing_track is not None and hasattr(closing_track, "set_suspended"):
+                closing_track.set_suspended(True)
             self.pending_candidates = []
+            if reset_offer_state:
+                self.current_viewer_id = None
+                self._offer_epoch = 0
+            authority = self._capture_authority()
+            if reset_input:
+                record.stage('resetInput', 'running')
+                active_stage = 'resetInput'
+                reset_result = await self._reset_keyboard_lifecycle(reason, lease_epoch=closing_epoch)
+                reset_status = reset_result.get('status') if type(reset_result) is dict else None
+                record.stage('resetInput', 'returned', reset_status)
+                active_stage = None
+            else:
+                record.stage('resetInput', 'not-requested')
 
-        if reset_offer_state and owns_peer:
-            self.current_viewer_id = None
-            self._offer_epoch = 0
+            if closing_pc:
+                record.stage('peerClose', 'running')
+                active_stage = 'peerClose'
+                await closing_pc.close()
+                record.stage('peerClose', 'returned')
+                active_stage = None
+            if closing_track:
+                record.stage('trackShutdown', 'running')
+                active_stage = 'trackShutdown'
+                await closing_track.shutdown()
+                record.stage('trackShutdown', 'returned')
+                active_stage = None
+            owns_peer = self._authority_matches(authority) and self.pc is None
+            if getattr(self, "screen_track", None) is closing_track:
+                self.screen_track = None
+            if getattr(self, "video_sender", None) is closing_sender:
+                self.video_sender = None
+            media_sender = getattr(self, "media_sender", None)
+            if media_sender is not None and closing_sender is not None:
+                bound_sender = getattr(media_sender, "sender", None)
+                if bound_sender is closing_sender:
+                    invalidate = getattr(media_sender, "invalidate", None)
+                    if callable(invalidate):
+                        invalidate()
+            if getattr(self, "capture_adapter", None) is not None and closing_track is not None:
+                if getattr(self.capture_adapter, "track", None) is closing_track:
+                    self.capture_adapter = None
+
+            # Drop recovery and trace references after the owner closes.  Keeping
+            # these objects alive across a new offer retains old generation state
+            # and makes task/resource leaks look like a control failure.
+            if owns_peer:
+                self._keyframe_recovery_state = {}
+                self._frame_trace_context = None
+                coordinator = getattr(self, "_media_apply_coordinator", None)
+                if coordinator is not None:
+                    coordinator.cancel_pending()
+
+            if getattr(self, "pending_candidates", None) is closing_candidates:
+                self.pending_candidates = []
+            outcome = 'returned'
+        except asyncio.CancelledError:
+            outcome = 'cancelled'
+            if active_stage is not None:
+                record.stage(active_stage, 'cancelled')
+            raise
+        except BaseException:
+            if active_stage is not None:
+                record.stage(active_stage, 'failed')
+            raise
+        finally:
+            # Read detached objects only. A newer authority cannot suppress this record.
+            peer_state = observe(lambda: getattr(closing_pc, 'connectionState', None))
+            track_facts = observe(lambda: closing_track.resource_snapshot())
+            if type(track_facts) is not dict:
+                track_facts = {}
+            observations = {
+                'peerConnectionClosed': peer_state == 'closed' if type(peer_state) is str else None,
+                'captureThreadAlive': track_facts.get('captureThreadAlive'),
+                'captureCloseState': track_facts.get('captureCloseState'),
+                'captureShutdownJoin': track_facts.get('captureShutdownJoin'),
+                'executorShutdownRequested': track_facts.get('executorShutdownRequested'),
+                'authorityCurrent': observe(lambda: self._authority_matches(authority))
+                    if authority is not None else None,
+                'currentPeerPresent': observe(lambda: self.pc is not None),
+            }
+            emit(record.terminal(outcome, observe(time.monotonic_ns), observations))
+
 
     async def on_offer(self, data):
         viewer_id = data.get('viewerId')
@@ -2745,7 +3677,18 @@ class WebRemoteHost:
         logger.info(f"Received offer from viewer {viewer_id} epoch={offer_epoch}")
 
         # Serialize offer processing to prevent race conditions
+        connection = getattr(self, "_signal_generation", 0)
         async with self._offer_lock:
+            if connection != getattr(self, "_signal_generation", 0):
+                return
+            if not getattr(self, "_signal_ready", True):
+                return
+            active = getattr(self, "_active_input_binding", None)
+            if isinstance(active, dict) and any(data.get(k) != active.get(k) for k in ("viewerId", "leaseId", "leaseEpoch")):
+                return
+            operation = getattr(self, "_control_operation", None)
+            if operation and (operation[1:] != ("grant", "applied") or data.get("leaseEpoch") != operation[0]):
+                return
             if not self._should_process_offer(viewer_id, offer_epoch):
                 return
             offer_sequence = data.get("connectionAttemptSequence")
@@ -2758,8 +3701,17 @@ class WebRemoteHost:
                 )
                 return
 
+            if operation is None and isinstance(active, dict) and active.get("leaseEpoch"):
+                self._control_operation = (active["leaseEpoch"], "grant", "applied")
+            self._advance_authority()
+            self._active_input_binding = None
+            authority = self._capture_authority()
+            offer_pc = None
+            offer_track = None
             try:
-                await self._close_peer_connection(reason="new-offer", reset_offer_state=False)
+                await self._close_peer_connection(reason="new-offer", reset_offer_state=False, preserve_authority=True)
+                if not self._authority_matches(authority):
+                    return
 
                 lease_id = data.get("leaseId")
                 lease_epoch = data.get("leaseEpoch")
@@ -2786,34 +3738,18 @@ class WebRemoteHost:
                     self._media_profile_sequence = 0
                     if isinstance(offer_sequence, int) and offer_sequence >= 1:
                         binding["connectionAttemptSequence"] = offer_sequence
-                    result = await self.input_handler.transition_keyboard(
-                        connection_generation=binding["connectionGeneration"],
-                        lease_id=binding["leaseId"],
-                        lease_epoch=binding["leaseEpoch"],
-                    )
-                    if result.get("status") != "applied":
-                        logger.warning("Ignoring offer with rejected keyboard binding")
+                    accepted = await self._bind_input_authority(binding, authority)
+                    if not self._authority_matches(authority):
                         return
-                    try:
-                        desktop_result = await self._transition_desktop_writes(
-                            lease_id=binding["leaseId"],
-                            lease_epoch=binding["leaseEpoch"],
-                        )
-                    except Exception:
-                        logger.exception("Rejecting offer with failed desktop write binding")
-                        desktop_result = None
-                    if getattr(desktop_result, "status", None) != "applied":
-                        logger.warning("Ignoring offer with rejected desktop write binding")
-                        self._active_input_binding = None
-                        try:
-                            await self._reset_keyboard_lifecycle(
-                                "desktop-binding-rejected",
-                                lease_epoch=binding["leaseEpoch"],
-                            )
-                        except Exception:
-                            logger.exception("Failed to clean up rejected offer binding")
+                    if not accepted:
+                        await self._reset_keyboard_lifecycle("desktop-binding-rejected", lease_epoch=binding["leaseEpoch"])
+                        return
+                    queue = getattr(self, '_input_admission', None)
+                    if queue is not None and not queue.resume():
+                        await self._reset_keyboard_lifecycle("desktop-binding-rejected", lease_epoch=binding["leaseEpoch"])
                         return
                     self._active_input_binding = binding
+                    authority = self._capture_authority()
                     # New offer/attempt invalidates prior media activity progress.
                     self._media_activity_binding = {
                         "viewerId": viewer_id,
@@ -2821,6 +3757,8 @@ class WebRemoteHost:
                         "generation": 0,
                         "state": "active",
                     }
+                    if isinstance(offer_sequence, int) and offer_sequence >= 1:
+                        self._media_activity_binding["connectionAttemptSequence"] = offer_sequence
 
                 try:
                     offer_width = int(data.get("width") or 0)
@@ -2842,10 +3780,11 @@ class WebRemoteHost:
                     iceServers=build_ice_servers(network_mode, self._session_turn_server_id,
                                                  getattr(self, "_session_turn_override", None))
                 )
-                self.pc = RTCPeerConnection(configuration=config)
+                offer_pc = RTCPeerConnection(configuration=config)
+                offer_pc._wrd_owner = (viewer_id, lease_id, lease_epoch)
                 if self._frame_trace_registry is not None:
                     self._frame_trace_registry.record_lab_pc_state(
-                        identifier=f"host-pc-{id(self.pc)}", state=str(self.pc.connectionState),
+                        identifier=f"host-pc-{id(offer_pc)}", state=str(offer_pc.connectionState),
                         width=int((self._user_resolution or {}).get("width", 0) or 0),
                         height=int((self._user_resolution or {}).get("height", 0) or 0),
                     )
@@ -2853,16 +3792,20 @@ class WebRemoteHost:
                     session_caps = (self._host_turn_capability(self._session_turn_server_id)
                                     if hasattr(self, "_host_turn_capability")
                                     else get_host_turn_capability(self._session_turn_server_id))
+                    session_caps["inputFrameCorrelationVersion"] = 1 if (globals().get("_rtp_observer_ready", False) and getattr(globals().get("_rtp_frame_observer"), "enabled", False)) else None
                     await self.sio.emit("host-capabilities", session_caps)
                 except Exception as cap_err:
                     logger.warning("Failed to refresh host TURN capability after offer: %s", cap_err)
 
+                if not self._authority_matches(authority):
+                    return
                 # Setup handlers BEFORE setting local description
                 ice_complete = asyncio.Event()
 
-                @self.pc.on("icecandidate")
+                @offer_pc.on("icecandidate")
                 async def on_icecandidate(candidate):
-                    if candidate and viewer_id:
+                    target_viewer = self.current_viewer_id if self.pc is offer_pc else None
+                    if candidate and target_viewer:
                         if not should_emit_ice_candidate(network_mode, candidate.sdp):
                             logger.info(
                                 "WRD_POLICY_INFO ice_candidate_dropped mode=%s sdp=%s",
@@ -2874,7 +3817,7 @@ class WebRemoteHost:
                         try:
                             await self.sio.emit('ice-candidate', {
                                 'target': 'viewer',
-                                'viewerId': viewer_id,
+                                'viewerId': target_viewer,
                                 'candidate': {
                                     'candidate': candidate.sdp,
                                     'sdpMLineIndex': candidate.sdpMLineIndex,
@@ -2884,19 +3827,21 @@ class WebRemoteHost:
                         except Exception as e:
                             logger.error(f"Failed to send ICE: {e}")
 
-                @self.pc.on("icegatheringstatechange")
+                @offer_pc.on("icegatheringstatechange")
                 def on_icegatheringstatechange():
-                    state = self.pc.iceGatheringState
+                    state = offer_pc.iceGatheringState
                     logger.info(f"ICE gathering: {state}")
                     if state == "complete":
                         ice_complete.set()
 
-                @self.pc.on("connectionstatechange")
+                @offer_pc.on("connectionstatechange")
                 def on_connectionstatechange():
+                    if self.pc is not offer_pc:
+                        return
                     state = self.pc.connectionState
                     if self._frame_trace_registry is not None:
                         self._frame_trace_registry.record_lab_pc_state(
-                            identifier=f"host-pc-{id(self.pc)}", state=str(state),
+                            identifier=f"host-pc-{id(offer_pc)}", state=str(state),
                             width=int((self._user_resolution or {}).get("width", 0) or 0),
                             height=int((self._user_resolution or {}).get("height", 0) or 0),
                         )
@@ -2905,17 +3850,21 @@ class WebRemoteHost:
                         logger.info("WebRTC CONNECTED!")
                     elif state in ('failed', 'closed', 'disconnected'):
                         self._schedule_input_lifecycle(
-                            self._reset_keyboard_lifecycle(f"webrtc-{state}")
+                            self._reset_keyboard_lifecycle(f"webrtc-{state}", authority=self._capture_authority())
                         )
                         if state == 'failed':
                             logger.error("WebRTC FAILED")
 
-                @self.pc.on("iceconnectionstatechange")
+                @offer_pc.on("iceconnectionstatechange")
                 def on_iceconnectionstatechange():
+                    if self.pc is not offer_pc:
+                        return
                     logger.info(f"ICE connection: {self.pc.iceConnectionState}")
 
-                @self.pc.on("datachannel")
+                @offer_pc.on("datachannel")
                 def on_datachannel(channel):
+                    if self.pc is not offer_pc:
+                        return
                     logger.info("DataChannel received: label=%s id=%s", channel.label, channel.id)
                     binding = dict(self._active_input_binding or {})
                     if channel.label == "input":
@@ -2979,7 +3928,7 @@ class WebRemoteHost:
                                 if not self._input_is_keepalive(data):
                                     logger.warning("Ignoring unbound or stale DataChannel input")
                                 return
-                            self._schedule_input_lifecycle(self.on_input(bound))
+                            self.on_input(bound)
                         except Exception as e:
                             self._emit_input_observation(
                                 "host_input_rejected", {"transport": "datachannel"},
@@ -2989,16 +3938,16 @@ class WebRemoteHost:
 
                 # Add video track
                 policy = self._h264_policy_provider.current_policy()
-                self._frame_trace_context = self._frame_trace_context_for_policy(policy)
-                self.screen_track = self._create_screen_track()
-                self.capture_adapter = CaptureAdapter(track=self.screen_track)
-                self.screen_track._host_ref = self
-                self.video_sender = self.pc.addTrack(self.screen_track)
-                self.video_sender._wrd_h264_policy = policy
-                self.video_sender._wrd_frame_trace_context = self._frame_trace_context
-                self.media_sender = MediaSenderAdapter()
-                self.media_sender.bind(self.video_sender, self.screen_track, pc=self.pc)
-                self._prefer_h264_transceivers()
+                frame_trace_context = self._frame_trace_context_for_policy(policy)
+                offer_track = self._create_screen_track()
+                offer_track._host_ref = self
+                offer_sender = offer_pc.addTrack(offer_track)
+                offer_sender._wrd_h264_policy = policy
+                offer_sender._wrd_frame_trace_context = frame_trace_context
+                offer_sender._wrd_input_frame_host = self
+                offer_media_sender = MediaSenderAdapter()
+                offer_media_sender.bind(offer_sender, offer_track, pc=offer_pc)
+                self._prefer_h264_transceivers(offer_pc)
                 logger.info("Added video track")
 
                 # Process offer - replace mDNS with localhost
@@ -3010,16 +3959,22 @@ class WebRemoteHost:
                 offer_sdp = re.sub(r'[a-f0-9-]+\.local', '127.0.0.1', offer_sdp)
                 self._log_video_codecs("viewer-offer", offer_sdp)
 
-                await self.pc.setRemoteDescription(
+                await offer_pc.setRemoteDescription(
                     RTCSessionDescription(sdp=offer_sdp, type=offer_data['type'])
                 )
+                if not self._authority_matches(authority):
+                    return
                 logger.info("Set remote description")
 
                 # Create answer
-                answer = await self.pc.createAnswer()
-                await self.pc.setLocalDescription(answer)
+                answer = await offer_pc.createAnswer()
+                if not self._authority_matches(authority):
+                    return
+                await offer_pc.setLocalDescription(answer)
+                if not self._authority_matches(authority):
+                    return
                 logger.info("Set local description")
-                local_description = self.pc.localDescription or answer
+                local_description = offer_pc.localDescription or answer
                 if not (local_description and hasattr(local_description, 'sdp')):
                     logger.warning("localDescription is None after setLocalDescription")
 
@@ -3030,30 +3985,51 @@ class WebRemoteHost:
                 except asyncio.TimeoutError:
                     logger.warning("ICE gathering timeout")
 
+                if not self._authority_matches(authority):
+                    return
                 # Send answer with ICE candidates included (relay mode filters non-relay)
-                local_description = self.pc.localDescription or answer
+                local_description = offer_pc.localDescription or answer
                 answer_sdp = filter_sdp_ice_candidates(
                     network_mode,
                     local_description.sdp if local_description else "",
                 )
                 if answer_sdp:
                     self._log_video_codecs("host-answer", answer_sdp)
+                if getattr(self, "_media_activity_suspended", False):
+                    if hasattr(offer_track, "set_suspended"):
+                        offer_track.set_suspended(True)
+                    offer_media_sender.suspend()
+                self.pc = offer_pc
+                self.screen_track = offer_track
+                self.video_sender = offer_sender
+                self.media_sender = offer_media_sender
+                self.capture_adapter = CaptureAdapter(track=offer_track)
+                self._frame_trace_context = frame_trace_context
                 await self.sio.emit('answer', {
                     'answer': {
                         'type': local_description.type,
                         'sdp': answer_sdp
                     },
-                    'viewerId': viewer_id
+                    'viewerId': self.current_viewer_id
                 })
                 logger.info("Sent answer")
 
                 # Process any pending candidates received before PC was ready
+                if not self._authority_matches(authority):
+                    return
                 for cand in self.pending_candidates:
                     await self._add_ice_candidate(cand)
+                    if not self._authority_matches(authority):
+                        return
                 self.pending_candidates = []
 
             except Exception as e:
                 logger.error(f"Error in on_offer: {e}", exc_info=True)
+            finally:
+                if offer_pc is not None and self.pc is not offer_pc:
+                    await offer_pc.close()
+                    if offer_track is not None:
+                        await offer_track.shutdown()
 
     async def on_ice_candidate(self, data):
         candidate_viewer_id = data.get('from')
@@ -3196,13 +4172,19 @@ class WebRemoteHost:
     async def on_viewer_stats(self, data):
         """Handle periodic WebRTC stats from viewer."""
         try:
+            def nullable_latency(value):
+                return value if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                                 and value >= 0 and (isinstance(value, int) or math.isfinite(value))) else None
+
+            rtt_ms = nullable_latency(data.get("rttMs"))
+            jitter_buffer_ms = nullable_latency(data.get("jitterBufferMs"))
             logger.info(
                 "VIEWER_STATS viewer=%s codec=%s fps=%.1f rtt=%sms jitter_buffer=%sms decoded=%s received=%s lost=%s dropped=%s packets=%s nack=%s pli=%s fir=%s freeze=%s candidate=%s bytes=%.2fMB",
                 data.get("viewerId", "-"),
                 data.get("codec") or "unknown",
                 float(data.get("fps") or 0),
-                data.get("rttMs", 0),
-                data.get("jitterBufferMs", 0),
+                rtt_ms if rtt_ms is not None else "null",
+                jitter_buffer_ms if jitter_buffer_ms is not None else "null",
                 data.get("framesDecoded", 0),
                 data.get("framesReceived", 0),
                 data.get("packetsLost", 0),
@@ -3220,7 +4202,7 @@ class WebRemoteHost:
                 data.get("viewerId", "-"),
                 data.get("selectedCandidateType") or "unknown",
                 float(data.get("fps") or 0),
-                data.get("rttMs", 0),
+                rtt_ms if rtt_ms is not None else "null",
                 (self._last_diag_network or {}).get("networkMode", "-"),
                 (self._last_diag_network or {}).get("turnConfigured", False),
                 (self._last_diag_network or {}).get("turnStatus", "unknown"),
@@ -3768,6 +4750,63 @@ class WebRemoteHost:
             )
         return applied
 
+    def _request_measured_media_policy(self, intent):
+        """Dormant adaptive adapter; explicit profile/startup paths stay separate.
+
+        Local qualification and immutable identity are checked before the
+        existing coordinator is asked to stage anything. Staging is not an ACK
+        of application; codec-open remains the sole media-apply completion.
+        Capture intent/FPS/generation are never optimistically changed here.
+        """
+        authority = self._capture_authority()
+        binding = getattr(self, "_active_input_binding", None)
+        coordinator = getattr(self, "_media_apply_coordinator", None)
+        # Unlike startup/explicit profile admission, an adaptive request has no
+        # authority to bind an attempt. Reject before the legacy helper can
+        # rebind and clear work owned by a newer C authority.
+        if (not isinstance(binding, dict)
+                or not isinstance(binding.get("viewerId"), str) or not binding["viewerId"]
+                or binding["viewerId"] != getattr(self, "current_viewer_id", None)
+                or not isinstance(binding.get("leaseId"), str) or not binding["leaseId"]
+                or type(binding.get("leaseEpoch")) is not int or binding["leaseEpoch"] < 1
+                or binding.get("connectionAttemptId") != intent.connection_attempt_id
+                or type(binding.get("connectionAttemptSequence")) is not int
+                or binding["connectionAttemptSequence"] != intent.generation
+                or type(binding.get("connectionGeneration")) is not int
+                or binding["connectionGeneration"] < 1
+                or binding["connectionGeneration"] != getattr(self, "_connection_generation", None)
+                or coordinator is None or coordinator._attempt_id != intent.connection_attempt_id):
+            return {"applied": False, "reason": "adaptive-authority-mismatch"}
+        for existing in (coordinator.pending, coordinator.current):
+            if existing is not None and (
+                    existing.attempt_id != intent.connection_attempt_id
+                    or existing.generation > intent.generation
+                    or (existing.generation == intent.generation
+                        and existing.profile_sequence > intent.profile_sequence)):
+                return {"applied": False, "reason": "adaptive-coordinator-stale"}
+        provider = getattr(self, "_h264_policy_provider", None)
+        current = provider.current() if provider is not None else None
+        if current is None or current.policy is None or current.intent is None:
+            return {"applied": False, "reason": "no-current-policy"}
+        previous = current.intent
+        if any(getattr(intent, field, None) != getattr(previous, field) for field in
+               ("connection_attempt_id", "generation", "path", "width", "height", "profile_sequence")):
+            return {"applied": False, "reason": "adaptive-scope-change"}
+        decision = select_measured_media_policy(
+            current.policy, intent, getattr(self, "_adaptive_local_qualification", None),
+            context=getattr(self, "_adaptive_qualification_context", None))
+        if not decision.changed:
+            return {"applied": False, "reason": decision.reason}
+        if (not self._authority_matches(authority)
+                or getattr(self, "_media_apply_coordinator", None) is not coordinator
+                or coordinator._attempt_id != intent.connection_attempt_id):
+            return {"applied": False, "reason": "adaptive-authority-mismatch"}
+        # Reuse existing generation/coalescing admission and codec-open observer.
+        # This method has no inbound handler and no automatic retry loop.
+        result = self._apply_encoder_bitrate_kbps(
+            decision.policy.target_bitrate_bps // 1000, policy=decision.policy)
+        return dict(result, reason=decision.reason)
+
     def _apply_encoder_bitrate_kbps(self, bitrate_kbps, policy=None):
         """Return an honest bitrate-application result for the current encoder."""
         try:
@@ -3907,10 +4946,10 @@ class WebRemoteHost:
         if state not in ("active", "suspended"):
             return False, "invalid-state", None
         generation = data.get("generation")
-        if not isinstance(generation, int) or generation < 1:
+        if not valid_relay_integer(generation, 1):
             return False, "invalid-generation", None
         attempt_id = data.get("connectionAttemptId")
-        if not isinstance(attempt_id, str) or not attempt_id:
+        if not valid_relay_nonce(attempt_id, 128):
             return False, "invalid-attempt", None
         viewer_id = data.get("viewerId")
         if not isinstance(viewer_id, str) or not viewer_id:
@@ -3919,7 +4958,7 @@ class WebRemoteHost:
         lease_epoch = data.get("leaseEpoch")
         if not isinstance(lease_id, str) or len(lease_id) < 16:
             return False, "invalid-lease", None
-        if not isinstance(lease_epoch, int) or lease_epoch < 1:
+        if not valid_relay_integer(lease_epoch, 1):
             return False, "invalid-lease", None
 
         binding = getattr(self, "_active_input_binding", None)
@@ -3955,6 +4994,16 @@ class WebRemoteHost:
             "reasons": data.get("reasons") if isinstance(data.get("reasons"), list) else [],
         }
 
+    def _retained_media_attempt_sequence(self, attempt_id):
+        for owner in (getattr(self, "_active_input_binding", None),
+                      getattr(self, "_media_activity_binding", None)):
+            if not isinstance(owner, dict) or owner.get("connectionAttemptId") != attempt_id:
+                continue
+            sequence = owner.get("connectionAttemptSequence")
+            if type(sequence) is int and sequence >= 1:
+                return {"connectionAttemptSequence": sequence}
+        return {}
+
     async def on_media_activity_change(self, data):
         """Apply lease-bound media suspend/resume demand from the active controller."""
         lock = getattr(self, "_media_activity_lock", None)
@@ -3973,6 +5022,7 @@ class WebRemoteHost:
                 )
                 return
 
+            authority = self._capture_authority()
             applied = False
             keyframe_requested = False
             screen_track = getattr(self, "screen_track", None)
@@ -4052,7 +5102,11 @@ class WebRemoteHost:
                     elif relay is not None and getattr(relay, "enabled", False):
                         try:
                             await relay.stop()
+                            if not self._authority_matches(authority):
+                                return
                         except Exception as exc:
+                            if not self._authority_matches(authority):
+                                return
                             step_ok["relay"] = False
                             logger.warning("media suspend relay stop failed: %s", type(exc).__name__)
                     applied = all(step_ok.values())
@@ -4106,11 +5160,15 @@ class WebRemoteHost:
                                     baseline,
                                     2.0,  # relay paths need more warmup time under CPU load
                                 )
+                                if not self._authority_matches(authority):
+                                    return
                                 if fresh is not True:
                                     step_ok["capture"] = False
                                     capture_failed_reason = "fresh-capture-timeout"
                             capture_seq = int(getattr(screen_track, "_capture_seq", 0) or 0)
                         except Exception as exc:
+                            if not self._authority_matches(authority):
+                                return
                             step_ok["capture"] = False
                             capture_failed_reason = "fresh-capture-timeout"
                             logger.warning("media resume capture failed: %s", type(exc).__name__)
@@ -4172,6 +5230,8 @@ class WebRemoteHost:
                         },
                     )
             except Exception as exc:
+                if not self._authority_matches(authority):
+                    return
                 logger.error("media activity apply failed: %s", type(exc).__name__)
                 applied = False
                 # Stay safe/suspended on failure.
@@ -4188,10 +5248,13 @@ class WebRemoteHost:
                 except Exception:
                     pass
 
+            if not self._authority_matches(authority):
+                return
             if applied:
                 # This binding is applied progress, not request history. Preserve
                 # the previous generation so a transient failure can replay once.
                 self._media_activity_binding = {
+                    **self._retained_media_attempt_sequence(normalized["connectionAttemptId"]),
                     "viewerId": normalized["viewerId"],
                     "connectionAttemptId": normalized["connectionAttemptId"],
                     "generation": normalized["generation"],
@@ -4246,6 +5309,8 @@ class WebRemoteHost:
         connection_attempt_id,
         applied,
         reject_reason=None,
+        start_request_id=None,
+        relay_scope=None,
     ):
         sio = getattr(self, "sio", None)
         if sio is None:
@@ -4258,6 +5323,10 @@ class WebRemoteHost:
             "applied": bool(applied),
             "viewerId": viewer_id if isinstance(viewer_id, str) else None,
         }
+        if valid_relay_scope(relay_scope):
+            payload.update(relayFrameSchemaVersion=1, relayScope=dict(relay_scope))
+        if start_request_id is not None:
+            payload.update(relayControlKind='start', relayStartRequestId=start_request_id)
         if reject_reason:
             payload["reason"] = str(reject_reason)[:64]
         await sio.emit("relay-stream-control-ack", payload)
@@ -4306,6 +5375,13 @@ class WebRemoteHost:
             )
             return
 
+        authority = self._capture_authority()
+        relay = None
+        def owns_relay():
+            return self._authority_matches(authority) and self.relay_streamer is relay
+
+        media_scope = {'connectionAttemptId': attempt_id, 'mediaGeneration': generation,
+                       'leaseEpoch': lease_epoch}
         applied = False
         try:
             if not self.relay_streamer:
@@ -4325,67 +5401,104 @@ class WebRemoteHost:
                     relay.set_suspended(True)
                 else:
                     await relay.stop()
+                    if not owns_relay():
+                        return
                 self._media_activity_suspended = True
                 applied = True
             else:
                 # Resume producer for current generation; Viewer still waits for fresh frame.
                 if getattr(relay, "viewer_id", None) != viewer_id or not getattr(relay, "enabled", True):
-                    await relay.start(
+                    started = await relay.start(
                         viewer_id,
                         width=data.get("width", 960),
                         height=data.get("height", 540),
                         fps=data.get("fps", 8),
+                        authority_is_current=owns_relay,
+                        media_scope=media_scope,
                     )
+                    if not owns_relay():
+                        return
+                    if started is False:
+                        raise RuntimeError("relay-start-superseded")
                 if hasattr(relay, "set_suspended"):
                     relay.set_suspended(False)
                 self._media_activity_suspended = False
                 applied = True
 
+            if hasattr(relay, 'bind_media_scope'):
+                relay.bind_media_scope(media_scope)
+                relay._authority_is_current = owns_relay
             self._media_activity_binding = {
+                **self._retained_media_attempt_sequence(attempt_id),
                 "viewerId": viewer_id,
                 "connectionAttemptId": attempt_id,
                 "generation": generation,
                 "state": state,
             }
         except Exception as exc:
+            if not owns_relay():
+                return
             logger.warning("tunnel media control apply failed: %s", type(exc).__name__)
             applied = False
             try:
-                if hasattr(self.relay_streamer, "set_suspended"):
-                    self.relay_streamer.set_suspended(True)
+                if hasattr(relay, "set_suspended"):
+                    relay.set_suspended(True)
             except Exception:
                 pass
             self._media_activity_suspended = True
             state = "suspended"
 
+        if not owns_relay():
+            return
         await self._emit_relay_stream_control_ack(
             viewer_id=viewer_id,
             state=state if applied else "suspended",
             generation=generation,
             connection_attempt_id=attempt_id,
             applied=applied,
+            relay_scope=getattr(relay, 'relay_scope', None) if applied else None,
             reject_reason=None if applied else "execution-failed",
         )
 
     async def on_relay_stream_control(self, data):
         """Start/stop Socket.IO tunnel video relay for networks where WebRTC ICE fails."""
+        authority = self._capture_authority()
         try:
             if self._is_tunnel_media_control(data):
-                await self._apply_tunnel_media_control(data)
+                lock = getattr(self, "_media_activity_lock", None)
+                if lock is None:
+                    lock = self._media_activity_lock = asyncio.Lock()
+                async with lock:
+                    if not self._authority_matches(authority):
+                        return
+                    await self._apply_tunnel_media_control(data)
+                return
+            if 'relayFrameSchemaVersion' in data and data.get('enabled'):
+                lock = getattr(self, '_media_activity_lock', None)
+                if lock is None:
+                    lock = self._media_activity_lock = asyncio.Lock()
+                async with lock:
+                    if not self._authority_matches(authority):
+                        return
+                    await self._start_scoped_relay(data, authority)
                 return
             enabled = bool(data.get("enabled"))
             viewer_id = data.get("viewerId")
             if not self.relay_streamer:
                 self.relay_streamer = TunnelRelayStreamer(self.sio)
+            relay = self.relay_streamer
             if enabled and viewer_id:
                 # Attempt authority is established only by offer or
                 # connection-attempt-bind. Do not invent it from relay start.
-                await self.relay_streamer.start(
+                await relay.start(
                     viewer_id,
                     width=data.get("width", 960),
                     height=data.get("height", 540),
                     fps=data.get("fps", 8),
+                    authority_is_current=lambda: self._authority_matches(authority) and self.relay_streamer is relay,
                 )
+                if not self._authority_matches(authority) or self.relay_streamer is not relay:
+                    return
             else:
                 active_viewer_id = getattr(self.relay_streamer, "viewer_id", None)
                 if viewer_id and active_viewer_id and viewer_id != active_viewer_id:
@@ -4395,10 +5508,58 @@ class WebRemoteHost:
                         active_viewer_id,
                     )
                     return
-                await self.relay_streamer.stop()
+                await relay.stop()
+                if not self._authority_matches(authority) or self.relay_streamer is not relay:
+                    return
                 logger.info("Tunnel relay stream stopped viewer=%s", viewer_id)
         except Exception as e:
             logger.error(f"Error handling relay stream control: {e}")
+
+    async def _start_scoped_relay(self, data, authority):
+        """Ordinary generation-zero start uses existing bound authority, not media applyAck."""
+        binding = getattr(self, '_active_input_binding', None) or {}
+        media = getattr(self, '_media_activity_binding', None) or {}
+        request_id = data.get('relayStartRequestId')
+        attempt = data.get('connectionAttemptId')
+        generation = data.get('relayMediaGeneration')
+        valid = (type(data.get('schemaVersion')) is int and data['schemaVersion'] == 2
+                 and type(data.get('relayFrameSchemaVersion')) is int and data['relayFrameSchemaVersion'] == 1
+                 and valid_relay_nonce(request_id, 64) and valid_relay_nonce(attempt, 128)
+                 and valid_relay_integer(generation) and valid_relay_integer(data.get('leaseEpoch'), 1)
+                 and binding.get('viewerId') == data.get('viewerId')
+                 and binding.get('leaseId') == data.get('leaseId') and bool(binding.get('leaseId'))
+                 and binding.get('leaseEpoch') == data.get('leaseEpoch')
+                 and binding.get('connectionAttemptId') == attempt
+                 and media.get('viewerId') == binding.get('viewerId')
+                 and media.get('connectionAttemptId') == attempt
+                 and media.get('generation') == generation and media.get('state') == 'active'
+                 and not getattr(self, '_media_activity_suspended', False))
+        if not valid:
+            await self._emit_relay_stream_control_ack(
+                viewer_id=data.get('viewerId'), state='active', generation=generation,
+                connection_attempt_id=attempt, applied=False, start_request_id=request_id,
+                reject_reason='invalid-relay-start')
+            return
+        if not self.relay_streamer:
+            self.relay_streamer = TunnelRelayStreamer(self.sio)
+        relay = self.relay_streamer
+        self._relay_start_request = request = object()
+        def owns_relay():
+            return (self._authority_matches(authority) and self.relay_streamer is relay
+                    and self._relay_start_request is request
+                    and self._media_activity_binding is media)
+        started = await relay.start(
+            binding['viewerId'], width=data.get('width', 960), height=data.get('height', 540),
+            fps=data.get('fps', 8), authority_is_current=owns_relay,
+            media_scope={'connectionAttemptId': binding['connectionAttemptId'],
+                         'mediaGeneration': media['generation'], 'leaseEpoch': binding['leaseEpoch']})
+        if not owns_relay():
+            return
+        await self._emit_relay_stream_control_ack(
+            viewer_id=binding['viewerId'], state='active', generation=media['generation'],
+            connection_attempt_id=binding['connectionAttemptId'], applied=started is not False,
+            start_request_id=request_id, relay_scope=relay.relay_scope if started is not False else None,
+            reject_reason='relay-start-failed' if started is False else None)
 
     async def on_connection_attempt_bind(self, data):
         """Adopt Signal's authoritative viewer/attempt bind for tunnel (no SDP offer)."""
@@ -4432,6 +5593,27 @@ class WebRemoteHost:
                 and binding.get("connectionAttemptId") not in (None, attempt_id)
             ):
                 return
+        if binding.get("connectionAttemptId") == attempt_id and binding.get("connectionAttemptSequence") == sequence:
+            return
+        self._advance_authority()
+        # Any capture already warming for the old attempt loses permission.
+        track = getattr(self, "screen_track", None)
+        if track is not None and hasattr(track, "set_suspended"):
+            track.set_suspended(True)
+        sender = getattr(self, "media_sender", None)
+        if sender is not None:
+            sender.suspend()
+        relay = getattr(self, "relay_streamer", None)
+        if relay is not None and hasattr(relay, "set_suspended"):
+            relay.set_suspended(True)
+        # This new attempt starts with active demand (generation 0). Freezing
+        # the previous attempt's resources is not a request to pause the new
+        # offer: a fresh visible Viewer has no resume intent to replay. Keep
+        # those old resources frozen; the new offer installs its own media.
+        # An explicit pause for this attempt can still set this flag before SDP
+        # completes, and an idempotent bind above will preserve that pause.
+        self._media_activity_suspended = False
+        if isinstance(sequence, int) and sequence >= 1:
             binding["connectionAttemptSequence"] = sequence
         binding["connectionAttemptId"] = attempt_id
         coordinator = getattr(self, "_media_apply_coordinator", None)
@@ -4451,11 +5633,33 @@ class WebRemoteHost:
             "generation": 0,
             "state": "active",
         }
+        if isinstance(sequence, int) and sequence >= 1:
+            self._media_activity_binding["connectionAttemptSequence"] = sequence
+
+        queue = getattr(self, '_input_admission', None)
+        if queue is not None and not queue.snapshot()['pendingCount'] and not queue.unordered_snapshot()['pendingCount']:
+            queue.resume()
 
     async def on_relay_frame_ack(self, data):
         try:
-            if self.relay_streamer and data.get("viewerId") == self.relay_streamer.viewer_id:
-                self.relay_streamer.ack(data.get("frameId"), latency_ms=data.get("latencyMs"))
+            relay = self.relay_streamer
+            if not relay or data.get('viewerId') != relay.viewer_id:
+                return
+            if relay.relay_scope is not None:
+                binding = getattr(self, '_active_input_binding', None) or {}
+                media = getattr(self, '_media_activity_binding', None) or {}
+                if (data.get('schemaVersion') != 2
+                    or binding.get('viewerId') != relay.viewer_id
+                    or data.get('leaseId') != binding.get('leaseId')
+                    or type(data.get('leaseEpoch')) is not int
+                    or data.get('leaseEpoch') != binding.get('leaseEpoch')
+                    or binding.get('connectionAttemptId') != relay.relay_scope['connectionAttemptId']
+                    or media.get('generation') != relay.relay_scope['mediaGeneration']
+                    or media.get('state') != 'active' or relay.suspended
+                    or (relay._authority_is_current and not relay._authority_is_current())):
+                    return
+            relay.ack(data.get('frameId'), relay_scope=data.get('relayScope'),
+                      relay_frame_schema_version=data.get('relayFrameSchemaVersion'))
         except Exception as e:
             logger.debug(f"Error handling relay frame ack: {e}")
 
@@ -4464,12 +5668,42 @@ class WebRemoteHost:
         try:
             logger.info(f"Viewer status: {data.get('onlineCount', 0)} online")
             if data.get("onlineCount", 0) == 0:
-                if self.relay_streamer:
-                    await self.relay_streamer.stop()
-                await self._close_peer_connection(
-                    reason="viewer-disconnected",
-                    reset_offer_state=True,
-                )
+                connection = getattr(self, "_signal_generation", 0)
+                authority = self._capture_authority()
+                operation = getattr(self, "_control_operation", None)
+                lock = getattr(self, "_control_transition_lock", None)
+                if lock is None:
+                    lock = self._control_transition_lock = asyncio.Lock()
+                async with lock:
+                    if (connection != getattr(self, "_signal_generation", 0)
+                            or not self._authority_matches(authority)):
+                        return
+                    # A trusted reset may already own detached resources. Only
+                    # its same-scope, completed barrier proves this status redundant.
+                    reset_completed = (
+                        type(operation) is tuple and len(operation) == 3
+                        and type(operation[0]) is int and operation[0] > 0
+                        and operation[1:] == ("reset", "pending")
+                        and getattr(self, "_control_operation", None)
+                            == (operation[0], "reset", "applied")
+                        and getattr(self, "_active_input_binding", None) is None
+                        and getattr(self, "current_viewer_id", None) is None
+                        and all(getattr(self, name, None) is None for name in (
+                            "relay_streamer", "pc", "screen_track", "video_sender",
+                            "_input_datachannel", "_input_move_datachannel",
+                            "media_sender", "capture_adapter"))
+                    )
+                    if not reset_completed:
+                        relay = getattr(self, "relay_streamer", None)
+                        if relay:
+                            await relay.stop()
+                        if (connection != getattr(self, "_signal_generation", 0)
+                                or not self._authority_matches(authority)):
+                            return
+                        await self._close_peer_connection(
+                            reason="viewer-disconnected",
+                            reset_offer_state=True,
+                        )
             self.overlay.send({
                 "type": "viewer-status",
                 "onlineCount": data.get("onlineCount", 0),
@@ -4548,7 +5782,7 @@ class WebRemoteHost:
         except Exception as e:
             logger.warning(f"Failed to parse {label} ICE candidates: {e}")
 
-    def _prefer_h264_transceivers(self):
+    def _prefer_h264_transceivers(self, pc=None):
         """Prefer H.264 for lower latency and better browser decoder support."""
         try:
             from aiortc import RTCRtpSender
@@ -4563,7 +5797,7 @@ class WebRemoteHost:
             fallback = [codec for codec in video_codecs if codec not in h264_codecs and codec not in h264_rtx]
             preferred = h264_codecs + h264_rtx + fallback
 
-            for transceiver in self.pc.getTransceivers():
+            for transceiver in (pc or self.pc).getTransceivers():
                 if transceiver.kind == "video":
                     transceiver.setCodecPreferences(preferred)
                     logger.info("Preferred host video codecs: %s", " | ".join(str(codec) for codec in preferred))
@@ -4575,8 +5809,21 @@ class WebRemoteHost:
 
     async def on_disconnect(self):
         logger.warning("Disconnected from signaling server")
-        if self.relay_streamer:
-            await self.relay_streamer.stop()
+        self._signal_authenticated_generation = None
+        initialized = getattr(self, "_signal_init_event", None)
+        if initialized is not None:
+            initialized.set()
+        self._signal_generation = getattr(self, "_signal_generation", 0) + 1
+        self._advance_authority()
+        self._signal_ready = False
+        self._active_input_binding = None
+        authority = self._capture_authority()
+        relay = getattr(self, "relay_streamer", None)
+        if relay:
+            self.relay_streamer = None
+            await relay.stop()
+            if not self._authority_matches(authority):
+                return
         await self._close_peer_connection(reason='signal-disconnect', reset_offer_state=True)
 
     async def ensure_connected(self):
@@ -4610,41 +5857,50 @@ class WebRemoteHost:
 
         logger.info("Host running. Press Ctrl+C to stop.")
 
-        # Event loop lag monitor
+        self._resource_sampler = ResourceSampler(os.getpid(), registered_pids={os.getpid()})
+        self._runtime_observability = RuntimeObservability(
+            read_current_rss=lambda: self._resource_sampler.snapshot()['currentRssMiB'],
+            read_peak_rss=lambda: self._resource_sampler.snapshot()['peakRssMiB'],
+        )
+        # Diagnostics only read already-existing queues; never instantiate input work.
+        def input_queue_snapshot(method):
+            queue = getattr(self, '_input_admission', None)
+            return getattr(queue, method)() if queue is not None else None
+        self._runtime_observability.register_queue(
+            'inputReliable', lambda: input_queue_snapshot('snapshot'))
+        self._runtime_observability.register_queue(
+            'inputUnordered', lambda: input_queue_snapshot('unordered_snapshot'))
+        def relay_queue_snapshot():
+            worker = getattr(getattr(self, 'relay_streamer', None), '_jpeg_worker', None)
+            return snapshot_relay_queue(worker)
+        self._runtime_observability.register_queue('relayFrames', relay_queue_snapshot)
+        self._resource_sampler.start()
+
         async def monitor_event_loop_lag():
-            interval_seconds = 1.0
-            emit_cooldown_seconds = 5.0
-            deadline = time.perf_counter() + interval_seconds
-            last_emitted_at = 0.0
-            pending_count = 0
-            pending_max_lag_ms = 0.0
+            interval_ns = 1_000_000_000
+            deadline = time.monotonic_ns() + interval_ns
+            last_emitted_at = time.monotonic_ns()
             while True:
-                await asyncio.sleep(max(0.0, deadline - time.perf_counter()))
-                observed_at = time.perf_counter()
-                lag_ms = max(0.0, (observed_at - deadline) * 1000)
-                deadline = observed_at + interval_seconds
-                if lag_ms > 20:
-                    pending_count += 1
-                    pending_max_lag_ms = max(pending_max_lag_ms, lag_ms)
-                should_emit = pending_count > 0 and (
-                    pending_max_lag_ms >= 100
-                    or observed_at - last_emitted_at >= emit_cooldown_seconds
-                )
-                if should_emit:
+                await asyncio.sleep(max(0.0, (deadline - time.monotonic_ns()) / 1_000_000_000))
+                observed_at = time.monotonic_ns()
+                self._runtime_observability.observe_loop(deadline, observed_at)
+                # Skip missed deadlines without inventing healthy zero samples.
+                deadline += (max(0, observed_at - deadline) // interval_ns + 1) * interval_ns
+                if observed_at - last_emitted_at >= 5_000_000_000:
+                    summary = self._runtime_observability.snapshot(observed_at)['eventLoop']
+                    max_lag = summary['max']
                     emit_host_event(
                         logger,
                         event="host_event_loop_lag",
-                        message="Host event loop lag exceeded threshold",
-                        level="warning",
+                        message="Host complete sampled event loop window",
+                        level="warning" if max_lag > 20 else "info",
                         meta=self.build_event_loop_lag_context(
-                            lag_ms=pending_max_lag_ms,
-                            sample_count=pending_count,
-                            max_lag_ms=pending_max_lag_ms,
+                            lag_ms=summary['last'],
+                            sample_count=summary['count'],
+                            max_lag_ms=max_lag,
                             task_count=len(asyncio.all_tasks()),
                         ),
                     )
-                    pending_count = 0
-                    pending_max_lag_ms = 0.0
                     last_emitted_at = observed_at
 
         lag_task = asyncio.create_task(monitor_event_loop_lag())
@@ -4658,6 +5914,8 @@ class WebRemoteHost:
             logger.info("Shutting down...")
         finally:
             lag_task.cancel()
+            await asyncio.gather(lag_task, return_exceptions=True)
+            await self._resource_sampler.close()
             lifecycle_tasks = list(self._input_lifecycle_tasks)
             if lifecycle_tasks:
                 await asyncio.gather(*lifecycle_tasks, return_exceptions=True)
@@ -4665,11 +5923,15 @@ class WebRemoteHost:
 
 
 if __name__ == "__main__":
-    host = WebRemoteHost()
     try:
-        if os.environ.get("WRD_DISABLE_VT_WARMUP") != "1":
-            warmup_videotoolbox()
-        asyncio.run(host.run())
-    except Exception as e:
-        logger.error(f"Fatal: {e}", exc_info=True)
-        sys.exit(1)
+        host = WebRemoteHost()
+        try:
+            if os.environ.get("WRD_DISABLE_VT_WARMUP") != "1":
+                warmup_videotoolbox()
+            asyncio.run(host.run())
+        except Exception as e:
+            logger.error(f"Fatal: {e}", exc_info=True)
+            sys.exit(1)
+    finally:
+        # Run after async lifecycle and fatal messages; no executor join.
+        host_log_handler.shutdown()

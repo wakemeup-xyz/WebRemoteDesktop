@@ -318,3 +318,150 @@ test('aggregates high-frequency move and wheel input without per-event traces or
   assert.equal(snapshot.counters.mouseMoveCount, 1500);
   assert.equal(snapshot.counters.wheelCount, 500);
 });
+
+test('optional schema3 retains monotonic timestamps beyond ten minutes with matching traceNowMs', () => {
+  let now = 700000.9;
+  const trace = requireCollector().create({ schemaVersion: 3, now: () => now, hashInputIds: null });
+  trace.record('lifecycle', { inputType: 'control', action: 'pause', text: 'TRACE_CLOCK_CANARY' });
+  now = 1300123.8; trace.record('lifecycle', { inputType: 'control', action: 'resume' });
+  const snapshot = trace.snapshot();
+  assert.equal(snapshot.schemaVersion, 3); assert.deepEqual(snapshot.events.map(event => event.at), [700000, 1300123]);
+  assert.equal(snapshot.traceNowMs, 1300123); assert.equal(snapshot.traceNowMs - snapshot.events[0].at, 600123);
+  assert.equal(JSON.stringify(snapshot).includes('TRACE_CLOCK_CANARY'), false);
+  trace.dispose();
+});
+test('schema3 timestamp validation rejects coercion, negative, nonfinite and unsafe clocks', () => {
+  for (const value of ['700000', -1, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+    const trace = requireCollector().create({ schemaVersion: 3, now: () => value, hashInputIds: null });
+    trace.record('lifecycle', { inputType: 'control', action: 'pause' });
+    const snapshot = trace.snapshot(); assert.equal(snapshot.traceNowMs, null); assert.equal(snapshot.events[0].at, null); trace.dispose();
+  }
+});
+
+
+test('schema3 15-minute chronology and boot hashes prevent cross-boot age comparison', () => {
+  let now=0;
+  const first=requireCollector().create({schemaVersion:3,now:()=>now,hashInputIds:null});
+  for(const value of [0,599999,600001,900000]){now=value;first.record('lifecycle',{action:'pause'});}
+  const a=first.snapshot(); assert.deepEqual(a.events.map(e=>e.at),[0,599999,600001,900000]);
+  assert.equal(a.traceNowMs,900000); assert.match(a.bootIdHash,/^[a-f0-9]{32}$/);
+  assert.equal(first.snapshot().bootIdHash,a.bootIdHash);
+  // A new collector represents a new trace epoch; only its own events use its clock.
+  const second=requireCollector().create({schemaVersion:3,now:()=>0,hashInputIds:null});
+  const b=second.snapshot();assert.notEqual(a.bootIdHash,b.bootIdHash);
+  assert.equal(b.traceNowMs,0);assert.deepEqual(b.events,[]);
+  first.dispose();second.dispose();
+});
+
+
+test('unordered ACK observations cannot evict reset timeout and retain ambiguous outcomes', () => {
+  let now = 1;
+  const trace = requireCollector().create({ now: () => now, hashInputIds: null });
+  trace.record('ack-timeout', { inputType: 'mouse', action: 'reset', status: 'timeout', reliable: true });
+  for (let i = 0; i < 1000; i++) {
+    now++;
+    trace.record('ack', { inputType: 'pointer', action: 'move', status: 'applied', accepted: false,
+      reliable: false, matchedReliablePending: false });
+  }
+  for (const extra of [{ status: 'duplicate' }, { status: 'execution-failed' }, { status: 'late' },
+    { reliable: true }, { matchedReliablePending: true }, { reliable: undefined }, { action: 'reset' }, { late: true }, { inputType: 'keyboard' }]) {
+    trace.record('ack', { inputType: 'pointer', action: 'move', status: 'applied', accepted: false,
+      reliable: false, matchedReliablePending: false, ...extra });
+  }
+  const result = trace.snapshot();
+  assert.equal(result.events.filter(e => e.stage === 'ack-timeout').length, 1);
+  assert.equal(result.counters.sampledAckEvents, 1000);
+  assert.equal(result.events.filter(e => e.stage === 'ack').length, 9);
+});
+
+test('append and async digest measure only the changed event and never resurrect an evicted entry', async () => {
+  const measured = [];
+  let resolveHash;
+  const trace = requireCollector().create({ now: () => 10,
+    byteLength(value) { measured.push(JSON.parse(value)); return Buffer.byteLength(value); },
+    hashInputIds: () => new Promise(resolve => { resolveHash = resolve; }) });
+  trace.record('lifecycle', { action: 'pause' });
+  assert.equal(measured.length, 1);
+  trace.record('transport-send', { inputType: 'keyboard', action: 'key', reliable: false, inputIds: ['digest'] });
+  assert.equal(measured.length, 2);
+  resolveHash('abcdef0123456789');
+  await Promise.resolve();
+  assert.equal(measured.length, 3);
+  assert.equal(measured[2].inputIdHash, 'abcdef0123456789');
+  assert.ok(measured.every(event => event.stage && !event.events));
+  trace.dispose();
+
+  let resolveLate;
+  const late = requireCollector().create({ now: () => 10,
+    byteLength(value) { measured.push(JSON.parse(value)); return Buffer.byteLength(value); },
+    hashInputIds: () => new Promise(resolve => { resolveLate = resolve; }) });
+  late.record('gate', { action: 'key', inputIds: ['late-digest'] });
+  for (let i = 0; i < 256; i++) late.record('lifecycle', { action: 'pause' });
+  const before = measured.length;
+  resolveLate('abcdef0123456789'); await Promise.resolve();
+  assert.equal(measured.length, before);
+  assert.equal(late.snapshot().events.some(event => event.inputIdHash), false);
+  late.dispose();
+});
+
+test('final byte cap survives maximal entries, hash growth and malformed UTF8 input', async () => {
+  const trace = requireCollector().create({ schemaVersion: 3, now: () => Number.MAX_SAFE_INTEGER,
+    hashInputIds: async () => 'abcdef0123456789', setTimeoutFn: () => null });
+  for (let i = 0; i < 400; i++) trace.record('transport-send', {
+    inputType: 'keyboard', action: 'reset', phase: 'down', transport: 'datachannel', accepted: true,
+    status: 'applied', reason: 'keyboard-reset-ack-unsupported-code', inputIds: [`cap-${i}`],
+    connectionAttemptId: 'a'.repeat(96), leaseEpoch: 0x7fffffff, seq: i,
+    focusKind: 'desktop', visibility: 'visible', state: 'reacquire-required', source: 'lifecycle',
+    generation: 0x7fffffff, gateAllowed: true, surfaceState: 'uncertain', recoveryState: 'waiting',
+    desktopWriteRecoveryState: 'reacquire-required', pendingMouseReset: true,
+    text: '\ud800😀中文', reasonCanary: '\udfff',
+  });
+  await settleHashes(trace);
+  const result = trace.snapshot();
+  assert.ok(result.events.length <= 256);
+  assert.ok(result.counters.pendingAckCount <= 256);
+  assert.ok(result.counters.pendingHashCount <= 64);
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 65536);
+  assert.ok(result.counters.droppedEvents > 0);
+  assert.equal(JSON.stringify(result).includes('中文'), false);
+  trace.dispose();
+});
+
+
+test('snapshot final cap independently checks bytes and accounts every removed event', () => {
+  const trace = requireCollector().create({ now: () => 1, byteLength: () => 0 });
+  for (let i = 0; i < 256; i++) trace.record('ack', {
+    inputType: 'keyboard', action: 'reset', status: 'execution-failed', accepted: false,
+    phase: 'down', transport: 'datachannel', connectionAttemptId: 'a'.repeat(96),
+    reason: 'keyboard-reset-ack-unsupported-code', seq: i, appliedSeq: i, leaseEpoch: i,
+    focusKind: 'desktop', visibility: 'visible', state: 'reacquire-required', source: 'lifecycle',
+    generation: i, gateAllowed: false, surfaceState: 'uncertain', recoveryState: 'waiting',
+    desktopWriteRecoveryState: 'reacquire-required', pendingMouseReset: true,
+  });
+  const snapshot = trace.snapshot();
+  assert.ok(Buffer.byteLength(JSON.stringify(snapshot)) <= 65536);
+  assert.equal(snapshot.counters.droppedEvents, 256 - snapshot.events.length);
+  assert.ok(snapshot.counters.droppedEvents > 0);
+  trace.dispose();
+});
+
+test('sampling cannot delete existing reliable waiters even with conflicting unordered hints', () => {
+  let now = 1; let deadline;
+  const trace = requireCollector().create({ now: () => now, hashInputIds: null,
+    setTimeoutFn: callback => { deadline = callback; return 1; }, clearTimeoutFn() {} });
+  trace.record('transport-send', { inputType: 'pointer', action: 'reset', accepted: true,
+    reliable: true, inputIds: ['reset-pending'], leaseEpoch: 4, connectionAttemptId: 'current' });
+  trace.record('ack', { inputType: 'pointer', action: 'move', status: 'applied', accepted: false,
+    reliable: false, matchedReliablePending: false, inputIds: ['reset-pending'], leaseEpoch: 3,
+    connectionAttemptId: 'old' });
+  assert.equal(trace.snapshot().counters.pendingAckCount, 1);
+  now = 4000; deadline();
+  trace.record('ack', { inputType: 'pointer', action: 'move', status: 'applied', accepted: false,
+    reliable: false, matchedReliablePending: false, inputIds: ['reset-pending'], leaseEpoch: 4,
+    connectionAttemptId: 'current' });
+  const snapshot = trace.snapshot();
+  assert.equal(snapshot.counters.pendingAckCount, 0);
+  assert.equal(snapshot.counters.sampledAckEvents, 1);
+  assert.equal(snapshot.events.at(-1).reason, 'late-ack');
+  trace.dispose();
+});

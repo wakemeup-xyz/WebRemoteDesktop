@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "runNonce": "0acf96f102fcd33e8f17b884a75e93f7",
+  "createdAtEpochMs": 1792348604333,
+  "validUntilEpochMs": 1792370204333,
+  "scenario": "baseline",
+  "mode": "relay",
+  "originSource": "formal-configured",
+  "originEvidenceSha256": "0408755280b9ae07fe554925711fe76c48930293d8f3b504f40165af1b36aa16",
+  "originSha256": "790a5ff79fbb5907c4e8f153de758b2515b76d761b14932f5fd5c2efacd2f545",
+  "deploymentEvidence": {
+    "kind": "root-verified-local-deployment",
+    "sha256": "04f4ab79ce84eb33353d1e03462d07196788fc9fde6eaacc8308965985718b46"
+  },
+  "signal": {
+    "sourceCommit": "dfb15434e79da90b803b763c533836e16c080c71",
+    "sourceTreeSha256": "1cab881687688bd4d61d30a57a932e9812155d1138da4dc4c9c637cb2a1fc1e4"
+  },
+  "host": {
+    "sourceCommit": "dfb15434e79da90b803b763c533836e16c080c71",
+    "sourceTreeSha256": "a9145f7098f6862230e1cc9c444e0940a5169c06c388463a756551aab8177a54"
+  },
+  "viewer": {
+    "sourceCommit": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+    "buildId": "a3671ba674ad7516"
+  },
+  "signalLog": {
+    "path": "/tmp/wrd-structured/signal-server.jsonl",
+    "device": 16777220,
+    "inode": 43620520
+  }
+}

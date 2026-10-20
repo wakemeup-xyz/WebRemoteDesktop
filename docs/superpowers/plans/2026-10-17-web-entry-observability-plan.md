@@ -1,5 +1,7 @@
 # 网页、入口与运行观测 Implementation Plan
 
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 让临时入口/资源错误可有界恢复，并使自动诊断能说明真实版本、事件时刻、耗时与资源状态，同时消除前端观测热路径的重复工作。
@@ -10,13 +12,13 @@
 
 **Spec:** [网页/入口/观测设计](../specs/2026-10-17-web-entry-observability-design.md)；实施前同时读[总设计](../specs/2026-10-17-reliability-latency-remediation-design.md)。
 
-当前所有步骤均未执行。用户本轮授权是文档与复审；本文的测试、代码与提交命令只在后续获得实施授权后执行。不启动当前服务、生产 Viewer 或 watcher，不构建生产 dist。
+执行状态：实现、测试、独立复核及提交记录见实施记录；以下步骤保留为审查版计划，复选框不作为执行账本。真实验收逐项登记，未运行项不因离线测试通过而关闭。
 
 ## Global Constraints
 
 以下内容须逐字复制到各执行计划的 Global Constraints：
 
-1. 本轮仅诊断和文档；业务代码、运行配置、服务、tunnel 均不修改或重启。
+1. 用户后续已明确授权本轮开发、验收、启动本地 Signal/Host 并保持可用；不得停止、重启或重建 tunnel。生产 Viewer 仍须避开正在使用的会话。
 2. 后续实施沿用严格单桌面 Viewer、控制租约和 fail-closed reset 屏障；不重放投递结果不确定的点击、文本或命令。
 3. 不自动切换网络模式、TURN 节点或公网地址；保留 Quality Lock，不自动降低用户选择的分辨率。
 4. 生产 Viewer 验收必须有明确维护窗口；普通检查不得创建会抢占用户控制的 Viewer。
@@ -27,7 +29,7 @@
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-“仅诊断和文档”约束描述当前授权。计划中的代码步骤是后续获实施授权后执行的内容，不是本轮完成声明；本地部署和tunnel操作继续遵守runbook及用户直接授权。
+用户后续已授权实施和本地部署，原仅诊断约束已解除；tunnel 操作仍须直接授权。
 
 ---
 
@@ -648,4 +650,4 @@ node --test web-client/js/chrome-layout.test.js web-client/js/webrtc.test.js web
 - [ ] 后续维护验收记录build/boot/scope、实际入口/媒体/input路径、质量锁、FPS/codec、当前RSS/swap/采样间隔。单点200或少量fixture不得宣称整体性能达标。
 - [ ] 实施完成后同步需求和runbook的真实状态，保留历史失败和证据限制；不把本文尚未执行的步骤改成“已修复”。
 
-本轮文档交付不触发上述执行步骤，也不请求再次选择规划流程。主线完成各子项目交叉review后再统一纳入版本管理。
+实现与复审已纳入隔离分支版本管理；真实部署和剩余验收状态以实施记录为准。

@@ -1,0 +1,48 @@
+{
+  "input": {
+    "rootDirectory": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-check-only-20261019-7g5bynje",
+    "input": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-check-only-20261019-7g5bynje/e0d817ad446b77398041d33d404cda2a/342e69a20f95f82c0b6adbe53e0552d3/r5-attempt.json",
+      "sha256": "3de38a6cf3d59d30e66ebedf86e7ef532ecc2af1853b25d3b11f392bfa496a24"
+    },
+    "rootDecision": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-r5-check-only-20261019-7g5bynje/e0d817ad446b77398041d33d404cda2a/342e69a20f95f82c0b6adbe53e0552d3/root-decision.json",
+      "sha256": "bf6ef400d79bdf077c64062791d234e98c14c9ed98cf03bd4431bc4addc3c401"
+    },
+    "issued": {
+      "wall": 1792355264.618957,
+      "monotonic": 1507718.829490175
+    },
+    "checkOnly": true,
+    "automaticLaunch": false
+  },
+  "toolResult": {
+    "chunk_id": "54c832",
+    "wall_time_seconds": 1.4224e-05,
+    "exit_code": 0,
+    "original_token_count": 32,
+    "output": "{\"checkOnly\":true,\"classification\":\"read-only-integration-passed\",\"fullProcessTreeExit\":\"unknown\",\"qualification\":\"NOT_RUN\"}\n"
+  },
+  "executionHEAD": "b032481707f08f35bb91683da1f3a6ac4c22fa24",
+  "legacyAttempt": {
+    "attemptDirectory": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a/attempts/342e69a20f95f82c0b6adbe53e0552d3",
+    "attemptSHA256": "85231cee8bbb4ca498d037a5a36852e23451388b0ce6e5b56238b53a9b239ec9",
+    "errorClass": null
+  },
+  "legacySequence": {
+    "sequenceDirectory": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/sequence-e0d817ad446b77398041d33d404cda2a",
+    "sequenceSHA256": "3fece9b738337a73bb7dbcc03507085ddb093c9bc93ea388d7fcf4bea3ab8d61",
+    "automaticLaunch": false
+  },
+  "classification": "actual-read-only-integration-passed",
+  "oneUseConsumed": false,
+  "operationalMarkersPresent": {
+    "outerStarted": false,
+    "outerResult": false,
+    "proof": false,
+    "legacyStarted": false,
+    "legacyResult": false
+  },
+  "capturedEpoch": 1792355342.6284428,
+  "runtimeQualification": "NOT_RUN"
+}

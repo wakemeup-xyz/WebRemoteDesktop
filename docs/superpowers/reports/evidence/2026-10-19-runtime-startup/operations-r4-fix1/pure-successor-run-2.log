@@ -1,0 +1,15 @@
+test_actual_historical_json_map_and_21_known_identities (test_successor_policy.HistoricalFixtures.test_actual_historical_json_map_and_21_known_identities) ... ok
+test_build_closure_broader_than_publication_rejects_dist (test_successor_policy.Policy.test_build_closure_broader_than_publication_rejects_dist) ... ok
+test_four_existing_and_docs_complement (test_successor_policy.Policy.test_four_existing_and_docs_complement) ... ok
+test_known_map_1016_same_keys_actual_modes (test_successor_policy.Policy.test_known_map_1016_same_keys_actual_modes) ... ok
+test_no_extra_executable_or_missing_docs (test_successor_policy.Policy.test_no_extra_executable_or_missing_docs) ... ok
+test_no_new_copy_paths_or_duplicate (test_successor_policy.Policy.test_no_new_copy_paths_or_duplicate) ... ok
+test_unbound_final_refuses_without_git (test_successor_policy.Policy.test_unbound_final_refuses_without_git) ... ok
+test_normal_registration_has_no_added_wait_or_poll (test_supervisor_registration.Registration.test_normal_registration_has_no_added_wait_or_poll) ... ok
+test_registration_failure_alive_at_original_deadline (test_supervisor_registration.Registration.test_registration_failure_alive_at_original_deadline) ... ok
+test_registration_failure_eventual_exit (test_supervisor_registration.Registration.test_registration_failure_eventual_exit) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.748s
+
+OK

@@ -1,10 +1,10 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { EventEmitter } = require('node:events');
 const test = require('node:test');
 const { signAccessToken } = require('../lib/auth');
 const { setupTerminal } = require('./terminal');
 const { createRuntimeContext } = require('./runtime-context');
+const { createStructuredLogger } = require('../lib/observability/logger');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || 'test-viewer-password';
@@ -39,89 +39,240 @@ function v2Key(overrides = {}) {
   };
 }
 
-class FakeSocket extends EventEmitter {
-  constructor(id, role, tokenRole = role === 'relay-viewer' ? 'viewer' : role) {
-    super();
-    this.id = id;
-    this.disconnected = false;
-    this.handshake = {
-      auth: { role, token: signAccessToken(tokenRole, `${id}-${tokenRole}`) },
-      address: '127.0.0.1',
-      headers: {},
-    };
-    this.sent = [];
-    this.volatile = {
-      emit: (event, data) => this.sent.push({ event, data, volatile: true }),
-    };
-  }
+const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('./signaling-test-fixture');
 
-  emit(event, data) {
-    this.sent.push({ event, data });
-    return true;
-  }
-
-  trigger(event, data) {
-    return super.emit(event, data);
-  }
-
-  disconnect() {
-    if (this.disconnected) return;
-    this.disconnected = true;
-    this.trigger('disconnect');
-  }
-}
-
-function makeIo() {
-  return {
-    connectionHandler: null,
-    middleware: null,
-    namespaces: new Map(),
-    use(handler) {
-      this.middleware = handler;
+// Offline-only fixture: no service, real Socket.IO connection, or native Host.
+function makeControlOutcomeFixture() {
+  resetConnections();
+  const io = makeIo();
+  const events = [];
+  const storedEvents = [];
+  const persisted = [];
+  const timers = new Map();
+  let timerId = 0;
+  let leaseId = 0;
+  let now = 0;
+  const structured = createStructuredLogger({ write: line => persisted.push(JSON.parse(line)) });
+  setupSignaling(io, {
+    now: () => now,
+    makeLeaseId: () => `lease-OUTCOME_CANARY-${++leaseId}`,
+    logger: { log() {}, warn() {}, info() {}, error() {} },
+    structuredLogger: { info(event) { events.push(event); structured.info(event); } },
+    recentEventStore: { append(event) { storedEvents.push(event); } },
+    scheduler: {
+      setInterval: () => ({ unref() {} }),
+      setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, due: now + ms }); return id; },
+      clearTimeout(id) { timers.delete(id); },
     },
-    on(event, handler) {
-      if (event === 'connection') {
-        this.connectionHandler = handler;
-      }
-    },
-    of(name) {
-      if (!this.namespaces.has(name)) {
-        this.namespaces.set(name, {
-          middleware: null,
-          connectionHandler: null,
-          use(handler) {
-            this.middleware = handler;
-          },
-          on(event, handler) {
-            if (event === 'connection') {
-              this.connectionHandler = handler;
-            }
-          },
-        });
-      }
-      return this.namespaces.get(name);
-    },
-    connect(socket) {
-      if (this.middleware) {
-        let middlewareError = null;
-        this.middleware(socket, (err) => {
-          middlewareError = err || null;
-        });
-        if (middlewareError) {
-          throw middlewareError;
-        }
-      }
-      this.connectionHandler(socket);
-    },
+  });
+  const connect = (id, role, version = 2) => {
+    const socket = new FakeSocket(id, role);
+    socket.handshake.auth.inputProtocolVersion = version;
+    io.connect(socket);
+    return socket;
   };
+  const grant = (host, viewer) => {
+    viewer.trigger('control-acquire', { requestId: 'outcome-grant' });
+    const transition = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+    host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+    const { leaseId, leaseEpoch } = viewer.sent.filter(row => row.event === 'control-grant').at(-1).data;
+    return { leaseId, leaseEpoch };
+  };
+  const advance = ms => {
+    const target = now + ms;
+    while (timers.size) {
+      const due = Math.min(...[...timers.values()].map(timer => timer.due));
+      if (due > target) break;
+      now = due;
+      for (const [id, timer] of [...timers]) {
+        if (timer.due <= now && timers.delete(id)) timer.fn();
+      }
+    }
+    now = target;
+  };
+  return { io, events, storedEvents, persisted, timers, connect, grant, advance };
 }
 
-function resetConnections() {
-  connections.host = null;
-  connections.viewers.clear();
-  connections.relayViewers.clear();
-  clearHostCapabilities();
+function v2Offer(lease = {}) {
+  return { schemaVersion: 2, offer: { type: 'offer', sdp: 'SDP_OUTCOME_CANARY' },
+    epoch: 1, connectionAttemptId: 'outcome-attempt', connectionAttemptSequence: 1, ...lease };
 }
+
+for (const viewerVersion of [1, 2]) {
+  for (const hostVersion of [null, 1, 2]) {
+    test(`v2 offline protocol matrix: viewer ${viewerVersion}, Host ${hostVersion ?? 'absent'}`, () => {
+      const h = makeControlOutcomeFixture();
+      const host = hostVersion === null ? null : h.connect('outcome-host', 'host', hostVersion);
+      const viewer = h.connect('outcome-viewer', 'viewer', viewerVersion);
+      const compatible = viewerVersion === 2 && hostVersion === 2;
+      const lease = compatible ? h.grant(host, viewer) : {};
+      const beforeViewer = viewer.sent.length;
+      const beforeHost = host?.sent.length ?? 0;
+      viewer.trigger('input', v2Key(lease));
+      viewer.trigger('offer', v2Offer(lease));
+      const replies = viewer.sent.slice(beforeViewer);
+      const errors = replies.filter(row => row.event === 'input-protocol-error');
+      const expectedError = viewerVersion !== 2 ? 'viewer-protocol-too-old'
+        : hostVersion === 1 ? 'host-protocol-too-old' : null;
+      assert.deepEqual(errors.map(row => row.data.reason), expectedError ? [expectedError, expectedError] : []);
+      assert.equal(replies.some(row => row.event === 'input-ack'), false);
+      const forwarded = (host?.sent.slice(beforeHost) ?? []).filter(row => ['input', 'offer'].includes(row.event));
+      assert.deepEqual(forwarded.map(row => row.event), compatible ? ['input', 'offer'] : []);
+      const inputEvent = h.events.filter(row => row.domain === 'input').at(-1);
+      assert.equal(inputEvent.meta.status, compatible ? 'accepted' : 'rejected');
+      if (viewerVersion === 2 && hostVersion === null) assert.equal(inputEvent.meta.reason, 'host-unavailable');
+      if (expectedError) assert.equal(inputEvent.meta.reason, 'protocol-too-old');
+    });
+  }
+}
+
+test('v2 offline rejection preserves role and inactive Viewer guards', () => {
+  const h = makeControlOutcomeFixture();
+  const relay = h.connect('outcome-relay', 'relay-viewer');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  viewer.disconnect();
+  for (const [socket, reason] of [[relay, 'role-rejected'], [viewer, 'inactive-viewer']]) {
+    const before = socket.sent.length;
+    socket.trigger('input', v2Key());
+    socket.trigger('offer', v2Offer());
+    assert.equal(socket.sent.slice(before).some(row => ['input-protocol-error', 'input-ack'].includes(row.event)), false);
+    assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, reason);
+  }
+});
+
+test('v2 present Host preserves malformed input and lease authorization rejection', () => {
+  const h = makeControlOutcomeFixture();
+  const host = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  const before = host.sent.length;
+  viewer.trigger('input', v2Key({ payload: { text: 'INPUT_OUTCOME_CANARY' } }));
+  const malformed = h.events.filter(row => row.domain === 'input').at(-1);
+  assert.equal(malformed.meta.status, 'rejected');
+  assert.equal(malformed.meta.reason, 'UNKNOWN_FIELD');
+  viewer.trigger('input', v2Key());
+  viewer.trigger('offer', v2Offer());
+  assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, 'unauthorized');
+  assert.equal(host.sent.slice(before).some(row => ['input', 'offer'].includes(row.event)), false);
+  assert.equal(viewer.sent.some(row => ['input-protocol-error', 'input-ack'].includes(row.event)), false);
+});
+
+test('reset completion records only exact applied reset once with persisted safe metadata', () => {
+  const h = makeControlOutcomeFixture();
+  const host = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  const lease = h.grant(host, viewer);
+  const completions = rows => rows.filter(row => row.event === 'control_reset_completed');
+  assert.equal(completions(h.events).length, 0, 'grant ACK is not reset completion');
+  viewer.trigger('control-release', { reason: 'released' });
+  const reset = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  assert.equal(reset.viewerId, undefined);
+  assert.equal(reset.leaseId, undefined);
+  assert.equal(h.events.some(row => row.event === 'control_transition_failed_closed'), true);
+  host.trigger('control-transition-ack', { leaseEpoch: lease.leaseEpoch, status: 'applied' });
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'rejected',
+    reason: 'reset-failed' });
+  assert.equal(completions(h.events).length, 0);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'REVOKING');
+  h.advance(1000);
+  assert.equal(host.sent.filter(row => row.event === 'control-transition').at(-1).data.leaseEpoch, reset.leaseEpoch);
+  const ack = { leaseEpoch: reset.leaseEpoch, status: 'applied', reason: 'ACK_OUTCOME_CANARY',
+    leaseId: lease.leaseId, payload: { text: 'INPUT_OUTCOME_CANARY' } };
+  host.trigger('control-transition-ack', ack);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'FREE');
+  assert.equal(h.timers.size, 0);
+  for (const rows of [h.events, h.storedEvents, h.persisted]) {
+    assert.equal(completions(rows).length, 1);
+    assert.deepEqual(completions(rows)[0].meta, { leaseEpoch: reset.leaseEpoch, status: 'applied', state: 'FREE' });
+  }
+  host.trigger('control-transition-ack', ack);
+  host.trigger('control-transition-ack', { leaseEpoch: lease.leaseEpoch, status: 'applied' });
+  h.advance(60_000);
+  assert.equal(completions(h.events).length, 1);
+  assert.equal(completions(h.storedEvents).length, 1);
+  assert.equal(completions(h.persisted).length, 1);
+  const persisted = JSON.stringify(h.persisted);
+  for (const canary of [lease.leaseId, 'ACK_OUTCOME_CANARY', 'INPUT_OUTCOME_CANARY']) {
+    assert.equal(persisted.includes(canary), false);
+  }
+});
+
+test('reset completion rejects old Host socket even when replacement has the same ID', () => {
+  const h = makeControlOutcomeFixture();
+  const oldHost = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  h.grant(oldHost, viewer);
+  const host = h.connect(oldHost.id, 'host');
+  viewer.trigger('control-release', {});
+  const reset = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  oldHost.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(h.events.some(row => row.event === 'control_reset_completed'), false);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'REVOKING');
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(h.events.filter(row => row.event === 'control_reset_completed').length, 1);
+});
+
+test('reset completion observes expiry before deciding whether an ACK settles the current barrier', () => {
+  const h = makeControlOutcomeFixture();
+  const host = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  viewer.trigger('control-acquire', { requestId: 'expiring-candidate' });
+  const candidate = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  h.advance(3000);
+  host.trigger('control-transition-ack', { leaseEpoch: candidate.leaseEpoch, status: 'applied' });
+  const reset = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  assert.ok(reset.leaseEpoch > candidate.leaseEpoch);
+  assert.equal(reset.viewerId, undefined);
+  assert.equal(viewer.sent.some(row => row.event === 'control-grant'), false);
+  assert.equal(h.events.some(row => row.event === 'control_reset_completed'), false);
+  // A reset-only deadline may enter fail-closed on the same epoch before its
+  // applied ACK settles FREE; both events describe their actual ordering.
+  h.advance(3000);
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'FREE');
+  const control = h.events.filter(row => row.domain === 'control');
+  assert.equal(control.filter(row => row.event === 'control_reset_completed').length, 1);
+  assert.equal(control.at(-2).event, 'control_transition_failed_closed');
+  assert.equal(control.at(-1).event, 'control_reset_completed');
+  assert.equal(h.timers.size, 0);
+});
+
+test('offline reset lifecycle requires fresh grant and never replays dropped input or offer', () => {
+  const h = makeControlOutcomeFixture();
+  const oldHost = h.connect('outcome-host-a', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  const oldLease = h.grant(oldHost, viewer);
+  const resetInput = lease => v2Key({ ...lease, action: 'reset', inputIds: ['INPUT_ID_OUTCOME_CANARY'],
+    payload: { reason: 'manual' } });
+  oldHost.disconnect();
+  assert.equal(connections.host, null);
+  assert.equal(viewer.sent.filter(row => row.event === 'control-state').at(-1).data.state, 'FREE');
+  const offlineViewer = viewer.sent.length;
+  const offlineHost = oldHost.sent.length;
+  viewer.trigger('input', resetInput(oldLease));
+  viewer.trigger('offer', v2Offer(oldLease));
+  assert.equal(viewer.sent.slice(offlineViewer).some(row => ['input-ack', 'input-protocol-error'].includes(row.event)), false);
+  assert.equal(oldHost.sent.slice(offlineHost).some(row => ['input', 'offer'].includes(row.event)), false);
+  assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, 'host-unavailable');
+  const host = h.connect('outcome-host-b', 'host');
+  assert.equal(host.sent.some(row => ['input', 'offer'].includes(row.event)), false);
+  const fresh = h.grant(host, viewer);
+  assert.notEqual(fresh.leaseId, oldLease.leaseId);
+  assert.ok(fresh.leaseEpoch > oldLease.leaseEpoch);
+  assert.equal(host.sent.some(row => ['input', 'offer'].includes(row.event)), false);
+  const grants = viewer.sent.filter(row => row.event === 'control-grant').length;
+  oldHost.trigger('control-transition-ack', { leaseEpoch: fresh.leaseEpoch, status: 'applied' });
+  assert.equal(viewer.sent.filter(row => row.event === 'control-grant').length, grants);
+  assert.equal(h.events.some(row => row.event === 'control_reset_completed'), false);
+  viewer.trigger('input', resetInput(oldLease));
+  assert.equal(h.events.filter(row => row.domain === 'input').at(-1).meta.reason, 'unauthorized');
+  assert.equal(host.sent.some(row => ['input', 'offer'].includes(row.event)), false);
+  viewer.trigger('input', resetInput(fresh));
+  assert.equal(host.sent.filter(row => row.event === 'input').length, 1);
+  assert.equal(host.sent.filter(row => row.event === 'input')[0].data.leaseId, fresh.leaseId);
+  assert.equal(host.sent.some(row => row.event === 'offer'), false);
+  assert.equal(JSON.stringify(h.persisted).includes('INPUT_ID_OUTCOME_CANARY'), false);
+  assert.equal(JSON.stringify(h.persisted).includes('SDP_OUTCOME_CANARY'), false);
+});
 
 test('proof admissions expire, enforce capacity, and cannot be replayed', () => {
   let now = 1000;
@@ -237,7 +388,7 @@ test('human viewer supersedes an admitted proof viewer under the existing user-p
   proof.handshake.auth.proofAdmission = issueProofAdmission();
   io.connect(proof);
   const human = new FakeSocket('human-viewer', 'viewer');
-  io.connect(human);
+  io.connectManual(human);
 
   assert.equal(proof.disconnected, true);
   assert.equal(connections.viewers.get('human-viewer'), human);
@@ -746,6 +897,10 @@ test('authenticated viewer reconnect rebinds the lease during the short disconne
   io.connect(host);
   io.connect(first);
   const grant = grantActiveLease(io, host, first, 'grace-rebind');
+  first.trigger('connection-attempt-bind', {
+    leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-grace', connectionAttemptSequence: 1,
+  });
   const transitionsBeforeDisconnect = host.sent.filter((entry) => entry.event === 'control-transition').length;
 
   first.trigger('disconnect');
@@ -760,21 +915,197 @@ test('authenticated viewer reconnect rebinds the lease during the short disconne
   const replacement = new FakeSocket('viewer-grace-b', 'viewer');
   replacement.handshake.auth.inputProtocolVersion = 2;
   replacement.handshake.auth.viewerSessionId = sessionId;
+  const order = [];
+  for (const candidate of [host, replacement]) {
+    const emit = candidate.emit.bind(candidate);
+    candidate.emit = (event, data, ack) => {
+      order.push([candidate.id, event]);
+      return emit(event, data, ack);
+    };
+  }
   io.connect(replacement);
   assert.equal(connections.viewers.get(replacement.id), replacement);
   assert.equal(connections.viewers.has(first.id), false);
   assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length, 1);
+  const rebind = host.sent.find((entry) => entry.event === 'viewer-session-rebind');
+  assert.equal(replacement.sent.some((entry) => entry.event === 'control-grant'), false);
+  const priorInputCount = host.sent.filter((entry) => entry.event === 'input').length;
+  replacement.trigger('input', v2Key({ leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch }));
+  assert.equal(host.sent.filter((entry) => entry.event === 'input').length, priorInputCount);
+  assert.equal(rebind.timeoutMs, 1500);
+  replacement.trigger('control-acquire', { requestId: 'pending-rebind-acquire' });
+  const pendingAcquire = replacement.sent.filter(e => e.event === 'control-acquire-result').at(-1);
+  assert.equal(pendingAcquire.data.reason, 'reset-in-progress');
+  assert.equal(pendingAcquire.data.requestId, 'pending-rebind-acquire');
+  assert.equal(replacement.sent.some(e => e.event === 'control-grant'), false);
+  rebind.ack(null, { status: 'applied' });
   const reboundGrant = replacement.sent.find((entry) => entry.event === 'control-grant');
   assert.deepEqual(reboundGrant?.data, {
     controller: true,
     leaseId: grant.leaseId,
     leaseEpoch: grant.leaseEpoch,
   });
+  assert.deepEqual(host.sent.find((entry) => entry.event === 'viewer-session-rebind')?.data, {
+    previousViewerId: first.id,
+    viewerId: replacement.id,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+    connectionAttemptId: 'attempt-grace',
+    connectionAttemptSequence: 1,
+  });
+  assert.ok(order.findIndex((entry) => entry[1] === 'viewer-session-rebind')
+    < order.findIndex((entry) => entry[1] === 'control-grant'));
+  assert.equal(replacement.sent.some((entry) => entry.event === 'viewer-session-rebind'), false);
 
   replacement.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
   assert.equal(replacement.sent.some((entry) => entry.event === 'control-heartbeat-rejected'), false);
   assert.equal(replacement.sent.at(-1)?.event, 'control-state');
 });
+
+test('Host rebind retries bounded timeouts and ignores late callbacks from older attempts', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001',
+    rebindAckTimeoutsMs: [1500, 3000, 6000],
+  });
+  const host = new FakeSocket('host-rebind-retry', 'host');
+  const first = new FakeSocket('viewer-rebind-retry-a', 'viewer');
+  first.handshake.auth.viewerSessionId = 'session-rebind-retry';
+  io.connect(host);
+  io.connect(first);
+  const grant = grantActiveLease(io, host, first, 'retry-grant');
+  first.disconnect();
+  const replacement = new FakeSocket('viewer-rebind-retry-b', 'viewer');
+  replacement.handshake.auth.viewerSessionId = 'session-rebind-retry';
+  io.connect(replacement);
+
+  const firstAttempt = host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+  assert.equal(firstAttempt.timeoutMs, 1500);
+  firstAttempt.ack(new Error('operation has timed out'));
+  const secondAttempt = host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+  assert.notEqual(secondAttempt, firstAttempt);
+  assert.equal(secondAttempt.timeoutMs, 3000);
+
+  firstAttempt.ack(null, { status: 'applied' });
+  assert.equal(replacement.sent.some(entry => entry.event === 'control-grant'), false);
+  secondAttempt.ack(new Error('operation has timed out'));
+  const thirdAttempt = host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+  assert.notEqual(thirdAttempt, secondAttempt);
+  assert.equal(thirdAttempt.timeoutMs, 6000);
+  assert.equal(host.sent.filter(entry => entry.event === 'viewer-session-rebind').length, 3);
+
+  thirdAttempt.ack(null, { status: 'applied' });
+  assert.deepEqual(replacement.sent.find(entry => entry.event === 'control-grant')?.data, {
+    controller: true,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
+});
+
+test('another viewer session cannot rebind the disconnected controller at Host', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-cross-session', 'host');
+  const first = new FakeSocket('viewer-cross-a', 'viewer');
+  first.handshake.auth.viewerSessionId = 'viewer-session-a';
+  io.connect(host);
+  io.connect(first);
+  grantActiveLease(io, host, first, 'cross-session');
+  first.disconnect();
+  const second = new FakeSocket('viewer-cross-b', 'viewer');
+  second.handshake.auth.viewerSessionId = 'viewer-session-b';
+  io.connectManual(second);
+  second.trigger('viewer-session-rebind', { previousViewerId: first.id, viewerId: second.id });
+  assert.equal(host.sent.some((entry) => entry.event === 'viewer-session-rebind'), false);
+  assert.equal(second.sent.some((entry) => entry.event === 'control-grant'), false);
+  assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data.reason,
+    'controller-disconnect');
+});
+
+test('same-session reconnect during a pending grant retains the Host reset barrier', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-pending-rebind', 'host');
+  const first = new FakeSocket('viewer-pending-a', 'viewer');
+  first.handshake.auth.viewerSessionId = 'viewer-session-pending';
+  io.connect(host);
+  io.connect(first);
+  first.trigger('control-acquire', { requestId: 'pending-rebind' });
+  first.disconnect();
+  const second = new FakeSocket('viewer-pending-b', 'viewer');
+  second.handshake.auth.viewerSessionId = 'viewer-session-pending';
+  io.connect(second);
+  assert.equal(host.sent.some((entry) => entry.event === 'viewer-session-rebind'), false);
+  assert.equal(second.sent.some((entry) => entry.event === 'control-grant'), false);
+  const reset = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  assert.equal(reset.reason, 'controller-disconnect');
+  assert.equal(reset.viewerId, undefined);
+  assert.equal(reset.leaseId, undefined);
+});
+
+for (const outcome of ['rejected', 'timeout', 'disconnected', 'superseded']) {
+  test(`Host rebind ${outcome} cannot grant from a late acknowledgement`, () => {
+    resetConnections();
+    const io = makeIo();
+    const timers = [];
+    setupSignaling(io, {
+      makeLeaseId: () => 'lease-000000000001',
+      rebindAckTimeoutsMs: [1500],
+      scheduler: {
+        setInterval: () => ({ unref() {} }),
+        setTimeout(fn, ms) {
+          const timer = { fn, ms, cancelled: false, unref() {} };
+          timers.push(timer);
+          return timer;
+        },
+        clearTimeout(timer) { timer.cancelled = true; },
+      },
+    });
+    const host = new FakeSocket(`host-rebind-${outcome}`, 'host');
+    const first = new FakeSocket(`viewer-rebind-${outcome}-a`, 'viewer');
+    first.handshake.auth.viewerSessionId = 'session-rebind-failure';
+    io.connect(host);
+    io.connect(first);
+    grantActiveLease(io, host, first, 'initial-grant');
+    first.disconnect();
+    const replacement = new FakeSocket(`viewer-rebind-${outcome}-b`, 'viewer');
+    replacement.handshake.auth.viewerSessionId = 'session-rebind-failure';
+    io.connect(replacement);
+    const rebind = host.sent.find((entry) => entry.event === 'viewer-session-rebind');
+    assert.ok(rebind);
+    if (outcome === 'rejected') rebind.ack(null, { status: 'rejected', reason: 'viewer-mismatch' });
+    if (outcome === 'timeout') {
+      assert.equal(rebind.timeoutMs, 1500);
+      rebind.ack(new Error('operation has timed out'));
+    }
+    if (outcome === 'disconnected') replacement.disconnect();
+    if (outcome === 'superseded') {
+      const other = new FakeSocket('viewer-rebind-unrelated', 'viewer');
+      other.handshake.auth.viewerSessionId = 'session-unrelated';
+      io.connectManual(other);
+    }
+    const transitionsBeforeLateAck = host.sent.filter((entry) => entry.event === 'control-transition').length;
+    rebind.ack(null, { status: 'applied' });
+    assert.equal(replacement.sent.some((entry) => entry.event === 'control-grant'), false);
+    assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length,
+      transitionsBeforeLateAck);
+    if (outcome === 'rejected' || outcome === 'timeout') {
+      const reset = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+      assert.equal(reset.reason, outcome === 'timeout' ? 'rebind-timeout' : 'rebind-rejected');
+      assert.equal(reset.viewerId, undefined);
+      assert.equal(reset.leaseId, undefined);
+      host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+      replacement.trigger('control-acquire', { requestId: 'rebind-fallback-acquire' });
+      const fresh = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+      assert.ok(fresh.leaseEpoch > reset.leaseEpoch);
+      host.trigger('control-transition-ack', { leaseEpoch: fresh.leaseEpoch, status: 'applied' });
+      assert.equal(replacement.sent.filter((entry) => entry.event === 'control-grant').length, 1);
+    }
+  });
+}
 
 test('viewer grace expiry falls back to the formal reset barrier', () => {
   resetConnections();
@@ -807,6 +1138,69 @@ test('viewer grace expiry falls back to the formal reset barrier', () => {
   assert.equal(connections.viewers.has(viewer.id), false);
   assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').length, beforeDisconnect + 1);
   assert.equal(host.sent.filter((entry) => entry.event === 'control-transition').at(-1)?.data?.reason, 'controller-disconnect');
+  const late = new FakeSocket('viewer-grace-too-late', 'viewer');
+  late.handshake.auth.viewerSessionId = 'browser-session-grace-2';
+  io.connect(late);
+  assert.equal(host.sent.some((entry) => entry.event === 'viewer-session-rebind'), false);
+  assert.equal(late.sent.some((entry) => entry.event === 'control-grant'), false);
+});
+
+test('control lifecycle survives the production logger with correlation and no credentials or input', () => {
+  resetConnections();
+  const io = makeIo();
+  const lines = [];
+  const leaseId = 'lease-private-logging-fixture';
+  setupSignaling(io, {
+    makeLeaseId: () => leaseId,
+    viewerDisconnectGraceMs: 8000,
+    scheduler: {
+      setInterval: () => ({ unref() {} }),
+      setTimeout: () => ({ unref() {} }),
+      clearTimeout() {},
+    },
+    structuredLogger: createStructuredLogger({ write: (line) => lines.push(line) }),
+  });
+  const host = new FakeSocket('host-log', 'host');
+  const first = new FakeSocket('viewer-log-a', 'viewer');
+  first.handshake.auth.viewerSessionId = 'viewer-session-log';
+  io.connect(host);
+  io.connect(first);
+  const grant = grantActiveLease(io, host, first, 'logging-grant');
+  first.disconnect();
+  const replacement = new FakeSocket('viewer-log-b', 'viewer');
+  replacement.handshake.auth.viewerSessionId = 'viewer-session-log';
+  io.connect(replacement);
+  host.sent.find((entry) => entry.event === 'viewer-session-rebind').ack(null, { status: 'applied' });
+  replacement.trigger('control-release', { reason: 'released' });
+  const reset = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', {
+    leaseEpoch: reset.leaseEpoch,
+    status: 'rejected',
+    reason: 'reset-failed',
+    leaseId: grant.leaseId,
+    token: 'private-token-fixture',
+    payload: { text: 'private-input-fixture' },
+  });
+
+  const events = lines.map((line) => JSON.parse(line));
+  const grace = events.find((event) => event.event === 'viewer_disconnect_grace_started');
+  assert.equal(grace.domain, 'control');
+  assert.equal(grace.meta.graceMs, 8000);
+  assert.deepEqual(grace.correlation, {
+    viewerId: first.id, browserSessionId: 'viewer-session-log',
+  });
+  const reconnected = events.find((event) => event.event === 'viewer_reconnected');
+  assert.deepEqual(reconnected.correlation, {
+    viewerId: replacement.id, previousViewerId: first.id, browserSessionId: 'viewer-session-log',
+  });
+  const failed = events.find((event) => event.event === 'control_transition_failed_closed'
+    && event.meta.reason === 'reset-failed');
+  assert.equal(failed.meta.leaseEpoch, reset.leaseEpoch);
+  assert.equal(events.some((event) => event.event === 'unknown'), false);
+  for (const secret of [leaseId, host.handshake.auth.token, first.handshake.auth.token,
+    'private-token-fixture', 'private-input-fixture']) {
+    assert.equal(lines.join('\n').includes(secret), false);
+  }
 });
 
 test('input from disconnected viewer is not relayed to host', () => {
@@ -853,7 +1247,7 @@ test('host input ack is routed only to its original viewer', () => {
   assert.equal(viewerA.sent.some((message) => message.event === 'input-ack' && message.data.inputIds[0] === 'input-1'), true);
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('viewer-b'), true);
 
@@ -1468,7 +1862,7 @@ test('legacy input lazily acquires control and stays blocked until host ack', ()
   assert.equal(host.sent.filter((entry) => entry.event === 'input').at(-1).data.viewerId, 'viewer-a');
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   assert.equal(connections.viewers.has('viewer-a'), false);
   viewerB.trigger('input', legacyInput);
   // Supersede removed the ACTIVE controller → REVOKING barrier; B cannot write yet.
@@ -1560,7 +1954,7 @@ test('legacy relay companion stops when a second desktop viewer supersedes the o
   assert.equal(host.sent.filter((entry) => entry.event === 'relay-stream-control').length, 1);
 
   const superseder = new FakeSocket('legacy-observer', 'viewer');
-  io.connect(superseder);
+  io.connectManual(superseder);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('legacy-observer'), true);
   assert.equal(mainViewer.disconnected, true);
@@ -1590,7 +1984,7 @@ test('legacy relay companion stops on second desktop viewer supersede and reject
   const relayedFramesBefore = relayViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
   const mainFramesBefore = mainViewer.sent.filter((entry) => entry.event === 'relay-frame').length;
 
-  io.connect(new FakeSocket('legacy-observer', 'viewer'));
+  io.connectManual(new FakeSocket('legacy-observer', 'viewer'));
   assert.deepEqual(host.sent.filter((entry) => entry.event === 'relay-stream-control').at(-1).data, {
     enabled: false,
     viewerId: 'legacy-main',
@@ -1673,7 +2067,7 @@ test('legacy relay companion stops when a second desktop viewer supersedes durin
 
   const v2Viewer = new FakeSocket('viewer-v2', 'viewer');
   v2Viewer.handshake.auth.inputProtocolVersion = 2;
-  io.connect(v2Viewer);
+  io.connectManual(v2Viewer);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('viewer-v2'), true);
   assert.equal(mainViewer.disconnected, true);
@@ -1735,7 +2129,7 @@ test('ACTIVE controller disconnect stays REVOKING until matching applied ack', (
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   const stateAfterConnect = viewerB.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
   assert.equal(stateAfterConnect.state, 'REVOKING');
   assert.equal(stateAfterConnect.pendingViewerId, null);
@@ -1831,7 +2225,7 @@ test('ACTIVE controller disconnect rejected reset retries same epoch and stays b
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
 
   host.trigger('control-transition-ack', {
     leaseEpoch: epoch,
@@ -1875,9 +2269,11 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
     role: 'host', status: 'ok', inputProtocolVersion: 1,
   });
   assert.deepEqual(viewer.sent.find((entry) => entry.event === 'connected').data, {
+    viewerAdmission: viewer.sent.find(e => e.event === 'connected').data.viewerAdmission,
     role: 'viewer', status: 'ok', hostOnline: true,
     inputProtocolVersion: 2, hostInputProtocolVersion: 1,
     hostCapabilities: {
+      inputFrameCorrelationVersion: null,
       turnReady: false,
       turnFingerprint: '',
       supportsSessionTurn: false,
@@ -2017,7 +2413,7 @@ test('legacy controller is single-writer and a later v2 viewer acquires only aft
 
   const v2Viewer = new FakeSocket('v2-viewer', 'viewer');
   v2Viewer.handshake.auth.inputProtocolVersion = 2;
-  io.connect(v2Viewer);
+  io.connectManual(v2Viewer);
   assert.equal(connections.viewers.size, 1);
   assert.equal(legacyViewer.disconnected, true);
   transition = host.sent.filter((entry) => entry.event === 'control-transition').at(-1).data;
@@ -2094,7 +2490,7 @@ test('rejected transition stays fail-closed in REVOKING and cannot replay on lat
   // New sole viewer still blocked while the reset-only barrier is unresolved.
   viewer.disconnect();
   const viewerB = new FakeSocket('viewer-2', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'blocked-while-reset' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
@@ -2124,7 +2520,7 @@ test('controller disconnect freezes old lease until host ack then grants later s
 
   const viewerB = new FakeSocket('viewer-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'b' });
   assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
@@ -2228,7 +2624,7 @@ test('heartbeat expiry is dispatched once before a later scheduler tick and keep
   viewerA.disconnect();
   const viewerB = new FakeSocket('viewer-expiry-b', 'viewer');
   viewerB.handshake.auth.inputProtocolVersion = 2;
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'b' });
   assert.equal(viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data.state, 'REVOKING');
 
@@ -2441,7 +2837,7 @@ test('blocked reset cannot grant a new controller and retries are same-epoch bou
   assert.equal(retries.length, 3);
   assert.equal(retries.every((entry) => entry.data.leaseEpoch === barrierEpoch), true);
   assert.equal(retries.every((entry) => entry.data.leaseId === undefined), true);
-  assert.equal(events.some((e) => e.type === 'control_reset_blocked'), true);
+  assert.equal(events.some((e) => e.event === 'control_reset_blocked'), true);
 
   const afterBlocked = viewer.sent.filter((entry) => entry.event === 'control-state').at(-1).data;
   assert.equal(afterBlocked.state, 'REVOKING');
@@ -2449,7 +2845,7 @@ test('blocked reset cannot grant a new controller and retries are same-epoch bou
 
   viewer.disconnect();
   const viewerB = new FakeSocket('viewer-2', 'viewer');
-  io.connect(viewerB);
+  io.connectManual(viewerB);
   viewerB.trigger('control-acquire', { requestId: 'should-block' });
   const acquire = viewerB.sent.filter((entry) => entry.event === 'control-acquire-result').at(-1).data;
   assert.equal(acquire.state, 'REVOKING');
@@ -2788,13 +3184,6 @@ test('tunnel media control requires ACTIVE lease and current attempt then routes
   assert.equal(Object.hasOwn(ack.data, 'leaseId'), false);
 });
 
-function grantActiveLease(io, host, viewer, requestId = 'grant') {
-  viewer.trigger('control-acquire', { requestId });
-  const transition = host.sent.find((e) => e.event === 'control-transition').data;
-  host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
-  return viewer.sent.find((e) => e.event === 'control-grant').data;
-}
-
 test('tunnel connection attempt bind does not require a synthetic offer', () => {
   resetConnections();
   const io = makeIo();
@@ -3128,7 +3517,7 @@ test('second desktop viewer supersedes the first', () => {
   assert.equal(connections.viewers.has('viewer-a'), true);
   assert.equal(a.sent.some((entry) => entry.event === 'connected'), true);
 
-  io.connect(b);
+  io.connectManual(b);
   assert.equal(connections.viewers.size, 1);
   assert.equal(connections.viewers.has('viewer-b'), true);
   assert.equal(connections.viewers.has('viewer-a'), false);
@@ -3159,7 +3548,7 @@ test('removeDesktopViewer is idempotent under disconnect after supersede', () =>
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
 
   const transitionsBefore = host.sent.filter((entry) => entry.event === 'control-transition').length;
-  io.connect(b);
+  io.connectManual(b);
   assert.equal(connections.viewers.size, 1);
   assert.equal(a.disconnected, true);
   const transitionsAfterSupersede = host.sent.filter((entry) => entry.event === 'control-transition').length;
@@ -3188,7 +3577,7 @@ test('host and relay-viewer survive desktop supersede', () => {
   io.connect(host);
   io.connect(relay);
   io.connect(viewerA);
-  io.connect(viewerB);
+  io.connectManual(viewerB);
 
   assert.equal(connections.host, host);
   assert.equal(connections.relayViewers.has('relay-1'), true);
@@ -3199,4 +3588,458 @@ test('host and relay-viewer survive desktop supersede', () => {
   assert.equal(host.disconnected, false);
   assert.equal(relay.disconnected, false);
   assert.equal(viewerB.disconnected, false);
+});
+
+function makeRebindRenewalFixture() {
+  resetConnections();
+  let now = 0;
+  const { DesktopControlLease } = require('../lib/desktop-control-lease');
+  const lease = new DesktopControlLease({ now: () => now, makeLeaseId: () => 'lease-000000000001' });
+  const timers = [];
+  const scheduler = {
+    setInterval: () => ({ unref() {} }),
+    setTimeout(fn, ms) { const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer; },
+    clearTimeout(timer) { if (timer) timer.cancelled = true; },
+  };
+  const io = makeIo();
+  setupSignaling(io, { desktopControlLease: lease, now: () => now, scheduler });
+  const host = new FakeSocket('host-renew', 'host');
+  const a = new FakeSocket('viewer-renew-a', 'viewer');
+  a.handshake.auth.viewerSessionId = 'fixture-same-session';
+  io.connect(host); io.connect(a);
+  const granted = grantActiveLease(io, host, a);
+  now = 2900; a.disconnect();
+  now = 10800;
+  const b = new FakeSocket('viewer-renew-b', 'viewer');
+  b.handshake.auth.viewerSessionId = 'fixture-same-session';
+  io.connect(b);
+  const rebind = host.sent.find(e => e.event === 'viewer-session-rebind');
+  assert.equal(rebind.timeoutMs, 1500);
+  assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
+  return { lease, host, b, io, rebind, granted, timers, advanceTo: value => { now = value; } };
+}
+
+test('confirmed rebind renews only after current Host applied ACK', () => {
+  const h = makeRebindRenewalFixture();
+  h.advanceTo(11000); h.rebind.ack(null, { status: 'applied' });
+  h.advanceTo(13000);
+  assert.deepEqual(h.lease.getActiveLease(h.b.id), {
+    leaseId: h.granted.leaseId, leaseEpoch: h.granted.leaseEpoch,
+  });
+  assert.equal(h.b.sent.filter(e => e.event === 'control-grant').length, 1);
+  h.advanceTo(22999); assert.ok(h.lease.getActiveLease(h.b.id));
+  h.advanceTo(23000); assert.equal(h.lease.getActiveLease(h.b.id), null);
+});
+
+for (const outcome of ['deadline', 'timeout', 'host-replaced', 'same-id-host-replaced', 'disconnected', 'superseded']) {
+  test(`pending rebind ${outcome} cannot renew, grant, or recreate cancelled work`, () => {
+    const h = makeRebindRenewalFixture();
+    h.advanceTo(11000);
+    if (outcome === 'deadline') h.advanceTo(12000);
+    if (outcome === 'timeout') {
+      h.advanceTo(12300); h.rebind.ack(new Error('operation has timed out'));
+    }
+    if (outcome.includes('host-replaced')) h.io.connect(new FakeSocket(
+      outcome === 'same-id-host-replaced' ? h.host.id : 'host-renew-next', 'host'));
+    if (outcome === 'disconnected') h.b.disconnect();
+    if (outcome === 'superseded') {
+      const other = new FakeSocket('viewer-renew-unrelated', 'viewer');
+      other.handshake.auth.viewerSessionId = 'fixture-other-session'; h.io.connectManual(other);
+    }
+    const before = h.host.sent.filter(e => e.event === 'control-transition').length;
+    h.rebind.ack(null, { status: 'applied' });
+    assert.equal(h.b.sent.filter(e => e.event === 'control-grant').length, 0);
+    const after = h.host.sent.filter(e => e.event === 'control-transition').length;
+    assert.equal(after, before + (outcome === 'deadline' ? 1 : 0));
+    h.advanceTo(13000); assert.equal(h.lease.getActiveLease(h.b.id), null);
+    h.rebind.ack(null, { status: 'applied' });
+    assert.equal(h.host.sent.filter(e => e.event === 'control-transition').length, after);
+  });
+}
+
+for (const status of ['applied', 'rejected']) {
+  test(`same-ID replacement Host cancels rebind ${status} behind a fresh reset barrier`, () => {
+    const h = makeRebindRenewalFixture();
+    h.advanceTo(11000);
+    const currentHost = new FakeSocket(h.host.id, 'host');
+    h.io.connect(currentHost);
+    h.rebind.ack(null, { status });
+    h.b.trigger('control-heartbeat', h.granted);
+    h.b.trigger('input', { type: 'mouse', action: 'move', x: 1, y: 1, ...h.granted });
+    assert.equal(h.lease.snapshot().state, 'REVOKING');
+    assert.equal(h.lease.getActiveLease(h.b.id), null);
+    assert.equal(currentHost.sent.some(e => e.event === 'input'), false);
+    assert.equal(h.b.sent.some(e => e.event === 'control-grant'), false);
+    const reset = currentHost.sent.filter(e => e.event === 'control-transition').at(-1)?.data;
+    assert.ok(reset);
+    assert.ok(reset.leaseEpoch > h.granted.leaseEpoch);
+    assert.equal(reset.viewerId, undefined);
+    assert.equal(reset.leaseId, undefined);
+    h.host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+    assert.equal(h.lease.snapshot().state, 'REVOKING');
+    h.advanceTo(13000);
+    assert.equal(h.lease.getActiveLease(h.b.id), null);
+    const transitionCount = currentHost.sent.filter(e => e.event === 'control-transition').length;
+    h.rebind.ack(null, { status: 'applied' });
+    assert.equal(currentHost.sent.filter(e => e.event === 'control-transition').length, transitionCount);
+    currentHost.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+    assert.equal(h.lease.snapshot().state, 'FREE');
+    h.b.trigger('control-acquire', { requestId: 'after-current-host-reset' });
+    const fresh = currentHost.sent.filter(e => e.event === 'control-transition').at(-1).data;
+    assert.ok(fresh.leaseEpoch > reset.leaseEpoch);
+    currentHost.trigger('control-transition-ack', { leaseEpoch: fresh.leaseEpoch, status: 'applied' });
+    assert.equal(h.b.sent.filter(e => e.event === 'control-grant').length, 1);
+  });
+}
+
+test('old rebind callback cannot clear a newer same-session rebind operation', () => {
+  const h = makeRebindRenewalFixture();
+  h.advanceTo(10900); h.b.disconnect();
+  const c = new FakeSocket('viewer-renew-c', 'viewer');
+  c.handshake.auth.viewerSessionId = 'fixture-same-session'; h.io.connect(c);
+  const current = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
+  assert.notEqual(current, h.rebind);
+  h.rebind.ack(null, { status: 'applied' });
+  assert.equal(c._wrdRebindPending, true);
+  assert.equal(c.sent.some(e => e.event === 'control-grant'), false);
+  h.advanceTo(11000); current.ack(null, { status: 'applied' });
+  assert.equal(c._wrdRebindPending, false);
+  assert.equal(c.sent.filter(e => e.event === 'control-grant').length, 1);
+  h.advanceTo(13000); assert.ok(h.lease.getActiveLease(c.id));
+});
+
+test('expired rebind clears only its pending gate so reset FREE can accept a fresh acquire', () => {
+  const h = makeRebindRenewalFixture();
+  h.advanceTo(12000); h.rebind.ack(null, { status: 'applied' });
+  assert.equal(h.b._wrdRebindPending, false);
+  assert.equal(h.lease.snapshot().state, 'REVOKING');
+  const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.ok(reset.leaseEpoch > h.granted.leaseEpoch);
+  h.host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  assert.equal(h.lease.snapshot().state, 'FREE');
+  h.b.trigger('control-acquire', { requestId: 'after-expired-rebind' });
+  const fresh = h.host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.ok(fresh.leaseEpoch > reset.leaseEpoch);
+  assert.equal(fresh.viewerId, h.b.id);
+});
+
+test('old grant ACK cannot clear reset rejection or cancel same-epoch retries', () => {
+  resetConnections();
+  const timers = [];
+  const io = makeIo();
+  setupSignaling(io, { scheduler: {
+    setInterval: () => ({ unref() {} }),
+    setTimeout(fn, ms) { const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer; },
+    clearTimeout(timer) { if (timer) timer.cancelled = true; },
+  } });
+  const host = new FakeSocket('host-old-grant', 'host');
+  const viewer = new FakeSocket('viewer-old-grant', 'viewer');
+  io.connect(host); io.connect(viewer);
+  viewer.trigger('control-acquire', { requestId: 'candidate' });
+  const grant = host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  viewer.trigger('control-release', {});
+  const reset = host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.ok(reset.leaseEpoch > grant.leaseEpoch);
+  host.trigger('control-transition-ack', { leaseEpoch: grant.leaseEpoch, status: 'applied' });
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'rejected' });
+  host.trigger('control-transition-ack', { leaseEpoch: grant.leaseEpoch, status: 'applied' });
+  const retry = timers.find(t => t.ms === 1000 && !t.cancelled);
+  assert.ok(retry);
+  retry.fn();
+  const retried = host.sent.filter(e => e.event === 'control-transition').at(-1).data;
+  assert.equal(retried.leaseEpoch, reset.leaseEpoch);
+  assert.equal(retried.viewerId, undefined);
+  assert.equal(viewer.sent.some(e => e.event === 'control-grant'), false);
+  viewer.trigger('control-acquire', { requestId: 'still-blocked' });
+  assert.equal(viewer.sent.filter(e => e.event === 'control-state').at(-1).data.state, 'REVOKING');
+});
+
+test('input ack nullable timing preserves missing values without coercing zero', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io);
+  const host = new FakeSocket('host-timing', 'host');
+  const viewer = new FakeSocket('viewer-timing', 'viewer');
+  io.connect(host); io.connect(viewer);
+  for (const value of [null, undefined, '', NaN, Infinity, -1, 0, 12.5]) {
+    host.trigger('input-ack', { viewerId: viewer.id, inputIds: ['sample'], timingSchemaVersion: 1,
+      hostExecuteMs: value, hostAdapterAwaitMs: value, hostQueueMs: value, hostApplyMs: value });
+    const ack = viewer.sent.filter(row => row.event === 'input-ack').at(-1).data;
+    const expected = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    assert.equal(ack.hostExecuteMs, expected);
+    for (const name of ['hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs']) assert.equal(ack[name], expected);
+  }
+});
+
+for (const outcome of ['applied', 'rejected', 'timeout', 'superseded', 'disconnected', 'companion-disconnected']) {
+  test(`legacy companion shares pending rebind gate and producer cleanup (${outcome})`, () => {
+    resetConnections();
+    const io = makeIo();
+    setupSignaling(io, {
+      makeLeaseId: () => 'lease-000000000001',
+      rebindAckTimeoutsMs: [1500],
+    });
+    const host = new FakeSocket('legacy-host', 'host');
+    const a = new FakeSocket('legacy-a', 'viewer');
+    a.handshake.auth.viewerSessionId = 'legacy-session';
+    const companion = new FakeSocket('legacy-companion', 'relay-viewer');
+    io.connect(host); io.connect(a); io.connect(companion);
+    a.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+    const transition = host.sent.find(e => e.event === 'control-transition').data;
+    host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
+    companion.trigger('relay-stream-control', { enabled: true });
+    assert.equal(host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data.viewerId, a.id);
+    a.disconnect();
+    const b = new FakeSocket('legacy-b', 'viewer');
+    b.handshake.auth.viewerSessionId = 'legacy-session';
+    io.connect(b);
+    const rebind = host.sent.find(e => e.event === 'viewer-session-rebind');
+    assert.ok(rebind);
+    const hostBefore = host.sent.length;
+    const companionBefore = companion.sent.length;
+    const bBefore = b.sent.length;
+    const competingCompanion = new FakeSocket('legacy-competing-companion', 'relay-viewer');
+    io.connect(competingCompanion);
+    competingCompanion.trigger('relay-stream-control', { enabled: true });
+    companion.trigger('relay-stream-control', { enabled: true });
+    companion.trigger('relay-stream-control', { enabled: false });
+    companion.trigger('relay-frame-ack', { frameId: 1 });
+    companion.trigger('input', { type: 'keyboard', action: 'keydown', payload: { code: 'KeyA' } });
+    host.trigger('relay-frame', { viewerId: a.id, frameId: 1, data: 'old' });
+    host.trigger('relay-frame', { viewerId: b.id, frameId: 2, data: 'pending' });
+    host.trigger('relay-stream-control-ack', { viewerId: b.id, state: 'active', applied: true });
+    host.trigger('media-activity-ack', { viewerId: b.id, state: 'active', applied: true });
+    assert.equal(host.sent.slice(hostBefore).filter(e => ['relay-stream-control', 'relay-frame-ack', 'input'].includes(e.event)).length, 0);
+    assert.equal(companion.sent.slice(companionBefore).filter(e => e.event === 'relay-frame').length, 0);
+    assert.equal(b.sent.slice(bBefore).filter(e => ['relay-frame', 'relay-stream-control-ack', 'media-activity-ack'].includes(e.event)).length, 0);
+    if (outcome === 'superseded') io.connectManual(new FakeSocket('legacy-superseder', 'viewer'));
+    if (outcome === 'disconnected') b.disconnect();
+    if (outcome === 'companion-disconnected') companion.disconnect();
+    rebind.ack(outcome === 'timeout' ? new Error('timeout') : null,
+      { status: ['superseded', 'disconnected'].includes(outcome) ? 'applied' : outcome });
+    if (outcome === 'applied') {
+      companion.trigger('relay-stream-control', { enabled: true });
+      assert.equal(host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data.viewerId, b.id);
+      host.trigger('relay-frame', { viewerId: b.id, frameId: 3, data: 'current' });
+      assert.equal(companion.sent.filter(e => e.event === 'relay-frame').length, 1);
+    } else {
+      assert.ok(host.sent.slice(hostBefore).some(e => e.event === 'relay-stream-control' && e.data.enabled === false && e.data.viewerId === a.id));
+      companion.trigger('relay-stream-control', { enabled: true });
+      assert.equal(host.sent.slice(hostBefore).filter(e => e.event === 'relay-stream-control' && e.data.enabled === true).length, 0);
+    }
+  });
+}
+
+test('disconnect telemetry whitelists protocol reasons without altering host cleanup', () => {
+  const events = [];
+  const context = createRuntimeContext();
+  const io = makeIo();
+  setupSignaling(io, {
+    runtimeContext: context,
+    structuredLogger: { info(event) { events.push(event); } },
+  });
+  const host = new FakeSocket('runtime-host', 'host');
+  io.connect(host);
+  host.trigger('disconnect', { payload: 'disconnect-secret-canary' });
+  const event = events.find((item) => item.event === 'signal_socket_disconnected');
+  assert.equal(event.meta.reason, 'other');
+  assert.equal(JSON.stringify(events).includes('disconnect-secret-canary'), false);
+  assert.equal(context.connections.host, null);
+});
+
+test('disconnect telemetry sink failure cannot prevent existing relay cleanup', () => {
+  const context = createRuntimeContext();
+  const io = makeIo();
+  setupSignaling(io, {
+    runtimeContext: context,
+    structuredLogger: { info() { throw new Error('sink unavailable'); } },
+    recentEventStore: { append() { throw new Error('store unavailable'); } },
+  });
+  const relay = new FakeSocket('runtime-relay', 'relay-viewer');
+  io.connect(relay);
+  assert.doesNotThrow(() => relay.trigger('disconnect', 'transport close'));
+  assert.equal(context.connections.relayViewers.has(relay.id), false);
+});
+
+function strictRelayFixture() {
+  resetConnections();
+  const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('m6-host', 'host'), viewer = new FakeSocket('m6-viewer', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  host.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer);
+  const lease = { schemaVersion: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', { ...lease, schemaVersion: 1,
+    connectionAttemptId: 'm6-attempt', connectionAttemptSequence: 1 });
+  const relayScope = { producerId: 'm6-producer', productionGeneration: 1,
+    connectionAttemptId: 'm6-attempt', mediaGeneration: 0, leaseEpoch: grant.leaseEpoch };
+  return { io, host, viewer, lease, relayScope };
+}
+
+test('strict ordinary generation-zero relay start preserves authenticated binding and dual ACK source', () => {
+  const { host, viewer, lease, relayScope } = strictRelayFixture();
+  const request = { ...lease, enabled: true, relayFrameSchemaVersion: 1,
+    relayStartRequestId: 'm6-start', relayMediaGeneration: 0, connectionAttemptId: 'm6-attempt' };
+  viewer.trigger('relay-stream-control', request);
+  const forwarded = host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data;
+  assert.deepEqual(forwarded, { ...request, viewerId: viewer.id });
+  assert.equal('generation' in forwarded, false);
+  assert.equal('mediaControlSchemaVersion' in forwarded, false);
+  const ack = { viewerId: viewer.id, schemaVersion: 1, state: 'active', generation: 0,
+    connectionAttemptId: 'm6-attempt', applied: true, relayControlKind: 'start',
+    relayStartRequestId: 'm6-start', relayFrameSchemaVersion: 1, relayScope };
+  host.trigger('relay-stream-control-ack', ack);
+  const routes = viewer.sent.filter(e => ['relay-stream-control-ack', 'media-activity-ack'].includes(e.event));
+  assert.equal(routes.length, 2); assert.deepEqual(routes[0].data, routes[1].data);
+  assert.deepEqual(routes[0].data.relayScope, relayScope);
+  assert.equal(routes[0].data.relayStartRequestId, 'm6-start');
+  assert.equal(routes[0].data.relayControlKind, 'start');
+  assert.equal('leaseId' in routes[0].data, false);
+  const count = host.sent.filter(e => e.event === 'relay-stream-control').length;
+  for (const patch of [{ relayMediaGeneration: true }, { relayMediaGeneration: -1 },
+    { relayMediaGeneration: Number.MAX_SAFE_INTEGER + 1 }, { relayStartRequestId: 'a'.repeat(65) },
+    { relayFrameSchemaVersion: true }, { connectionAttemptId: 'foreign' }, { leaseEpoch: lease.leaseEpoch + 1 }]) {
+    viewer.trigger('relay-stream-control', { ...request, ...patch });
+  }
+  assert.equal(host.sent.filter(e => e.event === 'relay-stream-control').length, count);
+});
+
+test('registered relay frame, ACK and feedback handlers preserve exact source and reject old owners', () => {
+  const { io, host, viewer, lease, relayScope } = strictRelayFixture();
+  const fields = { relayFrameSchemaVersion: 1, relayScope };
+  const frame = { ...fields, viewerId: viewer.id, frameId: 1, data: 'AAAA' };
+  host.trigger('relay-frame', frame);
+  assert.deepEqual(viewer.sent.filter(e => e.event === 'relay-frame').at(-1).data, frame);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame').at(-1).volatile, true);
+  viewer.trigger('relay-frame-ack', { ...lease, ...fields, frameId: 1 });
+  assert.deepEqual(host.sent.filter(e => e.event === 'relay-frame-ack').at(-1).data,
+    { ...lease, ...fields, frameId: 1, viewerId: viewer.id });
+  const feedback = { ...fields, viewerId: viewer.id, feedbackSequence: 1,
+    sample: { sampleSequence: 1, relayFrameAckRttMs: 1999, privateValue: 'discard' },
+    pendingCount: 1, oldestPendingAgeMs: 500, expiredCount: 2, unmatchedAckCount: 3,
+    timeoutCount: 4, coalescedCount: 5, lastSentAgeMs: 100, lastAckAgeMs: 0,
+    leaseId: 'must-not-be-forwarded', payload: 'must-not-be-forwarded' };
+  host.trigger('relay-frame-feedback', feedback);
+  const received = viewer.sent.filter(e => e.event === 'relay-frame-feedback').at(-1).data;
+  assert.equal(received.coalescedCount, 5);
+  assert.deepEqual(received.relayScope, relayScope);
+  assert.deepEqual(received.sample, { sampleSequence: 1, relayFrameAckRttMs: 1999 });
+  assert.equal('leaseId' in received, false); assert.equal('payload' in received, false);
+  const count = viewer.sent.filter(e => e.event === 'relay-frame-feedback').length;
+  for (const patch of [{ relayScope: { ...relayScope, mediaGeneration: true } },
+    { relayScope: { ...relayScope, producerId: 'a'.repeat(65) } },
+    { relayScope: { ...relayScope, connectionAttemptId: 'foreign' } },
+    { relayScope: { ...relayScope, leaseEpoch: relayScope.leaseEpoch + 1 } },
+    { sample: { sampleSequence: 1, relayFrameAckRttMs: null } },
+    { sample: { sampleSequence: 1, relayFrameAckRttMs: 2000 } }, { coalescedCount: true }]) {
+    host.trigger('relay-frame-feedback', { ...feedback, ...patch });
+  }
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame-feedback').length, count);
+  viewer.trigger('relay-frame-feedback', feedback);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame-feedback').length, count);
+  const replacementHost = new FakeSocket('m6-new-host', 'host'); io.connect(replacementHost);
+  host.trigger('relay-frame', frame); host.trigger('relay-frame-feedback', feedback);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame-feedback').length, count);
+  assert.equal(viewer.sent.filter(e => e.event === 'relay-frame').length, 1);
+});
+
+test('viewer-stats normalizes only nullable latency after current viewer identity admission', () => {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-1', 'host');
+  const viewer = new FakeSocket('viewer-1', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2; viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer, 'nullable-latency');
+  const identity = { schemaVersion: 2, connectionAttemptId: 'nullable-current', connectionAttemptSequence: 2,
+    generation: 2, leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', { ...identity, schemaVersion: 1 });
+  const unknowns = [null, undefined, '', '0', '725.1', true, false, {}, NaN, Infinity, -Infinity, -1];
+  const reports = () => host.sent.filter(entry => entry.event === 'viewer-stats');
+  for (const value of [...unknowns, 0, 0.1, 725.1]) {
+    const before = reports().length;
+    const payload = { ...identity, viewerId: 'forged', derivedFps: 19, decodedDelta: 19,
+      framesDecoded: 19, customLegacyAlias: 17, rttMs: value, jitterBufferMs: value };
+    if (value === undefined) { delete payload.rttMs; delete payload.jitterBufferMs; }
+    viewer.trigger('viewer-stats', payload);
+    assert.equal(reports().length, before + 1);
+    const forwarded = reports().at(-1).data;
+    const expected = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    assert.equal(forwarded.rttMs, expected); assert.equal(forwarded.jitterBufferMs, expected);
+    assert.equal(forwarded.viewerId, viewer.id);
+    for (const [key, val] of Object.entries(identity)) assert.equal(forwarded[key], val);
+    assert.equal(forwarded.customLegacyAlias, 17); assert.equal(forwarded.framesDecoded, 19);
+  }
+  const before = reports().length;
+  host.trigger('viewer-stats', { ...identity, rttMs: null });
+  viewer.trigger('viewer-stats', { ...identity, connectionAttemptId: 'old', connectionAttemptSequence: 1, generation: 1 });
+  assert.equal(reports().length, before);
+  viewer.trigger('disconnect');
+  viewer.trigger('viewer-stats', { ...identity, rttMs: null });
+  assert.equal(reports().length, before);
+});
+
+test('heartbeat attaches only after admitted main viewer claim and before welcome', () => {
+  const context = createRuntimeContext(); const io = makeIo(context); const attached = [];
+  setupSignaling(io, { runtimeContext: context, observeViewerHeartbeat(socket, current) {
+    assert.equal(current(), true);
+    assert.equal(socket.sent.some(e => e.event === 'connected'), false);
+    attached.push(socket);
+  } });
+  const host = new FakeSocket('heartbeat-host', 'host'); io.connect(host);
+  const relay = new FakeSocket('heartbeat-relay', 'relay-viewer'); io.connect(relay);
+  const viewer = new FakeSocket('heartbeat-main', 'viewer'); io.connect(viewer);
+  const rejected = new FakeSocket('heartbeat-rejected', 'viewer');
+  rejected.handshake.auth.proofAdmission = { token: 'invalid' }; io.connect(rejected);
+  const invalid = new FakeSocket('heartbeat-invalid-token', 'viewer'); invalid.handshake.auth.token = 'invalid';
+  assert.throws(() => io.connect(invalid));
+  assert.deepEqual(attached, [viewer]);
+});
+
+test('heartbeat coverage follows real proof and ordinary admission, rejection, rebind and observer failure', async () => {
+  const { createViewerHeartbeatRegistry } = require('../lib/observability/viewer-heartbeat');
+  const { EventEmitter } = require('node:events');
+  const context = createRuntimeContext(); const io = makeIo(context); const lines = []; const attached = [];
+  const registry = createViewerHeartbeatRegistry({ logger: { log: line => lines.push(line) } });
+  setupSignaling(io, { runtimeContext: context, observeViewerHeartbeat(socket, current) {
+    attached.push(socket); registry.attach(socket, current);
+  } });
+  const proof = new FakeSocket('heartbeat-proof', 'viewer'); proof.conn = new EventEmitter();
+  const admission = context.issueProofAdmission(); proof.handshake.auth.proofAdmission = admission; io.connect(proof);
+  const replay = new FakeSocket('heartbeat-replay', 'viewer'); replay.handshake.auth.proofAdmission = admission; io.connect(replay);
+  assert.equal(replay.disconnected, true);
+  const human = new FakeSocket('heartbeat-human', 'viewer'); human.conn = new EventEmitter(); io.connectManual(human);
+  await Promise.resolve();
+  assert.deepEqual(attached, [proof, human]);
+  assert.equal(context.connections.viewers.get(human.id), human);
+  assert.equal(JSON.parse(lines[0].slice('WRD_SIGNAL_HEARTBEAT '.length)).current, false);
+  assert.equal(JSON.parse(lines[0].slice('WRD_SIGNAL_HEARTBEAT '.length)).proof, true);
+  const stale = new FakeSocket('heartbeat-stale', 'viewer');
+  stale.handshake.auth.viewerSessionId = human.handshake.auth.viewerSessionId;
+  stale.handshake.auth.viewerAdmission = { mode: 'resume', generation: -1 }; io.connect(stale);
+  assert.equal(stale.disconnected, true); assert.equal(attached.length, 2);
+  const resume = human.sent.find(e => e.event === 'connected').data.viewerAdmission;
+  human.trigger('disconnect', 'transport close');
+  const replacement = new FakeSocket('heartbeat-rebound', 'viewer'); replacement.conn = new EventEmitter();
+  replacement.handshake.auth.viewerSessionId = human.handshake.auth.viewerSessionId;
+  replacement.handshake.auth.viewerAdmission = resume; io.connect(replacement);
+  assert.equal(context.connections.viewers.get(replacement.id), replacement);
+  await Promise.resolve(); assert.equal(attached.length, 3);
+  assert.equal(JSON.parse(lines[1].slice('WRD_SIGNAL_HEARTBEAT '.length)).current, false);
+  registry.stop();
+  const strict = createRuntimeContext({ realm: 'lab-test', requireViewerProof: true }); const strictIo = makeIo(strict);
+  const observed = []; const unavailable = createViewerHeartbeatRegistry({ logger: { log() {} } });
+  setupSignaling(strictIo, { runtimeContext: strict, observeViewerHeartbeat(socket, current) {
+    observed.push(socket); unavailable.attach(socket, current); throw Error('observer failure');
+  } });
+  const refused = new FakeSocket('heartbeat-proofless', 'viewer'); strictIo.connect(refused);
+  const host = new FakeSocket('heartbeat-strict-host', 'host'); strictIo.connect(host);
+  const relay = new FakeSocket('heartbeat-strict-relay', 'relay-viewer'); strictIo.connect(relay);
+  const accepted = new FakeSocket('heartbeat-accepted', 'viewer'); accepted.handshake.auth.proofAdmission = strict.issueProofAdmission();
+  strictIo.connect(accepted);
+  assert.deepEqual(observed, [accepted]); assert.equal(refused.disconnected, true);
+  assert.equal(accepted.disconnected, false); assert.ok(accepted.sent.some(e => e.event === 'connected'));
+  assert.equal(strict.connections.viewers.get(accepted.id), accepted); unavailable.stop();
 });

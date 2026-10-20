@@ -11,16 +11,19 @@ const {
   cachePolicyForAsset,
   edgeCachePolicyForAsset,
   createWebAssetMiddleware,
+  assetDigest,
 } = require('../lib/web-assets');
+
+const ASSET_NAME = `app.${assetDigest('ok')}.js`;
 
 function fixture() {
   const distDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-assets-'));
   fs.mkdirSync(path.join(distDir, 'assets'));
-  fs.writeFileSync(path.join(distDir, 'assets/app.0123456789abcdef.js'), 'ok');
+  fs.writeFileSync(path.join(distDir, 'assets', ASSET_NAME), 'ok');
   fs.writeFileSync(path.join(distDir, 'viewer.html'), '<!doctype html>');
   fs.writeFileSync(path.join(distDir, 'asset-manifest.json'), JSON.stringify({
     schemaVersion: 1,
-    assets: { desktopJs: 'assets/app.0123456789abcdef.js' },
+    assets: { desktopJs: `assets/${ASSET_NAME}` },
   }));
   return distDir;
 }
@@ -29,7 +32,7 @@ test('manifest-listed hashed assets are immutable while HTML revalidates', () =>
   const distDir = fixture();
   const manifest = loadWebAssetManifest({ distDir });
   assert.equal(
-    cachePolicyForAsset('/assets/app.0123456789abcdef.js', manifest),
+    cachePolicyForAsset(`/assets/${ASSET_NAME}`, manifest),
     'public, max-age=31536000, immutable',
   );
   assert.equal(
@@ -59,7 +62,7 @@ test('generated HTML revalidates and hashed assets are immutable', async () => {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const html = await fetch(`${origin}/viewer.html`);
-  const asset = await fetch(`${origin}/assets/app.0123456789abcdef.js`);
+  const asset = await fetch(`${origin}/assets/${ASSET_NAME}`);
   assert.equal(html.headers.get('cache-control'), 'no-cache, max-age=0, must-revalidate');
   assert.equal(html.headers.get('cdn-cache-control'), 'no-store');
   assert.equal(html.headers.get('cloudflare-cdn-cache-control'), 'no-store');

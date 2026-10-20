@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "scope": "fixed-reviews-and-bounded-safe-summaries-not-raw-input-or-runtime-qualification",
+  "sourceViewerTIP": "c802a68362459b46b84593c7e8921575e0783394",
+  "files": [
+    {
+      "file": "move-quarantine-assessment.md",
+      "sha256": "8b6db9376347a59f55a27ce2c7fb862d47e4097a13c65abd30404a890dd5a277",
+      "bytes": 9479,
+      "originalPath": "/tmp/wrd-move-backpressure-recovery-assessment-20261018.md"
+    },
+    {
+      "file": "move-task-review.md",
+      "sha256": "19e0b6122d9c323ed74d9dbabe7f72f2923ea86fee2b5abcf23808c8773f39b0",
+      "bytes": 7410,
+      "originalPath": "/tmp/wrd-move-quarantine-fallback-task-review-20261018.md"
+    },
+    {
+      "file": "move-final-review.md",
+      "sha256": "66fb351b4328c7735d0b6eacc87e0a8034fb13238139082ad7fc595e279f17b9",
+      "bytes": 7851,
+      "originalPath": "/tmp/wrd-final-move-quarantine-fallback-review-20261018.md"
+    },
+    {
+      "file": "move-task-report.md",
+      "sha256": "722008d184344a35486db6a04f52011bb668656e0cb21d1b39860cced9fcdc61",
+      "bytes": 7448,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/.superpowers/sdd/2026-10-18-move-quarantine-fallback-plan/task-1-report.md"
+    },
+    {
+      "file": "move-ledger.md",
+      "sha256": "8316d1be189c5083710e2e996c2ee64b77ccfe791f538568d6e7d3f46005c9ca",
+      "bytes": 2287,
+      "originalPath": "/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop/.superpowers/sdd/2026-10-18-move-quarantine-fallback-plan/progress.md"
+    },
+    {
+      "file": "r4-operations-review.md",
+      "sha256": "f76c423f8fb1d6a507894027f258a2973f69622c0108aad3556217e971120c71",
+      "bytes": 9006,
+      "originalPath": "/tmp/wrd-frontend-move-context-operations-r4-independent-review-20261018.md"
+    },
+    {
+      "file": "r4-checker-failure-assessment.md",
+      "sha256": "5d54a9760cb2e2e2da4a341c411c77cb8f2b57b48fdc3214f32ed72c545cb7c0",
+      "bytes": 5415,
+      "originalPath": "/tmp/wrd-r4-mixed-checker-failure-assessment-20261018.md"
+    },
+    {
+      "file": "r5-operations-fix-review.md",
+      "sha256": "96264a6cd0d0af58fed7d4fb7b1fe8f134caddc756f5574f72af921e79c520ba",
+      "bytes": 8019,
+      "originalPath": "/tmp/wrd-frontend-move-context-operations-r5-fix1-review-20261018.md"
+    },
+    {
+      "file": "r5-actual-asset-review.md",
+      "sha256": "58b3ae882fc8511df755159d3e78193eafb07fe6b5f326cbdba6f487acf44bcd",
+      "bytes": 12936,
+      "originalPath": "/tmp/wrd-r5-actual-asset-template-independent-review-20261018.md"
+    },
+    {
+      "file": "r5-baseline-cleanup-assessment.md",
+      "sha256": "6bed460c49e8932602dbbf9af73a155bfa20f2c4f446d4a1d5b84b1ff9befbd1",
+      "bytes": 10096,
+      "originalPath": "/tmp/wrd-r5-baseline-cleanup-failure-assessment-20261018.md"
+    },
+    {
+      "file": "r5-baseline-performance-assessment.md",
+      "sha256": "39cf2ea176143295b9d412cb76a1525887472dcf9b0e8756176a33977037feec",
+      "bytes": 13587,
+      "originalPath": "/tmp/wrd-r5-baseline-performance-assessment-20261018.md"
+    },
+    {
+      "file": "admission-teardown-task-report.md",
+      "sha256": "1c0ee95f9744b205816c76d0d28760ddc77b03509adab53522c3a78e6cd08aa4",
+      "bytes": 3862,
+      "originalPath": ".superpowers/sdd/2026-10-18-ordinary-admission-teardown-plan/task-1-report.md"
+    },
+    {
+      "file": "admission-teardown-task-review.md",
+      "sha256": "faf284c72d938285a295b2e7e0621d1254b332f52f0e094eb339d25658950d0c",
+      "bytes": 8111,
+      "originalPath": "/tmp/wrd-ordinary-admission-teardown-task-review-20261018.md"
+    },
+    {
+      "file": "admission-teardown-ledger.md",
+      "sha256": "e5daa8c7a6d4bb244e1cf73a6c6266c355f46d068bafea53f5ffbfadd4fe05a4",
+      "bytes": 1309,
+      "originalPath": ".superpowers/sdd/2026-10-18-ordinary-admission-teardown-plan/progress.md"
+    },
+    {
+      "file": "pacing-v2-fix-review.md",
+      "sha256": "e4146c2c76d4499920f18983c987983325392e331a2eb7e358a53c6f3fd769f2",
+      "bytes": 5658,
+      "originalPath": "/tmp/wrd-capture-pacing-experiment-v2-fix1-review-20261018.md"
+    },
+    {
+      "file": "pacing-v2-r5-interface-assessment.md",
+      "sha256": "f2e76d319a6782fcbc2bb12849083ae9f33ec65acc4ccde44651e98ecd7a7cf3",
+      "bytes": 11839,
+      "originalPath": "/tmp/wrd-pacing-v2-r5-interface-assessment-20261018.md"
+    },
+    {
+      "file": "pacing-v2-whole-fake-integration.md",
+      "sha256": "27ce8300c3251cd798a3e9ba257d94512df2320f73ea33dea810f50d2092607c",
+      "bytes": 9318,
+      "originalPath": "/tmp/wrd-capture-pacing-v2-whole-fake-integration-20261018.md"
+    },
+    {
+      "file": "root-review-closure.md",
+      "sha256": "797d0b21825be6855d160ec79f60bc12382ad595593ec9b33854feb1e2d6f619",
+      "bytes": 3152,
+      "originalPath": null
+    },
+    {
+      "file": "admission-teardown-initial-final-review.md",
+      "sha256": "bd25abc5efbe215f01d9bb562dd93aa70bff0edcf62914e75a35bec9b012969b",
+      "bytes": 8989,
+      "originalPath": "/tmp/wrd-final-ordinary-admission-teardown-review-20261018.md"
+    },
+    {
+      "file": "pacing-v2-whole-fake-integration-review.md",
+      "sha256": "a8914e32153b7f69d998753f7e34a04846ded914b1bf3e1a56f1a731a1165666",
+      "bytes": 8807,
+      "originalPath": "/tmp/wrd-capture-pacing-v2-whole-fake-integration-review-20261018.md"
+    },
+    {
+      "file": "native-collector-initial-draft-review.md",
+      "sha256": "a01f012ccb183c2c6ea103558ce78ae99bcb9d16f0937e622297314bffbdc315",
+      "bytes": 7194,
+      "originalPath": "/tmp/wrd-native-latency-collector-drafts-review-20261018.md"
+    },
+    {
+      "file": "native-collector-v2-fix-review.md",
+      "sha256": "14d6da89c2ff21e87614849015b252c92c0629c1e62f989a84171088b5d46191",
+      "bytes": 5816,
+      "originalPath": "/tmp/wrd-native-latency-collector-drafts-v2-fix1-review-20261018.md"
+    },
+    {
+      "file": "native-collector-v3-fix-review.md",
+      "sha256": "6da65f257130b1e2d29a48a38f5c265215da5d7983e1dc203fe483c2714e62ea",
+      "bytes": 3690,
+      "originalPath": "/tmp/wrd-native-latency-collector-drafts-v3-fix2-review-20261018.md"
+    },
+    {
+      "file": "rolling72h-late.md",
+      "sha256": "8662bb045148412404d468dabadfc5a47c98e90aaf2048c42a4889b1d1459c19",
+      "bytes": 5924,
+      "originalPath": "/tmp/wrd-rolling72h-refresh-20261018-late.md"
+    },
+    {
+      "file": "rolling72h-late-summary.json",
+      "sha256": "857a699c99f8625765cca9e13e8a2729049f1d50f839974f20a2373c75b8a41f",
+      "bytes": 16126,
+      "originalPath": "/tmp/wrd-rolling72h-refresh-20261018-late.json"
+    },
+    {
+      "file": "native-planning-copy-provenance.json",
+      "sha256": "65d4c9fe860744ae82ddabb1ac1fa6ee888264b5162b38dbc6af2f7b1fe23669",
+      "bytes": 894,
+      "originalPath": null
+    },
+    {
+      "file": "admission-teardown-final-fix-review.md",
+      "sha256": "f9fa58b55efb840cd36d7a61117de210c82878e49488f11c1e00ed70f3147a34",
+      "bytes": 5894,
+      "originalPath": "/tmp/wrd-final-ordinary-admission-teardown-fix1-review-20261018.md"
+    },
+    {
+      "file": "admission-teardown-final-fix-report.md",
+      "sha256": "075c692ff30a31eb24e5707cd6f8595e86e3eb5cab74d1120f09f0cbdd509687",
+      "bytes": 6763,
+      "originalPath": ".superpowers/sdd/2026-10-18-ordinary-admission-teardown-plan/task-1-report.md"
+    },
+    {
+      "file": "admission-teardown-completion-ledger.md",
+      "sha256": "069ed95e2e6db76b981aa64e0824c3dd93229da994662977f935cff9446a7d59",
+      "bytes": 1963,
+      "originalPath": ".superpowers/sdd/2026-10-18-ordinary-admission-teardown-plan/progress.md"
+    },
+    {
+      "file": "rolling72h-late-initial-review.md",
+      "sha256": "f90b977784523261b6ff7f55cb2a8d4775987ddda992221a0ed1f4bd5f079a78",
+      "bytes": 8168,
+      "originalPath": "/tmp/wrd-rolling72h-refresh-late-independent-review-20261018.md"
+    }
+  ],
+  "noCredentials": true,
+  "rawPrivateLogsNotCopied": true,
+  "invalidatedDrafts": [
+    {
+      "files": [
+        "rolling72h-late.md",
+        "rolling72h-late-summary.json"
+      ],
+      "status": "ChangesRequested-not-current-diagnostic-truth",
+      "reason": "physical timestamp lines incorrectly named complete records; Signal multiline event context lost",
+      "review": "rolling72h-late-initial-review.md",
+      "revisionState": "private-v2-in-progress-not-accepted"
+    }
+  ]
+}

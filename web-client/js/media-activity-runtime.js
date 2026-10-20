@@ -78,6 +78,7 @@
 
       clearTimer();
       desiredState = desired;
+      lastAck = null;
       desiredGeneration = nextGeneration;
       attemptId = connectionAttemptId || attemptId;
       generation += 1;
@@ -143,7 +144,8 @@
       if (attemptId && connectionAttemptId && connectionAttemptId !== attemptId) {
         return { accepted: false, reason: 'wrong-attempt', ...snapshot() };
       }
-      if (!afterResume && lastAck?.state !== 'active') {
+      if (lastAck?.state !== 'active' || lastAck?.applied !== true
+        || lastAck.generation !== desiredGeneration || lastAck.connectionAttemptId !== attemptId) {
         return { accepted: false, reason: 'no-active-ack', ...snapshot() };
       }
       clearTimer();

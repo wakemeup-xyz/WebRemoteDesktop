@@ -1,0 +1,12 @@
+test_actual_source_gate_request_equivalence_and_batch_coverage (test_blob_batch.BlobBatch.test_actual_source_gate_request_equivalence_and_batch_coverage) ... ok
+test_actual_source_validator_live_head_and_dirty_guards_repeat (test_blob_batch.BlobBatch.test_actual_source_validator_live_head_and_dirty_guards_repeat) ... ok
+test_binary_empty_shared_oid_equivalence_and_warm_no_fork (test_blob_batch.BlobBatch.test_binary_empty_shared_oid_equivalence_and_warm_no_fork) ... ok
+test_cache_entry_byte_and_response_bounds_are_atomic (test_blob_batch.BlobBatch.test_cache_entry_byte_and_response_bounds_are_atomic) ... ok
+test_failure_atomicity_complete_frame_exit_timeout_and_hash (test_blob_batch.BlobBatch.test_failure_atomicity_complete_frame_exit_timeout_and_hash) ... ok
+test_safe_exact_revision_paths_and_tree_binding (test_blob_batch.BlobBatch.test_safe_exact_revision_paths_and_tree_binding) ... ok
+test_unchanged_live_gates_and_deadlines_ast (test_blob_batch.BlobBatch.test_unchanged_live_gates_and_deadlines_ast) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 1.268s
+
+OK

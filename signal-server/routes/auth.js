@@ -1,5 +1,4 @@
 const express = require('express');
-const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { loadConfig } = require('../lib/config');
@@ -54,11 +53,6 @@ function createAuthLimiters(options = {}) {
   };
 }
 
-async function verifyPassword(input, expected) {
-  const hash = bcrypt.hashSync(expected, 10);
-  return bcrypt.compare(String(input || ''), hash);
-}
-
 function createAuthRouter(options = {}) {
   const router = express.Router();
   const terminalAudit = options.terminalAudit || createTerminalAudit(options.logger || console);
@@ -80,7 +74,9 @@ function createAuthRouter(options = {}) {
       return res.status(400).json({ error: 'Password required' });
     }
 
-    const valid = await verifyPassword(password, viewerAccessPassword);
+    const valid = typeof viewerAccessPassword === 'string'
+      && viewerAccessPassword.length > 0
+      && constantTimeSecretEqual(password, viewerAccessPassword);
     if (!valid) {
       return res.status(401).json({ error: 'Invalid password' });
     }
@@ -94,6 +90,31 @@ function createAuthRouter(options = {}) {
 
   router.post('/login', limiters.viewer, loginViewer);
   router.post('/login/viewer', limiters.viewer, loginViewer);
+
+  router.post('/viewer-admission', limiters.verify, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    let decoded;
+    try { decoded = verifyAccessToken(readBearerToken(req.headers.authorization), getConfig()); }
+    catch { return res.status(401).json({ error: 'Invalid token' }); }
+    if (decoded.role !== 'viewer') return res.status(403).json({ error: 'Viewer role required' });
+    const runtime = options.runtimeContext;
+    if (!runtime || runtime.requiresViewerProof()) return res.status(403).json({ error: 'Explicit admission unavailable' });
+    const hasInitialPolicy = Object.prototype.hasOwnProperty.call(req.body || {}, 'initialPolicy');
+    if (hasInitialPolicy && req.body.initialPolicy !== 'vacant-only-v1') {
+      return res.status(400).json({ error: 'invalid-initial-policy' });
+    }
+    const admission = runtime.viewerAdmission.issue(decoded.sub, req.body?.viewerSessionId,
+      hasInitialPolicy ? { initialPolicy: req.body.initialPolicy, context: runtime.viewerAdmissionContext?.() } : {});
+    if (admission.error) {
+      const statuses = {
+        'invalid-session': 400, 'invalid-initial-policy': 400, 'admission-capacity': 429,
+        'viewer-occupied': 409, 'relay-occupied': 409, 'host-unavailable': 409,
+        'human-intent-pending': 409, 'human-owner-retained': 409,
+      };
+      return res.status(statuses[admission.error] || 503).json({ error: admission.error });
+    }
+    return res.status(201).json({ admission });
+  });
 
   router.post('/login/host', limiters.host, (req, res) => {
     const { hostSharedSecret } = getConfig();

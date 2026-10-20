@@ -1,10 +1,100 @@
-const fs = require('fs');
-const path = require('path');
+const { createDiagnosticStore, getDiagDir } = require('./diagnostic-store');
 const { loadConfig } = require('./config');
+const { sanitizeDataChannelWatchdog, sanitizeSignalingFailure } = require('../../web-client/js/runtime-diagnostic');
 
-const DIAG_MAX_AGE_DAYS = 7;
-const DIAG_MAX_PER_VIEWER = 3;
-const DIAG_MAX_TOTAL = 50;
+const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
+const crypto = require('node:crypto');
+const hashIdentity = value => typeof value === 'string' && value.length > 0
+  ? crypto.createHash('sha256').update(value).digest('hex').slice(0, 32) : null;
+const finiteNonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const countValue = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+const digestValue = value => typeof value === 'string' && /^[0-9a-f]{16,64}$/.test(value) ? value : null;
+const OUTCOME_NAMES = ['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'];
+function redactLatency(snapshot) {
+  if (!isRecord(snapshot) || snapshot.schemaVersion !== 3) return null;
+  const metrics = {};
+  // Shared with the producer. Never add an independent list of latency names.
+  for (const name of LATENCY_METRIC_NAMES) {
+    const item = snapshot.metrics?.[name];
+    metrics[name] = {
+      last: finiteNonnegative(item?.last), p50: finiteNonnegative(item?.p50), p95: finiteNonnegative(item?.p95),
+      count: countValue(item?.count), available: item?.available === true,
+      lastSampleAgeMs: finiteNonnegative(item?.lastSampleAgeMs),
+    };
+  }
+  const rawScope = snapshot.scope;
+  const scope = isRecord(rawScope) ? { attemptHash: digestValue(rawScope.attemptHash) || hashIdentity(rawScope.connectionAttemptId),
+    generation: safeInteger(rawScope.generation, Number.MAX_SAFE_INTEGER), leaseEpoch: safeInteger(rawScope.leaseEpoch, Number.MAX_SAFE_INTEGER) } : null;
+  return { schemaVersion: 3, windowMs: 5000, scope, metrics,
+    outcomes: Object.fromEntries(OUTCOME_NAMES.map(name => [name, countValue(snapshot.outcomes?.[name])])) };
+}
+const STARTUP_MARKS = new Set(['html-shell', 'core-failed', 'core-interactive', 'start-click', 'bootstrap-start',
+  'bootstrap-ready', 'bootstrap-degraded', 'signal-connected', 'first-frame', 'active']);
+function redactStartup(value) {
+  const marks = Array.isArray(value?.marks) ? value.marks : [];
+  return { signalingFailure: sanitizeSignalingFailure(value?.signalingFailure), dataChannelWatchdog: sanitizeDataChannelWatchdog(value?.dataChannelWatchdog), marks: marks.filter(mark => STARTUP_MARKS.has(mark?.name)).slice(0, 64)
+    .map(mark => ({ name: mark.name, atMs: finiteNonnegative(mark.atMs ?? mark.at) })),
+    resources: (Array.isArray(value?.resources) ? value.resources : []).filter(resource =>
+      typeof resource?.path === 'string' && /^\/?assets\/[a-z0-9-]+\.[a-f0-9]{8,64}\.(js|css)$/.test(resource.path))
+      .slice(0, 10).map(resource => ({ path: resource.path, durationMs: finiteNonnegative(resource.durationMs) })) };
+}
+function redactBuild(value) {
+  const builtAt = Number.isSafeInteger(value?.builtAt) && value.builtAt >= 0 ? value.builtAt
+    : (typeof value?.builtAt === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value.builtAt) ? value.builtAt : null);
+  return { id: digestValue(value?.id), builtAt };
+}
+function redactRuntimeDiagnostic(payload) {
+  const latency = redactLatency(payload.latency);
+  const inputTrace = redactInputTrace(payload.inputTrace);
+  if (inputTrace) {
+    inputTrace.schemaVersion = 3;
+    inputTrace.traceNowMs = safeInteger(payload.inputTrace?.traceNowMs, Number.MAX_SAFE_INTEGER);
+    for (const event of inputTrace.events) {
+      if (event.connectionAttemptId) { event.attemptHash = hashIdentity(event.connectionAttemptId); delete event.connectionAttemptId; }
+    }
+  }
+  const inputState = redactInputState(payload.inputState);
+  if (inputState) for (const event of inputState.recentInputEvents) {
+    if (event.connectionAttemptId) { event.attemptHash = hashIdentity(event.connectionAttemptId); delete event.connectionAttemptId; }
+  }
+  const events = []; let dropped = countValue(payload.scopeEnded?.dropped);
+  for (const event of (Array.isArray(payload.scopeEnded?.events) ? payload.scopeEnded.events : [])) {
+    const snapshot = redactLatency(event?.snapshot);
+    const eventIdHash = digestValue(event?.eventIdHash);
+    const endedAtMs = finiteNonnegative(event?.endedAtMs);
+    if (!snapshot || !eventIdHash || endedAtMs === null || events.some(item => item.eventIdHash === eventIdHash)) { dropped++; continue; }
+    events.push({ eventIdHash, endedAtMs, snapshot });
+    while (events.length > 4 || Buffer.byteLength(JSON.stringify(events)) > 32 * 1024) { events.shift(); dropped++; }
+  }
+  const captured = payload.captured || {};
+  const wallTime = typeof captured.wallTime === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(captured.wallTime) ? captured.wallTime : null;
+  const clean = { type: 'connection-diagnostic', schemaVersion: 3, diagnosticId: digestValue(payload.diagnosticId),
+    reason: safeReason(payload.reason) || safeEnum(payload.reason, new Set(['pc-failed', 'pc-disconnected', 'ice-disconnected', 'dc-error', 'dc-stuck', 'negotiation-timeout', 'manual'])),
+    trigger: safeEnum(payload.trigger, new Set(['manual', 'auto-failure'])) || 'manual',
+    connectionAttemptId: hashIdentity(payload.connectionAttemptId), browserSessionId: hashIdentity(payload.browserSessionId),
+    mode: safeEnum(payload.mode, new Set(['auto', 'direct', 'relay', 'tunnel', 'stun', 'turn'])),
+    captured: { wallTime, monotonicMs: finiteNonnegative(captured.monotonicMs), bootIdHash: digestValue(captured.bootIdHash) },
+    build: redactBuild(payload.build), latencyStatus: latency ? 'available' : 'collector-unavailable', latency,
+    inputState, inputTrace, startup: redactStartup(payload.startup), resources: null,
+    scopeEnded: { events, dropped }, logs: [], keyboardDebug: [], events: [], probeResults: [], inputChannelTimeline: [],
+    traceSummary: {},
+  };
+  for (const key of ['receivedDelta', 'decodedDelta', 'derivedFps', 'bytesDelta', 'framesDroppedDelta', 'packetsReceivedDelta',
+    'nackCountDelta', 'pliCountDelta', 'firCountDelta', 'freezeDelta', 'videoWidth', 'videoHeight', 'readyState', 'jitterBufferMs']) {
+    const value = finiteNonnegative(payload.traceSummary?.[key]);
+    if (value !== null) clean.traceSummary[key] = value;
+  }
+  for (const key of ['hasPaintedFrame', 'keyframeRequested', 'keyframeEmitted', 'explicitOverride1080']) {
+    const value = payload.traceSummary?.[key];
+    if (typeof value === 'boolean') clean.traceSummary[key] = value;
+  }
+  // Trim only optional context; mandatory schema/capture/build/M1 explanation remains.
+  clean.truncation = { dropped: countValue(payload.truncation?.dropped) };
+  while (Buffer.byteLength(JSON.stringify(clean)) > 128 * 1024 && clean.inputTrace?.events.length) {
+    clean.inputTrace.events.shift(); clean.truncation.dropped++;
+  }
+  return clean;
+}
 
 const INPUT_TRACE_MAX_EVENTS = 256;
 const INPUT_TRACE_MAX_BYTES = 64 * 1024;
@@ -49,7 +139,7 @@ const INPUT_DIAGNOSTIC_STATUSES = new Set([
   'accepted', 'failed', 'pending', 'ready', 'blocked', 'reacquire-required', 'revoked',
 ]);
 const INPUT_DIAGNOSTIC_REASONS = new Set([
-  'no-active-control', 'inactive', 'viewport-unsupported', 'media-gate', 'manual-disconnect',
+  'signal-connect-error', 'no-active-control', 'inactive', 'viewport-unsupported', 'media-gate', 'manual-disconnect',
   'media-not-ready-for-attempt', 'keyboard-transport-blocked', 'keyboard-transport-reacquire-required',
   'keyboard-transport-revoked', 'keyboard-reset-pending', 'keyboard-blocked', 'surface-pending',
   'surface-uncertain', 'mouse-reset-pending', 'desktop-write-reacquire-required', 'draft-composing',
@@ -133,7 +223,7 @@ function safeTraceEvent(event) {
   const eventType = safeEnum(event.type, INPUT_DIAGNOSTIC_EVENT_TYPES);
   if (eventType !== null) clean.type = eventType;
   copyEnum('stage', new Set(['dom-received', 'gate', 'transport-send', 'ack', 'ack-timeout', 'lifecycle', 'recovery']));
-  copyInteger('at', 10 * 60 * 1000);
+  copyInteger('at', Number.MAX_SAFE_INTEGER);
   copyEnum('inputType', INPUT_DIAGNOSTIC_TYPES);
   copyEnum('action', INPUT_DIAGNOSTIC_ACTIONS);
   copyEnum('phase', INPUT_DIAGNOSTIC_PHASES);
@@ -192,6 +282,7 @@ function redactInputTrace(inputTrace) {
     schemaVersion: safeInteger(inputTrace.schemaVersion, 10) || 1,
     events,
     counters,
+    ...(inputTrace.schemaVersion === 3 ? { traceNowMs: safeInteger(inputTrace.traceNowMs, Number.MAX_SAFE_INTEGER), bootIdHash: digestValue(inputTrace.bootIdHash) } : {}),
   };
   const byteLength = () => Buffer.byteLength(JSON.stringify(clean), 'utf8');
   while (events.length && byteLength() > INPUT_TRACE_MAX_BYTES) {
@@ -327,6 +418,7 @@ function redactInputState(inputState) {
 }
 
 function redactDiagnosticPayload(payload) {
+  if (payload.schemaVersion === 3 && payload.captured && payload.diagnosticId) return redactRuntimeDiagnostic(payload);
   const recentLogs = Array.isArray(payload.logs) ? payload.logs.slice(-120) : [];
   const network = payload.network && typeof payload.network === 'object'
     ? {
@@ -353,115 +445,21 @@ function redactDiagnosticPayload(payload) {
   };
 }
 
-function getDiagDir() {
-  // Prefer a stable absolute path so operators/agents can find uploads without
-  // chasing macOS per-user os.tmpdir() folders. Override with WRD_DIAG_DIR.
-  const override = String(process.env.WRD_DIAG_DIR || '').trim();
-  if (override) return path.resolve(override);
-  return path.join('/tmp', 'wrd-diag');
+// Keep the public persistence API; all real filesystem operations and receipts
+// live in the one diagnostic store. HTTP and Socket still share this ingress.
+const diagnosticStore = () => createDiagnosticStore({ dir: getDiagDir() });
+function persistDiagnostic(filename, report) { return diagnosticStore().persistLegacy(filename, report); }
+function loadDiagnosticReceipts(now) { return diagnosticStore().loadDiagnosticReceipts(now); }
+function saveDiagnosticReceipts(index) { return diagnosticStore().saveDiagnosticReceipts(index); }
+function persistDiagnosticOnce(report, { viewerId = report.viewerId, receivedAt = report.receivedAt, now } = {}) {
+  return createDiagnosticStore({ dir: getDiagDir(), ...(now === undefined ? {} : { now: () => now }) })
+    .write({ ...report, viewerId, receivedAt });
 }
-
-function persistDiagnostic(filename, report) {
-  const dir = getDiagDir();
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, filename), JSON.stringify(report, null, 2), 'utf8');
-}
-
 function cleanupDiagLogs(logger = console) {
-  const dir = getDiagDir();
-  try {
-    if (!fs.existsSync(dir)) return;
-    const files = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => {
-        const filePath = path.join(dir, name);
-        const stat = fs.statSync(filePath);
-        return { name, filePath, mtimeMs: stat.mtimeMs };
-      })
-      .sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-    const now = Date.now();
-    const maxAgeMs = DIAG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-    for (const file of files) {
-      if (now - file.mtimeMs > maxAgeMs) {
-        fs.unlinkSync(file.filePath);
-      }
-    }
-
-    const remaining = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => {
-        const filePath = path.join(dir, name);
-        const stat = fs.statSync(filePath);
-        const viewerId = name.replace(/^.+_/, '').replace('.json', '');
-        return { name, filePath, viewerId, mtimeMs: stat.mtimeMs };
-      })
-      .sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-    const viewerCounts = {};
-    for (const file of remaining) {
-      viewerCounts[file.viewerId] = (viewerCounts[file.viewerId] || 0) + 1;
-      if (viewerCounts[file.viewerId] > DIAG_MAX_PER_VIEWER) {
-        fs.unlinkSync(file.filePath);
-        viewerCounts[file.viewerId] -= 1;
-      }
-    }
-
-    const finalFiles = fs.readdirSync(dir)
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => {
-        const filePath = path.join(dir, name);
-        return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
-      })
-      .sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-    while (finalFiles.length > DIAG_MAX_TOTAL) {
-      const oldest = finalFiles.shift();
-      fs.unlinkSync(oldest.filePath);
-    }
-  } catch (error) {
-    logger.error?.('[DIAGNOSTIC] cleanup failed:', error.message);
-  }
+  try { return diagnosticStore().cleanup(); }
+  catch (error) { logger.error?.('[DIAGNOSTIC] cleanup failed:', error.message); }
 }
-
-function loadRecentDiagnostics(limit = 50, options = {}) {
-  const dir = getDiagDir();
-  if (!fs.existsSync(dir)) {
-    return [];
-  }
-  const logger = options.logger || console;
-
-  return fs.readdirSync(dir)
-    .filter((name) => name.endsWith('.json'))
-    .flatMap((name) => {
-      const filePath = path.join(dir, name);
-      try {
-        return [{
-          name,
-          filePath,
-          mtimeMs: fs.statSync(filePath).mtimeMs,
-        }];
-      } catch (error) {
-        logger.warn?.(`[DIAGNOSTIC] Skip unreadable file ${name}: ${error.message}`);
-        return [];
-      }
-    })
-    .sort((a, b) => {
-      if (b.mtimeMs !== a.mtimeMs) {
-        return b.mtimeMs - a.mtimeMs;
-      }
-      return b.name.localeCompare(a.name);
-    })
-    .slice(0, Math.max(0, Number(limit) || 0))
-    .flatMap((entry) => {
-      try {
-        return [JSON.parse(fs.readFileSync(entry.filePath, 'utf8'))];
-      } catch (error) {
-        logger.warn?.(`[DIAGNOSTIC] Skip malformed file ${entry.name}: ${error.message}`);
-        return [];
-      }
-    });
-}
+function loadRecentDiagnostics(limit = 50) { return diagnosticStore().recent(limit); }
 
 function dedupeDiagnosticsByAttempt(items = []) {
   const deduped = [];
@@ -589,6 +587,7 @@ function ingestDiagnosticPayload(options = {}) {
     return { accepted: false, error: 'viewer-only' };
   }
 
+  if (data?.schemaVersion === 3 && data.captured && !digestValue(data.diagnosticId)) return { accepted: false, error: 'invalid-runtime-diagnostic' };
   const redacted = redactDiagnosticPayload(data || {});
   const receivedAt = new Date().toISOString();
   const connectionAttemptId = String(redacted.connectionAttemptId || '').trim() || `attempt-${Date.now()}`;
@@ -634,6 +633,10 @@ function ingestDiagnosticPayload(options = {}) {
     inputChannelTimeline: Array.isArray(redacted.inputChannelTimeline) ? redacted.inputChannelTimeline : [],
   };
 
+  if (redacted.diagnosticId && redacted.captured) {
+    for (const key of ['diagnosticId', 'captured', 'build', 'latencyStatus', 'latency', 'startup', 'resources', 'scopeEnded', 'truncation']) report[key] = redacted[key];
+  }
+
   if (redacted.failureCategory != null) {
     report.failureCategory = redacted.failureCategory;
   }
@@ -663,14 +666,15 @@ function ingestDiagnosticPayload(options = {}) {
   }
 
   let persisted = false;
+  let duplicate = false;
+  let eventIdHashes = [];
   if (config.enableDiagPersist) {
     try {
-      cleanupDiagLogs(logger);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `${ts}_${viewerId}.json`;
-      persistDiagnostic(filename, report);
-      persisted = true;
-      logger.log?.(`[DIAGNOSTIC] Saved → ${path.join(getDiagDir(), filename)}`);
+      if (report.diagnosticId) {
+        ({ persisted, duplicate, eventIdHashes } = persistDiagnosticOnce(report, { viewerId, receivedAt }));
+      } else {
+        ({ persisted, duplicate } = diagnosticStore().write(report));
+      }
     } catch (error) {
       logger.error?.('[DIAGNOSTIC] Failed to write log file:', error.message);
     }
@@ -679,13 +683,19 @@ function ingestDiagnosticPayload(options = {}) {
   return {
     accepted: true,
     connectionAttemptId,
+    persisted, duplicate,
+    receipt: { accepted: persisted, diagnosticId: persisted ? report.diagnosticId || null : null, eventIdHashes: persisted ? eventIdHashes : [] },
     report,
-    summaryEvent: buildDiagnosticSummaryEvent(report, { persisted, socketId }),
+    summaryEvent: duplicate ? null : buildDiagnosticSummaryEvent(report, { persisted, socketId }),
   };
 }
 
 module.exports = {
   redactDiagnosticPayload,
+  redactLatency,
+  loadDiagnosticReceipts,
+  saveDiagnosticReceipts,
+  persistDiagnosticOnce,
   getDiagDir,
   persistDiagnostic,
   cleanupDiagLogs,

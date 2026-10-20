@@ -14,7 +14,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 - 正式公网入口冷启动 Core Interactive P95 <= 5 秒，热加载 P95 <= 2 秒。
 - 点击「开始学习助手」必须立即反馈（含核心脚本未就绪时的排队反馈，100ms 内可见）；到 Signal connected P95 <= 3 秒。
-- 点击到首个稳定非黑画面 P95 <= 8 秒；超时必须退出连接中状态并允许重试。
+- 点击到首个稳定非黑画面 P95 <= 8 秒；超过反馈节点时退出阻塞式连接中呈现，显示慢连接提示并允许重试/取消；尚未终止的当前尝试可继续等待可信首帧，不能因软提示留下有画面但输入永久关闭的状态。
+- 普通 WebRTC 初次媒体启动：首次 media init 起 8 秒为软反馈，72 秒可见且有意激活的累计等待为单次 Start 的总硬预算；当前 PC 首次可信连接后出帧预算为 12 秒并受总剩余额度限制。bootstrap 原 5 秒截止、DC 原阶段预算、已成功会话恢复及 tunnel/JPEG 策略保留；自动重试不重置总预算，隐藏/主动暂停只暂停剩余额度。8 秒 P95 目标不因硬预算放宽而改变。
 - 任一 bootstrap 依赖不得静默阻塞超过 5 秒；ShellGuard 核心资源 deadline 为 5 秒。
 - Terminal/xterm 按需加载，加载失败不得影响 Desktop。
 - 以上公网指标至少使用 20 个新浏览器上下文，以 immutable JSON + SHA-256 验收；失败样本不得被重试成功结果替换。
@@ -72,10 +73,11 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - [x] **Canonical 统计与恢复身份**：Viewer 以区间 `decodedDelta` 计算 `derivedFps`，浏览器报告的 FPS 只作诊断；恢复请求携带当前 connection attempt 与 generation，旧会话事件不得影响当前会话。
 - [x] **Relay 策略与观测**：编码器按策略输出有界关键帧恢复和五秒聚合的编码、paint interval、最大 paint gap 与视频几何指标。默认 relay-peak-sliced-v1 的已测标准 20fps relay intent 使用 VideoToolbox 优先、双 slice、零应用层周期 IDR、keyint=1201 safety-net 与显式请求 IDR：1280x720 或 1152x720 为 3.2Mbps / 4.8Mbps VBV maxrate / 1000kbit，1920x1080 或 1728x1080 为 5Mbps / 7.2Mbps / 1300kbit；硬件编码不可用时回退 libx264 ultrafast。其它 resolution 或 FPS 实际回退 relay-on-demand-v1 ultrafast 单线程；on-demand、legacy 可显式回滚，balanced 仍禁止生产。真实 TURN/Viewer、丢包和物理设备验收未由离线通过替代。
 - [x] **捕获节奏边界**：2026-10-17源码复核，正常生产offer工厂显式使用 `CaptureExperiment(1.0,1)`，按target FPS的1倍捕获；2倍仍存在于默认/兼容/实验入口，不能泛化为正常生产链。源码事实不代表已核验每个历史运行进程，也不代表离线采集实验通过真实浏览器paint验收。
+- [x] **抓屏阶段与复用窗口**：grab 边界由 capture thread 实测，recv/worker 独立记录 queue、prepare、convert 和包围 prepare/convert 的 build；不能重复相加。缓存像素保留其原 captureSeq 和 grab 边界，新截图处理失败不能把旧图提升为新截图。capture_stats 的日志与 DataChannel 使用同一清零前 reuse/frames 快照；主动暂停等待单列 pause_wait，排除在 active recv_total 外。
 - [x] **Codec 优先级**：Viewer offer 与 Host answer 均优先 H.264，避免回落到 VP8 软件编码
 - [x] **WebRTC 统计回传**：Viewer 定时回传 codec / FPS / RTT / jitter buffer / 丢包等指标到 Host 日志
 - [x] **单一统计采样器**：每个 PeerConnection 只允许一个 1 秒 WebRTC stats sampler；candidate pair 优先采用 transport 的 `selectedCandidatePairId`，媒体统计使用区间 delta，刷新或断开必须取消 sampler 和 video frame callback
-- [x] **真实阶段计时**：Host frame timing 使用 `schemaVersion: 2`，只上报实测 `capturePrepareMs` / `frameConvertMs`；尚未建立真实边界的 `encoderMs` / `rtpSendMs` / `endToEndVideoMs` 必须为 `null`，不得用 track return 或 DataChannel 到达时间冒充
+- [x] **真实阶段计时**：Host frame timing 使用 `schemaVersion: 2`，上报实测 prepare/convert 与 worker queue/build；recv 尚未经过 encoder，故该消息的 `encoderMs`、`rtpSendMs`、`endToEndVideoMs` 仍为 `null`。详细 frame trace 的 encode 阶段必须先消费 lazy NAL generator，再开始 packetize；encode_total 为包围总项，不能与子阶段重复相加。codec 内部 reformat 计入 encode，独立 reformat 无 hook 时保持 null；不得用 track return 或 DataChannel 到达时间冒充编码、传输或可见效果。freshFrameAge 需要 Viewer 同钟的新 capture 关联证明，缺失时保持 unavailable。
 - [x] **网络模式选择**：Viewer 支持本地直连、自动穿透、外网直连、外网中继和隧道中继；自动/外网直连默认遵守 Strict STUN，不自动切媒体中继（失败只提示手动切换，不静默改写模式）
 - [x] **TURN 双边统一配置**：支持 `TURN_*` env、`signal-server/.env` 与本机 `WRD_TURN_JSON` / `~/.StockHub/turn.json`（env 覆盖 json）；signal-server 与 python-host 使用同一 fingerprint；Host LaunchAgent 注入 `TURN_*`（`scripts/lib-turn-env.sh`）
 - [x] **会话级 Host TURN**：`relay` 会话必须装载 TURN；`auto`/`stun` 在 Strict STUN 下仍可省略 TURN；offer 携带 `networkMode`
@@ -129,7 +131,7 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 - 单字符映射需同时覆盖 lowercase / uppercase / shifted symbols（如 `a` / `A` / `!`）
 - 注意：macOS keycode `0`（字母 `a`）在 Python 中为 falsy 值，判断键是否有效时必须使用显式布尔标志，不能直接用 `if not key_code:`
 - 输入链路需记录 `transport`、Viewer 本地 pending RTT 和 Host adapter-await 时间，便于区分 DataChannel 与 Socket.IO 兜底路径；这些是各自边界的耗时，不冒充跨机器单向延迟或可见原生效果。`dom-received`、`gate`、`transport-send`、`ack`/`ack-timeout`、`lifecycle`/`recovery` 六阶段摘要共用同一有界诊断轨迹
-- 桌面输入执行后必须独立返回 `input_ack`：浏览器同钟计算业务ACK往返，Host区分adapter-await、内部排队和实际应用。frame_timing只证明帧通知；输入后新捕获帧也不等于任意应用已产生可见效果。真正可见效果须有受控内容因果证据，缺测显示unavailable。2026-10-17复查发现当前UI/兼容分支/键盘计时仍违反该契约，属于待整改L1–L7，不能据现有字段声称已实现。DataChannel输入不经过Signal；`enqueued`是本地接受，`applied`是Host adapter成功，均不等于用户已看到效果。
+- 桌面输入执行后必须独立返回 `input_ack`：浏览器同钟计算业务ACK往返，Host区分adapter-await、内部排队和实际应用。frame_timing只证明帧通知；输入后新捕获帧也不等于任意应用已产生可见效果。真正可见效果须有受控内容因果证据，缺测显示unavailable。2026-10-17 M1代码已拆分输入确认RTT、帧通知与可见效果：5秒窗口按当前attempt/generation/leaseEpoch统计，ACK观察10秒到期，作用域结束保存有界final摘要；Host用同一monotonic时钟分别记录排队、原生worker执行和adapter-await，未知值保持null。relay反馈只取Host提交至相同generation帧ACK的monotonic差，忽略客户端latency用于质量选择。离线测试不代表真实公网、设备或光学验收通过，可见效果在缺少受控因果证据时仍为未测量。DataChannel输入不经过Signal；`enqueued`是本地接受，`applied`是Host adapter成功，均不等于用户已看到效果。
 
 #### 3.3.1 键盘协议、映射与兼容契约
 
@@ -525,3 +527,43 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 | 2026-09-03 | 修复生产 desktop bundle 未装配触控适配器、断连态网络模式入口被隐藏、延迟诊断 unavailable/0ms 混淆和状态栏指标宽度抖动；自动化验证与未执行的真实设备/公网验收见 `docs/superpowers/reports/2026-09-03-remote-desktop-input-diagnostics-stability-acceptance.md` |
 | 2026-09-06 | TURN 媒体时钟、canonical FPS、恢复 identity 与 paint/编码观测完成自动化覆盖。离线 `relay-balanced-v2` 矩阵没有合格候选，默认保留 `relay-legacy-v1`，生产捕获仍为 target FPS 的 2 倍；周期清晰度脉冲、真实 TURN、正式公网和物理设备验收保持未关闭。|
 | 2026-09-19 | Terminal 代码与页面 review：发现 presenter 事件回环、replay 超大 chunk 突破硬上限、startup timeout 清理不完整、WebRTC answer listener 泄漏、admin 密码普通比较、session title 无界和移动端 Terminal 布局/可访问性问题；新增优化 Spec/Plan 和验收报告，真实双浏览器与公网验收继续保持 NOT RUN |
+
+### 2026-10-17 输入背压与 relay JPEG 工作线程（M3）
+
+- Viewer 的键盘和可靠桌面写入共用 32 项／128 KiB 预算，单项不超过 64 KiB；预算覆盖已经提交但尚未确认的消息。先准入再分配可靠序号；容量不足沿既有控制恢复处理，不重放未知结果的业务输入。旧键盘消息在 reset 期间仍占预算，只有所属 reset 的成功 ACK 或控制租约终结才释放。up/reset 不绕过满队列。
+- 鼠标 move 只保留最新一项；wheel 在编号前合并为一项，两次提交至少相隔 16 ms，非有限或超过安全整数范围的合并量显式拒绝并恢复。切换控制作用域取消旧待发 wheel。
+- Host 同步准入可靠输入，等待队列最多 64 项／256 KiB，另一个执行项最多 64 KiB；unordered move 独立保留最新一项、最多 1 KiB。一个 drain 负责执行，过载冻结并只通知一次当前作用域，不能为拒绝洪峰创建逐消息 ACK/执行任务。旧 authority 在出队及原生完成后校验；原生完成后的序号、ACK 和输入帧候选均不可跨作用域提交。
+- 权威 reset 清理旧 waiting 并等待已开始的原生输入真正完成，随后执行键盘和桌面释放。2 秒等待超时或失败保持冻结；不能以 asyncio 取消代替原生结束。Host 输入排队耗时包含上述准入队列等待。
+- relay 抓屏、RGB 转换和 JPEG 编码使用单专属线程，MSS 仅在该线程创建、使用和关闭；只保留一个执行请求和一个最新待处理请求（请求 ≤4 KiB），没有逐帧 executor 积压。旧 generation 结果回到 Host loop 后丢弃。stop 超过 2 秒保留 stopping worker，禁止另起原生线程。
+- 可计数缓冲上限：BGRA 源 256 MiB（边长 ≤8192）、RGB 中间图 192 MiB、目标图每张 64 MiB 且最多两张、JPEG 16 MiB；超限停止该媒体任务，不自动降低用户选择的分辨率。这是 payload/应用缓冲预算，不是 Python、JS 或原生库 RSS 的硬上限；实际资源开销由运行采样报告。
+- 以上通过纯单元／VM／fake native 阻塞测试验证。真实抓屏、Viewer、公网路径、可见效果及长会话性能验收仍为 **NOT RUN**，不能据此宣称实际输入延迟已达标。
+
+### 2026-10-17 联合媒体资格门禁（M5）
+
+- 新增自适应策略门禁按媒体 spec §7.1 核对本机代码、codec/OS 与机器身份、完整策略 tuple、五场景逐帧质量/成本和至少 3 小时 runtime/资源证据。缺失、过期身份、未知资源、超时或丢帧均保持 current；Quality Lock 拒绝自适应。既有启动 fallback 和用户显式设置继续使用原路径。
+- 离线 `--matrix latency-joint-v1` 固定比较 20/15/12 FPS、1152×720/1280×720/1728×1080/1920×1080 与两类 codec，PTS 按 90 kHz/FPS 推进；完整复用原始质量、options、codec 实例与 IDR 门禁。当前 joint producer 仅支持 libx264；VideoToolbox 明确标 unsupported，不能获得资格。离线结果不替代真实 loop、业务 ACK、资源及持续会话证据。
+- Host 新适配器无入站消息入口，也未安装本地资格/context，当前默认 disabled；它只在资格成功后请求既有 coordinator，staged/rejected 不宣称 applied，不预先改变 capture intent/FPS/generation，不自动切换网络、TURN 或分辨率。15/12 FPS 的 peak tuple 仍未扩展到生产 resolver。
+- 代码行为由纯 raw fixture、selector、fake coordinator 和 CLI/fake codec 测试覆盖；真实编码矩阵、设备、公网、光学/可见效果及每路径 3 小时验收均为 **NOT RUN**。取得真实资格并独立复核前不启用扩展自适应。
+
+
+### 2026-10-17 延迟指标集成边界补充
+
+- `hostAdapterAwaitMs` 只覆盖输入adapter入口至返回；`hostQueueMs` 只覆盖adapter内部等待至原生调用，`hostApplyMs` 覆盖原生调用区间。Host外层准入等待不在这三个阶段内，仍保留队列遥测；业务RTT减adapter总段后的剩余量不能称作网络耗时。
+- `freshFrameAgeMs` 只在M2验证同scope、video stream、新captureSeq与实际rVFC关联后可用，采用原始Viewer回调时间（100ms呈现、800ms关联时年龄为700ms）。旧/重复captureSeq不刷新；暂停和scope变化清空gauge，旧scope或暂停前/期间的迟到关联不能恢复它。普通paint、ACK、frame_timing、未知关联保持缺测，不改变控制授权。
+- 以上为源码与离线集成验证，实际部署、Viewer、公网、原生输入/抓屏、真实codec与长会话验收不由本次修复声明完成。证据见[最终集成修复报告](../superpowers/reports/2026-10-17-final-integration-fixes.md)。
+
+### C5 Viewer 准入与恢复补充（2026-10-17）
+
+- 只有用户 Start/“重新连接桌面”向认证 API 申请短期、绑定主体和 session 的显式 ticket，才能顶替其他 Viewer；自动 Socket.IO 重连、pageshow、PC refresh 只恢复服务端确认的当前 session/准入代次。
+- 服务端在 Viewer map、proof epoch 和租约副作用前判定；被更新 owner 取代的旧页面在 grace 内外均不能自动夺回。当前 owner 保留独立于 grace/ticket TTL；容量满有界拒绝，不淘汰有效 ticket 的去重证据。旧版未知握手仅在服务本轮生命周期首次 zero-Viewer 时兼容，冲突或未知恢复要求显式重连。
+- 当前 owner 在 grace 内仍须 Host applied ACK 完成 rebind；grace 外仍须原 reset/regrant。拒绝后停止自动抢占链并显示原手动重连入口，保留草稿；不自动切模式或修改媒体参数。
+- proof 仍严格单次、zero-Viewer；proof 页面不得请求普通显式 ticket，已接纳 proof 同样阻止旧普通页面自动恢复。源码/离线证据见 [C5 实施报告](../superpowers/reports/2026-10-17-task-C5-admission-recovery.md)，生产与可见效果验收另记。
+
+
+## 2026-10-17 稳定性整改补充：JPEG 来源与缺测指标
+
+- JPEG 未收到反馈的发送槽使用 Host monotonic 2000ms TTL 退休；同来源 ACK 精确释放其槽，乱序不遗留阻塞。TTL 不是网络 SLA，不新增降分辨率或降档触发。
+- 严格 Viewer 的 frame、start/resume ACK 和反馈携完整 producer/production generation、connection attempt、media generation（首次允许0）、lease epoch 来源。旧帧不能通过补当前身份作为恢复证明；只有当前来源实际 image load 才确认媒体 ready。
+- JPEG 当前合格 image load 年龄达到5000ms时关闭实际输入门禁，沿既有键盘/鼠标 reset 屏障释放按住状态；新图不得清掉未确认 reset。图像 load 不是物理呈现或原生输入可见效果。
+- RTT 与 jitter buffer 缺测端到端使用 number|null；合法0保留，非法/缺失不造0，不累计“持续良好”。已测得 stall/loss 的既有恢复和身份准入规则不变。JPEG反馈RTT使用 Host 同钟 matched ACK，报告2000ms TTL右截断及每间隔最新样本合并，不能充作单向或输入可见延迟。
+- 代码及独立/整轮复审完成，运行已加载 `9e57bf4`、build `c30530f331a4def5`。此前 M6 build 的 JPEG/TURN暂停恢复加60秒短测通过，后续更长TURN在93秒因信令心跳超时中断；普通自动恢复、3小时、真实业务输入及可见效果未获生产认证。当前状态以[实施记录](../superpowers/reports/2026-10-17-remediation-execution.md)和[真实验收](../superpowers/reports/2026-10-17-live-acceptance.md)为准，不把连接/ACK/存活检查当最终全部验收。

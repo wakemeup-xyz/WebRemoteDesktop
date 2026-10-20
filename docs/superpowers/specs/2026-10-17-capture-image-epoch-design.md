@@ -1,0 +1,11 @@
+# 媒体档位更新保留有效截图
+
+同尺寸profile经`apply_media_profile`调用两个setter，各自增加`_target_generation`。此字段实际用来判断图像尺寸/cache及异步处理结果是否仍有效；FPS或码率变化不会改变已经获取的像素。无必要失效会丢弃在途处理结果和缓存，在没有新截图时输出最大矩形的blank；实际宽高比不同的截图随后可能使编码器再次重开。已通过纯AST setter离线复现每次同尺寸更新epoch+2；实际blank产生尚需测试。最新长测首个停顿先于profile变化，因此这是独立正确性修复和可能的后续放大因素，不是首故障根因结论。
+
+选择最小改动：`set_max_resolution`先按既有monitor/绝对上下限规范化，在目标锁内比较有效尺寸；仅有效尺寸变化时写入并将图像epoch递增一次，锁外释放旧输入帧预留。有效尺寸相同不失效。`set_target_fps`保留5..30范围与间隔更新，但不改图像epoch或释放图像因果预留；相同FPS无副作用。`apply_media_profile`返回实际生效的宽高和sizeChanged，避免请求值经cap后仍被误报变化。
+
+暂停/恢复/停止的`_capture_generation`和在途失效检查保持。尺寸确实变化时不能将旧尺寸结果或旧capture对应输入报告为新帧；FPS变化时保留正确旧图像及其原capture身份，复用图不能被计为新捕获/M2。
+
+不改峰值编码资格、codec/码率/FPS选择、Quality Lock、分辨率选项或网络。旧adaptive在20/15FPS间切换会走不同已存在codec政策，是另一需要可信用户意图和准入契约的议题；本修复不放宽15FPS峰值资格，也不把现有适配静默关闭。
+
+验证以合成像素和mock worker为主，禁止实例化真实MSS/截图：同尺寸profile/码率/FPS更新epoch不变；缓存及在途结果保留；无新截图复用原1152×720图而非1280×720blank；真正尺寸变动epoch+1并丢旧结果；cap等价输入不变；pause/shutdown仍拒旧工作。原有Peak qualification和因果关联测试继续通过。

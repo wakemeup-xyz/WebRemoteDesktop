@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "kind": "root-new-frontend-context-sequence",
+  "sequenceId": "ff601377b608c2c4b1b51e55123e2f20",
+  "packageManifestSHA256": "bcd09baaa0b0936e7424cd0dea5e51fb067503399ca49d3a236e789fc0fa6861",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+  "deployment": {
+    "frozen_dir": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc",
+    "frozen_sha256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
+    "asset_review": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-ASSET-REVIEW.json",
+    "asset_review_sha256": "30bf20addd4a6afae627266b3b214037467dd4ab31ab2d5ed307c2f885cd6d97"
+  },
+  "readinessSHA256": "1064eeaa41ac546ad9bd22d3ee05f5042be75f2423edda82f3f0137f0e60a74c",
+  "offlineIntegrationEvidence": {
+    "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R4F1-REUSED-ACTUAL-OFFLINE-INTEGRATION.json",
+    "sha256": "b63020856af50db03d7a16b2ff732d07491f7d2a6952158b79d41ea3b1b94b2c"
+  },
+  "failedHistory": [
+    "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242",
+    "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+    "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+  ],
+  "automaticLaunch": false
+}

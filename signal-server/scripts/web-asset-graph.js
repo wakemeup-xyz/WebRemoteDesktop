@@ -1,10 +1,16 @@
 'use strict';
 
 module.exports = Object.freeze({
+  loginScripts: Object.freeze([
+    'js/runtime-config.js',
+    'js/bounded-request.js',
+    'js/login.js',
+  ]),
   // Critical path only: enough for ShellGuard takeover, Start, signaling, media, input,
   // plus minimal diagnostic log capture so failure diagnosis remains possible.
   desktopScripts: Object.freeze([
     'js/runtime-config.js',
+    'js/bounded-request.js',
     'js/auth.js',
     'js/desktop-session-state.js',
     'js/webrtc-stats.js',
@@ -14,8 +20,10 @@ module.exports = Object.freeze({
     'js/media-activity-runtime.js',
     'js/startup-telemetry.js',
     'js/bootstrap-controller.js',
+    'js/asset-loader.js',
     'js/terminal-loader.js',
     'js/input-trace.js',
+    'js/runtime-diagnostic.js',
     'js/diagnostic-core.js',
     'js/presentation-budget.js',
     'js/webrtc.js',

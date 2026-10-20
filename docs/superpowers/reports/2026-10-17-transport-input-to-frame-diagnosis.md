@@ -1,6 +1,15 @@
 # 传输耗时与输入到画面延迟专项诊断
 
-日期：2026-10-17；所有正文时间为北京时间。主要生产证据窗截至约01:15，后续独立复核采样延至01:22:44；审查已有日志、诊断和当前源码，补充[网页、投屏与控制综合报告](2026-10-17-web-entry-screen-control-diagnosis.md)。本轮未修改业务代码、配置或运行服务，未打开新的生产 Viewer，未做压力测试。
+> **15:16 部署更新：** 认证e996467、截图epoch修复83c513e已随冻结候选afd598a加载；本地restart-local25.679s，Signal28142/15:15:15、Host28181/15:15:18，health与Host在线、Viewer0、源码/资源及主仓HEAD/index保留核对通过。builda6e8b15122bde656及tunnel/watcher身份未变。新TURN窗口turn-long-20261017b最终131.953秒/132样本INCOMPLETE：客户端transport-close时PC与画面仍推进，maxgap783.3ms；5次Signal ping均有pong，本次没有长停帧或ping-timeout签名。七个已登记测试身份自然退出；三小时及真实input→visible仍未通过。
+
+> **14:59 复核更新：服务在线，长会话验收未通过。** 已加载Host e279060（候选0ffb941），PID10658、Signal64505及builda6e8b15122bde656保持。本次计划10800秒的TURN实际采样256.072秒/256条，首次超限frameAge5262.4ms，已完成帧间隔先达6733ms、最终最大8116.308ms；Host心跳超时使控制租约失效，helper退出，INCOMPLETE。浏览器信令在清理前仍在线，不能归为Viewer先断开。线程采样被10秒预算终止且文件0字节，没有可用栈；旁证7个已登记测试进程自然退出，完整进程树退出仍未证明。原生input→visible仍NOT RUN。
+
+
+> **前次状态（14:34核验）：服务在线，稳定性验收尚未完成。** 已部署Host JPEG传输准入/阶段观测和Viewer时钟/reset修复。JPEG暂停恢复短测PASS；随后TURN在31s内发生13.849s停帧与PC重建，Host同窗encode13.541s/loop lag12.771s。之后独立300s诊断窗口301样本无故障、最大画面间隔433.316ms，未触发线程采样，不能据此否定先前故障或代替三小时验收。已记录7个测试进程均自然退出；旧记录与完整子进程树的退出盲区保留。详见[实施记录](2026-10-17-remediation-execution.md)、[真实验收](2026-10-17-live-acceptance.md)、[Host停顿边界](2026-10-17-turn-host-stall-code-review.md)。业务输入到真实可见效果仍NOT RUN。
+
+> 后续实测见[当前实施记录](2026-10-17-remediation-execution.md)、[新TURN300s分段数据](2026-10-17-media-clock-short-performance.md)、[JPEG处理退化与5.2s停帧](2026-10-17-media-clock-jpeg-failure-media.md)及[复位协议失败](2026-10-17-media-clock-jpeg-failure-signal.md)。原始历史窗口不扩展，以下源码/标签描述属于初次诊断基线。ACK/RTT、同钟阶段与真实可见效果继续分开，缺测不填零；当前仍没有原生输入到真实可见效果的生产样本。
+
+日期：2026-10-17；所有正文时间为北京时间。主要生产证据窗截至约01:15，后续独立复核采样延至01:22:44；审查已有日志、诊断和当前源码，补充[网页、投屏与控制综合报告](2026-10-17-web-entry-screen-control-diagnosis.md)。初次诊断阶段未修改业务代码、配置或运行服务、未打开生产Viewer；后续开发与受控验收见文首记录。
 
 ## 1. 结论
 
@@ -175,3 +184,13 @@ bytesDelta 是采样区间字节量，不是带宽容量。Viewer 有 elapsedMs�
 - 离线数值证明代码路径和计时错误，不是生产延迟分布。生产日志的采样、轮转和选择性告警也不能直接提供完整p95/p99。
 - 当前尚无可以诚实报告的“真实输入到可见效果整体P95”。网络单向时延、客户端入站调度、OS应用处理/合成和实际显示器呈现仍有缺口。
 - 用户已指定brainstorming + writing-plans作为默认流程。已补齐[三天复查](2026-10-17-three-day-review-and-solution.md)、[总spec](../specs/2026-10-17-reliability-latency-remediation-design.md)和[总plan](../plans/2026-10-17-reliability-latency-remediation-plan.md)及子文档；方案形成不代表已实施或通过运行验收。三天新增wheel队列60.8秒、up/reset约32秒，需按新报告提升输入背压优先级。
+
+## 14:07 TURN停顿的Host阶段证据补充
+
+同窗encoder统计54次调用，单次最大13,541.114ms；该函数单调wall time包含PyAV转换/编码/复制/packetize，排除executor排队、RTP发送和该条聚合日志输出。Host当前loop lag12,771.098ms、captureSeq150→151；15.773s标签窗口进程CPU只增加0.633s。主要PyAV codec/reformat原生调用释放GIL，因此不能称主循环同步硬编码占满CPU；换页、调度、复制期间GIL与外部编码服务等待仍待采样。此窗口不能算纯网络传输耗时。
+
+另已独立复现每帧frame_timing在输入DC欠排空时无界入队：200条诊断产生200条队列项/45,890B。它是独立性能风险，未取得该故障时队列证据，不能列为本次13.8s停帧根因。详见[调用边界复核](2026-10-17-turn-host-stall-code-review.md)。后续先按[受控采样设计](../specs/2026-10-17-turn-stall-profile-design.md)获取同窗线程栈，再决定主因修复；诊断不会计入性能合格。
+
+## 新截图与输出FPS的区别（后续正常窗口）
+
+独立300秒诊断窗口约19.09次/秒解码输出，Host captureSeq差分约9.31/s。59个日志窗共有5643输出、2980复用（52.81%）；去暖机后非复用候选约9.00/s，与不同边界的captureSeq速率相容。不能把19fps称为19张/秒新截图，不能以计数差直接认定网络丢帧，也不能用倒数推输入到画面时延。新鲜采集吞吐仍是性能限制，当前证据没有把它分解到MSS、原生图像拷贝或调度；后续优化应在相同质量与资源条件下分别测量，不能自动降低分辨率/画质制造PASS。详见[正常窗口对照](2026-10-17-turn-profile-run-review.md)。

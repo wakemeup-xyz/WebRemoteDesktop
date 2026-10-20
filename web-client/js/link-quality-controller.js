@@ -207,12 +207,14 @@ const LinkQualityController = {
         const qualityLock = this.qualityLock === true;
         const hasSelectedPair = Boolean(stats.selectedCandidateType);
         const fps = Number(stats.derivedFps ?? stats.fps ?? 0);
-        const rttMs = Number(stats.rttMs || 0);
-        const jitterBufferMs = Number(stats.jitterBufferMs || 0);
+        const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+        const rttMs = duration(stats.rttMs);
+        const jitterBufferMs = duration(stats.jitterBufferMs);
+        const latencyKnown = rttMs !== null && jitterBufferMs !== null;
         const zeroFps = fps === 0;
-        const highRtt = rttMs >= this.highRttMs;
-        const veryHighRtt = rttMs >= this.veryHighRttMs;
-        const highJitter = jitterBufferMs >= 150;
+        const highRtt = rttMs !== null && rttMs >= this.highRttMs;
+        const veryHighRtt = rttMs !== null && rttMs >= this.veryHighRttMs;
+        const highJitter = jitterBufferMs !== null && jitterBufferMs >= 150;
         const highLoss = packetsLostDelta >= 20;
         const decoderStalled = hasSelectedPair && decodedDelta === 0 && receivedDelta > 0;
         const mediaStalled = hasSelectedPair && zeroFps && !decoderStalled;
@@ -241,6 +243,15 @@ const LinkQualityController = {
         }
         if (!zeroFps) {
           this.startupGraceSamplesRemaining = 0;
+        }
+
+        // Missing latency interrupts streaks; measured bad media/loss/latency
+        // still follows the existing recovery path below.
+        if (!latencyKnown && !stalled && !highRtt && !highJitter && !highLoss) {
+          this.goodCount = 0;
+          this.degradedCount = 0;
+          this.criticalCount = 0;
+          return this._holdResult('latency-unavailable');
         }
 
         // Structural high RTT on relay must not alone enter critical/ICE restart.
@@ -277,7 +288,7 @@ const LinkQualityController = {
         if (sampleIsCongested) {
           this.degradedCount += 1;
           this.goodCount = 0;
-        } else if (fps > 0 && !highRtt && !highJitter && !highLoss) {
+        } else if (latencyKnown && fps > 0 && !highRtt && !highJitter && !highLoss) {
           this.degradedCount = 0;
           this.criticalCount = 0;
           this.goodCount += 1;

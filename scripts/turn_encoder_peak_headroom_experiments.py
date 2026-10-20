@@ -170,7 +170,7 @@ def _record_errors(scenario: Mapping[str, Any], config: PeakHeadroomConfig, reso
     return errors
 
 
-def _scenario_errors(scenario: Mapping[str, Any], *, expected: tuple[str, int, int, tuple[int, ...]], config: PeakHeadroomConfig, resolution: tuple[int, int], require_initial_quality: bool) -> list[str]:
+def _scenario_errors(scenario: Mapping[str, Any], *, expected: tuple[str, int, int, tuple[int, ...]], config: PeakHeadroomConfig, resolution: tuple[int, int], require_initial_quality: bool, joint: bool = False) -> list[str]:
     scenario_id, start, count, requests = expected
     if scenario.get("scenarioId") != scenario_id:
         return [f"missing scenario {scenario_id}"]
@@ -182,13 +182,17 @@ def _scenario_errors(scenario: Mapping[str, Any], *, expected: tuple[str, int, i
         index = start + offset
         if not isinstance(frame, Mapping) or frame.get("index") != index or frame.get("phaseIndex") != offset:
             errors.append(f"{scenario_id}: frame sequence drift"); break
-        if not isinstance(frame.get("inputHash"), str) or not frame["inputHash"] or frame.get("pts") != index * 4500 or frame.get("timeBase") != "1/90000":
+        if not isinstance(frame.get("inputHash"), str) or not frame["inputHash"] or frame.get("pts") != index * (90000 // config.fps if joint else 4500) or frame.get("timeBase") != "1/90000":
             errors.append(f"{scenario_id}: input or PTS drift"); break
         if any(not _finite(frame.get(key)) for key in ("bytes", "psnr", "changeMAE", "encodeMs", "decodeMs")):
             errors.append(f"{scenario_id}: non-finite frame result"); break
     expected_idrs = {} if scenario_id == "post-scroll-static" else {start: "initial"}
     expected_idrs.update({index: "on-demand" for index in requests})
-    if scenario_id == "safety-net":
+    if joint and config.periodic_idr_frames > 0:
+        expected_idrs.update({index: "periodic" for index in range(start, start + count)
+                              if index > 0 and index % config.periodic_idr_frames == 0
+                              and index not in requests})
+    elif scenario_id == "safety-net":
         expected_idrs[1201] = "encoder-safety-net"
     idrs = {frame.get("index"): frame for frame in frames if isinstance(frame, Mapping) and frame.get("idr")}
     if {index: frame.get("bitstreamIdrKind") for index, frame in idrs.items()} != expected_idrs:
@@ -202,14 +206,14 @@ def _scenario_errors(scenario: Mapping[str, Any], *, expected: tuple[str, int, i
         if kind == "on-demand":
             if float(frame.get("psnr", 0)) < 28.0:
                 errors.append(f"{scenario_id}: quality failure")
-        elif kind == "encoder-safety-net" or (require_initial_quality and kind == "initial"):
+        elif kind in {"encoder-safety-net", "periodic"} or (require_initial_quality and kind == "initial"):
             if float(frame.get("psnr", 0)) < 28.0 or float(frame.get("changeMAE", math.inf)) > 3.0:
                 errors.append(f"{scenario_id}: quality failure")
     if scenario.get("requestTokens") != [f"{scenario_id}:{index}" for index in requests]:
         errors.append(f"{scenario_id}: request token drift")
     actual_p95 = _p95(frames)
     cost = scenario.get("cost")
-    budget = 25.0 if resolution == (1152, 720) else 45.0
+    budget = 25.0 if (resolution[1] == 720 if joint else resolution == (1152, 720)) else 45.0
     if not isinstance(cost, Mapping) or cost.get("encodeMsP95") != round(actual_p95, 3) or actual_p95 > budget:
         errors.append(f"{scenario_id}: scenario cost failure")
     burst = scenario.get("burst")
@@ -219,8 +223,9 @@ def _scenario_errors(scenario: Mapping[str, Any], *, expected: tuple[str, int, i
     return errors
 
 
-def _validate(evidence: Mapping[str, Any], *, prescreen: bool) -> list[str]:
-    configs = (build_peak_headroom_candidate(), build_peak_headroom_sliced2_candidate())
+def _validate(evidence: Mapping[str, Any], *, prescreen: bool, joint_config=None) -> list[str]:
+    configs = (joint_config,) if joint_config is not None else (build_peak_headroom_candidate(), build_peak_headroom_sliced2_candidate())
+    resolutions = joint_config.resolutions if joint_config is not None else RELAY_RESOLUTIONS
     if not isinstance(evidence, Mapping):
         return ["immutable config drift"]
     config = next((candidate for candidate in configs if evidence.get("config") == candidate.to_dict()), None)
@@ -230,11 +235,11 @@ def _validate(evidence: Mapping[str, Any], *, prescreen: bool) -> list[str]:
     if not isinstance(input_data, Mapping) or input_data.get("contract") != dict(config.input_contract):
         return ["input contract drift"]
     runs = evidence.get("runs")
-    if not isinstance(runs, list) or {tuple(run.get("resolution", ())) for run in runs if isinstance(run, Mapping)} != set(RELAY_RESOLUTIONS):
+    if not isinstance(runs, list) or {tuple(run.get("resolution", ())) for run in runs if isinstance(run, Mapping)} != set(resolutions):
         return ["incomplete dual-resolution runs"]
     expected_specs = (("safety-net", 0, 1226, ()),) if prescreen else REQUIRED_SCENARIOS
     errors: list[str] = []
-    for resolution in RELAY_RESOLUTIONS:
+    for resolution in resolutions:
         run = next(run for run in runs if tuple(run.get("resolution", ())) == resolution)
         scenarios = run.get("scenarios")
         if not isinstance(scenarios, list) or len(scenarios) != len(expected_specs):
@@ -245,7 +250,7 @@ def _validate(evidence: Mapping[str, Any], *, prescreen: bool) -> list[str]:
             if scenario is None:
                 errors.append(f"{resolution[0]}x{resolution[1]}: missing scenario {expected[0]}")
             else:
-                errors.extend(f"{resolution[0]}x{resolution[1]}: {error}" for error in _scenario_errors(scenario, expected=expected, config=config, resolution=resolution, require_initial_quality=prescreen))
+                errors.extend(f"{resolution[0]}x{resolution[1]}: {error}" for error in _scenario_errors(scenario, expected=expected, config=config, resolution=resolution, require_initial_quality=prescreen or joint_config is not None, joint=joint_config is not None))
     return errors
 
 
@@ -253,5 +258,6 @@ def validate_prescreen(evidence: Mapping[str, Any]) -> list[str]:
     return _validate(evidence, prescreen=True)
 
 
-def validate_full_matrix(evidence: Mapping[str, Any]) -> list[str]:
-    return _validate(evidence, prescreen=False)
+def validate_full_matrix(evidence: Mapping[str, Any], *, joint_config=None) -> list[str]:
+    """Reuse every legacy gate; joint_config is an offline trusted fixed config."""
+    return _validate(evidence, prescreen=False, joint_config=joint_config)

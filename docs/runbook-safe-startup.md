@@ -576,3 +576,9 @@ Viewer 对 Relay、STUN/直连和 Tunnel 都启用 signaling recovery。短暂�
 启动日志会输出诊断持久化的 `enabled/disabled`、来源和目录。只有 `WRD_ENABLE_DIAG_PERSIST=1` 时才会把脱敏 bundle 写入 `/tmp/wrd-diag`；该目录只保存有限数量和期限的 JSON 文件，不包含密码、token、SDP 或原始输入正文。
 
 控制恢复保持 fail-closed：`Host 输入复位未确认，控制已安全锁定` 表示复位 ACK 尚未匹配当前 attempt、lease epoch 和 input id。不要绕过锁定；确认 Host 在线后等待有界重试，仍 blocked 时只重启本地 Signal/Host，绝不重启或重建 tunnel。
+
+### 2026-10-17 入口分层巡检（W2b）
+
+生产 `watch-fixed-domain.sh` 的 Python coordinator 保留六层有界 ProbeResult：origin/formal health、login/viewer HTML、当前 core hash 资源、已有被动业务摘要；health 最快每 60 秒，HTML/core 最快每 300 秒，串行共享 15 秒单调截止。健康/HTML 正文限制 64 KiB、core 1 MiB，当前 manifest 只读本地普通文件并验证同源 hash 路径，重定向不跟随；默认沿环境代理，显式 `WRD_FIXED_PROBE_PROXY_MODE=direct` 才走直连。持久化只包含有限 layer/routeClass/reason、HTTP 状态、时间和字节数，不保存完整 URL、代理地址、原始异常或响应正文。默认 manifest 为 `web-client/dist/asset-manifest.json`，可显式设置 `WRD_FIXED_ASSET_MANIFEST`。
+
+health=200 只说明该 health 层成功，不能代替资源、认证、输入 ACK 或新鲜画面。未知/超时、401/403/407、代理拒绝、仅资产故障和无被动样本不会升级 connector 恢复；只有 origin 已知成功且 formal-health 连续已知可恢复失败才进入既有 180 秒阈值、300 秒冷却和 3600 秒最多两次预算，已有 token/multiple-owner/preflight/in-flight 保护继续生效。该观测改动不新增任何恢复授权，不登录、不创建 Viewer、不发送输入、不自动换入口或网络模式。4032 次离散巡检及 25 次 formal 探针失败仍是历史样本，不能换算完整可用性 SLA；本任务仅完成离线 fixture 验证，真实公网、服务恢复及长时间验收为 `NOT RUN`。

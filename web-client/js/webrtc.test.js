@@ -33,7 +33,7 @@ test('Lab-only loss taps retain rVFC and Host data-channel events with real getS
       wireTimestamp: 42, ssrc: 1, framePts: 7, idrKind: 'PLI', idrReason: 'loss', policyDigest: 'policy',
       stages: { grab: 1, age_at_recv: 1, worker_queue: 1, prepare: 1, build: 1, reformat: 1, encode: 1, packetize: 1, encode_total: 1 } }] }), 0);
   assert.equal(WebRTC.ensureFrameTraceCollector().observeVideoFrame(
-    { attemptId: 'attempt', generation: 4, streamId: 'video', rtpTimestamp: 42 }, {}), true);
+    { attemptId: 'attempt', generation: 4, streamId: 'video', ssrc: 1, rtpTimestamp: 42 }, {}, 0), true);
   WebRTC.recordLossLabRvfc({ rtpTimestamp: 42 }, { videoWidth: 1280, videoHeight: 720 });
   WebRTC.acceptLossLabHostTraceBatch({ type: 'loss_lab_host_trace_batch', schemaVersion: 1, tapEpoch: 1, droppedEventCount: 0,
     events: [{ type: 'rtcp_feedback', kind: 'PLI', monotonicNs: 1, senderId: 'host', tapEpoch: 1, sourceSeq: 1 }] });
@@ -82,6 +82,7 @@ function makeElement() {
     },
     listeners,
     addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener(type, handler) { if (listeners.get(type) === handler) listeners.delete(type); },
     removeAttribute(name) { attrs.delete(name); },
     setAttribute(name, value) { attrs.set(name, String(value)); },
     getAttribute(name) { return attrs.has(name) ? attrs.get(name) : null; },
@@ -113,6 +114,10 @@ function loadWebRTC(overrides = {}) {
   };
   const context = {
     console,
+    // Explicit offline configuration response; never use a real network fetch.
+    fetch: async (url) => ({ ok: true, status: 200, json: async () => url.endsWith('/api/auth/viewer-admission') ? { admission: { ticket: 'fixture-ticket' } } : {} }),
+    AbortController,
+    URLSearchParams,
     setTimeout: trackTimeout,
     clearTimeout: clearTrackedTimeout,
     setInterval: trackInterval,
@@ -140,6 +145,7 @@ function loadWebRTC(overrides = {}) {
     Auth: {
       getToken: () => 'token',
       isLoggedIn: () => true,
+      isVerified: () => true,
       logout: () => {},
     },
     RTCSessionDescription: function RTCSessionDescription(value) { return value; },
@@ -153,6 +159,8 @@ function loadWebRTC(overrides = {}) {
     io: () => ({ on() {}, emit() {}, disconnect() {}, connected: true }),
   };
   Object.assign(context, overrides);
+  // Partial storage overrides still implement the browser Storage interface.
+  context.localStorage = { removeItem() {}, ...context.localStorage };
   if (overrides.document) {
     context.document = overrides.document;
   }
@@ -161,6 +169,7 @@ function loadWebRTC(overrides = {}) {
   }
   context.globalThis = context;
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'bounded-request.js'), 'utf8'), context);
   if (!overrides.createDesktopSessionState) {
     const stateSource = fs.readFileSync(path.join(__dirname, 'desktop-session-state.js'), 'utf8');
     vm.runInContext(stateSource, context);
@@ -189,6 +198,7 @@ function loadWebRTC(overrides = {}) {
       context.StunPortSearchController = context.window.StunPortSearchController;
     }
   }
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'runtime-diagnostic.js'), 'utf8'), context);
   const source = fs.readFileSync(path.join(__dirname, 'webrtc.js'), 'utf8');
   vm.runInContext(`${source}\nglobalThis.__WebRTC = WebRTC;`, context);
   if (overrides.realInput) {
@@ -215,6 +225,426 @@ function loadWebRTC(overrides = {}) {
   activeWebRtcFixtures.add(cleanup);
   return { WebRTC: context.__WebRTC, context, elements, cleanup };
 }
+
+test('native latency: accepted channel send and ACK entry survive later observer work', () => {
+  let now = 100;
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  const sends = [];
+  const observeSend = monitor.observeControlledSend;
+  monitor.observeControlledSend = (meta, context) => {
+    sends.push(context.viewerClockMs);
+    return observeSend(meta, context);
+  };
+  const { WebRTC: w, context } = loadWebRTC({ realInput: true,
+    LatencyMonitor: monitor, performance: { now: () => now } });
+  const input = context.__Input;
+  w.currentConnectionAttemptId = 'attempt'; w.connectionAttemptSequence = 2; w.pc = {};
+  input.activeControlLease = { leaseId: 'lease', leaseEpoch: 4 }; input.isActive = true;
+  const channel = w.inputChannel = { readyState: 'open', bufferedAmount: 0, send() { now = 110; } };
+  w.socket = { connected: false };
+  const reservation = input.prepareLabInput('mouse', 'down', { relX: .5, relY: .5 });
+  monitor.setScope(w.latencyScope());
+  assert.equal(monitor.beginControlledInputEvidence({ inputId: reservation.inputId,
+    leaseId: 'lease', scope: w.latencyScope(), streamId: 'video', inputType: 'mouse', action: 'down' }), true);
+  const originalTrace = input._recordInputTrace;
+  input._recordInputTrace = function(...args) {
+    const result = originalTrace.apply(this, args); now = Math.max(now, 200); return result;
+  };
+  assert.equal(input.dispatchPreparedLabInput(reservation), reservation.inputId);
+  assert.deepEqual(sends, [110]);
+  const pending = input._desktopWritePending.get(reservation.inputId);
+  const originalAck = input._acceptMouseAck;
+  input._acceptMouseAck = function(ack) {
+    const result = originalAck.call(this, ack); now = 400; return result;
+  };
+  now = 300;
+  w.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', leaseEpoch: 4,
+    inputIds: [reservation.inputId], appliedSeq: pending.seq, status: 'applied' },
+  { transport: 'datachannel', dataChannel: channel });
+  const row = monitor.readControlledInputEvidence(reservation.inputId, {
+    scope: w.latencyScope(), leaseId: 'lease', streamId: 'video', pc: w.pc,
+    live: w.captureControlledTransportSnapshot(),
+  });
+  assert.equal(row.send.viewerClockMs, 110);
+  assert.equal(row.ack.viewerClockMs, 300);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, 200);
+});
+
+function nativeLatencyFixture({ transport = 'datachannel', type = 'mouse', action = 'down',
+  traceUnavailable = false, wallStep = 0 } = {}) {
+  let mono = 100, wall = 1792208500000;
+  class PageDate extends Date { static now() { return wall; } }
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => mono });
+  const trace = require('./input-trace.js').InputTrace.create({ now: () => mono,
+    hashInputIds: null, setTimeoutFn: () => null, clearTimeoutFn() {} });
+  const { WebRTC: w, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor,
+    performance: { now: () => mono }, Date: PageDate });
+  const input = context.__Input;
+  // Only the collector capability is substituted; trace, pruning and product methods stay real.
+  input._traceCollector = traceUnavailable ? () => null : () => trace;
+  w.currentConnectionAttemptId = 'attempt'; w.connectionAttemptSequence = 2; w.pc = {};
+  input.activeControlLease = { leaseId: 'lease', leaseEpoch: 4 }; input.isActive = true;
+  const sent = [], observedSends = [];
+  const accepted = data => { sent.push(JSON.parse(JSON.stringify(data))); mono = 110; };
+  const reliable = w.inputChannel = { readyState: transport === 'datachannel' ? 'open' : 'closed',
+    bufferedAmount: 0, send(json) { accepted(JSON.parse(json)); } };
+  const move = w.inputMoveChannel = { readyState: reliable.readyState, bufferedAmount: 0,
+    send(json) { accepted(JSON.parse(json)); } };
+  const socket = w.socket = { connected: transport === 'socket', id: 'socket',
+    emit(event, data) { assert.equal(event, 'input'); accepted(data); } };
+  const observeSend = monitor.observeControlledSend;
+  monitor.observeControlledSend = (meta, current) => {
+    observedSends.push({ meta, current }); return observeSend(meta, current);
+  };
+  const payload = type === 'keyboard' ? { text: 'offline fixture' } : { relX: .5, relY: .5 };
+  const reservation = input.prepareLabInput(type, action, payload);
+  assert.ok(reservation);
+  const current = () => ({ scope: w.latencyScope(), leaseId: input.activeControlLease?.leaseId,
+    streamId: w.currentFrameTraceIdentity().streamId, pc: w.pc, live: w.captureControlledTransportSnapshot() });
+  monitor.setScope(w.latencyScope());
+  assert.equal(monitor.beginControlledInputEvidence({ inputId: reservation.inputId, leaseId: 'lease',
+    scope: w.latencyScope(), streamId: 'video', inputType: type, action }), true);
+  const source = transport === 'socket' ? { transport, socket } : { transport, dataChannel: reliable };
+  const ack = (overrides = {}, incoming = source) => w.acceptObservedInputAck({ schemaVersion: 2,
+    inputType: type, inputIds: [reservation.inputId], leaseEpoch: 4, status: 'applied',
+    ...(action === 'move' ? {} : { appliedSeq: sent[0]?.seq }), ...overrides }, incoming);
+  return { w, input, context, monitor, trace, reliable, move, socket, sent, observedSends,
+    reservation, payload, source, current, ack, set: value => { mono = value; },
+    jump: () => { wall += wallStep; }, dispatch: () => input.dispatchPreparedLabInput(reservation),
+    row: options => monitor.readControlledInputEvidence(reservation.inputId, current(), options) };
+}
+
+for (const traceUnavailable of [false, true]) for (const wallStep of [-60000, 0, 60000]) {
+  for (const variant of ['accepted', 'wrong-source', 'unknown-id', 'buffered']) {
+    test(`native latency: trace independent move ${traceUnavailable}/${wallStep}/${variant}`, () => {
+      const f = nativeLatencyFixture({ action: 'move', traceUnavailable, wallStep });
+      try {
+        if (variant === 'buffered') f.move.bufferedAmount = 4097;
+        assert.equal(f.dispatch(), f.reservation.inputId);
+        assert.equal(f.input._desktopWritePending.size, 0);
+        f.jump(); f.set(210);
+        if (variant === 'wrong-source') f.ack({}, { transport: 'datachannel', dataChannel: f.move });
+        else f.ack(variant === 'unknown-id' ? { inputIds: ['unknown'] } : {});
+        const row = f.row();
+        assert.equal(row.send?.viewerClockMs ?? null, variant === 'buffered' ? null : 110);
+        assert.equal(row.ack?.viewerClockMs ?? null, variant === 'accepted' ? 210 : null);
+        assert.equal(f.sent.length, variant === 'buffered' ? 0 : 1);
+        assert.equal(f.observedSends.length, variant === 'buffered' ? 0 : 1);
+        if (traceUnavailable || wallStep !== 0 || variant === 'accepted') {
+          assert.equal(f.input._unorderedTraceSends.size, 0);
+        }
+        if (variant === 'accepted') {
+          assert.equal(f.observedSends[0].current.sendSource, f.move);
+          assert.equal(f.observedSends[0].current.ackSource, f.reliable);
+          assert.equal(f.monitor.snapshot().metrics.inputAckRttMs.last, 100);
+        }
+      } finally { f.trace.dispose(); }
+    });
+  }
+}
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: genuine ${transport} send keeps raw v2 envelope and one-use reservation`, () => {
+    const f = nativeLatencyFixture({ transport });
+    try {
+      assert.equal(f.dispatch(), f.reservation.inputId);
+      assert.equal(f.dispatch(), null);
+      assert.deepEqual(f.sent, [{ type: 'mouse', action: 'down', payload: f.payload,
+        inputIds: [f.reservation.inputId], schemaVersion: 2, leaseId: 'lease', leaseEpoch: 4, seq: 1,
+        ...(transport === 'datachannel' ? { transport: 'datachannel' } : {}) }]);
+      assert.equal(f.row().send.viewerClockMs, 110);
+      assert.equal(f.observedSends.length, 1);
+      const meta = f.observedSends[0].meta;
+      assert.deepEqual(Object.keys(meta).sort(), ['action', 'inputId', 'inputType', 'leaseEpoch', 'leaseId', 'seq']);
+      assert.equal(JSON.stringify(meta).includes('payload'), false);
+      f.set(210); f.ack();
+      assert.equal(f.row().ack.viewerClockMs, 210);
+      assert.equal(f.input._desktopWritePending.size, 0);
+      assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: DC refusal records exactly one socket acceptance with the original ID', () => {
+  const f = nativeLatencyFixture({ transport: 'socket' });
+  try {
+    f.reliable.readyState = 'open'; f.reliable.bufferedAmount = 524289;
+    assert.equal(f.dispatch(), f.reservation.inputId);
+    assert.equal(f.observedSends.length, 1);
+    assert.equal(f.observedSends[0].current.transport, 'socket');
+    assert.equal(f.sent[0].inputIds[0], f.reservation.inputId);
+    f.set(210); f.ack(); assert.equal(f.row().ack.viewerClockMs, 210);
+  } finally { f.trace.dispose(); }
+});
+
+for (const failure of ['channel-throw', 'socket-throw', 'disconnected', 'quarantined-selected-move']) {
+  test(`native latency: ${failure} creates no actual-send evidence`, () => {
+    const f = nativeLatencyFixture({ transport: failure === 'socket-throw' ? 'socket' : 'datachannel',
+      action: failure === 'quarantined-selected-move' ? 'move' : 'down' });
+    try {
+      const error = new Error('fixture refusal');
+      if (failure === 'channel-throw') f.reliable.send = () => { throw error; };
+      if (failure === 'socket-throw') f.socket.emit = () => { throw error; };
+      if (failure === 'disconnected') { f.reliable.readyState = 'closed'; f.socket.connected = false; }
+      if (failure === 'quarantined-selected-move') f.w._quarantinedInputChannel = f.move;
+      if (failure.endsWith('throw')) assert.throws(f.dispatch, actual => actual === error);
+      else assert.equal(f.dispatch(), null);
+      assert.equal(f.observedSends.length, 0);
+      assert.equal(f.row().send, null);
+      assert.equal(f.sent.length, 0);
+      if (failure === 'quarantined-selected-move') {
+        const live = f.w.captureControlledTransportSnapshot();
+        assert.equal(live.datachannel.selectedMoveSendSource, null);
+        assert.equal(live.datachannel.selectedReliableSendSource, f.reliable);
+      }
+    } finally { f.trace.dispose(); }
+  });
+}
+
+const nativeRotations = {
+  'move-channel': f => { f.w.inputMoveChannel = { ...f.move }; },
+  'reliable-channel': f => { f.w.inputChannel = { ...f.reliable }; },
+  'socket-object': f => { f.w.socket = { ...f.socket }; },
+  'socket-id': f => { f.socket.id = 'rotated'; },
+  'pc': f => { f.w.pc = {}; },
+};
+for (const phase of ['before-ack', 'after-completion']) for (const [name, rotate] of Object.entries(nativeRotations)) {
+  test(`native latency: ${name} rotation ${phase} fails the fresh source fence`, () => {
+    const f = nativeLatencyFixture({ action: name.startsWith('socket') ? 'down' : 'move',
+      transport: name.startsWith('socket') ? 'socket' : 'datachannel' });
+    try {
+      f.dispatch(); f.set(210);
+      if (phase === 'before-ack') rotate(f);
+      f.ack();
+      if (phase === 'after-completion') {
+        f.set(220);
+        f.monitor.onPostApplyFrame({ inputIds: [f.reservation.inputId], scope: f.w.latencyScope(),
+          attemptId: 'attempt', generation: 2, streamId: 'video', viewerClockMs: 215,
+          captureSeq: 1, rtpTimestamp: 44, wireTimestamp: 44, rtpOrigin: 0,
+          traceStatus: 'matched', captureFresh: true, captureAfterApplied: true }, { scope: f.w.latencyScope() });
+        assert.equal(f.row().state, 'COMPLETE'); rotate(f);
+      }
+      const row = f.row({ finalize: true });
+      assert.equal(row.reason, 'source-changed'); assert.equal(row.state, 'INCOMPLETE');
+      if (phase === 'before-ack') assert.equal(row.ack, null);
+      // The observer fence does not rewrite C's outcome; old socket ACKs are already rejected by C.
+      assert.equal(f.monitor.snapshot().outcomes.acked,
+        phase === 'before-ack' && name.startsWith('socket') ? 0 : 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const change of ['scope', 'lease', 'epoch', 'future-sequence', 'stale-status', 'wrong-type', 'unknown-id']) {
+  test(`native latency: ${change} cannot produce a controlled applied ACK`, () => {
+    const f = nativeLatencyFixture();
+    try {
+      f.dispatch(); f.set(210);
+      if (change === 'scope') f.w.connectionAttemptSequence++;
+      if (change === 'lease') f.input.activeControlLease = { leaseId: 'new-lease', leaseEpoch: 4 };
+      if (change === 'epoch') f.input.activeControlLease = { leaseId: 'lease', leaseEpoch: 5 };
+      f.ack(change === 'future-sequence' ? { appliedSeq: 999 }
+        : change === 'stale-status' ? { status: 'stale-lease' }
+          : change === 'wrong-type' ? { inputType: 'keyboard' }
+            : change === 'unknown-id' ? { inputIds: ['unknown'] } : {});
+      assert.equal(f.row().ack, null);
+      assert.equal(f.row({ finalize: true }).state, 'INCOMPLETE');
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: duplicate actual ACK handling keeps one controlled sample and M1 result', () => {
+  const f = nativeLatencyFixture({ action: 'move' });
+  try {
+    f.dispatch(); f.set(210); f.ack(); f.set(230); f.ack();
+    assert.equal(f.row().ack.viewerClockMs, 210);
+    assert.equal(f.row().observationCounters.duplicateAcks, 1);
+    assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+    assert.equal(f.monitor.snapshot().metrics.inputAckRttMs.count, 1);
+  } finally { f.trace.dispose(); }
+});
+
+test('native latency: lease replacement during real C processing cannot qualify the entry clock', () => {
+  const f = nativeLatencyFixture();
+  try {
+    f.dispatch();
+    const accept = f.input._acceptMouseAck;
+    f.input._acceptMouseAck = function(...args) {
+      const result = accept.apply(this, args);
+      this.activeControlLease = { leaseId: 'replacement', leaseEpoch: 4 };
+      return result;
+    };
+    f.set(210); f.ack();
+    assert.equal(f.row().ack, null); assert.equal(f.row().reason, 'lease-changed');
+    assert.equal(f.input._desktopWritePending.size, 0);
+    assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+  } finally { f.trace.dispose(); }
+});
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: ${transport} API accepting across lease replacement records no controlled send`, () => {
+    const f = nativeLatencyFixture({ transport });
+    try {
+      const source = transport === 'socket' ? f.socket : f.reliable;
+      const method = transport === 'socket' ? 'emit' : 'send', send = source[method];
+      source[method] = function(...args) {
+        const result = send.apply(this, args);
+        f.input.activeControlLease = { leaseId: 'replacement', leaseEpoch: 4 };
+        return result;
+      };
+      assert.equal(f.dispatch(), f.reservation.inputId);
+      assert.equal(f.sent.length, 1); assert.equal(f.row().send, null);
+      assert.equal(f.observedSends.length, 0);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const fault of ['missing-monitor', 'send-observer', 'ack-observer', 'snapshot', 'clock', 'stream-context']) {
+  test(`native latency: ${fault} failure preserves real delivery, C/M1 and final trace`, () => {
+    const f = nativeLatencyFixture();
+    try {
+      const throws = () => { throw new Error('observer fixture'); };
+      if (fault === 'missing-monitor') delete f.context.LatencyMonitor;
+      if (fault === 'send-observer') f.monitor.observeControlledSend = throws;
+      if (fault === 'ack-observer') f.monitor.observeControlledAck = throws;
+      if (fault === 'snapshot') f.w.captureControlledTransportSnapshot = throws;
+      let failClock = false;
+      if (fault === 'clock') {
+        const now = f.context.performance.now, send = f.reliable.send;
+        f.reliable.send = function(...args) { send.apply(this, args); failClock = true; };
+        f.context.performance.now = () => {
+          if (failClock) { failClock = false; return throws(); }
+          return now();
+        };
+      }
+      if (fault === 'stream-context') f.w.currentFrameTraceIdentity = throws;
+      assert.equal(f.dispatch(), f.reservation.inputId);
+      f.set(210); if (fault === 'clock') failClock = true;
+      assert.doesNotThrow(() => f.ack());
+      assert.equal(f.input._desktopWritePending.size, 0);
+      assert.equal(f.input._desktopWriteSequence, 1);
+      assert.equal(f.sent.length, 1);
+      assert.equal(f.trace.snapshot().events.some(event => event.stage === 'ack'), true);
+      if (fault !== 'missing-monitor') assert.equal(f.monitor.snapshot().outcomes.acked, 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: prepared desktop keyboard text records ${transport} acceptance without inventing C authority`, () => {
+    const f = nativeLatencyFixture({ transport, type: 'keyboard', action: 'text' });
+    try {
+      assert.equal(f.dispatch(), f.reservation.inputId); assert.equal(f.dispatch(), null);
+      assert.equal(f.row().send.viewerClockMs, 110);
+      assert.equal(f.sent[0].payload.text, f.payload.text);
+      f.set(210); f.ack();
+      assert.equal(f.row().ack, null); // Existing C requires KeyboardTransport-owned pending.
+      assert.equal(f.input._desktopWritePending.size, 1);
+    } finally { f.trace.dispose(); }
+  });
+
+  test(`native latency: actual keyboard wrapper ${transport} send and C-applied ACK retain raw clocks`, () => {
+    const f = nativeLatencyFixture({ transport, type: 'keyboard', action: 'text' });
+    try {
+      // The real transport owns its ledger; its supported ID allocator joins the prepared fixture ID.
+      f.input.keyboardTransport = f.context.KeyboardTransport.create({
+        makeInputId: () => f.reservation.inputId, now: f.context.performance.now,
+        sendDataChannel: transport === 'datachannel' ? data => f.input.sendKeyboardDataChannel(data) : undefined,
+        sendSocket: data => f.input.sendKeyboardSocket(data),
+        getConnectionAttemptId: () => f.w.currentConnectionAttemptId,
+        getSocket: () => f.w.socket, getDataChannel: () => f.w.inputChannel,
+        setTimeoutFn: () => null, clearTimeoutFn() {},
+      });
+      f.input.keyboardTransport.setLease(f.input.activeControlLease);
+      const envelope = { type: 'keyboard', action: 'text', payload: f.payload,
+        inputIds: [f.reservation.inputId] };
+      assert.ok(f.input.keyboardTransport.send(envelope));
+      assert.equal(f.row().send.viewerClockMs, 110);
+      f.set(210); f.ack({ appliedSeq: f.sent[0].seq, pressedKeyCount: 0, modifierMask: 0 });
+      assert.equal(f.row().ack.viewerClockMs, 210);
+      assert.equal(f.input.keyboardTransport.getSnapshot().pendingCount, 0);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const transport of ['datachannel', 'socket']) {
+  test(`native latency: socket and channel candidates are finite with no action or trace lookup (${transport})`, () => {
+    const f = nativeLatencyFixture({ transport });
+    try {
+      assert.equal(f.w.captureControlledTransportSnapshot.length, 0);
+      f.dispatch();
+      // An unused path is not an identity fence for this reservation.
+      f.w.inputMoveChannel = { ...f.move };
+      if (transport === 'socket') f.w.inputChannel = { ...f.reliable };
+      f.set(210); f.ack();
+      assert.equal(f.row().ack.viewerClockMs, 210);
+      const live = f.w.captureControlledTransportSnapshot();
+      assert.deepEqual(Object.keys(live).sort(), ['datachannel', 'pc', 'socket']);
+      assert.deepEqual(Object.keys(live.datachannel).sort(),
+        ['reliableAckSource', 'selectedMoveSendSource', 'selectedReliableSendSource']);
+      assert.deepEqual(Object.keys(live.socket).sort(), ['id', 'object', 'reliableAckSource', 'selectedSendSource']);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: move selection survives quarantine of the unused reliable send candidate', () => {
+  const f = nativeLatencyFixture({ action: 'move' });
+  try {
+    f.w._quarantinedInputChannel = f.reliable;
+    assert.equal(f.dispatch(), f.reservation.inputId);
+    const live = f.w.captureControlledTransportSnapshot();
+    assert.equal(live.datachannel.selectedMoveSendSource, f.move);
+    assert.equal(live.datachannel.selectedReliableSendSource, null);
+    assert.equal(live.datachannel.reliableAckSource, f.reliable);
+    f.set(210); f.ack(); assert.equal(f.row().ack.viewerClockMs, 210);
+  } finally { f.trace.dispose(); }
+});
+
+for (const site of ['desktop', 'keyboard-wrapper']) {
+  test(`native latency: ${site} socket acceptance precedes trace and sequence observation`, () => {
+    const f = nativeLatencyFixture({ transport: 'socket', type: site === 'desktop' ? 'mouse' : 'keyboard',
+      action: site === 'desktop' ? 'down' : 'text' });
+    try {
+      const trace = f.input._recordInputTrace;
+      f.input._recordInputTrace = function(...args) {
+        const result = trace.apply(this, args); f.set(200); return result;
+      };
+      if (site === 'desktop') assert.equal(f.dispatch(), f.reservation.inputId);
+      else assert.equal(f.input.sendKeyboardSocket({ type: 'keyboard', action: 'text', payload: f.payload,
+        inputIds: [f.reservation.inputId], schemaVersion: 2, leaseId: 'lease', leaseEpoch: 4, seq: 1 }), true);
+      assert.equal(f.row().send.viewerClockMs, 110);
+      assert.equal(f.observedSends.length, 1);
+      assert.equal(f.monitor.snapshot().outcomes.sent, 1);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+for (const action of ['down', 'move']) {
+  test(`native latency: real ${action} C then M1 then controlled observation then trace order`, () => {
+    const f = nativeLatencyFixture({ action });
+    try {
+      f.dispatch(); const order = [];
+      for (const [object, method, stage] of [[f.input, 'acceptMouseAck', 'C'],
+        [f.monitor, action === 'move' ? 'onUnorderedInputAck' : 'onInputAck', 'M1'],
+        [f.monitor, 'observeControlledAck', 'controlled'], [f.input, 'recordObservedInputAck', 'trace']]) {
+        const original = object[method];
+        object[method] = function(...args) { order.push(stage); return original.apply(this, args); };
+      }
+      f.set(210); f.ack();
+      assert.deepEqual(order, ['C', 'M1', 'controlled', 'trace']);
+      assert.equal(f.row().ack.viewerClockMs, 210);
+    } finally { f.trace.dispose(); }
+  });
+}
+
+test('native latency: actual socket emit without a bounded socket ID cannot qualify evidence', () => {
+  const f = nativeLatencyFixture({ transport: 'socket' });
+  try {
+    f.socket.id = ''; assert.equal(f.dispatch(), f.reservation.inputId);
+    assert.equal(f.sent.length, 1); assert.equal(f.row().send, null);
+    f.set(210); f.ack(); assert.equal(f.row().ack, null);
+    assert.equal(f.input._desktopWritePending.size, 0);
+  } finally { f.trace.dispose(); }
+});
 
 test('WebRTC VM fixture cleanup clears its own recurring timers', () => {
   const { WebRTC, cleanup } = loadWebRTC();
@@ -307,8 +737,11 @@ test('frame trace uses the same attempt sequence sent to Host instead of media s
     return 1;
   };
   WebRTC.createConnectionAttemptId = () => 'attempt-trace';
+  const videoTrack = { id: 'trace-video', kind: 'video' };
+  video.srcObject = { getVideoTracks: () => [videoTrack] };
   WebRTC.pc = {
     connectionState: 'connected', iceConnectionState: 'connected',
+    getReceivers: () => [{ track: videoTrack, getSynchronizationSources: () => [{ source: 7 }] }],
     createDataChannel(label) {
       const channel = { label, readyState: 'open', on() {}, send() {} };
       return channel;
@@ -316,6 +749,7 @@ test('frame trace uses the same attempt sequence sent to Host instead of media s
   };
   WebRTC._mediaIntent = { state: 'active', generation: 99 };
   WebRTC.beginConnectionAttempt('viewer-open');
+  WebRTC._frameTraceEnabled = true;
   WebRTC.startVideoFrameTracking();
   callback(10, { rtpTimestamp: 77 });
   // The existing receiver path owns this handler in production. Invoke it with
@@ -562,6 +996,7 @@ test('keyboard acknowledgement clears keyboard pending without clearing mouse re
   const latencyAcks = [];
   const channels = new Map();
   const socketEvents = [];
+  const dcWrites = [];
   const { WebRTC, context } = loadWebRTC({
     realInput: true,
     LatencyMonitor: {
@@ -573,7 +1008,7 @@ test('keyboard acknowledgement clears keyboard pending without clearing mouse re
   WebRTC.pc = {
     connectionState: 'connecting', iceConnectionState: 'checking',
     createDataChannel(label) {
-      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send() {} };
+      const channel = { label, readyState: 'connecting', bufferedAmount: 0, send(json) { dcWrites.push(JSON.parse(json)); } };
       channels.set(label, channel);
       return channel;
     },
@@ -589,23 +1024,24 @@ test('keyboard acknowledgement clears keyboard pending without clearing mouse re
   assert.equal(Input.keyboardController.handleDomEvent({ type: 'keydown', code: 'KeyA', key: 'a', target: {}, getModifierState() { return false; }, preventDefault() {} }), true);
   assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 1);
   Input._pendingMouseReset = true;
-  Input._pendingMouseResetId = 'mouse-reset-1';
+  Input._pendingMouseResetId = Input.sendInput('mouse', 'reset', { reason: 'manual' });
+  const mouseReset = socketEvents.at(-1).payload;
 
   inputChannel.onmessage({ data: JSON.stringify({
     type: 'input_ack', inputType: 'keyboard', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
-    inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
+    inputIds: dcWrites.at(-1).inputIds, appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
   }) });
 
   assert.equal(Input.getDiagnosticState().pendingMouseReset, true);
   assert.equal(Input.keyboardTransport.getSnapshot().pendingCount, 0);
   assert.equal(Input.keyboardController.getSnapshot().state, 'READY');
   assert.equal(latencyAcks.length, 1);
-  assert.equal(socketEvents.length, 0);
+  assert.equal(socketEvents.length, 1);
 
-  inputChannel.onmessage({ data: JSON.stringify({
+  WebRTC.acceptObservedInputAck({
     type: 'input_ack', inputType: 'mouse', status: 'applied', schemaVersion: 2, leaseEpoch: 4,
-    inputIds: ['mouse-reset-1'], appliedSeq: 1, pressedKeyCount: 0, modifierMask: 0,
-  }) });
+    inputIds: mouseReset.inputIds, appliedSeq: mouseReset.seq, pressedKeyCount: 0, modifierMask: 0,
+  }, { transport: 'socket', socket: WebRTC.socket });
   assert.equal(Input.getDiagnosticState().pendingMouseReset, false);
   clearTimeout(WebRTC._dcTimeout);
 });
@@ -795,8 +1231,8 @@ test('viewer waits for an active control lease before starting an offer and rout
     Input: {
       init() {},
       setActive() {},
-      setControlLease() {},
-      acceptKeyboardAck() { order.push('transport'); },
+      setControlLease(lease) { this.activeControlLease = lease; return true; },
+      acceptKeyboardAck() { order.push('transport'); return { status: 'applied' }; },
       acceptMouseAck() { order.push('mouse'); },
     },
     LatencyMonitor: { onInputAck() { order.push('latency'); } },
@@ -915,13 +1351,15 @@ test('buildSignalingSocketOptions forwards the Lab proof admission from session 
 test('tunnel relay uses the authenticated viewer socket instead of a second relay socket', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 6 } };
   WebRTC.tunnelRelayActive = true;
 
   WebRTC.emitRelayStreamControl();
 
-  assert.equal(emitted[0][0], 'relay-stream-control');
+  assert.equal(emitted.at(-1)[0], 'relay-stream-control');
   assert.equal(Object.prototype.hasOwnProperty.call(WebRTC, 'relaySocket'), false);
 });
 
@@ -946,6 +1384,8 @@ test('tunnel start binds the current connection attempt before media controls us
 test('tunnel relay stream control caps request size to medium profile', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 6 } };
   WebRTC.currentResolution = { width: 1280, height: 720, label: '720p' };
@@ -1048,6 +1488,8 @@ test('control-acquire-result clears sticky switching label on occupied reset bar
 test('relay control and frame acknowledgements require and carry the active v2 lease', () => {
   const emitted = [];
   const { WebRTC, elements } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
   WebRTC.emitRelayStreamControl();
   assert.equal(emitted.length, 0);
@@ -1060,7 +1502,8 @@ test('relay control and frame acknowledgements require and carry the active v2 l
   });
 
   WebRTC.tunnelRelayActive = true;
-  WebRTC.handleRelayFrame({ data: 'ZmFrZQ==', frameId: 3, timestamp: Date.now() });
+  const fields = prepareOrdinaryRelay(WebRTC);
+  WebRTC.handleRelayFrame({ ...fields, data: 'ZmFrZQ==', frameId: 3, timestamp: Date.now() });
   elements.get('relayImage').onload();
   const ack = emitted.at(-1)[1];
   assert.equal(emitted.at(-1)[0], 'relay-frame-ack');
@@ -1105,13 +1548,13 @@ test('DataChannel lifecycle updates keyboard transport availability before recon
 });
 
 test('dc-error does not schedule full reconnect when inbound video is healthy', () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   WebRTC.manualDisconnect = false;
   WebRTC._refreshing = false;
   WebRTC.reconnectTimer = null;
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
   WebRTC._lastInboundFramesDecoded = 10;
-  WebRTC._lastInboundFramesDecodedAt = Date.now();
+  WebRTC._lastInboundFramesDecodedAt = context.performance.now();
   let scheduled = 0;
   const original = WebRTC.scheduleReconnect.bind(WebRTC);
   WebRTC.scheduleReconnect = (reason) => { scheduled += 1; return original(reason); };
@@ -1128,7 +1571,7 @@ test('dc-error schedules reconnect when inbound video is not healthy', () => {
   WebRTC.reconnectTimer = null;
   WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected' };
   WebRTC._lastInboundFramesDecoded = 0;
-  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC._lastInboundFramesDecodedAt = null;
   let scheduled = 0;
   const reasons = [];
   WebRTC.scheduleReconnect = (reason) => {
@@ -1143,9 +1586,10 @@ test('dc-error schedules reconnect when inbound video is not healthy', () => {
 });
 
 test('inbound video health requires recent decoded progress', () => {
-  const { WebRTC } = loadWebRTC();
+  let now = 10000;
+  const { WebRTC } = loadWebRTC({ performance: { now: () => now } });
   WebRTC._lastInboundFramesDecoded = 0;
-  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC._lastInboundFramesDecodedAt = null;
   assert.equal(WebRTC.isInboundVideoHealthy(), false);
 
   WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 5 });
@@ -1157,7 +1601,7 @@ test('inbound video health requires recent decoded progress', () => {
   WebRTC.processStatsSnapshot({ framesDecoded: 5, framesReceived: 5, fps: 0 });
   assert.ok(WebRTC._lastInboundFramesDecodedAt >= growthAt);
 
-  WebRTC._lastInboundFramesDecodedAt = Date.now() - 6000;
+  now += 6000;
   assert.equal(WebRTC.isInboundVideoHealthy(), false);
 });
 
@@ -2394,8 +2838,11 @@ test('auto fallback handles relay frames while tunnel relay is active', () => {
 
   WebRTC.networkMode = 'auto';
   WebRTC.tunnelRelayActive = true;
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.socket = { connected: true, emit() {} };
+  const fields = prepareOrdinaryRelay(WebRTC);
 
-  WebRTC.handleRelayFrame({
+  WebRTC.handleRelayFrame({ ...fields,
     data: 'ZmFrZS1mcmFtZQ==',
     mime: 'image/jpeg',
     frameId: 1,
@@ -2425,7 +2872,9 @@ test('base64 relay frames ack after the browser image loads', () => {
     },
   };
 
-  WebRTC.handleRelayFrame({
+  const fields = prepareOrdinaryRelay(WebRTC);
+  emitted.length = 0;
+  WebRTC.handleRelayFrame({ ...fields,
     data: 'ZmFrZS1mcmFtZQ==',
     mime: 'image/jpeg',
     frameId: 7,
@@ -2440,7 +2889,8 @@ test('base64 relay frames ack after the browser image loads', () => {
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].event, 'relay-frame-ack');
   assert.equal(emitted[0].payload.frameId, 7);
-  assert.equal(typeof emitted[0].payload.latencyMs, 'number');
+  assert.equal(emitted[0].payload.latencyMs, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(emitted[0].payload.relayScope)), fields.relayScope);
 });
 
 test('main viewer socket emits start control during auto tunnel fallback', () => {
@@ -2456,6 +2906,8 @@ test('main viewer socket emits start control during auto tunnel fallback', () =>
   WebRTC.networkMode = 'auto';
   WebRTC.tunnelRelayActive = true;
   WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true, lease: { leaseId: 'lease-000000000001', leaseEpoch: 6 } };
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = socket;
 
   WebRTC.emitRelayStreamControl();
@@ -3389,7 +3841,7 @@ test('PC connection syncs the desktop input gate without directly enabling input
   assert.deepEqual(inputCalls, []);
 });
 
-test('suspended media prevents tunnel start or restart until the active phase is restored', () => {
+test('suspended media blocks tunnel start while authorized resume mounts receiver behind input gate', () => {
   const emitted = [];
   const { WebRTC, context } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
@@ -3401,6 +3853,7 @@ test('suspended media prevents tunnel start or restart until the active phase is
   };
   WebRTC.networkMode = 'tunnel';
   WebRTC.currentConnectionAttemptId = 'wrd-1';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create({ requestTimeoutMs: 1500 });
 
   WebRTC.applyMediaActivity({ state: 'suspended', reasons: ['manual-pause'], generation: 1 });
@@ -3424,13 +3877,15 @@ test('suspended media prevents tunnel start or restart until the active phase is
   emitted.length = 0;
 
   WebRTC.startTunnelRelay();
-  assert.equal(WebRTC.tunnelRelayActive, false);
+  assert.equal(WebRTC.tunnelRelayActive, true, 'authorized active intent already mounted the receiver');
+  assert.equal(WebRTC.canEnableDesktopInput(), false);
   assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), false);
 
   WebRTC.handleMediaActivityAck({
-    state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true,
+    ...relayAckFields(WebRTC, 2), state: 'active', generation: 2, connectionAttemptId: 'wrd-1', applied: true,
   });
-  WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1 });
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 1, data: 'AAAA' });
+  context.document.getElementById('relayImage').onload();
   WebRTC.startTunnelRelay();
   assert.equal(WebRTC.tunnelRelayActive, true);
   assert.equal(emitted.some(([event, payload]) => event === 'relay-stream-control' && payload.enabled === true), true);
@@ -4039,6 +4494,37 @@ test('media resume enables input only after active ack and rendered frame', () =
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 });
 
+test('initial visible attempt binds active media without requiring a resume request', () => {
+  const { WebRTC, context } = loadWebRTC();
+  for (const filename of ['media-activity-controller.js', 'media-activity-runtime.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, filename), 'utf8'), context);
+  }
+  context.MediaActivityController = context.window.MediaActivityController;
+  context.document.hidden = false;
+  const emitted = [];
+  WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-initial';
+  WebRTC.connectionAttemptSequence = 1;
+  WebRTC.networkMode = 'relay';
+
+  WebRTC.initializeMediaActivity();
+  assert.equal(WebRTC.bindCurrentConnectionAttempt(), true);
+  WebRTC.ensureMediaActiveIfVisible('control-grant');
+  assert.equal(WebRTC.replayMediaActivityIntent('control-regrant'), false);
+  WebRTC.ensureMediaActiveIfVisible('pc-connected');
+
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC.getMediaActivitySnapshot())), {
+    state: 'active', reasons: [], generation: 0,
+  });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
+  assert.deepEqual(emitted.map(([event]) => event), ['connection-attempt-bind']);
+  assert.equal(emitted[0][1].connectionAttemptId, 'attempt-initial');
+});
+
 test('ensureMediaActiveIfVisible clears page-hidden and replays active intent', () => {
   const { WebRTC, context } = loadWebRTC();
   const controllerSource = require('node:fs').readFileSync(
@@ -4098,7 +4584,7 @@ test('ensureMediaActiveIfVisible clears page-hidden and replays active intent', 
   assert.ok(WebRTC.PAGE_HIDDEN_SUSPEND_DELAY_MS >= 15000);
 });
 
-test('resume stays resuming when framesDecoded does not increase past baseline', () => {
+test('resume stays gated through decoded statistics until a real rendered frame', () => {
   const { WebRTC, context } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
   require('node:vm').runInContext(runtimeSource, context);
@@ -4137,7 +4623,7 @@ test('resume stays resuming when framesDecoded does not increase past baseline',
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
   assert.equal(WebRTC.canEnableDesktopInput(), false);
 
-  // Fresh decoded frame past baseline unlocks once.
+  // Decoded statistics cannot stand in for a fresh rendered frame.
   WebRTC.processStatsSnapshot({
     fps: 15,
     rttMs: 40,
@@ -4147,6 +4633,9 @@ test('resume stays resuming when framesDecoded does not increase past baseline',
     bytesReceived: 1100,
     selectedCandidateType: 'srflx',
   });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  WebRTC.noteMediaRenderedFrame({ source: 'video-callback', frameSeq: 1,
+    connectionAttemptId: 'wrd-1', pc: WebRTC.pc });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 
@@ -4290,7 +4779,7 @@ test('tunnel media activity waits for Host applied ack and fresh relay frame', (
   WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
   WebRTC.handleMediaActivityAck({
-    state: 'active',
+    ...relayAckFields(WebRTC, 2), state: 'active',
     generation: 2,
     connectionAttemptId: 'attempt-tunnel-1',
     applied: true,
@@ -4300,15 +4789,12 @@ test('tunnel media activity waits for Host applied ack and fresh relay frame', (
 
   // Fresh relay frame unlocks.
   WebRTC.tunnelLastFrameId = 10;
-  WebRTC.observeFreshResumeFrame({
-    source: 'video-callback',
-    frameSeq: (WebRTC._videoFrameSeq || 0) + 1,
-    connectionAttemptId: 'attempt-tunnel-1',
-  });
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 11, data: 'AAAA' });
+  context.document.getElementById('relayImage').onload();
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
 });
 
-test('tunnel active ack promotes a relay frame rendered before the ack', () => {
+test('tunnel drops pre-ACK frames and requires a new scoped load after ACK', () => {
   const emitted = [];
   const { WebRTC, context, elements } = loadWebRTC();
   const runtimeSource = require('node:fs').readFileSync(require('node:path').join(__dirname, 'media-activity-runtime.js'), 'utf8');
@@ -4331,13 +4817,17 @@ test('tunnel active ack promotes a relay frame rendered before the ack', () => {
   WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 2 });
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
 
-  WebRTC.handleRelayFrame({ frameId: 1, timestamp: Date.now(), mime: 'image/jpeg', data: 'AAAA' });
-  elements.get('relayImage').onload();
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 1, timestamp: Date.now(), mime: 'image/jpeg', data: 'AAAA' });
+  assert.equal(elements.get('relayImage')?.onload ?? null, null);
+  assert.equal(WebRTC.tunnelLastFrameId, 0);
   assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
 
   WebRTC.handleMediaActivityAck({
-    state: 'active', generation: 2, connectionAttemptId: 'attempt-tunnel-race', applied: true,
+    ...relayAckFields(WebRTC, 2), state: 'active', generation: 2, connectionAttemptId: 'attempt-tunnel-race', applied: true,
   });
+  assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
+  WebRTC.handleRelayFrame({ ...relayAckFields(WebRTC, 2), frameId: 2, data: 'AAAA' });
+  elements.get('relayImage').onload();
   assert.equal(WebRTC.getMediaAppliedPhase(), 'active');
   assert.equal(WebRTC.canEnableDesktopInput(), true);
 });
@@ -4810,7 +5300,7 @@ test('stale attempt relay frame cannot unlock a newer resume attempt', () => {
     connectionAttemptId: 'attempt-old',
   };
   WebRTC.handleMediaActivityAck({
-    state: 'active',
+    ...relayAckFields(WebRTC, 5), state: 'active',
     generation: 5,
     connectionAttemptId: 'attempt-new',
     applied: true,
@@ -4863,7 +5353,7 @@ test('control grant honors the media input gate before a fresh frame', () => {
 test('control grant does not createOffer when PC and DC are already live', () => {
   const { WebRTC, context } = loadWebRTC();
   let offers = 0;
-  context.Input = { init() {}, setControlLease() {}, setActive() {} };
+  context.Input = { init() {}, setControlLease(lease) { this.activeControlLease = lease; return true; }, setActive() {} };
   WebRTC.startControlHeartbeat = () => {};
   WebRTC.updateControlUI = () => {};
   WebRTC.createOffer = () => { offers += 1; };
@@ -4881,7 +5371,7 @@ test('control grant does not createOffer when PC and DC are already live', () =>
 test('control grant still creates offer when PC is missing', () => {
   const { WebRTC, context } = loadWebRTC();
   let offers = 0;
-  context.Input = { init() {}, setControlLease() {}, setActive() {} };
+  context.Input = { init() {}, setControlLease(lease) { this.activeControlLease = lease; return true; }, setActive() {} };
   WebRTC.startControlHeartbeat = () => {};
   WebRTC.updateControlUI = () => {};
   WebRTC.createOffer = () => { offers += 1; };
@@ -4899,6 +5389,8 @@ test('control grant still creates offer when PC is missing', () => {
 test('starting a new tunnel producer resets the frame-id cursor', () => {
   const emitted = [];
   const { WebRTC } = loadWebRTC();
+  WebRTC.currentConnectionAttemptId = 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence = 1;
   WebRTC.socket = { connected: true, emit(...args) { emitted.push(args); }, on() {} };
   WebRTC.controlState = {
     state: 'ACTIVE', controller: true, hostOnline: true,
@@ -4948,7 +5440,7 @@ test('tunnel fresh-frame fallback keeps the current attempt', () => {
     WebRTC.applyMediaActivity({ state: 'active', reasons: [], generation: 5 });
     for (const timer of timers) timer.cleared = true;
     WebRTC.handleMediaActivityAck({
-      state: 'active', generation: 5, connectionAttemptId: 'attempt-tunnel-stable', applied: true,
+      ...relayAckFields(WebRTC, 5), state: 'active', generation: 5, connectionAttemptId: 'attempt-tunnel-stable', applied: true,
     });
     assert.equal(WebRTC.getMediaAppliedPhase(), 'resuming');
 
@@ -5054,6 +5546,7 @@ test('stable viewport while adaptive relay frame sizes change', () => {
     lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
   };
   WebRTC.socket = { connected: true, emit() {}, on() {} };
+  const fields = prepareOrdinaryRelay(WebRTC);
   const relayImage = elements.get('relayImage') || context.document.getElementById('relayImage');
   // Fake bounding box independent of intrinsic image size.
   let box = { width: 800, height: 450, left: 0, top: 0 };
@@ -5062,7 +5555,7 @@ test('stable viewport while adaptive relay frame sizes change', () => {
   let frameId = 0;
   for (const [width, height] of sizes) {
     frameId += 1;
-    WebRTC.handleRelayFrame({
+    WebRTC.handleRelayFrame({ ...fields,
       frameId,
       width,
       height,
@@ -5126,7 +5619,7 @@ test('viewer-superseded enters terminal state and blocks scheduleReconnect', () 
   assert.equal(WebRTC.reconnectTimer, null);
 });
 
-test('reclaimDesktopSession clears supersede flags', () => {
+test('reclaimDesktopSession clears supersede flags', async () => {
   const { WebRTC } = loadWebRTC();
   WebRTC.handleViewerSuperseded({ reason: 'single-desktop-viewer' });
   let started = 0;
@@ -5134,7 +5627,7 @@ test('reclaimDesktopSession clears supersede flags', () => {
   WebRTC.createPeerConnection = () => {};
   WebRTC.beginConnectionAttempt = () => {};
 
-  WebRTC.reclaimDesktopSession();
+  await WebRTC.reclaimDesktopSession();
 
   assert.equal(WebRTC._superseded, false);
   assert.equal(WebRTC.manualDisconnect, false);
@@ -5190,6 +5683,120 @@ test('WebRTC.init consumes supplied snapshot and does not fetch config', async (
   });
   assert.equal(WebRTC.serverConfig.iceServers.length, 0);
   assert.equal(signalingSockets.length, 1);
+});
+
+function relayAckFields(WebRTC, generation = 0, producerId = 'fixture-producer') {
+  return { relayFrameSchemaVersion: 1, relayScope: { producerId, productionGeneration: generation + 1,
+    connectionAttemptId: WebRTC.currentConnectionAttemptId, mediaGeneration: generation,
+    leaseEpoch: WebRTC.controlState.lease.leaseEpoch } };
+}
+
+function prepareOrdinaryRelay(WebRTC, producerId = 'fixture-producer') {
+  WebRTC.currentConnectionAttemptId ||= 'relay-fixture-attempt';
+  WebRTC.connectionAttemptSequence ||= 1;
+  WebRTC.tunnelRelayActive = true;
+  assert.equal(WebRTC.emitRelayStreamControl(), true);
+  const pending = WebRTC._relayPendingStart;
+  const fields = relayAckFields(WebRTC, pending.mediaGeneration, producerId);
+  assert.equal(WebRTC.handleMediaActivityAck({ ...fields, relayControlKind: 'start',
+    relayStartRequestId: pending.requestId, generation: pending.mediaGeneration,
+    state: 'active', applied: true, connectionAttemptId: pending.attempt }), true);
+  return fields;
+}
+
+function firstFrameSamplerFixture() {
+  let timerId = 0;
+  const timers = new Map();
+  const fixture = loadWebRTC({
+    realInput: true,
+    performance: { now: () => 1000, timeOrigin: 1792208500000 },
+    Date: { now: () => 1792208501000 },
+    setTimeout(fn, delay) { timers.set(++timerId, { fn, delay }); return timerId; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  fixture.WebRTC.pc = { connectionState: 'new', getStats: async () => new Map() };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../scripts/passive_session_sampler.js'), 'utf8'), fixture.context);
+  const sampler = fixture.context.window.__wrdPassiveSampler;
+  return { ...fixture, sampler, timers,
+    cleanup() {
+      try {
+        sampler.stop();
+        fixture.WebRTC.clearFirstFrameDeadline();
+      } finally {
+        fixture.cleanup();
+        timers.clear();
+      }
+    },
+  };
+}
+
+test('explicit first-frame timer fresh source owns null and unchanged sampler observes false', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  assert.equal(Object.hasOwn(h.WebRTC, '_firstFrameTimer'), true);
+  assert.equal(h.WebRTC._firstFrameTimer, null);
+  const sample = await h.sampler.sample();
+  assert.equal(sample.inputGate.status, 'observed');
+  assert.equal(sample.inputGate.allowed, false);
+  assert.equal(sample.inputGate.firstFrameTimerHandlePresent, false);
+});
+
+test('explicit first-frame timer startup delegation preserves its separate media budget', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  const { WebRTC, timers } = h;
+  WebRTC.networkMode = 'auto';
+  const episode = WebRTC.beginStartupEpisode();
+  WebRTC.startupPending = () => true;
+  let budgetStarts = 0;
+  const startBudget = WebRTC.startStartupMediaBudget;
+  WebRTC.startStartupMediaBudget = function () {
+    budgetStarts += 1;
+    return startBudget.call(this);
+  };
+  const previousTimers = new Set(timers.keys());
+  WebRTC.beginFirstFrameDeadline('startup-attempt', 1234);
+  assert.equal(budgetStarts, 1);
+  assert.equal(episode.started, true);
+  assert.equal(episode.remaining, 72000);
+  assert.equal(episode.feedbackRemaining, 8000);
+  assert.equal(timers.get(episode.timer).delay, 8000);
+  assert.deepEqual([...timers.keys()].filter(id => !previousTimers.has(id)), [episode.timer]);
+  assert.equal(WebRTC._firstFrameTimer, null);
+  const sample = await h.sampler.sample();
+  assert.equal(sample.inputGate.status, 'observed');
+  assert.equal(sample.inputGate.firstFrameTimerHandlePresent, false);
+  assert.equal(episode.remaining, 72000);
+  assert.equal(episode.feedbackRemaining, 8000);
+});
+
+test('explicit first-frame timer real legacy arm and clear project true then false', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  const { WebRTC, timers } = h;
+  WebRTC.currentConnectionAttemptId = 'legacy-attempt';
+  WebRTC.beginFirstFrameDeadline('legacy-attempt', 4321);
+  const handle = WebRTC._firstFrameTimer;
+  assert.equal(timers.get(handle).delay, 4321);
+  const armed = await h.sampler.sample();
+  assert.equal(armed.inputGate.status, 'observed');
+  assert.equal(armed.inputGate.firstFrameTimerHandlePresent, true);
+  WebRTC.clearFirstFrameDeadline();
+  assert.equal(timers.has(handle), false);
+  assert.equal(WebRTC._firstFrameTimer, null);
+  const cleared = await h.sampler.sample();
+  assert.equal(cleared.inputGate.status, 'observed');
+  assert.equal(cleared.inputGate.firstFrameTimerHandlePresent, false);
+});
+
+test('explicit first-frame timer deleted source property remains unknown to unchanged sampler', async (t) => {
+  const h = firstFrameSamplerFixture();
+  t.after(() => h.cleanup());
+  delete h.WebRTC._firstFrameTimer;
+  assert.equal(Object.hasOwn(h.WebRTC, '_firstFrameTimer'), false);
+  const sample = await h.sampler.sample();
+  assert.equal(sample.inputGate.status, 'observed');
+  assert.equal(sample.inputGate.firstFrameTimerHandlePresent, null);
 });
 
 test('first-frame timeout exits connecting without reviving a stale attempt', () => {
@@ -5290,7 +5897,7 @@ test('TURN dead detection: 20 consecutive bytes=0 on relay triggers refresh', ()
     // stub out everything processStatsSnapshot touches
     selectedCandidatePair: {},
     _lastInboundFramesDecoded: 0,
-    _lastInboundFramesDecodedAt: 0,
+    _lastInboundFramesDecodedAt: null,
     _mediaResumeFramePending: false,
     noMediaTicks: 0,
     lastCandidateType: 'relay',
@@ -5324,7 +5931,7 @@ test('TURN dead detection: 20 consecutive bytes=0 on relay triggers refresh', ()
 });
 
 test('TURN dead detection: non-zero bytes resets counter', () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   const calls = { refresh: 0 };
   const wrtc = Object.assign(Object.create(WebRTC), {
     networkMode: 'relay',
@@ -5336,7 +5943,7 @@ test('TURN dead detection: non-zero bytes resets counter', () => {
     refresh(opts) { calls.refresh++; },
     selectedCandidatePair: {},
     _lastInboundFramesDecoded: 100,
-    _lastInboundFramesDecodedAt: Date.now(),
+    _lastInboundFramesDecodedAt: context.performance.now(),
     _mediaResumeFramePending: false,
     noMediaTicks: 0,
     lastCandidateType: 'relay',
@@ -5373,7 +5980,7 @@ test('TURN dead detection: suppressed media does not count toward dead-channel t
     refresh(opts) { calls.refresh++; },
     selectedCandidatePair: {},
     _lastInboundFramesDecoded: 0,
-    _lastInboundFramesDecodedAt: 0,
+    _lastInboundFramesDecodedAt: null,
     _mediaResumeFramePending: false,
     noMediaTicks: 0,
     lastCandidateType: 'relay',
@@ -5397,7 +6004,7 @@ test('TURN dead detection: suppressed media does not count toward dead-channel t
 });
 
 test('recovery refresh is suppressed within 3s of last refresh', async () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   let closed = 0;
   WebRTC.socket = { connected: true };
   WebRTC.networkMode = 'relay';
@@ -5406,13 +6013,13 @@ test('recovery refresh is suppressed within 3s of last refresh', async () => {
   WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {} }; };
   WebRTC.createOffer = () => {};
   WebRTC.pc = { close() { closed += 1; } };
-  WebRTC._lastRefreshAt = Date.now();
+  WebRTC._lastRefreshAt = context.performance.now();
   await WebRTC.refresh({ reason: 'dc-dead-on-resume' });
   assert.equal(closed, 0);
 });
 
 test('manual refresh bypasses recovery cooldown', async () => {
-  const { WebRTC } = loadWebRTC();
+  const { WebRTC, context } = loadWebRTC();
   let closed = 0;
   WebRTC.socket = { connected: true };
   WebRTC.networkMode = 'relay';
@@ -5421,7 +6028,7 @@ test('manual refresh bypasses recovery cooldown', async () => {
   WebRTC.createPeerConnection = () => { WebRTC.pc = { close() {} }; };
   WebRTC.createOffer = () => {};
   WebRTC.pc = { close() { closed += 1; } };
-  WebRTC._lastRefreshAt = Date.now();
+  WebRTC._lastRefreshAt = context.performance.now();
   await WebRTC.refresh({ reason: 'manual' });
   assert.equal(closed, 1);
 });
@@ -5487,7 +6094,7 @@ test('non-forced refresh is ignored while _refreshing', async () => {
   const { WebRTC } = loadWebRTC();
   let closed = 0;
   WebRTC._refreshing = true;
-  WebRTC._lastRefreshAt = 0;
+  WebRTC._lastRefreshAt = null;
   WebRTC.pc = { close() { closed += 1; } };
   WebRTC.socket = { connected: true };
   WebRTC.networkMode = 'stun';
@@ -5851,9 +6458,9 @@ test('capture_stats does not overwrite playback fpsDisplay', () => {
 
 test('decoded progress timestamp updates for every positive canonical delta', () => {
   let now = 1000;
-  const { WebRTC } = loadWebRTC({ Date: { now: () => now } });
+  const { WebRTC } = loadWebRTC({ performance: { now: () => now } });
   WebRTC._lastInboundFramesDecoded = 100;
-  WebRTC._lastInboundFramesDecodedAt = 0;
+  WebRTC._lastInboundFramesDecodedAt = null;
   WebRTC.handlePortSearchMedia = () => {};
   WebRTC.handleReceiverStats = () => {};
 
@@ -6125,7 +6732,7 @@ test('scheduleReconnect keeps uiPhase in sync with disconnected status', () => {
   WebRTC.reconnectTimer = null;
   WebRTC._refreshing = false;
   WebRTC._superseded = false;
-  WebRTC._lastRefreshAt = 0;
+  WebRTC._lastRefreshAt = null;
   WebRTC.isMediaHealthSuppressed = () => false;
   WebRTC.isPortSearchActive = () => false;
   WebRTC.hasTurnConfigured = () => false;
@@ -6361,6 +6968,43 @@ test('media-pending 8s auto-sends paint-pending-timeout', () => {
   assert.equal(WebRTC.uiPhase, 'media-pending');
 });
 
+test('intentional pause and hidden pages do not report first-paint timeout, but active resume does', () => {
+  const timers = new Map();
+  const { WebRTC, context } = loadWebRTC({
+    setTimeout(callback, ms) { timers.set(ms, callback); return ms; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const sent = [];
+  const fire = (ms) => {
+    const callback = timers.get(ms);
+    timers.delete(ms);
+    callback();
+  };
+  context.Diagnostic = { autoSendFailure(reason) { sent.push(reason); } };
+  WebRTC.updateNetworkUI = () => {};
+  let state = 'active';
+  WebRTC.getMediaActivitySnapshot = () => ({ state, reasons: [], generation: 1 });
+  WebRTC.uiPhase = 'media-pending';
+  WebRTC.schedulePaintPendingCopyTimers();
+  state = 'suspended';
+  fire(8000);
+  assert.deepEqual(sent, []);
+  WebRTC.clearPaintPendingCopyTimers();
+  WebRTC.schedulePaintPendingCopyTimers();
+  assert.equal(timers.size, 0);
+
+  state = 'active';
+  WebRTC.schedulePaintPendingCopyTimers();
+  context.document.hidden = true;
+  fire(8000);
+  assert.deepEqual(sent, []);
+  WebRTC.clearPaintPendingCopyTimers();
+  context.document.hidden = false;
+  WebRTC.schedulePaintPendingCopyTimers();
+  fire(8000);
+  assert.deepEqual(sent, ['paint-pending-timeout']);
+});
+
 test('media-stalled lasting 3s auto-sends media-stalled', () => {
   const timers = new Map();
   const { WebRTC, context } = loadWebRTC({
@@ -6431,4 +7075,2025 @@ test('classic bundle exposes WebRTC on globalThis for deferred diagnostic.js', (
   assert.equal(context.globalThis.WebRTC, WebRTC);
   assert.equal(typeof context.globalThis.WebRTC.getSessionPresentation, 'function');
   assert.equal(typeof context.globalThis.WebRTC.uiPhase, 'string');
+});
+
+test('stale business ACKs never contribute timing samples on socket or DataChannel adapters', () => {
+  const observed = [];
+  const { WebRTC } = loadWebRTC({
+    Input: { acceptMouseAck() { return { status: 'stale' }; }, acceptKeyboardAck() { return { status: 'stale' }; } },
+    LatencyMonitor: { onInputAck(data) { observed.push(data); } },
+  });
+  WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'keyboard', leaseEpoch: 4, inputIds: ['old'] });
+  WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', leaseEpoch: 4, inputIds: ['old-mouse'] });
+  assert.equal(observed.length, 0);
+});
+
+for (const transport of ['socket', 'datachannel']) for (const status of ['applied', 'execution-failed']) {
+  test(`accepted unordered mouse move settles only matching scope ${status} observation over ${transport}`, () => {
+    let now = 1000;
+    const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+    const { WebRTC, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor, performance: { now: () => now } });
+    const Input = context.__Input;
+    WebRTC.currentConnectionAttemptId = 'unordered-attempt'; WebRTC.connectionAttemptSequence = 1;
+    Input.activeControlLease = { leaseId: 'lease-000000000001', leaseEpoch: 4 };
+    Input.isActive = true;
+    let sent;
+    WebRTC.sendInput = data => { if (transport !== 'datachannel') return false; sent = data; return true; };
+    WebRTC.socket = { connected: true, emit(_event, data) { sent = data; } };
+    const inputId = Input._sendInput('mouse', 'move', { relX: .5, relY: .5 });
+    assert.equal(inputId, sent.inputIds[0]);
+    assert.equal(Input._desktopWritePending.size, 0);
+    now = 1100;
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 3, inputIds: [inputId] }, { transport });
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4, inputIds: [inputId] }, { transport: transport === 'socket' ? 'datachannel' : 'socket' });
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status, leaseEpoch: 4, inputIds: [inputId] }, { transport });
+    assert.equal(monitor.snapshot().metrics.inputAckRttMs.last, status === 'applied' ? 100 : null);
+    assert.equal(monitor.snapshot().outcomes.acked, status === 'applied' ? 1 : 0);
+    assert.equal(monitor.snapshot().outcomes.rejected, status === 'applied' ? 0 : 1);
+    now = 12000;
+    assert.equal(monitor.snapshot().outcomes.timedOut, 0);
+  });
+}
+
+test('future-sequence applied keyboard envelope cannot produce successful timing after business resync', () => {
+  let now = 1000;
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  const { WebRTC, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor, performance: { now: () => now } });
+  const Input = context.__Input;
+  WebRTC.currentConnectionAttemptId = 'future-attempt'; WebRTC.connectionAttemptSequence = 1;
+  Input.initKeyboardController(); Input.setControlLease({ leaseId: 'lease-000000000001', leaseEpoch: 4 });
+  const sent = [];
+  WebRTC.socket = { connected: true, emit(_event, data) { sent.push(data); } };
+  WebRTC.sendInput = () => false;
+  assert.equal(Input.keyboardTransport.send({ type: 'keyboard', action: 'text', payload: { text: 'fixture' } }) !== null, true);
+  const inputId = sent[0].inputIds[0]; now = 1100;
+  WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'keyboard', leaseEpoch: 4, appliedSeq: 999,
+    status: 'applied', pressedKeyCount: 0, modifierMask: 0, inputIds: [inputId] }, { transport: 'socket' });
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 0);
+  assert.equal(monitor.snapshot().outcomes.acked, 0);
+});
+
+
+for (const transport of ['socket', 'datachannel']) test(`1000 actual ${transport} ACK handlers keep business and M1 calls before trace sampling`, () => {
+  const { InputTrace } = require('./input-trace.js');
+  const trace = InputTrace.create({ hashInputIds: null });
+  const order = [];
+  const counts = { mouse: 0, keyboard: 0, latency: 0 };
+  const handlers = new Map(); const channels = new Map();
+  let pending = true;
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      peekInputAckMetadata() { order.push('peek'); return { inputType: 'pointer', action: pending ? 'reset' : 'move',
+        reliable: pending, matchedReliablePending: pending, late: false }; },
+      acceptMouseAck() { counts.mouse++; order.push('mouse'); pending = false; return { status: 'applied' }; },
+      acceptKeyboardAck() { counts.keyboard++; order.push('keyboard'); return { status: 'applied' }; },
+      recordObservedInputAck(data, result, meta) { order.push('trace'); trace.record('ack', { ...meta, status: data.status, accepted: false }); },
+    },
+    LatencyMonitor: { onInputAck() { counts.latency++; order.push('latency'); } },
+  });
+  WebRTC.pc = { createDataChannel(label) { const c = { label, readyState: 'connecting', send() {} }; channels.set(label, c); return c; } };
+  WebRTC.socket = { on(event, handler) { handlers.set(event, handler); } };
+  WebRTC.createInputChannel(); WebRTC.setupSocketListeners();
+  const deliver = data => transport === 'socket' ? handlers.get('input-ack')(data)
+    : channels.get('input').onmessage({ data: JSON.stringify(data) });
+  // Legacy envelopes invoke both real business consumer names on every ACK.
+  deliver({ type: 'input_ack', inputType: 'mouse', status: 'applied' });
+  for (let i = 0; i < 1000; i++) deliver({ type: 'input_ack', inputType: 'mouse', status: 'applied' });
+  assert.deepEqual(counts, { mouse: 1001, keyboard: 1001, latency: 1001 });
+  assert.deepEqual(order.slice(0, 5), ['peek', 'mouse', 'keyboard', 'latency', 'trace']);
+  assert.equal(trace.snapshot().counters.sampledAckEvents, 1000);
+  assert.equal(trace.snapshot().events[0].action, 'reset');
+  trace.dispose();
+});
+
+
+for (const transport of ['socket', 'datachannel']) test(`real v2 unordered ${transport} ACK sampling preserves 1000 C and M1 deliveries`, () => {
+  const { InputTrace } = require('./input-trace.js');
+  let now = 1000;
+  const trace = InputTrace.create({ now: () => now, hashInputIds: null });
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  const handlers = new Map(); const channels = new Map();
+  const counts = { mouse: 0, keyboard: 0, unordered: 0, latency: 0 };
+  const { WebRTC, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor,
+    Diagnostic: { recordInputTrace: (stage, meta) => trace.record(stage, meta) },
+    performance: { now: () => now } });
+  const Input = context.__Input;
+  WebRTC.currentConnectionAttemptId = 'sampling-attempt'; WebRTC.connectionAttemptSequence = 1;
+  Input.activeControlLease = { leaseId: 'lease-000000000001', leaseEpoch: 4 }; Input.isActive = true;
+  WebRTC.pc = { createDataChannel(label) { const c = { label, readyState: 'connecting', send() {} }; channels.set(label, c); return c; } };
+  WebRTC.socket = { connected: true, id: 'sampling-socket', emit() {}, on(event, handler) { handlers.set(event, handler); } };
+  WebRTC.createInputChannel(); WebRTC.setupSocketListeners();
+  WebRTC.sendInput = () => transport === 'datachannel';
+  for (const [object, method, counter] of [[Input, 'acceptMouseAck', 'mouse'], [Input, 'acceptKeyboardAck', 'keyboard'],
+    [monitor, 'onUnorderedInputAck', 'unordered'], [monitor, 'onInputAck', 'latency']]) {
+    const original = object[method];
+    object[method] = function(...args) { counts[counter]++; return original.apply(this, args); };
+  }
+  const deliver = ack => transport === 'socket' ? handlers.get('input-ack')(ack)
+    : channels.get('input').onmessage({ data: JSON.stringify(ack) });
+  const resetId = Input._sendInput('mouse', 'reset', {});
+  assert.equal(Input._desktopWritePending.size, 1);
+  deliver({ type: 'input_ack', schemaVersion: 2, inputType: 'mouse', status: 'applied',
+    leaseEpoch: 4, appliedSeq: 1, inputIds: [resetId] });
+  assert.equal(Input._desktopWritePending.size, 0);
+  assert.equal(trace.snapshot().events.find(event => event.stage === 'ack').action, 'reset');
+  trace.record('ack-timeout', { inputType: 'pointer', action: 'reset', status: 'timeout', reliable: true });
+  for (let i = 0; i < 1000; i++) {
+    const id = Input._sendInput('mouse', 'move', { relX: .5, relY: .5 });
+    assert.ok(id);
+    const ack = { type: 'input_ack', schemaVersion: 2, inputType: 'mouse', status: 'applied', leaseEpoch: 4, inputIds: [id] };
+    deliver(ack);
+  }
+  assert.deepEqual(counts, { mouse: 1001, keyboard: 0, unordered: 1000, latency: 1001 });
+  const snapshot = trace.snapshot();
+  assert.equal(snapshot.counters.sampledAckEvents, 1000);
+  assert.equal(snapshot.events.filter(event => event.stage === 'ack-timeout').length, 1);
+  assert.equal(snapshot.events.filter(event => event.stage === 'ack' && event.action === 'reset').length, 1);
+  assert.equal(Input._desktopWritePending.size, 0);
+  assert.equal(Input._unorderedTraceSends.size, 0);
+  trace.dispose();
+});
+
+
+test('ACK metadata and passive trace failures do not reduce C/M1 dispatch or grant timing authority', () => {
+  const calls = [];
+  const { WebRTC } = loadWebRTC({
+    Input: {
+      peekInputAckMetadata() { calls.push('peek'); throw new Error('observer metadata'); },
+      acceptMouseAck() { calls.push('mouse'); return { status: 'stale' }; },
+      acceptKeyboardAck() { calls.push('keyboard'); return { status: 'applied' }; },
+      recordObservedInputAck() { calls.push('trace'); throw new Error('observer trace'); },
+    },
+    LatencyMonitor: { onInputAck() { calls.push('latency'); }, onUnorderedInputAck() { calls.push('unordered'); } },
+  });
+  assert.doesNotThrow(() => WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'keyboard', status: 'applied' }));
+  assert.deepEqual(calls, ['peek', 'mouse', 'keyboard', 'latency', 'trace']);
+  calls.length = 0;
+  assert.doesNotThrow(() => WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: 'mouse', status: 'applied' }));
+  assert.deepEqual(calls, ['peek', 'mouse', 'unordered', 'trace']);
+});
+
+for (const realInput of [false, true]) {
+test(`200 stable rVFCs preserve every authority and M observation with no extra chrome writes (real Input=${realInput})`, () => {
+  const { WebRTC, context } = loadWebRTC({ realInput });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'chrome-layout.js'), 'utf8'), context);
+  const writes = [];
+  const instrumented = new WeakSet();
+  const instrument = node => {
+    if (instrumented.has(node)) return node;
+    instrumented.add(node);
+    for (const key of ['className', 'textContent', 'hidden', 'disabled', 'title']) {
+      let value = node[key];
+      Object.defineProperty(node, key, { configurable: true,
+        get: () => value, set(next) { value = next; writes.push([key, next]); } });
+    }
+    for (const method of ['add', 'remove', 'toggle']) {
+      const original = node.classList[method];
+      node.classList[method] = (...args) => { writes.push([method, ...args]); return original(...args); };
+    }
+    const originalAttribute = node.setAttribute;
+    node.setAttribute = (...args) => { writes.push(args); return originalAttribute(...args); };
+    node.style = new Proxy(node.style, { set(target, key, value) { writes.push([key, value]); target[key] = value; return true; } });
+    return node;
+  };
+  const lookup = context.document.getElementById;
+  context.document.getElementById = id => instrument(lookup(id));
+  instrument(context.document.body);
+  const video = context.document.getElementById('remoteVideo');
+  const callbacks = [];
+  const track = { id: 'stable-video', kind: 'video' };
+  video.videoWidth = 1280; video.videoHeight = 720;
+  video.srcObject = { getVideoTracks: () => [track] };
+  video.getBoundingClientRect = () => ({ x: 0, y: 0, width: 1280, height: 720 });
+  video.requestVideoFrameCallback = callback => { callbacks.push(callback); return callbacks.length; };
+  WebRTC.pc = { connectionState: 'connected',
+    getReceivers: () => [{ track, getSynchronizationSources: () => [{ source: 17 }] }] };
+  WebRTC.currentConnectionAttemptId = 'stable-attempt';
+  WebRTC.uiPhase = 'connected';
+  WebRTC.socket = { connected: true };
+  WebRTC.hasActiveControl = () => true;
+  WebRTC.canEnableDesktopInput = () => true;
+  const activations = [];
+  if (realInput) {
+    const input = context.__Input;
+    const activate = input.setActive;
+    input.setActive = function(value, ...args) { activations.push(value); return activate.call(this, value, ...args); };
+  } else context.Input = { setActive(value) { activations.push(value); } };
+  const latency = [], frameTrace = [], inputFrames = [], resumeFrames = [];
+  context.LatencyMonitor = { onVideoFrame: (now, metadata) => latency.push([now, metadata.rtpTimestamp]) };
+  WebRTC._frameTraceEnabled = true;
+  WebRTC.ensureFrameTraceCollector = () => ({ observeVideoFrame: (identity, observation, now) => frameTrace.push([identity, now]) });
+  WebRTC.ensureInputFrameCollector = () => ({ observeVideoFrame: (identity, observation, now) => inputFrames.push([identity, now]) });
+  WebRTC.consumeInputFrameMatches = () => {};
+  const observeResume = WebRTC.observeFreshResumeFrame;
+  WebRTC.observeFreshResumeFrame = function(frame) { resumeFrames.push(frame.frameSeq); return observeResume.call(this, frame); };
+  const session = WebRTC.ensureDesktopSessionState();
+  let freshMediaTransitions = 0;
+  const sessionAdapter = { ...session, applyMedia(event) {
+    if (event.event === 'fresh-frame') freshMediaTransitions++;
+    return session.applyMedia(event);
+  } };
+  WebRTC.ensureDesktopSessionState = () => sessionAdapter;
+  WebRTC.startVideoFrameTracking();
+  callbacks[0](0, { presentedFrames: 1, rtpTimestamp: 100 });
+  const before = writes.length;
+  assert.ok(before > 0);
+  for (let index = 1; index <= 200; index++) callbacks[index](index * 16, {
+    presentedFrames: index + 1, rtpTimestamp: 100 + index,
+  });
+  assert.equal(writes.length, before);
+  assert.equal(WebRTC._videoFrameSeq, 201);
+  assert.equal(activations.length, 201);
+  assert.ok(activations.every(Boolean));
+  assert.equal(latency.length, 201);
+  assert.equal(frameTrace.length, 201);
+  assert.equal(inputFrames.length, 201);
+  assert.equal(resumeFrames.length, 201);
+  assert.equal(resumeFrames.at(-1), 201);
+  assert.equal(inputFrames.at(-1)[0].rtpTimestamp, 300);
+  assert.equal(inputFrames.at(-1)[1], 3200);
+  assert.equal(WebRTC._paintObservationWindow.intervals.length, 200);
+  assert.equal(WebRTC._paintObservationWindow.lastPaintAt, 3200);
+  assert.ok(freshMediaTransitions >= 201);
+  const oldCallback = callbacks.at(-1);
+  WebRTC.currentConnectionAttemptId = 'replacement-attempt';
+  oldCallback(3216, { presentedFrames: 202, rtpTimestamp: 301 });
+  assert.equal(WebRTC._videoFrameSeq, 201);
+  assert.equal(activations.length, 201);
+  assert.equal(resumeFrames.length, 201);
+});
+}
+
+test('real control writer cannot enable Terminal controls behind an unchanged chrome projection', () => {
+  const { WebRTC, context } = loadWebRTC();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'chrome-layout.js'), 'utf8'), context);
+  WebRTC.uiPhase = 'connected';
+  WebRTC.hasPaintedFrame = true;
+  WebRTC.controlState = { state: 'FREE', controller: false };
+  WebRTC.hasActiveControl = () => false;
+  WebRTC.getMediaActivitySnapshot = () => ({ reasons: ['terminal-active'] });
+  const button = context.document.getElementById('requestControlBtn');
+  for (let i = 0; i < 3; i++) {
+    WebRTC.updateControlUI('只读');
+    assert.equal(button.disabled, true, `control update ${i} must preserve the Terminal veto`);
+    assert.equal(button.getAttribute('aria-disabled'), 'true');
+  }
+});
+
+test('real mobile and port-search writers converge with the chrome capability projection', () => {
+  const { WebRTC, context } = loadWebRTC({ realInput: true });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'chrome-layout.js'), 'utf8'), context);
+  const Input = context.__Input;
+  WebRTC.uiPhase = 'connected'; WebRTC.hasPaintedFrame = true;
+  WebRTC.hasActiveControl = () => true;
+  WebRTC.controlState = { state: 'ACTIVE', controller: true };
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'active', reasons: [] });
+  Input.isActive = true;
+  const mobile = context.document.getElementById('mobileTextInputBtn');
+  WebRTC.syncChromeCapabilities();
+  Input.updateMobileTextInputButton();
+  assert.equal(mobile.hidden, true, 'pointer-only viewer does not have a mobile text surface');
+  WebRTC.syncChromeCapabilities();
+  assert.equal(mobile.hidden, true, 'same chrome projection must preserve the mobile support veto');
+  context.navigator.maxTouchPoints = 1;
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'suspended', reasons: ['terminal-active'] });
+  for (let i = 0; i < 3; i++) {
+    WebRTC.syncChromeCapabilities();
+    Input.updateMobileTextInputButton();
+    assert.equal(mobile.hidden, true);
+    assert.equal(mobile.disabled, true);
+  }
+  const port = context.document.getElementById('portSearchBtn');
+  WebRTC.uiPhase = 'media-stalled';
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'active', reasons: [] });
+  WebRTC.canStartPortSearch = () => true;
+  for (const tools of ['loading', 'failed', 'ready']) {
+    WebRTC._operatorToolsState = tools;
+    WebRTC.renderPortSearchStatus();
+    WebRTC.syncChromeCapabilities();
+    assert.equal(port.disabled, tools === 'loading');
+    assert.equal(port.getAttribute('aria-disabled'), String(tools === 'loading'));
+  }
+  WebRTC.getMediaActivitySnapshot = () => ({ state: 'suspended', reasons: ['terminal-active'] });
+  WebRTC._operatorToolsState = 'failed';
+  WebRTC.syncChromeCapabilities();
+  WebRTC.renderPortSearchStatus();
+  assert.equal(port.disabled, true, 'tool retry cannot override the Terminal gate');
+  assert.equal(port.getAttribute('aria-disabled'), 'true');
+});
+
+function admissionViewerFixture({ proof = null, fetchAdmission = null, realPeer = false } = {}) {
+  const sockets = [], requests = [];
+  const storage = new Map(proof ? [['wrdProofAdmission', JSON.stringify(proof)]] : []);
+  const result = loadWebRTC({
+    RTCPeerConnection: class {
+      constructor(config) { this.config = config; this.connectionState = 'new'; this.iceConnectionState = 'new'; }
+      createDataChannel() { return { readyState: 'connecting', bufferedAmount: 0, send() {} }; }
+      close() { this.connectionState = 'closed'; }
+    },
+    sessionStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) },
+    fetch: async (url, init) => {
+      if (!url.endsWith('/api/auth/viewer-admission')) return { ok: true, status: 200, json: async () => ({ iceServers: [] }) };
+      requests.push({ url, init });
+      if (fetchAdmission) return fetchAdmission();
+      return { ok: true, status: 201, json: async () => ({ admission: { ticket: `fixture-ticket-${requests.length}` } }) };
+    },
+    io: (_url, options) => {
+      const handlers = new Map();
+      const socket = { auth: options.auth, connected: false, attempts: 0, reconnectEnabled: true,
+        on: (event, handler) => handlers.set(event, handler), emit() {},
+        disconnect() { this.connected = false; }, connect() { this.attempts++; },
+        trigger(event, data) { return handlers.get(event)?.(data); },
+        io: { opts: options, engine: { readyState: 'opening', transport: { name: 'websocket' } }, _readyState: 'closed',
+          reconnection(value) { socket.reconnectEnabled = value; } },
+      };
+      sockets.push(socket); return socket;
+    },
+  });
+  const { WebRTC } = result;
+  // Most admission tests isolate PC effects. Lifecycle tests opt into the real
+  // createPeerConnection/createOffer methods with only the platform RTC fake.
+  if (!realPeer) {
+    WebRTC.createPeerConnection = () => {};
+    WebRTC.createOffer = () => {};
+  }
+  const controller = { load: async () => ({ schemaVersion: 1, host: { online: false }, webrtc: { iceServers: [] } }) };
+  return { ...result, sockets, requests, storage, controller };
+}
+
+test('real Start/reclaim issue once while Socket.IO resume, pageshow and PC refresh retain acknowledged generation', async () => {
+  const h = admissionViewerFixture();
+  const start = h.WebRTC.createStartHandler(h.controller);
+  await Promise.all([start(), start()]);
+  assert.equal(h.requests.length, 1);
+  const original = h.sockets[0];
+  assert.equal(original.auth.viewerAdmission.mode, 'explicit');
+  assert.equal(original.auth.viewerAdmission.ticket, 'fixture-ticket-1');
+  original.connected = true;
+  original.trigger('connected', { hostOnline: false, viewerAdmission: { mode: 'resume', generation: 'generation-1' } });
+  assert.equal(original.auth.viewerAdmission.generation, 'generation-1');
+  assert.equal(original.auth.viewerAdmission.ticket, undefined);
+  original.connected = false;
+  original.trigger('disconnect', 'transport close');
+  h.WebRTC.handlePageLifecycle('pageshow');
+  assert.equal(original.attempts, 1);
+  h.WebRTC.createSignalingSocket(true);
+  assert.equal(h.sockets[1].auth.viewerAdmission.generation, 'generation-1');
+  await h.WebRTC.refresh({ reason: 'fresh-frame-timeout' });
+  assert.equal(h.requests.length, 1, 'automatic recovery must not fetch a new ticket');
+  h.WebRTC.handleViewerSuperseded({ reason: 'single-desktop-viewer' });
+  await Promise.all([h.WebRTC.reclaimDesktopSession(), h.WebRTC.reclaimDesktopSession()]);
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.sockets.at(-1).auth.viewerAdmission.ticket, 'fixture-ticket-2');
+  assert.equal(h.WebRTC._superseded, false);
+});
+
+test('actual admission rejection stops reconnect chain and preserves input draft with manual reclaim available', async () => {
+  const h = admissionViewerFixture();
+  await h.WebRTC.startViewer(h.controller);
+  const socket = h.sockets[0]; socket.connected = true;
+  h.context.document.getElementById('mobileTextInput').value = 'unfinished draft';
+  h.storage.set('draft-canary', 'saved draft');
+  h.WebRTC.scheduleSignalingRecovery('network-online');
+  socket.trigger('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
+  assert.equal(socket.reconnectEnabled, false);
+  assert.equal(h.WebRTC.manualDisconnect, true);
+  assert.equal(h.WebRTC._signalRecoveryTimer, null);
+  assert.equal(h.WebRTC.createSignalingSocket(true), null);
+  assert.equal(h.WebRTC.handlePageLifecycle('pageshow'), false);
+  assert.equal(h.WebRTC.scheduleSignalingRecovery(), false);
+  await h.WebRTC.refresh({ reason: 'fresh-frame-timeout' });
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.context.document.getElementById('mobileTextInput').value, 'unfinished draft');
+  assert.equal(h.storage.get('draft-canary'), 'saved draft');
+  assert.equal(h.context.document.getElementById('viewerSupersededOverlay').hidden, false);
+  await h.WebRTC.reclaimDesktopSession();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.sockets.length, 2);
+});
+
+test('proof-bearing Start and manual reclaim never obtain an ordinary takeover ticket', async () => {
+  const proof = { token: 'fixture-proof', epoch: 1, realm: 'production' };
+  const h = admissionViewerFixture({ proof });
+  await h.WebRTC.startViewer(h.controller);
+  assert.equal(h.requests.length, 0);
+  assert.equal(JSON.stringify(h.sockets[0].auth.proofAdmission), JSON.stringify(proof));
+  assert.equal(h.sockets[0].auth.viewerAdmission, undefined);
+  h.WebRTC.handleViewerSuperseded();
+  await h.WebRTC.reclaimDesktopSession();
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.sockets.at(-1).auth.viewerAdmission, undefined);
+});
+
+test('admission API failure or stale auth response cannot open signaling or clear current credentials', async () => {
+  const failed = admissionViewerFixture({ fetchAdmission: async () => ({ ok: false, status: 429, json: async () => ({ error: 'admission-capacity' }) }) });
+  await failed.WebRTC.startViewer(failed.controller);
+  assert.equal(failed.sockets.length, 0);
+  let complete;
+  const h = admissionViewerFixture({ fetchAdmission: () => new Promise(resolve => { complete = resolve; }) });
+  const pending = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  h.context.Auth.getToken = () => 'new-auth-token';
+  complete({ ok: true, status: 201, json: async () => ({ admission: { ticket: 'old-response' } }) });
+  await pending;
+  assert.equal(h.sockets.length, 0);
+  assert.equal(h.WebRTC._viewerAdmission, null);
+  assert.equal(h.context.Auth.getToken(), 'new-auth-token');
+});
+
+test('malformed retained proof cannot turn an automated Start into ordinary admission', async () => {
+  const h = admissionViewerFixture();
+  h.storage.set('wrdProofAdmission', '{broken');
+  await h.WebRTC.startViewer(h.controller);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.sockets[0].auth.proofAdmission.invalid, true);
+  assert.equal(h.sockets[0].auth.viewerAdmission, undefined);
+});
+
+for (const rejection of ['viewer-superseded', 'viewer-admission-rejected']) {
+  test(`late bootstrap after ${rejection} preserves TURN for explicit reclaim with real peer creation`, async () => {
+    const h = admissionViewerFixture({ realPeer: true });
+    h.WebRTC.networkMode = 'relay';
+    let finishBootstrap;
+    h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+    const start = h.WebRTC.startViewer(h.controller);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.WebRTC._deferPeerUntilConfig, true);
+    h.sockets[0].trigger(rejection, { reason: 'explicit-reconnect-required' });
+    finishBootstrap({ schemaVersion: 1, host: { online: true }, webrtc: {
+      iceServers: [{ urls: 'turn:fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+      turnConfigured: true,
+    } });
+    await start;
+    assert.equal(h.WebRTC.pc, null, 'bootstrap completion must not reconnect a rejected page');
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.requests.length, 1);
+    await h.WebRTC.reclaimDesktopSession();
+    assert.equal(h.sockets.length, 2);
+    assert.equal(h.requests.length, 2, 'only the explicit reclaim issues a second intent');
+    assert.equal(h.WebRTC._superseded, false);
+    assert.ok(h.WebRTC.pc, 'reclaim must construct the actual Relay peer from retained TURN config');
+    assert.equal(h.WebRTC.hasTurnConfigured(), true);
+    assert.equal(h.WebRTC._deferPeerUntilConfig, false);
+    assert.equal(h.WebRTC.pc.config.iceTransportPolicy, 'relay');
+    assert.ok(h.WebRTC.pc.config.iceServers.some(server => server.urls === 'turn:fixture.invalid:3478'));
+  });
+}
+
+test('superseded bootstrap from an older auth generation cannot populate reclaim TURN config', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  h.WebRTC.networkMode = 'relay';
+  let finishBootstrap;
+  h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+  const start = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  h.sockets[0].trigger('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
+  h.context.Auth.getToken = () => 'new-auth-token';
+  finishBootstrap({ schemaVersion: 1, webrtc: {
+    turnConfigured: true,
+    iceServers: [{ urls: 'turn:stale-fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+  } });
+  await start;
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
+  assert.equal(h.WebRTC.pc, null);
+  assert.equal(h.WebRTC._superseded, true);
+  assert.equal(h.WebRTC._deferPeerUntilConfig, false);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.requests.length, 1);
+});
+
+for (const staleAuth of [false, true]) {
+  test(`reclaim before bootstrap waits for validated config (${staleAuth ? 'stale auth' : 'current auth'})`, async () => {
+    const h = admissionViewerFixture({ realPeer: true });
+    h.WebRTC.networkMode = 'relay';
+    let finishBootstrap;
+    h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+    const start = h.WebRTC.startViewer(h.controller);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    h.sockets[0].trigger('viewer-admission-rejected', { reason: 'explicit-reconnect-required' });
+    const reclaim = h.WebRTC.reclaimDesktopSession();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    assert.equal(h.requests.length, 1, 'do not issue another takeover intent before config is usable');
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.WebRTC.pc, null);
+    if (staleAuth) h.context.Auth.getToken = () => 'new-auth-token';
+    finishBootstrap({ schemaVersion: 1, webrtc: {
+    turnConfigured: true,
+      iceServers: [{ urls: 'turn:fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+    } });
+    await Promise.all([start, reclaim]);
+    assert.equal(h.WebRTC._pendingBootstrapConfig, null);
+    assert.equal(h.WebRTC._deferPeerUntilConfig, false);
+    if (staleAuth) {
+      assert.equal(h.requests.length, 1);
+      assert.equal(h.sockets.length, 1);
+      assert.equal(h.WebRTC.pc, null);
+      assert.equal(h.WebRTC.hasTurnConfigured(), false);
+      assert.equal(h.WebRTC._superseded, true);
+    } else {
+      assert.equal(h.requests.length, 2);
+      assert.equal(h.sockets.length, 2);
+      assert.equal(h.WebRTC.connectionAttemptSequence, 1, 'only reclaim initializes a new media attempt');
+      assert.ok(h.WebRTC.pc);
+      assert.equal(h.WebRTC.pc.config.iceTransportPolicy, 'relay');
+      assert.equal(h.WebRTC.hasTurnConfigured(), true);
+      assert.equal(h.WebRTC._superseded, false);
+    }
+  });
+}
+
+test('auth change between bootstrap validation and Start continuation cannot create a peer', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  h.WebRTC.networkMode = 'relay';
+  let finishBootstrap;
+  h.controller.load = () => new Promise(resolve => { finishBootstrap = resolve; });
+  const start = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  finishBootstrap({ schemaVersion: 1, webrtc: {
+    turnConfigured: true,
+    iceServers: [{ urls: 'turn:fixture.invalid:3478', username: 'fixture', credential: 'fixture' }],
+  } });
+  await Promise.resolve();
+  h.context.Auth.getToken = () => 'new-auth-token';
+  await start;
+  assert.equal(h.WebRTC.pc, null);
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
+});
+
+function relayIntegrationFixture({ initialReady = false, withCrypto = true } = {}) {
+  let now = 1000, timerId = 0;
+  const timers = new Map(), sent = [], docHandlers = new Map();
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  class RelayDate extends Date { static now() { return now; } }
+  const h = loadWebRTC({ realInput: true, LatencyMonitor: monitor, Date: RelayDate,
+    crypto: withCrypto ? require('node:crypto').webcrypto : undefined, TextEncoder, Blob, URL,
+    performance: { now: () => now },
+    setTimeout(fn, delay = 0) { const id = ++timerId; timers.set(id, { fn, due: now + delay, delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const { WebRTC, context } = h, Input = context.__Input;
+  for (const name of ['media-activity-controller.js', 'media-activity-runtime.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, name), 'utf8'), context);
+  }
+  context.MediaActivityController = context.window.MediaActivityController;
+  WebRTC.socket = { id: 'viewer-1', connected: true, on() {}, emit(event, data) { sent.push([event, data]); } };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+  WebRTC.currentConnectionAttemptId = 'attempt-1'; WebRTC.connectionAttemptSequence = 1;
+  WebRTC.networkMode = initialReady ? 'relay' : 'tunnel';
+  WebRTC.initializeMediaActivity();
+  WebRTC.mediaActivityRuntime = context.MediaActivityRuntime.create();
+  assert.equal(WebRTC.getMediaActivitySnapshot().generation, 0);
+  assert.equal(WebRTC.mediaActivityRuntime.snapshot().desiredGeneration, 0);
+  const video = context.document.getElementById('remoteVideo');
+  video.tagName = 'VIDEO'; video.videoWidth = 960; video.videoHeight = 540;
+  video.getBoundingClientRect = () => ({ left: 0, top: 0, width: 960, height: 540 });
+  video.hasPointerCapture = () => false; video.setPointerCapture = () => {};
+  video.focus = () => { context.document.activeElement = video; };
+  context.document.activeElement = video;
+  context.document.addEventListener = (type, fn) => docHandlers.set(type, fn);
+  context.window.addEventListener = () => {};
+  context.document.querySelectorAll = () => [];
+  Input.videoElement = video;
+  Input.setControlLease(WebRTC.controlState.lease);
+  Input.setupEventListeners();
+  if (initialReady) {
+    WebRTC.hasPaintedFrame = true; WebRTC._mediaReadyConnectionAttemptId = WebRTC.currentConnectionAttemptId;
+    WebRTC.uiPhase = 'connected'; WebRTC.syncDesktopInputGate();
+  }
+  const writes = () => sent.filter(([event, d]) => event === 'input' && ['mouse', 'keyboard'].includes(d?.type)).map(([,d]) => d);
+  const business = () => writes().filter(d => d.action !== 'reset' && d.action !== 'up');
+  const key = (phase = 'keydown') => docHandlers.get(phase)?.({ type: phase, target: video,
+    code: 'KeyA', key: 'a', location: 0, repeat: false, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+    preventDefault() {}, getModifierState() { return false; } });
+  const pointer = (phase = 'pointerdown') => video.listeners.get(phase)?.({ type: phase, target: video,
+    currentTarget: video, pointerType: 'mouse', pointerId: 1, button: 0, buttons: 1,
+    clientX: 400, clientY: 300, timeStamp: now, preventDefault() {} });
+  function ackWrite(payload, extra = {}) {
+    WebRTC.acceptObservedInputAck({ schemaVersion: 2, inputType: payload.type, inputIds: payload.inputIds,
+      appliedSeq: payload.seq, leaseEpoch: payload.leaseEpoch, status: 'applied',
+      pressedKeyCount: 0, modifierMask: 0, ...extra }, { socket: WebRTC.socket, transport: 'socket' });
+  }
+  function currentResets() {
+    const keyboard = Input._captureKeyboardReset(), mouseId = Input._pendingMouseResetId;
+    const list = writes();
+    return [keyboard && list.find(d => d.inputIds.includes(keyboard.inputId)),
+      mouseId && list.find(d => d.inputIds.includes(mouseId))].filter(Boolean);
+  }
+  function settleResets() {
+    const current = currentResets();
+    current.forEach(d => ackWrite(d));
+    return current;
+  }
+  function advance(ms) {
+    now += ms;
+    for (let iterations = 0; iterations < 100; iterations++) {
+      const due = [...timers].find(([,timer]) => timer.due <= now);
+      if (!due) return;
+      timers.delete(due[0]); due[1].fn();
+    }
+    throw new Error('unexpected timer loop');
+  }
+  function replyStart(producerId = 'producer-1') {
+    const p = WebRTC._relayPendingStart;
+    assert.ok(p);
+    const fields = relayAckFields(WebRTC, p.mediaGeneration, producerId);
+    const data = { ...fields, relayControlKind: 'start', relayStartRequestId: p.requestId,
+      generation: p.mediaGeneration, connectionAttemptId: p.attempt, state: 'active', applied: true };
+    assert.equal(WebRTC.handleMediaActivityAck(data), true);
+    return { fields, data };
+  }
+  function frame(fields, frameId = 1, load = true) {
+    WebRTC.handleRelayFrame({ ...fields, frameId, data: 'AAAA', timestamp: Date.now() + 86400000 });
+    const onload = context.document.getElementById('relayImage').onload;
+    if (load) { assert.equal(typeof onload, 'function'); onload(); }
+    return onload;
+  }
+  return { ...h, Input, monitor, sent, timers, writes, business, key, pointer, ackWrite, currentResets,
+    settleResets, advance, replyStart, frame, now: () => now };
+}
+
+function relayFeedback(fields, sequence, sample = null) {
+  return { ...fields, feedbackSequence: sequence, sample, pendingCount: 0,
+    oldestPendingAgeMs: null, expiredCount: 0, unmatchedAckCount: 0, timeoutCount: 0,
+    coalescedCount: 0, lastSentAgeMs: null, lastAckAgeMs: null };
+}
+
+for (const mode of ['same-attempt-restart', 'webrtc-fallback']) test(`pending JPEG ${mode} immediately closes real business gate through current reset ACKs`, () => {
+  const h = relayIntegrationFixture({ initialReady: true }), { WebRTC, Input } = h;
+  assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer();
+  const held = h.writes();
+  assert.ok(held.some(d => d.type === 'keyboard' && d.action === 'key'));
+  assert.ok(held.some(d => d.type === 'mouse' && d.action === 'down'));
+  held.forEach(d => h.ackWrite(d, d.type === 'keyboard' ? { pressedKeyCount: 1 } : {}));
+  if (mode === 'same-attempt-restart') {
+    // Obtain a first producer through the ordinary handshake, settle it, then restart it.
+    assert.equal(WebRTC.startTunnelRelay(), true);
+    const first = h.replyStart('first-producer'); h.frame(first.fields); h.settleResets();
+    assert.equal(Input.getEffectiveInputGate().allowed, true);
+    h.key(); h.pointer(); h.writes().slice(held.length).filter(d => d.action !== 'reset').forEach(d => h.ackWrite(d));
+  } else {
+    WebRTC.pc = { close() {} };
+  }
+  const before = h.business().length;
+  assert.equal(WebRTC.startTunnelRelay(), true);
+  assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC._mediaReadyConnectionAttemptId, null);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  assert.ok(h.writes().some(d => d.type === 'keyboard' && d.action === 'reset'));
+  assert.ok(h.writes().some(d => d.type === 'mouse' && d.action === 'reset'));
+  const previousResets = h.currentResets();
+  const { fields, data } = h.replyStart('new-producer');
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  WebRTC.handleMediaActivityAck(data); // Duplicate route cannot reset or ready.
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  h.frame(fields);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  const current = h.currentResets();
+  const superseded = previousResets.filter(old => !current.some(d => d.inputIds[0] === old.inputIds[0]));
+  superseded.forEach(d => h.ackWrite(d));
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.settleResets();
+  assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer(); assert.ok(h.business().length > before);
+});
+
+test('ordinary generation-zero start travels actual Viewer → registered Signal → real Host → Signal → Viewer', () => {
+  process.env.ACCESS_PASSWORD ||= 'test-viewer-password';
+  process.env.JWT_SECRET ||= '12345678'; process.env.HOST_PASSWORD ||= 'test-host-password';
+  const { setupSignaling, connections } = require('../../signal-server/websocket/signaling');
+  const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('../../signal-server/websocket/signaling-test-fixture');
+  resetConnections();
+  const io = makeIo(); setupSignaling(io);
+  const host = new FakeSocket('host-1', 'host'), viewer = new FakeSocket('viewer-1', 'viewer');
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  host.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer);
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  assert.equal(grant.leaseEpoch, 1);
+  WebRTC.controlState.lease = { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  h.Input.setControlLease(WebRTC.controlState.lease);
+  WebRTC.socket.emit = (event, data) => { h.sent.push([event, data]); viewer.trigger(event, data); };
+  assert.equal(WebRTC.startTunnelRelay(), true);
+  const bind = host.sent.filter(e => e.event === 'connection-attempt-bind').at(-1).data;
+  const request = host.sent.filter(e => e.event === 'relay-stream-control').at(-1).data;
+  assert.equal(request.relayMediaGeneration, 0);
+  for (const key of ['generation', 'state', 'mediaControlSchemaVersion']) assert.equal(key in request, false);
+  const bridge = require('node:child_process').spawnSync('python3', ['-B', path.join(__dirname, '../../python-host/test_tunnel_relay.py')], {
+    input: JSON.stringify({ bind, request, leaseBinding: { viewerId: viewer.id, leaseId: grant.leaseId,
+      leaseEpoch: grant.leaseEpoch, connectionGeneration: 1 } }), encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(bridge.status, 0, bridge.stderr);
+  const ack = JSON.parse(bridge.stdout.trim());
+  assert.equal(ack.applied, true); assert.equal(ack.generation, 0);
+  const fields = { relayFrameSchemaVersion: 1, relayScope: ack.relayScope };
+  h.frame(fields, 1, false);
+  assert.equal(WebRTC.tunnelLastFrameId, 0, 'before start ACK the frame is discarded');
+  host.trigger('relay-stream-control-ack', ack);
+  const routes = viewer.sent.filter(e => ['media-activity-ack', 'relay-stream-control-ack'].includes(e.event));
+  assert.equal(routes.length, 2);
+  assert.deepEqual(routes[0].data, routes[1].data);
+  routes.forEach(e => WebRTC.handleMediaActivityAck(e.data));
+  assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC.mediaActivityRuntime.snapshot().desiredGeneration, 0);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  h.frame(fields, 2);
+  assert.equal(WebRTC.isCurrentAttemptMediaReady(), true);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  h.key(); assert.equal(h.business().length, 1);
+  resetConnections();
+});
+
+test('JPEG stale image load closes real gate, resets held keys/pointer, and only current reset ACKs reopen', () => {
+  const h = relayIntegrationFixture(), { WebRTC, Input } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer(); h.writes().forEach(d => h.ackWrite(d, d.type === 'keyboard' ? { pressedKeyCount: 1 } : {}));
+  const before = h.business().length;
+  h.advance(4999); assert.equal(WebRTC.canEnableDesktopInput(), true);
+  assert.equal(Input.lastKeyboardResetReason, null);
+  h.advance(1);
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  assert.equal(Input.isActive, false);
+  assert.equal(Input.lastKeyboardResetReason, 'deactivated');
+  assert.ok(h.writes().some(d => d.type === 'mouse' && d.action === 'reset'));
+  const previous = h.currentResets();
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  h.frame(fields, 2);
+  assert.equal(WebRTC.uiPhase, 'connected');
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  const current = h.currentResets();
+  previous.filter(a => !current.some(b => a.inputIds[0] === b.inputIds[0])).forEach(d => h.ackWrite(d));
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.settleResets(); assert.equal(Input.getEffectiveInputGate().allowed, true);
+  h.key(); h.pointer(); assert.ok(h.business().length > before);
+});
+
+for (const failure of ['inactive', 'rejected', 'timeout']) test(`JPEG freshness preserves real ${failure} reset barriers`, () => {
+  const h = relayIntegrationFixture(), { WebRTC, Input } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  h.key(); h.writes().forEach(d => h.ackWrite(d, { pressedKeyCount: 1 }));
+  if (failure === 'inactive') Input.setActive(false, { resetKeyboard: false });
+  h.advance(5000);
+  assert.equal(Input.lastKeyboardResetReason, 'deactivated');
+  const resets = h.currentResets();
+  assert.ok(resets.some(d => d.type === 'keyboard'));
+  h.frame(fields, 2);
+  const before = h.business().length;
+  if (failure === 'rejected') h.currentResets().forEach(d => h.ackWrite(d, { status: 'execution-failed' }));
+  if (failure === 'timeout') h.advance(3001);
+  assert.equal(Input.getEffectiveInputGate().allowed, false);
+  h.key(); h.pointer(); assert.equal(h.business().length, before);
+  if (failure === 'inactive') { h.settleResets(); assert.equal(Input.getEffectiveInputGate().allowed, true); }
+  else {
+    const count = h.writes().length;
+    h.frame(fields, 3, failure !== 'timeout');
+    h.key(); h.pointer();
+    assert.equal(Input.getEffectiveInputGate().allowed, false);
+    assert.ok(h.writes().slice(count).every(d => d.action === 'reset' || d.action === 'up'));
+  }
+});
+
+async function waitRelayDigest(WebRTC) {
+  for (let i = 0; i < 100 && !WebRTC._relayOriginDigest; i++) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.match(WebRTC._relayOriginDigest, /^[a-f0-9]{64}$/);
+}
+
+test('JPEG feedback uses real collector, keeps old producer samples, isolates UI, and deduplicates full origins', async () => {
+  const h = relayIntegrationFixture(), { WebRTC, monitor } = h;
+  WebRTC.startTunnelRelay(); const a = h.replyStart('producer-A');
+  h.frame(a.fields); // Decode and input readiness do not await the optional digest.
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  await waitRelayDigest(WebRTC);
+  assert.equal(WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 100 })), true);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.last, 100);
+  monitor.recordStage('inputAckRttMs', 15, { scope: WebRTC.latencyScope(), atMs: h.now(), sampleKey: 'input-other-metric' });
+  h.advance(100);
+  WebRTC.startTunnelRelay(); const b = h.replyStart('producer-B');
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '未测量');
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 1);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 1);
+  await waitRelayDigest(WebRTC);
+  const firstB = relayFeedback(b.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 200 });
+  WebRTC.handleRelayFrameFeedback(firstB);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 2);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.last, 200);
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '200 ms');
+  WebRTC.handleRelayFrameFeedback(firstB);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(b.fields, 2, { sampleSequence: 1, relayFrameAckRttMs: 999 }));
+  WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 3, { sampleSequence: 2, relayFrameAckRttMs: 777 }));
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 2);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(b.fields, 3, null));
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 2);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null, 'feedback never refreshes image load age');
+  WebRTC.applyMediaActivity({ state: 'suspended', generation: 1, reasons: ['manual-pause'] });
+  WebRTC.handleMediaActivityAck({ state: 'suspended', generation: 1, applied: true, connectionAttemptId: 'attempt-1' });
+  WebRTC.applyMediaActivity({ state: 'active', generation: 2, reasons: [] });
+  const resumed = relayAckFields(WebRTC, 2, 'producer-B');
+  WebRTC.handleMediaActivityAck({ ...resumed, state: 'active', generation: 2, applied: true, connectionAttemptId: 'attempt-1' });
+  await waitRelayDigest(WebRTC);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(resumed, 1, { sampleSequence: 1, relayFrameAckRttMs: 300 }));
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 3);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.last, 300);
+  assert.equal(monitor.snapshot().metrics.inputAckRttMs.count, 1);
+  h.advance(5000); WebRTC.renderRelayFeedbackRtt();
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '未测量');
+});
+
+test('JPEG maximum source strings produce collision-resistant bounded keys without resetting collector', async () => {
+  const h = relayIntegrationFixture(), { WebRTC, monitor } = h;
+  WebRTC.currentConnectionAttemptId = 'a'.repeat(128);
+  WebRTC.syncLatencyScope();
+  WebRTC.startTunnelRelay(); const a = h.replyStart('p'.repeat(64));
+  await waitRelayDigest(WebRTC);
+  const keyCalls = [];
+  const record = monitor.recordStage;
+  monitor.recordStage = (name, value, options) => { keyCalls.push(options.sampleKey); return record(name, value, options); };
+  WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 1, { sampleSequence: Number.MAX_SAFE_INTEGER, relayFrameAckRttMs: 12 }));
+  assert.equal(keyCalls[0].length, 87);
+  assert.match(keyCalls[0], /^relay:[a-f0-9]{64}:[0-9]+$/);
+  const canonical = JSON.stringify(['p'.repeat(64), 1, 'a'.repeat(128), 0, 1]);
+  assert.equal(keyCalls[0], `relay:${require('node:crypto').createHash('sha256').update(canonical).digest('hex')}:${Number.MAX_SAFE_INTEGER}`);
+  assert.equal(monitor.snapshot().metrics.relayFrameAckRttMs.count, 1);
+});
+
+test('JPEG missing or late diagnostics hash never gates media or backfills misleading sample timestamps', async () => {
+  const h = relayIntegrationFixture({ withCrypto: false }), { WebRTC } = h;
+  const pendingDigests = [];
+  h.context.crypto = { subtle: { digest(_alg, bytes) { return new Promise(resolve => pendingDigests.push({ bytes, resolve })); } } };
+  WebRTC.startTunnelRelay(); const a = h.replyStart('producer-A');
+  h.frame(a.fields);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(a.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 50 }));
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+  h.advance(100);
+  WebRTC.startTunnelRelay(); const b = h.replyStart('producer-B');
+  pendingDigests[0].resolve(new Uint8Array(32).fill(1).buffer);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(WebRTC._relayOriginDigest, null);
+  pendingDigests[1].resolve(new Uint8Array(32).fill(2).buffer);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(WebRTC._relayOriginDigest, '02'.repeat(32));
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(b.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 150 }));
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.last, 150);
+  const noCrypto = relayIntegrationFixture({ withCrypto: false });
+  noCrypto.WebRTC.startTunnelRelay(); const c = noCrypto.replyStart(); noCrypto.frame(c.fields);
+  assert.equal(noCrypto.Input.getEffectiveInputGate().allowed, true);
+  noCrypto.WebRTC.handleRelayFrameFeedback(relayFeedback(c.fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 100 }));
+  assert.equal(noCrypto.monitor.snapshot().metrics.relayFrameAckRttMs.available, false);
+});
+
+test('JPEG source validation precedes watermark, and replaced onload/socket/scope cannot ACK or recover', () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const p = WebRTC._relayPendingStart;
+  const expected = relayAckFields(WebRTC);
+  h.frame(expected, 99, false);
+  assert.equal(WebRTC.tunnelLastFrameId, 0);
+  const first = h.replyStart();
+  for (const patch of [{ producerId: 'foreign' }, { productionGeneration: 99 }, { mediaGeneration: true },
+    { mediaGeneration: -1 }, { leaseEpoch: 2 }, { connectionAttemptId: 'wrong' }, { producerId: 'x'.repeat(65) }, { producerId: 'producer-1\n' }]) {
+    h.frame({ ...first.fields, relayScope: { ...first.fields.relayScope, ...patch } }, 99, false);
+    assert.equal(WebRTC.tunnelLastFrameId, 0);
+  }
+  const oldLoad = h.frame(first.fields, 1, false);
+  const newLoad = h.frame(first.fields, 2, false);
+  const before = h.sent.filter(([e]) => e === 'relay-frame-ack').length;
+  oldLoad(); assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  newLoad(); newLoad();
+  assert.equal(h.sent.filter(([e]) => e === 'relay-frame-ack').length, before + 1);
+  const ack = h.sent.filter(([e]) => e === 'relay-frame-ack').at(-1)[1];
+  assert.equal(ack.frameId, 2); assert.equal(ack.latencyMs, undefined); assert.equal(ack.renderedAt, undefined);
+  assert.equal(JSON.stringify(ack.relayScope), JSON.stringify(first.fields.relayScope));
+  const timer = [...h.timers].find(([,t]) => t.delay === 5000)[1];
+  WebRTC.startTunnelRelay(); const next = h.replyStart('new-producer');
+  timer.fn(); assert.equal(WebRTC.uiPhase, 'signaling');
+  const load = h.frame(next.fields, 1, false);
+  WebRTC.socket = { connected: true, emit() {} };
+  load(); assert.equal(WebRTC.hasPaintedFrame, false);
+  assert.equal(WebRTC.relayScopeMatches(next.fields.relayScope), false);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  assert.equal(p.mediaGeneration, 0);
+});
+
+test('JPEG superseded start and suspend reject stale generation-zero ACK/request and foreign leases', () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const oldPending = WebRTC._relayPendingStart;
+  const oldAck = { ...relayAckFields(WebRTC), relayControlKind: 'start', relayStartRequestId: oldPending.requestId,
+    state: 'active', generation: 0, applied: true, connectionAttemptId: 'attempt-1' };
+  WebRTC.startTunnelRelay(); assert.notEqual(WebRTC._relayPendingStart.requestId, oldPending.requestId);
+  assert.equal(WebRTC.handleMediaActivityAck(oldAck), false);
+  const latest = WebRTC._relayPendingStart;
+  assert.equal(WebRTC.handleMediaActivityAck({ ...oldAck, relayStartRequestId: latest.requestId,
+    relayScope: { ...oldAck.relayScope, leaseEpoch: 2 } }), false);
+  WebRTC.applyMediaActivity({ state: 'suspended', generation: 1, reasons: ['manual-pause'] });
+  assert.equal(WebRTC._relayPendingStart, null);
+  assert.equal(WebRTC.handleMediaActivityAck({ ...oldAck, relayStartRequestId: latest.requestId }), false);
+  assert.equal(WebRTC._relayExpectedScope, null);
+  assert.equal(WebRTC._relayFreshnessTimer, null);
+});
+
+for (const offset of [-86400000, 86400000]) test(`JPEG image timestamp offset ${offset} never changes monotonic feedback RTT`, async () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart();
+  WebRTC.handleRelayFrame({ ...fields, frameId: 1, data: 'AAAA', timestamp: h.now() + offset });
+  h.context.document.getElementById('relayImage').onload();
+  const ack = h.sent.filter(([e]) => e === 'relay-frame-ack').at(-1)[1];
+  assert.equal('latencyMs' in ack, false); assert.equal('renderedAt' in ack, false);
+  await waitRelayDigest(WebRTC);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 321 }));
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '321 ms');
+  assert.equal(h.monitor.snapshot().metrics.relayFrameAckRttMs.last, 321);
+  assert.match(h.context.document.getElementById('latencyDisplay').title, /JPEG反馈往返/);
+});
+
+test('JPEG single scope timer expires RTT after stall and arrival-only traffic never refreshes load age', async () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  await waitRelayDigest(WebRTC);
+  h.advance(4000);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 42 }));
+  h.frame(fields, 2, false);
+  assert.equal(WebRTC._relayLastLoadedAtMs, 1000);
+  const timerFn = h.timers.get(WebRTC._relayFreshnessTimer).fn;
+  h.advance(1000);
+  assert.equal(WebRTC.uiPhase, 'media-stalled');
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '42 ms');
+  const count = h.writes().length;
+  timerFn(); timerFn();
+  assert.equal(h.writes().length, count, 'repeated stall does not reissue reset');
+  h.settleResets(); // Complete safety release without supplying a fresh media frame.
+  h.advance(4000);
+  assert.equal(h.context.document.getElementById('latencyDisplay').textContent, '未测量');
+  assert.equal(WebRTC._relayFreshnessTimer, null);
+  assert.equal(WebRTC._relayLastLoadedAtMs, 1000);
+});
+
+test('JPEG socket replacement clears origin/pending callbacks and ignores the old registered socket', () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  const oldHandlers = new Map(), newHandlers = new Map();
+  WebRTC.socket.on = (event, fn) => oldHandlers.set(event, fn);
+  WebRTC.setupSocketListeners();
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); const load = h.frame(fields, 1, false);
+  WebRTC.socket = { id: 'viewer-new', connected: true, emit() {}, on: (event, fn) => newHandlers.set(event, fn) };
+  WebRTC.setupSocketListeners();
+  assert.equal(WebRTC._relayExpectedScope, null);
+  assert.equal(WebRTC._relayPendingStart, null);
+  load();
+  oldHandlers.get('relay-frame')({ ...fields, frameId: 2, data: 'AAAA' });
+  oldHandlers.get('relay-frame-feedback')(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 1 }));
+  assert.equal(WebRTC.tunnelLastFrameId, 0);
+  assert.equal(WebRTC._relayLastLoadedAtMs, null);
+  assert.equal(WebRTC._relayRttView, null);
+  assert.equal(WebRTC._relayFreshnessTimer, null);
+});
+
+for (const mode of ['relay', 'stun']) for (const action of ['attempt', 'freeze']) {
+  test(`JPEG origin cleanup preserves ${mode} RTT display during real ${action} lifecycle`, () => {
+    const { WebRTC, context } = loadWebRTC();
+    WebRTC.networkMode = mode;
+    WebRTC.socket = { connected: true, emit() {} };
+    const latency = context.document.getElementById('latencyDisplay');
+    latency.textContent = 'RTT 37 ms';
+    latency.title = '网络 RTT 37 ms';
+    if (action === 'attempt') WebRTC.beginConnectionAttempt('viewer-open');
+    else WebRTC.freezeControl('control-revoked');
+    assert.equal(latency.title, '网络 RTT 37 ms');
+    assert.equal(latency.textContent, 'RTT 37 ms');
+    assert.equal(WebRTC._relayExpectedScope, null);
+  });
+}
+
+test('JPEG origin cleanup still clears the just-ended active relay RTT display', async () => {
+  const h = relayIntegrationFixture(), { WebRTC } = h;
+  WebRTC.startTunnelRelay(); const { fields } = h.replyStart(); h.frame(fields);
+  await waitRelayDigest(WebRTC);
+  WebRTC.handleRelayFrameFeedback(relayFeedback(fields, 1, { sampleSequence: 1, relayFrameAckRttMs: 42 }));
+  const latency = h.context.document.getElementById('latencyDisplay');
+  assert.equal(latency.textContent, '42 ms');
+  assert.match(latency.title, /JPEG反馈往返/);
+  WebRTC.stopTunnelRelay();
+  assert.equal(latency.textContent, '未测量');
+  assert.match(latency.title, /JPEG反馈往返/);
+  assert.equal(WebRTC._relayExpectedScope, null);
+  assert.equal(WebRTC._relayRttView, null);
+});
+
+// Exercise the real consumer chain: process -> handleReceiverStats -> controller.
+test('nullable media latency survives DOM, paint cache, controller and viewer-stats without losing zero', () => {
+  const { LinkQualityController } = require('./link-quality-controller');
+  const unknowns = [null, undefined, '', '0', '725.1', true, false, {}, NaN, Infinity, -Infinity, -1];
+  const pairs = [...unknowns.flatMap(value => [[value, value], [value, 0], [40, value]]), [0, 0], [0.1, 725.1]];
+  for (const [rttMs, jitterBufferMs] of pairs) {
+    const reports = [], observed = [];
+    const monitor = require('./latency-monitor').createLatencyMonitor({ now: () => 0 });
+    const { WebRTC, context } = loadWebRTC({ LinkQualityController, LatencyMonitor: monitor, console: { log() {}, warn() {}, error() {} } });
+    WebRTC.networkMode = 'stun'; WebRTC.adaptiveMediaEnabled = true;
+    WebRTC.currentConnectionAttemptId = 'nullable-attempt'; WebRTC.connectionAttemptSequence = 1;
+    WebRTC.socket = { connected: true, emit(event, payload) { if (event === 'viewer-stats') reports.push(payload); } };
+    const controller = WebRTC.ensureLinkQualityController();
+    const observe = controller.observe.bind(controller);
+    controller.observe = stats => { observed.push(stats); return observe(stats); };
+    WebRTC.uiPhase = 'connected'; WebRTC.hasPaintedFrame = true;
+    const valid = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    WebRTC.processStatsSnapshot({ derivedFps: 20, receivedDelta: 20, decodedDelta: 20,
+      packetsLostDelta: 0, bytesDelta: 4000, totals: { framesDecoded: 20 },
+      selectedCandidateType: 'host', rttMs, jitterBufferMs, videoWidth: 1280, videoHeight: 720 });
+    assert.equal(observed.length, 1, 'real handleReceiverStats must invoke controller');
+    for (const stats of [observed[0], reports[0]]) {
+      assert.equal(stats.rttMs, valid(rttMs)); assert.equal(stats.jitterBufferMs, valid(jitterBufferMs));
+    }
+    assert.equal(WebRTC._lastPaintStats.jitterBufferMs, valid(jitterBufferMs));
+    assert.equal(monitor.snapshot().metrics.candidateRttMs.last, valid(rttMs));
+    assert.equal(monitor.snapshot().metrics.jitterBufferMs.last, valid(jitterBufferMs));
+    assert.equal(WebRTC.selectedCandidatePair.rttMs, null);
+    assert.equal(WebRTC.uiPhase, 'connected');
+    assert.equal(controller.goodCount, valid(rttMs) !== null && valid(jitterBufferMs) !== null && rttMs < controller.highRttMs && jitterBufferMs < 150 ? 1 : 0);
+    const latency = context.document.getElementById('latencyDisplay');
+    const expected = [];
+    if (valid(rttMs) !== null) expected.push(`RTT ${Math.round(rttMs)} ms`);
+    if (valid(jitterBufferMs) !== null) expected.push(`缓冲 ${Math.round(jitterBufferMs)} ms`);
+    assert.equal(latency.textContent, expected.join(' · ') || '未测量');
+    if (valid(rttMs) !== null) {
+      assert.match(latency.title, new RegExp(`RTT ${Math.round(rttMs)} ms`));
+      assert.match(context.document.getElementById('candidateDisplay').textContent, new RegExp(`· ${rttMs} ms`));
+    } else assert.doesNotMatch(context.document.getElementById('candidateDisplay').textContent, /· .* ms/);
+    if (valid(jitterBufferMs) !== null) assert.match(latency.title, new RegExp(`缓冲 ${Math.round(jitterBufferMs)} ms`));
+    if (!expected.length) assert.equal(latency.title, '未测量');
+    WebRTC.processStatsSnapshot({ derivedFps: 20, decodedDelta: 20, receivedDelta: 20,
+      selectedCandidateType: 'host', selectedCandidatePair: { localType: 'host', remoteType: 'srflx', rttMs } });
+    assert.equal(WebRTC.selectedCandidatePair.rttMs, valid(rttMs));
+    assert.equal(WebRTC.selectedCandidatePair.remoteType, 'srflx');
+  }
+});
+
+for (const selectedCandidateType of ['host', 'prflx', 'relay']) test(`${selectedCandidateType} guidance distinguishes RTT zero from unavailable`, () => {
+  const { WebRTC, context } = loadWebRTC({ console: { log() {}, warn() {}, error() {} } });
+  WebRTC.networkMode = selectedCandidateType === 'relay' ? 'relay' : 'stun';
+  WebRTC.uiPhase = 'connected'; WebRTC.hasPaintedFrame = true;
+  for (const rttMs of [0, null]) {
+    WebRTC.processStatsSnapshot({ derivedFps: 20, decodedDelta: 20, receivedDelta: 20,
+      bytesDelta: 4000, selectedCandidateType, rttMs, jitterBufferMs: 0, videoWidth: 1280 });
+    assert.match(context.document.getElementById('networkAdvisorText').textContent,
+      rttMs === null ? /RTT 未测量/ : /RTT 0 ms/);
+  }
+});
+
+function webRtcDurationFixture() {
+  let mono = 0, wall = 1792208500000, timerId = 0;
+  const timers = new Map();
+  const result = loadWebRTC({
+    performance: { now: () => mono }, Date: { now: () => wall },
+    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay, due: mono + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  return { ...result, timers,
+    stepWall(delta) { wall += delta; },
+    setMono(value) { mono = value; },
+    advanceTo(target) {
+      for (;;) {
+        const next = [...timers].sort((a, b) => a[1].due - b[1].due)[0];
+        if (!next || next[1].due > target) break;
+        mono = next[1].due; timers.delete(next[0]); next[1].fn();
+      }
+      mono = target;
+    },
+  };
+}
+
+function modeSwitchRecoveryFixture({ withEpisode = false } = {}) {
+  const h = webRtcDurationFixture();
+  const { WebRTC, context } = h;
+  const sockets = [], peers = [];
+  let resolveConfig;
+  context.setInterval = () => 1;
+  context.clearInterval = () => {};
+  context.io = (_url, options) => {
+    const handlers = new Map();
+    const socket = { id: `mode-socket-${sockets.length}`, auth: options.auth, connected: false,
+      on(event, fn) { handlers.set(event, fn); }, emit() {},
+      disconnect() { this.connected = false; },
+      trigger(event, data) { return handlers.get(event)?.(data); },
+      io: { opts: options, engine: { readyState: 'opening', transport: { name: 'websocket' } },
+        _readyState: 'closed', reconnection() {} } };
+    sockets.push(socket);
+    return socket;
+  };
+  WebRTC.serverConfig = { turnConfigured: true, turnStatus: 'configured', iceServers: [] };
+  WebRTC.loadServerConfig = () => new Promise(resolve => { resolveConfig = resolve; });
+  WebRTC.configureNetworkControls = () => {};
+  WebRTC.bindControlLifecycle = () => {};
+  WebRTC.createPeerConnection = () => {
+    const peer = { connectionState: 'new', close() {} };
+    WebRTC.pc = peer; peers.push(peer);
+  };
+  if (withEpisode) {
+    const episode = WebRTC.beginStartupEpisode();
+    episode.state = 'complete';
+  }
+  const a = WebRTC.createSignalingSocket();
+  WebRTC.scheduleSignalingRecovery();
+  const oldTimer = WebRTC._signalRecoveryTimer;
+  const queuedA = h.timers.get(oldTimer).fn;
+  WebRTC.setNetworkMode('stun');
+  assert.equal(WebRTC.socket, null);
+  assert.equal(typeof resolveConfig, 'function');
+  return { ...h, sockets, peers, a, oldTimer, queuedA,
+    async finishConfig() {
+      resolveConfig();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      assert.equal(sockets.length, 2);
+      return sockets[1];
+    } };
+}
+
+for (const ordering of ['expiry-during-config', 'error-before-expiry', 'error-after-expiry', 'queued-A-after-B-timer']) {
+  test(`mode-switch watchdog ownership: ${ordering} recreates current socket at original max wait`, async t => {
+    const h = modeSwitchRecoveryFixture(), { WebRTC } = h;
+    const expected = [['[RECOVERY] Signaling connect error:', 'timeout'],
+      ['[RECOVERY] Recreating signaling socket after %sms reason=%s', 24000, 'signal-connect-error']];
+    captureExpectedSignalingWarnings(t, h.context, expected);
+    const oldOrigin = WebRTC._signalRecoveryStartedAt;
+    if (ordering === 'expiry-during-config' || ordering === 'error-after-expiry') {
+      h.advanceTo(1500);
+      h.queuedA();
+    } else h.advanceTo(500);
+    assert.equal(h.peers.length, 0);
+    h.a.connected = true;
+    await h.a.trigger('connect');
+    assert.equal(h.peers.length, 0, 'old connect cannot create a peer during config');
+    h.a.connected = false;
+    if (ordering === 'error-after-expiry') h.advanceTo(2000);
+    const b = await h.finishConfig();
+    assert.equal(h.peers.length, 1);
+    b.trigger('connect_error', { message: 'timeout' });
+    const timerB = WebRTC._signalRecoveryTimer;
+    if (ordering === 'queued-A-after-B-timer') {
+      h.advanceTo(1500);
+      h.queuedA(); // Cancellation cannot remove an already queued callback.
+      assert.equal(WebRTC._signalRecoveryTimer, timerB);
+      assert.equal(WebRTC.socket, b);
+      assert.equal(h.sockets.length, 2);
+    }
+    assert.equal(WebRTC._signalRecoveryStartedAt, oldOrigin, 'quiesce/error retain elapsed budget');
+    assert.equal(WebRTC._signalRecoveryPending, true);
+    h.advanceTo(23999);
+    assert.equal(h.sockets.length, 2);
+    h.advanceTo(24000);
+    assert.equal(h.sockets.length, 3, 'current socket watchdog must recreate at unchanged maximum wait');
+    assert.notEqual(WebRTC.socket, b);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 24000);
+  });
+}
+
+for (const outcome of ['connect', 'manual-disconnect', 'superseded', 'retired-episode']) {
+  test(`mode-switch watchdog ownership: ${outcome} cancels current recovery and fences queued timers`, async t => {
+    const h = modeSwitchRecoveryFixture({ withEpisode: outcome === 'retired-episode' }), { WebRTC } = h;
+    captureExpectedSignalingWarnings(t, h.context, [
+      ['[RECOVERY] Signaling connect error:', 'timeout'],
+      ...(outcome === 'superseded' ? [['[VIEWER] superseded', 'unknown', '']] : []),
+    ]);
+    h.advanceTo(500);
+    const b = await h.finishConfig();
+    b.trigger('connect_error', { message: 'timeout' });
+    const timerB = WebRTC._signalRecoveryTimer;
+    const queuedB = h.timers.get(timerB).fn;
+    if (outcome === 'connect') {
+      // Actual connect cleanup can refresh a stale peer; isolate that media effect.
+      WebRTC.refresh = () => {};
+      b.connected = true; await b.trigger('connect');
+    } else if (outcome === 'manual-disconnect') WebRTC.disconnect();
+    else if (outcome === 'superseded') WebRTC.handleViewerSuperseded();
+    else WebRTC.retireStartupEpisode('startup-cancelled', { cleanup: true });
+    assert.equal(WebRTC._signalRecoveryTimer, null);
+    assert.equal(WebRTC._signalRecoveryStartedAt, null);
+    assert.equal(WebRTC._signalRecoveryPending, false);
+    h.queuedA(); queuedB(); h.advanceTo(15000);
+    assert.equal(h.sockets.length, 2);
+    assert.equal(WebRTC._signalRecoveryTimer, null);
+  });
+}
+
+test('signaling watchdog retires its own spent handle before stale socket or episode returns', () => {
+  for (const stale of ['socket', 'episode']) {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    const episode = WebRTC.beginStartupEpisode();
+    episode.state = 'complete';
+    const handlers = new Map();
+    h.context.io = () => ({ connected: false, on(event, fn) { handlers.set(event, fn); }, emit() {}, disconnect() {} });
+    WebRTC.createSignalingSocket();
+    WebRTC.scheduleSignalingRecovery();
+    const timer = WebRTC._signalRecoveryTimer;
+    if (stale === 'socket') WebRTC.createSignalingSocket(true);
+    else WebRTC.retireStartupEpisode('startup-cancelled');
+    h.advanceTo(1500);
+    assert.equal(h.timers.has(timer), false);
+    assert.equal(WebRTC._signalRecoveryTimer, null, stale);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 0, stale);
+    assert.equal(WebRTC._signalRecoveryPending, true, stale);
+    assert.equal(WebRTC.pc, null, stale);
+  }
+});
+
+for (const wallStep of [-60000, 60000]) {
+  test(`duration clock: signaling preserves mono0 through 1500/24000/25500 with wall step ${wallStep}`, () => {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    WebRTC.socket = { connected: false };
+    let recreated = 0;
+    WebRTC.createSignalingSocket = (recreate) => { assert.equal(recreate, true); recreated++; };
+    assert.equal(WebRTC.scheduleSignalingRecovery(), true);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 0);
+    h.stepWall(wallStep); h.advanceTo(1500);
+    assert.equal(recreated, 0);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 0);
+    h.advanceTo(23999); assert.equal(recreated, 0);
+    h.advanceTo(24000); assert.equal(recreated, 1);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 24000);
+    h.stepWall(-wallStep); h.advanceTo(13500);
+    assert.equal(recreated, 1);
+    assert.equal(WebRTC._signalRecoveryStartedAt, 24000);
+  });
+
+  test(`duration clock: media progress freshness expires by elapsed time with wall step ${wallStep}`, () => {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    WebRTC._lastInboundFramesDecoded = 10;
+    assert.equal(WebRTC._lastInboundFramesDecodedAt, null);
+    assert.equal(WebRTC.isInboundVideoHealthy(), false);
+    WebRTC.handlePortSearchMedia = () => {};
+    WebRTC.handleReceiverStats = () => {};
+    WebRTC.processStatsSnapshot({ decodedDelta: 1, receivedDelta: 1, bytesDelta: 100,
+      totals: { framesDecoded: 11 }, selectedCandidateType: 'host' });
+    assert.equal(WebRTC._lastInboundFramesDecodedAt, 0);
+    assert.equal(WebRTC.isInboundVideoHealthy(), true);
+    h.stepWall(wallStep); h.setMono(5000);
+    assert.equal(WebRTC.isInboundVideoHealthy(), true);
+    h.setMono(5001); assert.equal(WebRTC.isInboundVideoHealthy(), false);
+    WebRTC.processStatsSnapshot({ decodedDelta: 0, receivedDelta: 0, bytesDelta: 0 });
+    assert.equal(WebRTC._lastInboundFramesDecodedAt, 0, 'no progress cannot renew freshness');
+  });
+
+  test(`duration clock: refresh/keyframe cooldown admits unset and cools mono0 with wall step ${wallStep}`, async () => {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    const emitted = [];
+    WebRTC.socket = { connected: true, emit: (...args) => emitted.push(args) };
+    WebRTC.isMediaHealthSuppressed = () => false;
+    WebRTC.activeLeaseEnvelope = () => ({ leaseId: 'lease-clock', leaseEpoch: 3 });
+    assert.equal(WebRTC._lastRefreshAt, null);
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), true);
+    WebRTC.networkMode = 'relay';
+    WebRTC.hasTurnConfigured = () => true;
+    WebRTC.getTurnServers = () => [{ urls: 'turn:fixture.invalid' }];
+    WebRTC.stopTunnelRelay = () => {};
+    WebRTC.createPeerConnection = () => {};
+    WebRTC.createOffer = () => {};
+    await WebRTC.refresh({ reason: 'dc-error' });
+    assert.equal(WebRTC._lastRefreshAt, 0);
+    WebRTC.markRefreshSettled('test');
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), false);
+    assert.equal(WebRTC.requestKeyframe('test'), true);
+    assert.equal(WebRTC._lastKeyframeRequestAt, 0);
+    assert.equal(WebRTC.requestKeyframe('test'), false);
+    h.stepWall(wallStep); h.setMono(999);
+    assert.equal(WebRTC.requestKeyframe('test'), false);
+    h.setMono(1000); assert.equal(WebRTC.requestKeyframe('test'), true);
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), false);
+    WebRTC.scheduleReconnect('dc-error');
+    assert.equal(WebRTC.reconnectTimer, null);
+    h.setMono(3000);
+    assert.equal(WebRTC.canBeginRefresh('dc-error'), true);
+    WebRTC.scheduleReconnect('dc-error');
+    assert.notEqual(WebRTC.reconnectTimer, null);
+    assert.equal(emitted.filter(([event]) => event === 'request-keyframe').length, 2);
+    WebRTC.currentConnectionAttemptId = 'replacement';
+    assert.equal(WebRTC.requestKeyframe('new-generation'), true);
+  });
+}
+
+test('duration clock: signaling cancellation on success/manual/superseded clears zero origin', () => {
+  for (const outcome of ['success', 'manual', 'superseded']) {
+    const h = webRtcDurationFixture(), { WebRTC } = h;
+    let recreated = 0;
+    WebRTC.socket = { connected: false, disconnect() {} };
+    WebRTC.createSignalingSocket = () => { recreated++; };
+    WebRTC.scheduleSignalingRecovery();
+    const timer = WebRTC._signalRecoveryTimer;
+    if (outcome === 'success') {
+      WebRTC.socket.connected = true;
+      WebRTC.refresh = () => {};
+      h.advanceTo(1500);
+    } else if (outcome === 'manual') WebRTC.disconnect();
+    else WebRTC.handleViewerSuperseded();
+    assert.equal(WebRTC._signalRecoveryStartedAt, null, outcome);
+    assert.equal(WebRTC._signalRecoveryPending, false, outcome);
+    assert.equal(WebRTC._signalRecoveryTimer, null, outcome);
+    assert.equal(h.timers.has(timer), false, outcome);
+    h.stepWall(60000); h.advanceTo(15000);
+    assert.equal(recreated, 0, outcome);
+    assert.equal(WebRTC._signalRecoveryTimer, null, outcome);
+  }
+});
+
+for (const lifecycle of ['refresh', 'disconnect', 'superseded', 'tunnel', 'control-lease']) {
+  test(`DataChannel watchdog retires on actual ${lifecycle} lifecycle and rejects queued callbacks`, async () => {
+    let now = 0, nextId = 0; const timers = new Map();
+    const { WebRTC, context } = loadWebRTC({ performance: { now: () => now },
+      setTimeout(fn, ms) { const id = nextId++; timers.set(id, { fn, ms }); return id; },
+      clearTimeout(id) { timers.delete(id); } });
+    WebRTC.socket = { connected: true, emit() {}, on() {}, disconnect() {}, io: { reconnection() {} } };
+    WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true,
+      lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 } };
+    WebRTC.networkMode = 'auto'; WebRTC.currentConnectionAttemptId = 'old'; WebRTC.connectionAttemptSequence = 1;
+    WebRTC.pc = { connectionState: 'new', iceConnectionState: 'new',
+      _wrdControlLease: { ...WebRTC.controlState.lease }, createDataChannel: () => ({ readyState: 'connecting' }),
+      close() { oldChannel.onclose(); } };
+    WebRTC.createInputChannel(); const oldChannel = WebRTC.inputChannel;
+    const timeout = timers.get(WebRTC._dcTimeout).fn; const faults = [];
+    WebRTC.noteDataChannelFault = reason => faults.push(reason); WebRTC.scheduleReconnect = reason => faults.push(reason);
+    WebRTC.createPeerConnection = () => {}; WebRTC.createOffer = () => {};
+    if (lifecycle === 'refresh') await WebRTC.refresh({ reason: 'manual' });
+    if (lifecycle === 'disconnect') WebRTC.disconnect();
+    if (lifecycle === 'superseded') WebRTC.handleViewerSuperseded();
+    if (lifecycle === 'tunnel') { WebRTC.networkMode = 'tunnel'; WebRTC.startTunnelRelay(); }
+    if (lifecycle === 'control-lease') {
+      context.Input = { init() {}, setControlLease() {}, setActive() {} };
+      WebRTC.startControlHeartbeat = () => {}; WebRTC.updateControlUI = () => {};
+      WebRTC.bindCurrentConnectionAttempt = () => false; WebRTC.replayMediaActivityIntent = () => false;
+      WebRTC.ensureMediaActiveIfVisible = () => false;
+      WebRTC.handleControlGrant({ controller: true, leaseId: 'lease-000000000002', leaseEpoch: 2 });
+    }
+    assert.equal(WebRTC._dataChannelWatchdog, null); assert.equal(WebRTC._dcTimeout, null);
+    now = 40000; timeout(); oldChannel.onclose(); oldChannel.onerror({});
+    assert.deepEqual(faults, []); assert.equal(WebRTC._dcReconnectTimer, null);
+  });
+}
+
+
+function captureExpectedSignalingWarnings(t, context, expected) {
+  const originalConsole = context.console;
+  const warnings = [];
+  context.console = { ...originalConsole, warn(...args) {
+    if (expected.some(warning => warning.length === args.length && warning.every((value, index) => value === args[index]))) {
+      warnings.push(args);
+    } else {
+      originalConsole.warn(...args);
+    }
+  } };
+  t.after(() => {
+    context.console = originalConsole;
+    assert.deepEqual(warnings, expected);
+  });
+}
+
+test('signaling session persists through bootstrap reuse, media attempts, refresh, mode switch and socket recreation', async t => {
+  const h = admissionViewerFixture();
+  captureExpectedSignalingWarnings(t, h.context, [['[RECOVERY] Signaling connect error:', 'timeout']]);
+  let finishBootstrap;
+  const start = h.WebRTC.startViewer({ load: () => new Promise(resolve => { finishBootstrap = resolve; }) });
+  for (let i = 0; i < 20 && !finishBootstrap; i++) await Promise.resolve();
+  const first = h.sockets[0];
+  first.active = true;
+  first.trigger('connect_error', { message: 'timeout' });
+  const session = h.WebRTC._signalingSession;
+  assert.equal(session.preferPolling, true);
+  const captured = h.WebRTC.getSignalingFailureSnapshot();
+  finishBootstrap({ webrtc: { iceServers: [] } }); await start;
+  assert.equal(h.WebRTC._signalingSession, session, 'init reuse must preserve bootstrap timeout selection');
+  assert.equal(h.WebRTC.socket, first);
+  h.WebRTC.beginConnectionAttempt('manual-turn-switch');
+  assert.equal(h.WebRTC._signalingSession, session);
+  h.WebRTC.createSignalingSocket(true);
+  assert.equal(h.WebRTC._signalingSession, session);
+  assert.deepEqual(Array.from(h.sockets.at(-1).io.opts.transports), ['polling', 'websocket']);
+  await h.WebRTC.refresh({ reason: 'fresh-frame-timeout' });
+  assert.equal(h.WebRTC._signalingSession, session);
+  h.WebRTC.setNetworkMode('tunnel');
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  assert.equal(h.WebRTC._signalingSession, session);
+  assert.equal(h.WebRTC.getSignalingFailureSnapshot().failureClass, 'timeout');
+  assert.equal(captured.ageMs, 0); assert.equal(h.requests.length, 1);
+});
+
+test('explicit Start and successful reclaim reset signaling session before new socket; retired callbacks cannot select', async t => {
+  const h = admissionViewerFixture();
+  captureExpectedSignalingWarnings(t, h.context, [['[RECOVERY] Signaling connect error:', 'timeout']]);
+  await h.WebRTC.startViewer(h.controller);
+  const old = h.sockets[0]; old.active = true; old.trigger('connect_error', { message: 'timeout' });
+  const previous = h.WebRTC._signalingSession;
+  await h.WebRTC.startViewer(h.controller);
+  assert.notEqual(h.WebRTC._signalingSession, previous); assert.equal(h.WebRTC.getSignalingFailureSnapshot(), null);
+  assert.deepEqual(Array.from(h.sockets.at(-1).io.opts.transports), ['websocket', 'polling']);
+  old.trigger('connect_error', { message: 'timeout' }); assert.equal(h.WebRTC._signalingSession.preferPolling, false);
+  const beforeReclaim = h.WebRTC._signalingSession; beforeReclaim.preferPolling = true;
+  await h.WebRTC.reclaimDesktopSession();
+  assert.notEqual(h.WebRTC._signalingSession, beforeReclaim);
+  assert.equal(h.WebRTC.getSignalingFailureSnapshot(), null);
+  assert.deepEqual(Array.from(h.sockets.at(-1).io.opts.transports), ['websocket', 'polling']);
+});
+
+for (const stop of ['disconnect', 'handleViewerSuperseded']) {
+  test(`signaling session and last error retire on ${stop}`, async t => {
+    const h = admissionViewerFixture();
+    captureExpectedSignalingWarnings(t, h.context, [['[RECOVERY] Signaling connect error:', 'timeout'],
+      ...(stop === 'handleViewerSuperseded' ? [['[VIEWER] superseded', 'unknown', '']] : [])]);
+    await h.WebRTC.startViewer(h.controller);
+    const socket = h.sockets[0]; socket.active = true; socket.trigger('connect_error', { message: 'timeout' });
+    const failure = h.WebRTC.getSignalingFailureSnapshot();
+    h.WebRTC[stop](); assert.equal(h.WebRTC.getSignalingFailureSnapshot(), null);
+    socket.trigger('connect_error', { message: 'timeout' }); assert.equal(h.WebRTC._signalingSession, null);
+    assert.equal(failure.failureClass, 'timeout'); assert.equal(Object.isFrozen(failure), true);
+  });
+}
+
+test('startup ownership: new explicit Start fences older admission before bootstrap and init', async () => {
+  let finishAdmission;
+  let calls = 0;
+  const h = admissionViewerFixture({ fetchAdmission: () => {
+    calls++;
+    if (calls === 1) return new Promise(resolve => { finishAdmission = resolve; });
+    return { ok: true, status: 201, json: async () => ({ admission: { ticket: 'new-ticket' } }) };
+  } });
+  const old = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  const retired = h.WebRTC._startupEpisode;
+  await h.WebRTC.startViewer(h.controller);
+  const current = h.WebRTC._startupEpisode;
+  finishAdmission({ ok: true, status: 201, json: async () => ({ admission: { ticket: 'old-ticket' } }) });
+  await old;
+  assert.equal(retired.state, 'retired');
+  assert.equal(h.WebRTC._startupEpisode, current);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.sockets[0].auth.viewerAdmission.ticket, 'new-ticket');
+});
+
+test('startup ownership: cancelled bootstrap resolution and rejection cannot revive UI or overwrite next Start', async () => {
+  for (const rejectOld of [false, true]) {
+    const h = admissionViewerFixture();
+    let finish, reject;
+    const controller = { load: () => new Promise((resolve, fail) => { finish = resolve; reject = fail; }), cancel() {} };
+    const old = h.WebRTC.startViewer(controller);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    h.WebRTC.retireStartupEpisode('startup-cancelled', { cleanup: true });
+    await h.WebRTC.startViewer(h.controller);
+    const current = h.WebRTC._startupEpisode;
+    if (rejectOld) reject(new Error('old-bootstrap-error'));
+    else finish({ webrtc: { iceServers: [{ urls: 'turn:old.invalid' }] } });
+    await old;
+    assert.equal(h.WebRTC._startupEpisode, current);
+    assert.equal(h.WebRTC.uiPhase, 'signaling');
+    assert.equal(h.WebRTC.hasTurnConfigured(), false);
+    assert.equal(h.sockets.length, 2);
+  }
+});
+
+test('startup ownership: deferred verification from older Start cannot enroll over newer Start', async () => {
+  const h = admissionViewerFixture();
+  let finish, checks = 0;
+  h.context.Auth.whenReady = () => ++checks === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(true);
+  const old = h.WebRTC.startViewer(h.controller);
+  await h.WebRTC.startViewer(h.controller);
+  const current = h.WebRTC._startupEpisode;
+  finish(true);
+  await old;
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.WebRTC._startupEpisode, current);
+});
+
+test('startup ownership: retained superseded config cannot cross auth scope before explicit reclaim', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  let finish;
+  h.controller.load = () => new Promise(resolve => { finish = resolve; });
+  const start = h.WebRTC.startViewer(h.controller);
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  h.sockets[0].trigger('viewer-superseded', {});
+  finish({ webrtc: { turnConfigured: true, iceServers: [{ urls: 'turn:old.invalid' }] } });
+  await start;
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
+  h.context.Auth.getToken = () => 'new-auth';
+  await h.WebRTC.reclaimDesktopSession();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.WebRTC.pc, null);
+  assert.equal(h.WebRTC.hasTurnConfigured(), false);
+});
+
+test('startup ownership: detached old PC and metadata callbacks cannot act on replacement PC', async () => {
+  const h = admissionViewerFixture({ realPeer: true });
+  await h.WebRTC.startViewer(h.controller);
+  const old = h.WebRTC.pc;
+  const connected = old.onconnectionstatechange, track = old.ontrack;
+  await h.WebRTC.startViewer(h.controller);
+  const current = h.WebRTC.pc, episode = h.WebRTC._startupEpisode;
+  connected();
+  track({});
+  assert.equal(h.WebRTC.pc, current);
+  assert.equal(h.WebRTC._startupEpisode, episode);
+  assert.equal(h.WebRTC.uiPhase, 'signaling');
+  assert.equal(h.WebRTC.hasPaintedFrame, false);
+});
+
+for (const boundary of ['admission', 'pre-enrollment bootstrap']) {
+  test(`review I1: obsolete reclaim ${boundary} rejection cannot terminate a newer explicit Start`, async () => {
+    let rejectOld, admissionCalls = 0;
+    const h = admissionViewerFixture({ realPeer: true, fetchAdmission: () => {
+      admissionCalls++;
+      if (boundary === 'admission' && admissionCalls === 2) {
+        return new Promise((_resolve, reject) => { rejectOld = reject; });
+      }
+      return { ok: true, status: 201, json: async () => ({ admission: { ticket: `ticket-${admissionCalls}` } }) };
+    } });
+    let oldStart;
+    if (boundary === 'pre-enrollment bootstrap') {
+      oldStart = h.WebRTC.startViewer({ load: () => new Promise((_resolve, reject) => { rejectOld = reject; }) });
+      for (let i = 0; i < 30; i++) await Promise.resolve();
+      h.sockets[0].trigger('viewer-superseded', {});
+    } else {
+      await h.WebRTC.startViewer(h.controller);
+    }
+    const reclaim = h.WebRTC.reclaimDesktopSession();
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    await h.WebRTC.startViewer(h.controller);
+    const w = h.WebRTC, episode = w._startupEpisode, pc = w.pc, socket = w.socket;
+    const timer = episode.timer, phase = w.uiPhase;
+    rejectOld(new Error('obsolete-request-failed'));
+    assert.equal(await reclaim, false);
+    if (oldStart) await oldStart;
+    assert.equal(w._startupEpisode, episode);
+    assert.equal(episode.state, 'pending');
+    assert.equal(episode.timer, timer);
+    assert.equal(w.pc, pc);
+    assert.equal(w.socket, socket);
+    assert.equal(w.uiPhase, phase);
+    assert.equal(admissionCalls, boundary === 'admission' ? 3 : 2);
+  });
+}
+
+test('review I1: current reclaim admission rejection retains terminal failure authority', async () => {
+  const h = admissionViewerFixture({ fetchAdmission: () => Promise.reject(new Error('current-request-failed')) });
+  assert.equal(await h.WebRTC.reclaimDesktopSession(), false);
+  assert.equal(h.WebRTC._startupEpisode.state, 'retired');
+  assert.equal(h.WebRTC._startupEpisode.reason, 'bootstrap-failure');
+  assert.equal(h.WebRTC.uiPhase, 'disconnected');
+});
+
+const startupJoinFlush = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(); };
+function startupJoinDeferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+async function startupJoinScenario(delayed, outcome = 'normal') {
+  const events = [], peers = [], sockets = [], requests = [], errors = [], warnings = [];
+  let clock = 0;
+  const bootstrap = startupJoinDeferred();
+  class FakePeer {
+    constructor(config) { this.ordinal = peers.length + 1; this.config = config; this.connectionState = 'new'; this.iceConnectionState = 'new'; this.iceGatheringState = 'complete'; this.signalingState = 'stable'; this.transceivers = []; this.remoteDescriptions = 0; peers.push(this); events.push(['pc-created', this.ordinal]); }
+    createDataChannel() { return { readyState: 'connecting', bufferedAmount: 0, send() {}, close() {} }; }
+    getTransceivers() { return this.transceivers; }
+    addTransceiver() { const t = { receiver: { track: { kind: 'video' } }, setCodecPreferences() {} }; this.transceivers.push(t); return t; }
+    async createOffer() { events.push(['platform-createOffer', this.ordinal]); return { type: 'offer', sdp: 'offline-fixture-sdp' }; }
+    async setLocalDescription(value) { this.localDescription = value; this.signalingState = 'have-local-offer'; events.push(['platform-local-description', this.ordinal]); }
+    async setRemoteDescription(value) { this.remoteDescription = value; this.remoteDescriptions++; this.signalingState = 'stable'; events.push(['platform-remote-description', this.ordinal]); }
+    close() { this.connectionState = 'closed'; this.signalingState = 'closed'; events.push(['pc-closed', this.ordinal]); }
+    addEventListener() {} removeEventListener() {}
+  }
+  const quiet = { log() {}, warn(...args) { warnings.push(String(args[0])); }, error(...args) { errors.push(String(args[0])); } };
+  const elements = new Map();
+  const h = loadWebRTC({
+    realInput: true,
+    window: { location: { origin: 'http://offline.invalid' }, addEventListener() {}, removeEventListener() {} },
+    document: { readyState: 'loading', hidden: false, querySelectorAll: () => [], body: makeElement(), addEventListener() {}, querySelector: () => null, getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); } },
+    console: quiet,
+    setTimeout() { return 0; }, clearTimeout() {}, setInterval() { return 0; }, clearInterval() {},
+    performance: { now: () => clock },
+    Auth: { whenReady: async () => true, getToken: () => 'offline-token', getGeneration: () => 1, isVerified: () => true, isLoggedIn: () => true, logout() { throw Error('unexpected logout'); } },
+    sessionStorage: { getItem() { return null; }, setItem() {} },
+    fetch: async (url) => { requests.push(url.endsWith('/api/auth/viewer-admission') ? 'admission' : 'unexpected'); return { ok: true, status: 201, json: async () => ({ admission: { ticket: 'offline-ticket' } }) }; },
+    RTCPeerConnection: FakePeer,
+    io(_base, options) {
+      const handlers = new Map();
+      const socket = { connected: false, auth: options.auth, emitted: [],
+        on(event, fn) { handlers.set(event, fn); },
+        emit(event, data) { this.emitted.push({ event, data }); events.push(['socket-emit', event]); },
+        disconnect() { this.connected = false; },
+        trigger(event, data) { return handlers.get(event)?.(data); },
+        io: { opts: options, engine: { readyState: 'open', transport: { name: 'websocket' } }, _readyState: 'open', on() {}, reconnection() {} }
+      }; sockets.push(socket); return socket;
+    }
+  });
+  const W = h.WebRTC;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'bootstrap-controller.js'), 'utf8'), h.context);
+  const controller = h.context.createViewerBootstrap({ getScope: () => 1, now: () => clock,
+    setTimer: () => 0, clearTimer() {}, fetchSnapshot: () => bootstrap.promise });
+  const config = { schemaVersion: 1, host: { online: true, capabilities: {} }, webrtc: { iceServers: [{ urls: ['stun:offline.invalid'] }], turnConfigured: false } };
+  // Observe real calls without replacing their bodies or mutating product state.
+  const protectedMethods = ['startViewer', 'requestExplicitViewerAdmission', 'createSignalingSocket', 'init', 'handleControlGrant', 'createPeerConnection', 'createOffer'];
+  for (const name of protectedMethods) { const original = W[name]; W[name] = function(...args) { events.push(['real-method', name]); return original.apply(this, args); }; }
+  if (!delayed) { bootstrap.resolve(config); await controller.load({ mode: W.networkMode, turnServerId: W.selectedTurnServerId || '' }); }
+  const pending = W.startViewer(controller);
+  await startupJoinFlush();
+  assert.equal(sockets.length, 1, 'ordinary admission should create exactly one socket');
+  const socket = sockets[0];
+  if (!delayed) await pending;
+  socket.connected = true;
+  await socket.trigger('connect');
+  socket.trigger('connected', { hostOnline: true, hostCapabilities: {}, viewerAdmission: { mode: 'resume', generation: 'offline-generation' } });
+  assert(socket.emitted.some(e => e.event === 'control-acquire'), 'welcome must actually request control');
+  const grant = { controller: true, leaseId: 'offline-lease-00000001', leaseEpoch: 1 };
+  if (outcome !== 'no-control') {
+    socket.trigger('control-grant', grant);
+    socket.trigger('control-grant', grant); // duplicate while the offer is in flight
+  }
+  await startupJoinFlush();
+  if (outcome === 'input-unavailable') {
+    const input = h.context.__Input;
+    assert.equal(input.keyboardTransport.acceptAck({ schemaVersion: 2, leaseEpoch: 1, status: 'invalid-input' }).status, 'reacquire-required');
+    socket.trigger('control-grant', grant); // real setControlLease must reject this lease
+    assert.equal(input._recoveryControlReacquireRequired, true);
+  }
+  if (outcome === 'cancel') W.retireStartupEpisode('startup-cancelled', { cleanup: true });
+  if (outcome === 'supersede') socket.trigger('viewer-superseded', {});
+  if (outcome === 'auth-change') h.context.Auth.getToken = () => 'changed-token';
+  const before = { pcs: peers.length, offers: socket.emitted.filter(e => e.event === 'offer').length, deferred: W._deferPeerUntilConfig, currentPc: W.pc?.ordinal, pcSignaling: W.pc?.signalingState, configServerEntries: W.pc?.config?.iceServers?.length, attemptSequence: W.connectionAttemptSequence };
+  if (delayed) { clock = 900; bootstrap.resolve(config); await pending; await startupJoinFlush(); }
+  const after = { pcs: peers.length, offers: socket.emitted.filter(e => e.event === 'offer').length, currentPc: W.pc?.ordinal, pcSignaling: W.pc?.signalingState, oldClosed: peers.length > 1 ? peers[0].connectionState === 'closed' : null, gateAllowed: W.canEnableDesktopInput(), episodeState: W._startupEpisode?.state, configServerEntries: W.pc?.config?.iceServers?.length, attemptSequence: W.connectionAttemptSequence };
+  if (outcome !== 'normal') {
+    assert.equal(socket.emitted.filter(e => e.event === 'offer').length, 0);
+    if (['cancel', 'supersede', 'auth-change'].includes(outcome)) assert.equal(peers.length, 0);
+    h.cleanup(); return;
+  }
+  socket.trigger('control-grant', grant); // duplicate after createOffer's lock clears
+  await startupJoinFlush();
+  assert.equal(socket.emitted.filter(e => e.event === 'offer').length, 1);
+  await socket.trigger('answer', { answer: { type: 'answer', sdp: 'offline-fixture-answer' } });
+  await startupJoinFlush();
+  const result = { scenario: delayed ? 'delayed-bootstrap-fast-grant' : 'ready-bootstrap-control', before, after,
+    answersApplied: peers.map(p => p.remoteDescriptions), requests, errors, warnings, events };
+  assert.deepEqual(requests, ['admission']);
+  assert.deepEqual(errors, []);
+  if (delayed) {
+    assert.equal(before.pcs, 0, 'deferred configuration must fence peer creation');
+    assert.equal(before.offers, 0, 'deferred configuration must fence offers');
+  }
+  assert.equal(after.pcs, 1);
+  assert.equal(after.offers, 1);
+  assert.equal(peers[0].remoteDescriptions, 1);
+  assert.equal(h.context.__Input.activeControlLease.leaseEpoch, 1);
+  assert.equal(h.context.__Input._recoveryControlReacquireRequired, false);
+  // Stable completed peers can still renegotiate on a later regrant.
+  socket.trigger('control-grant', grant);
+  await startupJoinFlush();
+  assert.equal(socket.emitted.filter(e => e.event === 'offer').length, 2);
+  h.cleanup();
+  return result;
+}
+
+test('startup config join: delayed configuration and early real Input grant', async () => { await startupJoinScenario(true); });
+test('startup config join: ready configuration and late real Input grant', async () => { await startupJoinScenario(false); });
+
+for (const outcome of ['input-unavailable', 'no-control', 'cancel', 'supersede', 'auth-change']) {
+  test(`startup config join: delayed config preserves ${outcome}`, async () => { await startupJoinScenario(true, outcome); });
+}
+
+// Offline synthetic browser boundaries; all recovery, media and Input methods are real.
+async function afterGracePeerFixture({ pending = false, firstGrant = false, channelState = 'open' } = {}) {
+  let clock = 1000, timerId = 0, frameId = 0;
+  const timers = new Map(), frames = new Map(), peers = [], emitted = [], writes = [], plays = [], samples = [];
+  const setTimer = (fn, ms, interval = false) => {
+    const id = ++timerId; timers.set(id, { fn, ms, interval }); return id;
+  };
+  class RecoveryPeer {
+    constructor() {
+      this.connectionState = this.iceConnectionState = 'new';
+      this.signalingState = 'stable'; this.iceGatheringState = 'complete';
+      this.transceivers = []; this.channels = []; this.decoded = 0; this.offers = 0; peers.push(this);
+    }
+    createDataChannel() {
+      const channel = { readyState: channelState, bufferedAmount: 0,
+        send(value) { writes.push(JSON.parse(value)); }, close() { this.readyState = 'closed'; this.onclose?.(); } };
+      this.channels.push(channel); return channel;
+    }
+    getTransceivers() { return this.transceivers; }
+    addTransceiver() {
+      const t = { receiver: { track: { kind: 'video' } }, setCodecPreferences() {} };
+      this.transceivers.push(t); return t;
+    }
+    getReceivers() { return []; }
+    async createOffer() { this.offers++; return { type: 'offer', sdp: 'offline-fixture-sdp' }; }
+    async setLocalDescription(value) { this.localDescription = value; this.signalingState = 'have-local-offer'; }
+    async setRemoteDescription(value) { this.remoteDescription = value; this.signalingState = 'stable'; }
+    async getStats() { return new Map([['video', { type: 'inbound-rtp', kind: 'video',
+      framesDecoded: this.decoded, framesReceived: this.decoded, frameWidth: 1280, frameHeight: 720 }]]); }
+    addEventListener() {} removeEventListener() {}
+    close() {
+      this.connectionState = this.iceConnectionState = this.signalingState = 'closed';
+      this.channels.forEach(channel => channel.close()); // Exercise synchronous close reentry too.
+    }
+  }
+  const elements = new Map();
+  const h = loadWebRTC({ realInput: true, RTCPeerConnection: RecoveryPeer,
+    console: { log() {}, warn() {}, error() {} },
+    window: { location: { origin: 'http://offline.invalid' }, addEventListener() {}, removeEventListener() {} },
+    document: { hidden: false, readyState: 'loading', body: makeElement(), activeElement: null,
+      addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; },
+      getElementById(id) { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); } },
+    performance: { now: () => clock },
+    setTimeout: (fn, ms) => setTimer(fn, ms), clearTimeout: id => timers.delete(id),
+    setInterval: (fn, ms) => setTimer(fn, ms, true), clearInterval: id => timers.delete(id),
+  });
+  for (const filename of ['webrtc-stats.js', 'media-activity-controller.js', 'media-activity-runtime.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, filename), 'utf8'), h.context);
+  }
+  h.context.MediaActivityController = h.context.MediaActivityController || h.context.window.MediaActivityController;
+  h.context.MediaActivityRuntime = h.context.MediaActivityRuntime || h.context.window.MediaActivityRuntime;
+  vm.runInContext('globalThis.__Stats = WebRtcStats;', h.context);
+  const createSampler = h.context.__Stats.createWebRtcStatsSampler;
+  h.context.__Stats.createWebRtcStatsSampler = options => { samples.push(options); return createSampler(options); };
+  const w = h.WebRTC, input = h.context.__Input, video = h.context.document.getElementById('remoteVideo');
+  video.videoWidth = 1280; video.videoHeight = 720; video.readyState = 0;
+  video.play = () => new Promise((resolve, reject) => plays.push({ stream: video.srcObject, resolve, reject }));
+  video.requestVideoFrameCallback = fn => { frames.set(++frameId, fn); return frameId; };
+  video.cancelVideoFrameCallback = id => frames.delete(id);
+  w.socket = { connected: true, emit(event, payload) { emitted.push({ event, payload }); if (event === 'input') writes.push(payload); } };
+  const settle = startupJoinFlush;
+  const connect = async (peer = w.pc, stream = { getTracks: () => [] }) => {
+    await peer.setRemoteDescription({ type: 'answer', sdp: 'offline-answer' });
+    peer.ontrack({ track: { kind: 'video' }, streams: [stream] });
+    peer.connectionState = peer.iceConnectionState = 'connected'; peer.onconnectionstatechange();
+    await settle(); return stream;
+  };
+  const paint = () => {
+    const id = w._videoFrameCallbackId, fn = frames.get(id);
+    assert.equal(typeof fn, 'function', 'real current rVFC must exist');
+    frames.delete(id); clock += 16; fn(clock, {});
+  };
+  const mediaRequest = (state = 'active') => {
+    const entry = [...emitted].reverse().find(({ event, payload }) => event === 'media-activity-change'
+      && payload.state === state && payload.connectionAttemptId === w.currentConnectionAttemptId
+      && payload.generation === w._mediaIntent?.generation);
+    assert.ok(entry, 'real current-scope media request must have been emitted');
+    assert.ok(entry.payload.generation > 0); return entry.payload;
+  };
+  const ackMedia = request => w.handleMediaActivityAck({ state: request.state, generation: request.generation,
+    connectionAttemptId: request.connectionAttemptId, applied: true });
+  const ackInput = write => {
+    const ack = { schemaVersion: 2, inputType: write.type, inputIds: write.inputIds,
+      leaseEpoch: write.leaseEpoch, appliedSeq: write.seq, status: 'applied' };
+    return write.type === 'keyboard' ? input.acceptKeyboardAck(ack) : input.acceptMouseAck(ack);
+  };
+  const ackResets = () => writes.filter(write => write.action === 'reset').forEach(ackInput);
+  w.initializeMediaActivity();
+  assert.ok(w.mediaActivityController); assert.ok(w.mediaActivityRuntime);
+  w.beginStartupEpisode(); w.startStartupMediaBudget(); w.beginConnectionAttempt('viewer-open');
+  const lease = { controller: true, leaseId: 'offline-original-lease', leaseEpoch: 7 };
+  if (firstGrant) { w.createPeerConnection(); return { h, w, input, video, peers, emitted, frames, timers, settle, connect, paint, mediaRequest, ackMedia, ackInput, ackResets, writes, plays, samples, lease }; }
+  w.handleControlGrant(lease); await settle();
+  assert.ok(w.pc.localDescription, 'real createOffer must finish');
+  await connect();
+  w.setMediaActivityReason('manual-pause', true); ackMedia(mediaRequest('suspended'));
+  assert.equal(w.getMediaAppliedPhase(), 'suspended');
+  w.setMediaActivityReason('manual-pause', false);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  ackMedia(mediaRequest());
+  assert.equal(w.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  if (!pending) {
+    paint(); assert.equal(w.getMediaAppliedPhase(), 'active'); assert.equal(w.canEnableDesktopInput(), true);
+    w.checkStartupEpisode({ painted: true }); assert.equal(w._startupEpisode.state, 'complete');
+    ackResets(); assert.equal(input.getEffectiveInputGate().allowed, true);
+  }
+  return { h, w, input, video, peers, emitted, frames, timers, settle, connect, paint, mediaRequest, ackMedia, ackInput, ackResets, writes, plays, samples, lease };
+}
+
+test('after-grace fixture: real positive generation media and Input baseline', async () => {
+  const { w, input } = await afterGracePeerFixture();
+  assert.equal(w.getMediaAppliedPhase(), 'active');
+  assert.equal(input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: changed grant retires unleased refreshed peer', async () => {
+  const f = await afterGracePeerFixture();
+  const { w, input, video, peers, settle, connect, paint, mediaRequest, ackMedia, ackResets, plays } = f;
+  w.freezeControl('signal-disconnect'); await w.refresh({ reason: 'signal-reconnected' });
+  const orphan = w.pc, owner = w._peerCallbackOwner;
+  assert.equal(orphan._wrdControlLease, null);
+  const oldTrack = orphan.ontrack, oldConnected = orphan.onconnectionstatechange;
+  w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await settle();
+  assert.notEqual(w.pc, orphan, 'new attempt must not retain a peer owned by the previous attempt');
+  assert.equal(orphan.connectionState, 'closed'); assert.equal(w.ownsStartupOwner(owner), false);
+  assert.equal(w._peerCallbackOwner.peer, w.pc); assert.equal(w._peerCallbackOwner.attempt, w.currentConnectionAttemptId);
+  assert.equal(w._peerCallbackOwner.sequence, w.connectionAttemptSequence);
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  const stream = { getTracks: () => [] }; await connect(w.pc, stream);
+  assert.equal(video.srcObject, stream); assert.equal(plays.filter(play => play.stream === stream).length, 1);
+  assert.ok(w._statsSampler); assert.ok(w._videoFrameOwner);
+  oldTrack({ track: { kind: 'video' }, streams: [{ getTracks: () => [] }] }); oldConnected();
+  assert.equal(video.srcObject, stream);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming'); assert.equal(w.canEnableDesktopInput(), false);
+  const request = mediaRequest(); ackMedia(request);
+  const applied = w.mediaActivityRuntime.snapshot().lastAck;
+  assert.equal(applied.applied, true); assert.equal(applied.connectionAttemptId, request.connectionAttemptId);
+  assert.equal(applied.generation, request.generation);
+  assert.equal(w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(w.canEnableDesktopInput(), false, 'applied ACK alone is not a fresh frame');
+  assert.equal(input.getEffectiveInputGate().allowed, false);
+  paint(); assert.equal(w.isCurrentAttemptMediaReady(), true); assert.equal(w.getMediaAppliedPhase(), 'active');
+  assert.equal(w.canEnableDesktopInput(), true); ackResets(); assert.equal(input.getEffectiveInputGate().allowed, true);
+  assert.equal(peers.filter(peer => peer.connectionState !== 'closed').length, 1);
+});
+
+async function afterGraceChangedGrant(f, { beforeGrant = false } = {}) {
+  const { w, settle, connect } = f;
+  w.freezeControl('signal-disconnect'); await w.refresh({ reason: 'signal-reconnected' });
+  const orphan = w.pc, owner = w._peerCallbackOwner;
+  assert.equal(orphan._wrdControlLease, null);
+  if (beforeGrant) await connect(orphan);
+  w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await settle();
+  assert.notEqual(w.pc, orphan); assert.equal(orphan.connectionState, 'closed');
+  assert.equal(w.ownsStartupOwner(owner), false);
+  assert.equal(w._peerCallbackOwner.peer, w.pc);
+  assert.equal(w._peerCallbackOwner.attempt, w.currentConnectionAttemptId);
+  assert.equal(w._peerCallbackOwner.sequence, w.connectionAttemptSequence);
+  return orphan;
+}
+
+test('after-grace ownership: pending startup preserves allowance', async () => {
+  const f = await afterGracePeerFixture({ pending: true });
+  const { w } = f, episode = w._startupEpisode;
+  const { remaining, feedbackRemaining } = episode;
+  await afterGraceChangedGrant(f);
+  assert.equal(w._startupEpisode, episode); assert.equal(episode.state, 'pending');
+  assert.ok(episode.remaining <= remaining); assert.ok(episode.feedbackRemaining <= feedbackRemaining);
+  await f.connect(); f.ackMedia(f.mediaRequest()); f.paint();
+  w.checkStartupEpisode({ painted: true }); assert.equal(episode.state, 'complete');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: current frame waits for matching media ACK', async () => {
+  const f = await afterGracePeerFixture();
+  const old = f.mediaRequest();
+  await afterGraceChangedGrant(f); await f.connect();
+  const current = f.mediaRequest();
+  f.paint(); assert.equal(f.w.isCurrentAttemptMediaReady(), true);
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(old); f.ackMedia({ ...current, generation: current.generation - 1 });
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.w.canEnableDesktopInput(), false);
+  f.ackMedia(current); assert.equal(f.w.getMediaAppliedPhase(), 'active');
+  assert.equal(f.w.canEnableDesktopInput(), true, 'same request early frame may replay after matching ACK');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: old media proof cannot complete new request', async () => {
+  const f = await afterGracePeerFixture(), old = f.mediaRequest();
+  const oldFrame = f.frames.get(f.w._videoFrameCallbackId);
+  assert.equal(typeof oldFrame, 'function');
+  await afterGraceChangedGrant(f); await f.connect();
+  f.ackMedia(old); oldFrame(2000, {});
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.w.isCurrentAttemptMediaReady(), false);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(f.mediaRequest()); oldFrame(2016, {});
+  assert.equal(f.w.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.w.canEnableDesktopInput(), false);
+  f.paint(); assert.equal(f.w.getMediaAppliedPhase(), 'active');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: connected and track before changed grant', async () => {
+  const f = await afterGracePeerFixture();
+  f.w.freezeControl('signal-disconnect'); await f.w.refresh({ reason: 'signal-reconnected' });
+  const orphan = f.w.pc; const stream = await f.connect(orphan);
+  const track = orphan.ontrack, connected = orphan.onconnectionstatechange;
+  const frame = f.frames.get(f.w._videoFrameCallbackId), sample = f.samples.at(-1).onSample;
+  f.paint(); assert.equal(f.w.isCurrentAttemptMediaReady(), true);
+  f.w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await f.settle();
+  assert.notEqual(f.w.pc, orphan); assert.equal(orphan.connectionState, 'closed');
+  assert.equal(f.w.isCurrentAttemptMediaReady(), false); assert.equal(f.w.hasPaintedFrame, false);
+  track({ track: { kind: 'video' }, streams: [stream] }); connected(); frame(2100, {}); sample({ framesDecoded: 50 });
+  assert.equal(f.w.isCurrentAttemptMediaReady(), false); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  const nextStream = await f.connect(); assert.equal(f.video.srcObject, nextStream);
+  assert.equal(f.plays.filter(play => play.stream === nextStream).length, 1);
+  f.ackMedia(f.mediaRequest()); assert.equal(f.w.getMediaAppliedPhase(), 'resuming');
+  f.paint(); assert.equal(f.w.getMediaAppliedPhase(), 'active');
+  f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: retired producers cannot revive', async () => {
+  const f = await afterGracePeerFixture({ channelState: 'connecting' });
+  f.w.freezeControl('signal-disconnect'); await f.w.refresh({ reason: 'signal-reconnected' });
+  const orphan = f.w.pc, oldOwner = f.w._peerCallbackOwner, oldChannel = f.w.inputChannel;
+  const watchdog = f.w._dataChannelWatchdog;
+  assert.ok(watchdog); const watchdogCallback = f.timers.get(watchdog.timer).fn;
+  const priorTimers = new Set(f.timers.keys());
+  const stream = await f.connect(orphan);
+  const fallback = [...f.timers].filter(([id, timer]) => !priorTimers.has(id) && timer.ms === 8000 && !timer.interval);
+  assert.ok(fallback.length, 'ontrack must generate the real 8s fallback');
+  // Two actual play requests let both queued fulfillment and rejection run.
+  orphan.ontrack({ track: { kind: 'video' }, streams: [stream] });
+  const oldPlays = f.plays.slice(-2); assert.equal(oldPlays.length, 2);
+  const sample = f.samples.at(-1);
+  const queued = [
+    ['track', () => orphanTrack({ track: { kind: 'video' }, streams: [stream] })],
+    ['connection', orphan.onconnectionstatechange], ['ICE connection', orphan.oniceconnectionstatechange],
+    ['ICE candidate', () => orphanIce({ candidate: { candidate: 'offline-candidate' } })],
+    ['DC open', oldChannel.onopen], ['DC close', oldChannel.onclose],
+    ['DC message', () => oldMessage({ data: JSON.stringify({ type: 'capture_stats', fps: 999 }) })],
+    ['watchdog', watchdogCallback], ['stats sample', () => sample.onSample({ framesDecoded: 500, framesReceived: 500 })],
+    ['stats error', () => sample.onError(new Error('offline queued error'))],
+    ['rVFC', () => oldFrame(2200, {})], ['metadata', f.video.onloadedmetadata], ['playing', f.video.onplaying],
+    ...fallback.map(([, timer]) => ['8s fallback', timer.fn]),
+    ['play resolve', () => oldPlays[0].resolve()], ['play reject', () => oldPlays[1].reject(new Error('offline queued rejection'))],
+  ];
+  const orphanTrack = orphan.ontrack, orphanIce = orphan.onicecandidate, oldMessage = oldChannel.onmessage;
+  const oldFrame = f.frames.get(f.w._videoFrameCallbackId);
+  queued.forEach(([name, fn]) => assert.equal(typeof fn, 'function', `${name} must actually exist`));
+  f.w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await f.settle();
+  assert.equal(f.w.ownsStartupOwner(oldOwner), false); assert.equal(orphan.connectionState, 'closed');
+  await f.connect();
+  const invariant = () => ({ pc: f.w.pc, stream: f.video.srcObject, painted: f.w.hasPaintedFrame,
+    ready: f.w.isCurrentAttemptMediaReady(), gate: f.input.getEffectiveInputGate().allowed,
+    phase: f.w.getMediaAppliedPhase(), sampler: f.w._statsSampler, frameOwner: f.w._videoFrameOwner,
+    callback: f.w._videoFrameCallbackId, timers: [...f.timers.keys()], frames: [...f.frames.keys()],
+    captureFps: f.w._hostCaptureFps, emitted: f.emitted.length });
+  const current = invariant();
+  for (const [name, fn] of queued) { fn(); await f.settle(); assert.deepEqual(invariant(), current, name); }
+  f.ackMedia(f.mediaRequest()); f.paint(); f.ackResets();
+  assert.equal(f.input.getEffectiveInputGate().allowed, true);
+  const active = invariant();
+  for (const [name, fn] of queued) { fn(); await f.settle(); assert.deepEqual(invariant(), active, `active: ${name}`); }
+});
+
+test('after-grace ownership: duplicate grant preserves healthy peer', async () => {
+  const f = await afterGracePeerFixture();
+  const pc = f.w.pc, owner = f.w._peerCallbackOwner, attempt = f.w.currentConnectionAttemptId;
+  const sequence = f.w.connectionAttemptSequence, sampler = f.w._statsSampler, frameOwner = f.w._videoFrameOwner;
+  const offers = pc.offers;
+  f.w.handleControlGrant(f.lease); await f.settle();
+  assert.equal(f.w.pc, pc); assert.equal(f.peers.length, 1); assert.equal(pc.offers, offers);
+  assert.equal(f.w._peerCallbackOwner, owner); assert.equal(f.w.currentConnectionAttemptId, attempt);
+  assert.equal(f.w.connectionAttemptSequence, sequence); assert.equal(f.w._statsSampler, sampler);
+  assert.equal(f.w._videoFrameOwner, frameOwner); assert.equal(f.w.isCurrentAttemptMediaReady(), true);
+  assert.equal(f.w.hasPaintedFrame, true);
+  // Existing intent replay may require another applied ACK and fresh resume frame.
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming');
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(f.mediaRequest()); f.paint(); f.ackResets();
+  assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: within grace rebind preserves peer and ACK barrier', async () => {
+  const f = await afterGracePeerFixture();
+  const pc = f.w.pc, attempt = f.w.currentConnectionAttemptId, sequence = f.w.connectionAttemptSequence;
+  f.w.socket.connected = false; f.w.freezeControl('signal-disconnect');
+  f.w.scheduleSignalingRecovery('signal-disconnected');
+  f.w.socket.connected = true;
+  assert.equal(f.w.handleSignalingRecoveryConnected(), true);
+  const before = f.writes.length; f.w.handleControlGrant(f.lease); await f.settle();
+  assert.equal(f.w.pc, pc); assert.equal(f.peers.length, 1);
+  assert.equal(f.w.currentConnectionAttemptId, attempt); assert.equal(f.w.connectionAttemptSequence, sequence);
+  const resets = f.writes.slice(before).filter(write => write.action === 'reset');
+  assert.equal(resets.length, 2); assert.deepEqual(resets.map(write => write.type).sort(), ['keyboard', 'mouse']);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackMedia(f.mediaRequest()); f.paint();
+  assert.equal(f.w.getMediaAppliedPhase(), 'active'); assert.equal(f.w.canEnableDesktopInput(), true);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false, 'media proof cannot replace either reset ACK');
+  f.ackInput(resets[0]); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.ackInput(resets[1]); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: first grant keeps unleased startup peer', async () => {
+  const f = await afterGracePeerFixture({ firstGrant: true });
+  const pc = f.w.pc, owner = f.w._peerCallbackOwner, attempt = f.w.currentConnectionAttemptId;
+  const sequence = f.w.connectionAttemptSequence;
+  assert.equal(pc._wrdControlLease, null); assert.equal(f.w._mediaControlLease == null, true);
+  f.w.handleControlGrant(f.lease); await f.settle();
+  assert.equal(f.w.pc, pc); assert.equal(f.peers.length, 1); assert.equal(f.w._peerCallbackOwner, owner);
+  assert.equal(f.w.currentConnectionAttemptId, attempt); assert.equal(f.w.connectionAttemptSequence, sequence);
+  assert.equal(f.w.ownsStartupOwner(owner), true);
+  await f.connect(); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.paint(); f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
+});
+
+test('after-grace ownership: different leased peer still retires', async () => {
+  const f = await afterGracePeerFixture();
+  const old = f.w.pc, owner = f.w._peerCallbackOwner;
+  assert.equal(old._wrdControlLease.leaseEpoch, 7);
+  f.w.handleControlGrant({ controller: true, leaseId: 'offline-next-lease', leaseEpoch: 9 }); await f.settle();
+  assert.notEqual(f.w.pc, old); assert.equal(old.connectionState, 'closed');
+  assert.equal(f.w.ownsStartupOwner(owner), false);
+  assert.equal(f.w._peerCallbackOwner.peer, f.w.pc);
+  assert.equal(f.w._peerCallbackOwner.attempt, f.w.currentConnectionAttemptId);
+  assert.equal(f.w._peerCallbackOwner.sequence, f.w.connectionAttemptSequence);
+  assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  await f.connect(); f.ackMedia(f.mediaRequest());
+  assert.equal(f.w.getMediaAppliedPhase(), 'resuming'); assert.equal(f.input.getEffectiveInputGate().allowed, false);
+  f.paint(); f.ackResets(); assert.equal(f.input.getEffectiveInputGate().allowed, true);
 });

@@ -1,0 +1,126 @@
+{
+  "classification": "PASS",
+  "kind": "passive-session-continuity-only",
+  "buildId": "6b2ad956f6a6cdd8",
+  "source": "8675e85e3b66453fc17ddb778fd3a253f4c0d600",
+  "samples": 301,
+  "sampleSpanSeconds": 300.0010862920899,
+  "helperElapsedSecondsIncludingCleanup": 303.4607789469883,
+  "supervisorElapsedSeconds": 335.2562732161023,
+  "sampleSha256": "cbdce56d8293af37803535f8037e6e7a2b570a8458bd8e0dfe898590ee47d1d8",
+  "missingSamples": 0,
+  "lateSamples": 0,
+  "failedObservations": 0,
+  "identityChangeObservations": 0,
+  "gatesTrueObservations": {
+    "inputActive": 301,
+    "hasInputLease": 301,
+    "viewportSupported": 301,
+    "hasPaintedFrame": 301,
+    "currentAttemptReady": 301,
+    "hasActiveControl": 301,
+    "socketConnected": 301,
+    "allowed": 301
+  },
+  "maxCompletedFrameCallbackGapMs": 800.0999999999767,
+  "frameAgeSnapshotsMs": {
+    "observations": 301,
+    "p50": 40.79999990464421,
+    "p95": 192.09999999997672,
+    "max": 634.2999999999884
+  },
+  "lastMetricSnapshots": {
+    "candidateRttMs": {
+      "available": true,
+      "count": 5,
+      "last": 102,
+      "p95": 246,
+      "lastSampleAgeMs": 434.5
+    },
+    "jitterBufferMs": {
+      "available": true,
+      "count": 5,
+      "last": 133.6,
+      "p95": 161.2,
+      "lastSampleAgeMs": 434.5
+    },
+    "decodeMs": {
+      "available": true,
+      "count": 5,
+      "last": 1.7836428571428466,
+      "p95": 1.8552222222222918,
+      "lastSampleAgeMs": 434.5
+    },
+    "paintIntervalMs": {
+      "available": true,
+      "count": 61,
+      "last": 50.09999999997672,
+      "p95": 166.70000000001164,
+      "lastSampleAgeMs": 56.99999990465585
+    }
+  },
+  "metricScope": "last rolling five-second application windows; repeated 1Hz observations are not whole-run latency percentiles",
+  "metricLastSnapshotDistribution": {
+    "candidateRttMs": {
+      "observations": 301,
+      "p50": 105,
+      "p95": 294,
+      "max": 432
+    },
+    "jitterBufferMs": {
+      "observations": 299,
+      "p50": 162,
+      "p95": 275.5,
+      "max": 306.7
+    },
+    "decodeMs": {
+      "observations": 299,
+      "p50": 1.7500000000000293,
+      "p95": 2.067117647058822,
+      "max": 2.8642500000000126
+    }
+  },
+  "startupSinglePageMs": {
+    "clickToBootstrapReady": 846.6000000000004,
+    "clickToSignalConnected": 2812.8,
+    "clickToFirstFrame": 7949.500000000001
+  },
+  "inputMetricsUsableObservations": {
+    "inputAckRttMs": 0,
+    "inputToPostApplyFrameMs": 0,
+    "inputToVisibleEffectMs": 0,
+    "hostQueueMs": 0,
+    "hostApplyMs": 0,
+    "hostAdapterAwaitMs": 0
+  },
+  "activeControl": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physicalDisplay": "NOT_RUN",
+  "threeHourContinuityMet": false,
+  "startProof": {
+    "status": "verified",
+    "freshPage": true,
+    "coreInstalled": true,
+    "authVerified": true,
+    "startClickMarksBefore": 0,
+    "startClickMarksAfter": 1
+  },
+  "browserCloseMs": 3301,
+  "managerStopMs": 35,
+  "registeredIdentities": 7,
+  "allRegisteredIdentitiesExited": true,
+  "signals": 0,
+  "completeProcessTreeExitEstablished": false,
+  "ownershipCoverage": [
+    "observation-unavailable",
+    "polling-may-miss-fast-orphan",
+    "macos-check-to-signal-race",
+    "no-CDP-no-manager-proxy"
+  ],
+  "sampleTriggered": false,
+  "originalReloadClassification": "failed-or-indeterminate",
+  "originalReloadUnexpectedCoverage": [
+    "observation-unavailable"
+  ],
+  "loadedStateSeparatelyCorroborated": true
+}

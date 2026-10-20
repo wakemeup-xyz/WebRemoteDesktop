@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "before-new-Viewer-deployment",
+  "productSourceCommit": "dfb15434e79da90b803b763c533836e16c080c71",
+  "deployedToolCommit": "59bca14209eed299b0e94da58decb8b85e5ce70c",
+  "viewerSourceCorrection": "cdea28227fc56f40d537cadc2945f79f7857fb3f",
+  "diagnosticSourceCorrection": "35c6f972d30b8c225c2d9feac2773ddb21b43cd0",
+  "actualSecondBaselineResultSHA256": "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+  "actualSecondBaselineClassification": "INCOMPLETE-zero-qualified-time-and-samples",
+  "artifacts": {
+    "first-frame-gate-assessment.md": {
+      "sha256": "3990cbe75a0eaaf44b45964b68a8d1a40c6265cce2d24322fd813a76933e8151",
+      "bytes": 17270,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "second-baseline-performance.md": {
+      "sha256": "4a0c95100b102fcca1c32e57bc05ca9e273c0e0c04f88371a7952ccd096d99ef",
+      "bytes": 12894,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "process-coverage-assessment.md": {
+      "sha256": "97fe08d1f0b0042a46431a435fd40259b3e9618d28773ea7d240919a132d5289",
+      "bytes": 19392,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "first-frame-task-report.md": {
+      "sha256": "61c7a4099c2214f9b5d66ff6d8c5b808ad5a658e4d8fd0eeb0c97ba8859d6e51",
+      "bytes": 4837,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "first-frame-task-review.md": {
+      "sha256": "9938c47701063eb48f6643550504720a8fa452efaefc86de021e10d9710d70ee",
+      "bytes": 4263,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "first-frame-final-review.md": {
+      "sha256": "77e8098e79eaa901497d6a42e47132b007403a4150039878c3a56a0dd1616e0f",
+      "bytes": 7335,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "context-task-report.md": {
+      "sha256": "dabca8185df4f734fa6c7a45efc79fb13b67694d28eac3166ed05af440a271b7",
+      "bytes": 15355,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "context-task-review.md": {
+      "sha256": "28c17b07859b417c1c21a750a8a0b77694fac7d811401e47c3b661b01ea12cad",
+      "bytes": 4227,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "context-fix1-review.md": {
+      "sha256": "e87d6be501863e2f5e11dbe76e61df174b141aeb42000eea879962b845df8c53",
+      "bytes": 2134,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "context-final-review.md": {
+      "sha256": "4e05a504451efd6083dc085a79eeec3035c1a5d09527feb6d3b36e8cee000b46",
+      "bytes": 6532,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "capture-pacing-experiment-design.md": {
+      "sha256": "5d67d69556ef891f686b15688dde344ab110fd832dfd4c46159e63511c7b6540",
+      "bytes": 15101,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "macos-sleep-official-sources.md": {
+      "sha256": "299038cd86fa8ea55a16a5e07cece3ee1d2a67b8c4502eb45938382965471e8e",
+      "bytes": 10420,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "first-frame-ledger.md": {
+      "sha256": "9a9a1c1f5ae7d88e65f758f808a12aaf2ceb5e274931e74f9519bc0a37f2ae68",
+      "bytes": 1807,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    },
+    "context-ledger.md": {
+      "sha256": "06bb1c5a2fd28711221400be48f23e524cfc0a61dab402bb596a0dd85f5c8cb0",
+      "bytes": 2144,
+      "scope": "read-only-assessment-or-source-only-review-not-runtime-qualification"
+    }
+  },
+  "privatePureLogs": {
+    "2026-10-18-first-frame-timer-state-plan/task-1-affected.log": {
+      "sha256": "37331fa2442d6350d1aeb97de289732068943b52c58eee3edbee54f414ff3d07",
+      "bytes": 130502,
+      "rawVersioned": false
+    },
+    "2026-10-18-first-frame-timer-state-plan/task-1-green.log": {
+      "sha256": "c7dac1d46063e3708c545f1824c8bb0c974eee358506fee189a520bf81477b9b",
+      "bytes": 1238,
+      "rawVersioned": false
+    },
+    "2026-10-18-first-frame-timer-state-plan/task-1-red.log": {
+      "sha256": "688360ebc95d67d87426ee30159bded238662e9d02a9fe7906c827f7775c0f47",
+      "bytes": 3011,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-fix1-green-full.log": {
+      "sha256": "6e22e92b9017d4b7741e34c9f58156110658d565c99af71db7fde8a3c6eb61c7",
+      "bytes": 5250,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-fix1-green-token.log": {
+      "sha256": "0f0f7a29281899d0c3696b0db0dd0652785d6b82d90b9acdbe055a4628bd1c56",
+      "bytes": 290,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-fix1-green.log": {
+      "sha256": "b072948c9dc3e296cfefa1c20cc7bf5fe33c33b1346b79b85acd65b1fcef115b",
+      "bytes": 2975,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-fix1-red-inflight.log": {
+      "sha256": "bb2af0353b29239af9c1589472b41e2f14cb8e4bf22eb37fbc1d86e05cbc8744",
+      "bytes": 3935,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-fix1-red-snapshot.log": {
+      "sha256": "9f36e592dc5d7221c6270e57ad716406455433206e9b4a7d30598a163c7e49f6",
+      "bytes": 2105,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-fix1-red.log": {
+      "sha256": "9360b39981f4cb51039ceeda8113dfcc24a7d96ea89ec5ed79105f3b3887d780",
+      "bytes": 1924,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-green.log": {
+      "sha256": "fe4da1559d6d0803aa3214eba4361b41bc13c963cc7ebcae2704d886c006856d",
+      "bytes": 4426,
+      "rawVersioned": false
+    },
+    "2026-10-18-process-observation-context-plan/task-1-red.log": {
+      "sha256": "d0fd8d6f39bcb10938681611067f0261040769ea9db718d018f0376c62cc834b",
+      "bytes": 1361,
+      "rawVersioned": false
+    }
+  },
+  "finalSourceReviewsApproved": true,
+  "actualRegistryParity": "NOT_RUN",
+  "newBuildDeployment": "NOT_RUN",
+  "nativeInputVisiblePhysical": "NOT_RUN",
+  "fullProcessTreeExit": "UNKNOWN"
+}

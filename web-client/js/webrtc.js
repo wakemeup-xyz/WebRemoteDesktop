@@ -43,11 +43,11 @@ const FRAME_TRACE_ROW_FIELDS = [
 // performs identity joins only: rVFC's rtpTimestamp is never subtracted from a
 // Host timestamp or compared to the encoder's pre-origin timestamp.
 class FrameTraceCollector {
-  constructor({ now = () => performance.now(), capacity = 2048, ttlMs = 120000, lateWaitMs = 2000 } = {}) {
+  constructor({ now = () => performance.now(), capacity = 256, ttlMs = 30000, lateWaitMs = 2000 } = {}) {
     this.now = now;
-    this.capacity = capacity;
-    this.ttlMs = ttlMs;
-    this.lateWaitMs = lateWaitMs;
+    this.capacity = Math.min(256, Math.max(1, capacity));
+    this.ttlMs = Math.min(30000, ttlMs);
+    this.lateWaitMs = Math.min(2000, lateWaitMs);
     this.frames = new Map();
     this.traces = new Map();
     this.seen = new Map();
@@ -95,7 +95,7 @@ class FrameTraceCollector {
 
   identity(value) {
     return [value?.attemptId, Number(value?.generation), value?.streamId,
-      Number(value?.wireTimestamp) >>> 0].join('|');
+      value?.ssrc, Number(value?.wireTimestamp) >>> 0].join('|');
   }
 
   isValidTrace(trace) {
@@ -138,12 +138,12 @@ class FrameTraceCollector {
     this.matched = [];
   }
 
-  prune(map) {
-    const deadline = Number(this.now()) - this.ttlMs;
+  prune(map, ttlMs = this.lateWaitMs) {
+    const deadline = Number(this.now()) - ttlMs;
     for (const [id, entry] of map) {
       if (entry.at <= deadline) {
         map.delete(id);
-        this.unaligned = true;
+        if (map !== this.seen) { this.unaligned = true; this.droppedTraceCount += 1; }
       }
     }
   }
@@ -151,7 +151,7 @@ class FrameTraceCollector {
   expire() {
     this.prune(this.frames);
     this.prune(this.traces);
-    this.prune(this.seen);
+    this.prune(this.seen, this.ttlMs);
     const lateDeadline = Number(this.now()) - this.lateWaitMs;
     for (const entry of this.frames.values()) {
       if (entry.at <= lateDeadline) this.unaligned = true;
@@ -159,7 +159,7 @@ class FrameTraceCollector {
     for (const entry of this.traces.values()) {
       if (entry.at <= lateDeadline) this.unaligned = true;
     }
-    const deadline = Number(this.now()) - this.ttlMs;
+    const deadline = Number(this.now()) - this.lateWaitMs;
     while (this.matched.length && this.matched[0].at <= deadline) {
       this.matched.shift();
       this.unaligned = true;
@@ -167,16 +167,16 @@ class FrameTraceCollector {
   }
 
   appendMatch(value) {
-    if (this.matched.length >= this.capacity) {
-      this.failClosed();
-      return false;
+    if (this.matched.length >= Math.min(128, this.capacity)) {
+      this.matched.shift(); this.droppedTraceCount += 1;
     }
-    this.matched.push({ at: Number(this.now()), value });
+    this.matched.push({ at: value.viewerClockMs, value });
+    this.matched.sort((a, b) => a.at - b.at);
     this.lastMatched = value;
     return true;
   }
 
-  matchedVisual(trace, rtpTimestamp, roi) {
+  matchedVisual(trace, rtpTimestamp, roi, at) {
     // This is the only browser-side conversion from a Host trace plus rVFC.
     // Keep every join identity so downstream scene validation never needs to
     // invent a timestamp or infer a generation from a marker.
@@ -191,16 +191,24 @@ class FrameTraceCollector {
       // It is evidence of the observed mapping, never a clock for latency.
       rtpOrigin: (trace.wireTimestamp - trace.encoderTimestamp) >>> 0,
       traceStatus: 'matched',
-      viewerClockMs: Number(this.now()),
+      viewerClockMs: at,
       idrKind: trace.idrKind || null,
       roi,
+      ...(trace.inputIds ? { inputIds: trace.inputIds, scope: trace.scope,
+        captureFresh: trace.captureFresh, captureAfterApplied: trace.captureAfterApplied } : {}),
     };
   }
 
-  observeVideoFrame(identity, roi) {
+  observeVideoFrame(identity, roi, callbackAtMs) {
     if (this.terminalUnaligned) return false;
-    const timestamp = Number(identity?.rtpTimestamp);
-    if (!Number.isFinite(timestamp)) {
+    if (typeof callbackAtMs !== 'number' || !Number.isFinite(callbackAtMs) || callbackAtMs < 0) {
+      this.unaligned = true;
+      return false;
+    }
+    const timestamp = identity?.rtpTimestamp;
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > 0xffffffff
+        || !Number.isSafeInteger(identity?.ssrc) || identity.ssrc < 0 || identity.ssrc > 0xffffffff
+        || !identity.streamId) {
       this.unaligned = true;
       return false;
     }
@@ -208,16 +216,16 @@ class FrameTraceCollector {
     if (!this.isInScope({ ...identity, wireTimestamp: timestamp })) return false;
     const id = this.identity({ ...identity, wireTimestamp: timestamp });
     const trace = this.traces.get(id);
+    if (!trace && (this.frames.has(id) || this.seen.has(id))) return false;
     if (trace) {
       this.traces.delete(id);
-      this.appendMatch(this.matchedVisual(trace.value, timestamp, roi));
+      this.appendMatch(this.matchedVisual(trace.value, timestamp, roi, callbackAtMs));
       return true;
     }
     if (this.frames.size >= this.capacity) {
-      this.failClosed();
-      return false;
+      this.frames.delete(this.frames.keys().next().value); this.droppedTraceCount += 1;
     }
-    this.frames.set(id, { at: Number(this.now()), value: { identity, roi } });
+    this.frames.set(id, { at: callbackAtMs, value: { identity, roi } });
     return false;
   }
 
@@ -230,12 +238,12 @@ class FrameTraceCollector {
           && (!Number.isSafeInteger(batch.droppedTraceCount) || batch.droppedTraceCount < 0))) return this.rejectInvalidBatch();
     const identities = new Set();
     for (const trace of batch.traces) {
-      if (!this.isValidTrace(trace)) return this.rejectInvalidBatch();
-      if (!this.isInScope(trace)) {
+      if (trace && typeof trace.attemptId === 'string' && trace.attemptId.trim() && Number.isSafeInteger(trace.generation) && trace.generation >= 0
+          && typeof trace.streamId === 'string' && trace.streamId.trim() && !this.isInScope(trace)) {
         this.staleTraceCount += 1;
-        this.failClosed();
-        return 0;
+        continue;
       }
+      if (!this.isValidTrace(trace)) return this.rejectInvalidBatch();
       const id = this.identity(trace);
       if (identities.has(id) || this.traces.has(id) || this.seen.has(id)) {
         this.conflictingTraceCount += 1;
@@ -244,27 +252,49 @@ class FrameTraceCollector {
       }
       identities.add(id);
     }
-    if (this.seen.size + identities.size > this.capacity) return this.rejectInvalidBatch();
+
     this.droppedTraceCount += Math.max(0, Number(batch.droppedTraceCount) || 0);
     if (this.droppedTraceCount) this.unaligned = true;
     let joined = 0;
-    for (const trace of batch.traces) {
-      const id = this.identity(trace);
-      this.seen.set(id, { at: Number(this.now()) });
-      const frame = this.frames.get(id);
-      if (frame) {
-        this.frames.delete(id);
-        this.appendMatch(this.matchedVisual(trace, frame.value.identity.rtpTimestamp, frame.value.roi));
-        joined += 1;
-        continue;
-      }
-      if (this.traces.size >= this.capacity) {
-        this.failClosed();
-        return 0;
-      }
-      this.traces.set(id, { at: Number(this.now()), value: trace });
-    }
+    for (const trace of batch.traces) if (this.isInScope(trace)) joined += this.joinTrace(trace);
     return joined;
+  }
+
+  joinTrace(trace) {
+    const id = this.identity(trace);
+    while (this.seen.size >= 2048) { this.seen.delete(this.seen.keys().next().value); this.droppedTraceCount += 1; }
+    this.seen.set(id, { at: Number(this.now()) });
+    const frame = this.frames.get(id);
+    if (frame) {
+      this.frames.delete(id);
+      this.appendMatch(this.matchedVisual(trace, frame.value.identity.rtpTimestamp, frame.value.roi, frame.at));
+      return 1;
+    }
+    if (this.traces.size >= this.capacity) {
+      this.traces.delete(this.traces.keys().next().value); this.droppedTraceCount += 1;
+    }
+    this.traces.set(id, { at: Number(this.now()), value: trace });
+    return 0;
+  }
+
+  acceptBinding(binding, scope) {
+    this.expire();
+    if (this.terminalUnaligned || !binding || binding.type !== 'input_frame_binding' || binding.schemaVersion !== 1) return 0;
+    const fields = ['type', 'schemaVersion', 'scope', 'streamId', 'captureSeq', 'encoderTimestamp', 'wireTimestamp', 'ssrc', 'captureFresh', 'captureAfterApplied', 'inputIds'];
+    if (Object.keys(binding).length !== fields.length || fields.some(k => !Object.hasOwn(binding, k))) return 0;
+    if (!scope || Object.keys(binding.scope || {}).length !== 3
+        || !['connectionAttemptId', 'generation', 'leaseEpoch'].every(k => binding.scope[k] === scope[k])) { this.staleTraceCount += 1; return 0; }
+    const uint = value => Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff;
+    if (binding.captureFresh !== true || binding.captureAfterApplied !== true || binding.streamId !== 'video'
+        || !Number.isSafeInteger(binding.captureSeq) || binding.captureSeq < 0
+        || !['encoderTimestamp', 'wireTimestamp', 'ssrc'].every(k => uint(binding[k]))
+        || !Array.isArray(binding.inputIds) || binding.inputIds.length < 1 || binding.inputIds.length > 64
+        || binding.inputIds.some(id => typeof id !== 'string' || !/^[\x20-\x7e]{1,128}$/.test(id))
+        || new Set(binding.inputIds).size !== binding.inputIds.length) return 0;
+    const trace = { ...binding, attemptId: scope.connectionAttemptId, generation: scope.generation };
+    const id = this.identity(trace);
+    if (this.seen.has(id)) { this.conflictingTraceCount += 1; this.failClosed(); return 0; }
+    return this.joinTrace(trace);
   }
 
   takeMatched() {
@@ -275,6 +305,7 @@ class FrameTraceCollector {
   }
 
   latestMatchedForRtp(rtpTimestamp) {
+    if (this.lastMatched && this.now() - this.lastMatched.viewerClockMs >= this.lateWaitMs) this.lastMatched = null;
     const row = this.lastMatched;
     if (!row || (Number(row.rtpTimestamp) >>> 0) !== (Number(rtpTimestamp) >>> 0)) return null;
     // Callers must not be able to mutate the T3-owned join object.
@@ -294,6 +325,8 @@ class FrameTraceCollector {
         rtpTimestamp: row.rtpTimestamp, wireTimestamp: row.wireTimestamp,
         captureSeq: row.captureSeq, rtpOrigin: row.rtpOrigin,
         traceStatus: row.traceStatus,
+        ...(row.inputIds ? { inputIds: row.inputIds, scope: row.scope,
+          captureFresh: row.captureFresh, captureAfterApplied: row.captureAfterApplied } : {}),
       }];
     });
   }
@@ -365,6 +398,9 @@ const WebRTC = {
   controlState: { state: 'FREE', controller: false, lease: null, hostOnline: false },
   _controlHeartbeatTimer: null,
   _controlRequestId: 0,
+  _controlAcquireIntent: null,
+  _controlRecoveryGeneration: 0,
+  _controlUserReleased: false,
   _controlLifecycleBound: false,
   _fullscreenLifecycleBound: false,
   _fullscreenLifecycleHandler: null,
@@ -421,16 +457,18 @@ const WebRTC = {
   _mediaResumeFrameTimer: null,
   _mediaResumeArmPending: false,
   _mediaResumeSoftRecoverUsed: false,
+  _mediaResumeReadyReplay: null,
   _mediaIntent: null,
   _mediaRequestRetryUsed: false,
   _mediaResumeRefreshFallbackUsed: false,
   _mediaFailureHandledKey: null,
   _mediaReadyConnectionAttemptId: null,
   _lastInboundFramesDecoded: 0,
-  _lastInboundFramesDecodedAt: 0,
+  _lastInboundFramesDecodedAt: null,
   _videoFrameSeq: 0,
   uiPhase: 'idle',
   hasPaintedFrame: false,
+  _firstFrameTimer: null,
   _paintDecodedBaseline: 0,
   _stallSince: null,
   _paintPending3sTimer: null,
@@ -463,11 +501,17 @@ const WebRTC = {
   // supervisor so a transient signaling outage cannot leave a connected-looking
   // peer with a dead control/session context forever.
   _signalRecoveryTimer: null,
-  _signalRecoveryStartedAt: 0,
+  _signalRecoveryStartedAt: null,
   _signalRecoveryPending: false,
   _viewerSessionId: null,
+  _viewerAdmission: null,
+  _explicitAdmissionSequence: 0,
+  _reclaimPromise: null,
+  _pendingBootstrapConfig: null,
   SIGNAL_RECOVERY_RETRY_MS: 1500,
-  SIGNAL_RECOVERY_MAX_WAIT_MS: 12000,
+  // Keep the client recovery window below the server's 30s viewer grace
+  // period so a reconnect can still rebind the original lease.
+  SIGNAL_RECOVERY_MAX_WAIT_MS: 24000,
   _pageLifecycleRecoveryBound: false,
   _pageLifecycleHidden: false,
   _relayHardRefreshCount: 0,
@@ -475,7 +519,8 @@ const WebRTC = {
   _noRelayReceiveCount: 0,
   _inputDcDegraded: false,
   _tunnelLockUntil: 0,
-  _lastRefreshAt: 0,
+  _lastRefreshAt: null,
+  _lastKeyframeRequestAt: null,
   _dcKeepaliveTimer: null,
   currentConnectionAttemptId: '',
   connectionAttemptSequence: 0,
@@ -619,7 +664,12 @@ const WebRTC = {
     if (!this.mediaActivityController) {
       return this.getMediaActivitySnapshot();
     }
-    return this.mediaActivityController.setReason(reason, enabled);
+    const result = this.mediaActivityController.setReason(reason, enabled);
+    if (typeof LatencyMonitor !== 'undefined') {
+      this.syncLatencyScope();
+      LatencyMonitor.setMediaState?.(result.state === 'active', { scope: this.latencyScope() });
+    }
+    return result;
   },
 
   getMediaActivitySnapshot() {
@@ -642,6 +692,8 @@ const WebRTC = {
       && !this.manualDisconnect
       && Boolean(this.mediaActivityRuntime?.canEnableDesktopInput?.() ?? true)
       && this.getMediaActivitySnapshot().state === 'active'
+      && (!this.tunnelRelayActive || (this.relayScopeMatches(this._relayExpectedScope)
+        && this._relayLastLoadedAtMs != null && !this._relayFrameStale))
       && (!this.currentConnectionAttemptId
         || this._mediaReadyConnectionAttemptId === this.currentConnectionAttemptId);
   },
@@ -674,6 +726,7 @@ const WebRTC = {
   },
 
   applyMediaActivity(snapshot = this.getMediaActivitySnapshot()) {
+    this.checkStartupEpisode({ suspended: snapshot?.state === 'suspended' });
     this.initializeMediaActivity();
     if (!this.mediaActivityRuntime && typeof MediaActivityRuntime !== 'undefined') {
       this.mediaActivityRuntime = MediaActivityRuntime.create({
@@ -689,6 +742,8 @@ const WebRTC = {
     const generation = Number(snapshot?.generation) || 0;
     if (generation < 1) return snapshot;
     if (this._mediaIntent?.generation !== generation) {
+      if (this.tunnelRelayActive) this.clearRelayOrigin();
+      this.clearMediaResumeProof();
       this._mediaRequestRetryUsed = false;
       this._mediaResumeRefreshFallbackUsed = false;
       this._mediaResumeSoftRecoverUsed = false;
@@ -698,9 +753,12 @@ const WebRTC = {
       reasons: Array.isArray(snapshot?.reasons) ? snapshot.reasons.slice(0, 8) : [],
       generation,
     };
+    if (desired === 'suspended') this.clearPaintPendingCopyTimers();
+    else if (this.uiPhase === 'media-pending') this.schedulePaintPendingCopyTimers();
 
     // Immediate local gates on suspend.
     if (desired === 'suspended') {
+      this.clearRelayOrigin();
       if (typeof Input !== 'undefined') {
         // Keep lease; only release pointer + keys. Do not open a keyboard reset
         // barrier that blocks typing after a brief hide/resume cycle.
@@ -715,10 +773,7 @@ const WebRTC = {
       }
       if (this.isPortSearchActive()) this.stopPortSearch('media-suspended');
       this.noMediaTicks = 0;
-      this._mediaResumeFramePending = false;
-      this._mediaResumeBaseline = null;
-      this._mediaResumeArmPending = false;
-      this.clearMediaResumeFallback();
+      this.clearMediaResumeProof();
     }
 
     const runtime = this.mediaActivityRuntime;
@@ -836,8 +891,10 @@ const WebRTC = {
     if (this._mediaResumeRefreshFallbackUsed || this._mediaIntent?.state !== 'active') return;
     if (this.getMediaAppliedPhase() !== 'resuming') return;
     const timeoutMs = this.mediaResumeTimeoutMs();
+    const baseline = this._mediaResumeBaseline;
     this._mediaResumeFrameTimer = setTimeout(() => {
       this._mediaResumeFrameTimer = null;
+      if (baseline !== this._mediaResumeBaseline || !this.mediaResumeScopeMatches(baseline)) return;
       this.onMediaResumeFrameTimeout();
     }, timeoutMs);
   },
@@ -920,13 +977,38 @@ const WebRTC = {
     return false;
   },
 
-  captureMediaResumeBaseline(generation) {
-    this._mediaResumeBaseline = {
+  clearMediaResumeProof() {
+    this._mediaResumeFramePending = false;
+    this._mediaResumeBaseline = null;
+    this._mediaResumeEarlyFrame = null;
+    this._lastRenderedRelayFrame = null;
+    this._mediaResumeArmPending = false;
+    this.clearMediaResumeFallback();
+  },
+
+  mediaResumeScope(generation = this._mediaIntent?.generation) {
+    const lease = this.activeLeaseEnvelope();
+    return {
       connectionAttemptId: this.currentConnectionAttemptId || null,
       generation: Number(generation) || 0,
-      framesDecoded: Number(this._lastInboundFramesDecoded) || 0,
-      videoFrameSeq: Number(this._videoFrameSeq) || 0,
+      leaseId: lease?.leaseId || null,
+      leaseEpoch: lease?.leaseEpoch || null,
       pc: this.pc || null,
+      relayRevision: Number(this._mediaRelayRevision) || 0,
+      socket: this.socket || null,
+    };
+  },
+
+  mediaResumeScopeMatches(scope) {
+    const current = this.mediaResumeScope();
+    return Boolean(scope && Object.keys(current).every(key => scope[key] === current[key]));
+  },
+
+  captureMediaResumeBaseline(generation) {
+    this.clearMediaResumeProof();
+    this._mediaResumeBaseline = {
+      ...this.mediaResumeScope(generation),
+      videoFrameSeq: Number(this._videoFrameSeq) || 0,
     };
   },
 
@@ -948,6 +1030,13 @@ const WebRTC = {
 
     // networkMode selects one adapter: WebRTC contract or tunnel relay control.
     if (this.networkMode === 'tunnel' || this.tunnelRelayActive) {
+      // An authorized active request must mount its receiver even while media
+      // remains resuming. Starting the receiver is not an input-ready proof.
+      if (desired === 'active' && !this.tunnelRelayActive) {
+        if (!this.startTunnelRelay({ allowResuming: true, sendRequest: false })) return false;
+        // Local producer identity changed; capture after that change, before send.
+        this.captureMediaResumeBaseline(snapshot.generation);
+      }
       // Re-assert attempt authority before media control so a late WebRTC offer
       // cannot leave Host on a stale attempt across the first suspend/resume.
       this.bindCurrentConnectionAttempt();
@@ -968,12 +1057,23 @@ const WebRTC = {
       });
     }
 
+    if (this.pc) this.pc._wrdConnectionAttemptId = this.currentConnectionAttemptId;
     this.socket.emit('media-activity-change', payload);
     return true;
   },
 
   handleMediaActivityAck(data = {}) {
+    if (data.relayControlKind === 'start') return this.handleRelayStartAck(data);
+    if (this.tunnelRelayActive && data.state === 'active' && data.applied === true
+      && (data.relayFrameSchemaVersion !== 1 || !this.validRelayScope(data.relayScope)
+        || data.relayScope.mediaGeneration !== data.generation
+        || data.relayScope.connectionAttemptId !== data.connectionAttemptId)) {
+      this.updateNetworkUI('JPEG 来源尚未验证，请刷新页面并升级 Host。', 'warning');
+      return;
+    }
     if (!this.mediaActivityRuntime) return;
+    if (!this.mediaResumeScopeMatches(this._mediaResumeBaseline)
+      && data.state === 'active') return;
     const result = this.mediaActivityRuntime.applyAck({
       state: data.state,
       generation: data.generation,
@@ -998,84 +1098,60 @@ const WebRTC = {
       return;
     }
     if (!result.accepted) return;
+    if (this.tunnelRelayActive && result.phase === 'resuming'
+      && !this.acceptRelayScope(data.relayScope)) return;
     this._mediaFailureHandledKey = null;
     if (result.phase === 'resuming') {
       this._mediaResumeFramePending = true;
-      if (!this._mediaResumeBaseline) {
-        this.captureMediaResumeBaseline(data.generation);
-      }
       this.ensureMediaResumeFallbackArmed('media-ack');
-      // A tunnel relay frame may finish rendering just before its Host ACK reaches
-      // this socket. Consume that post-baseline frame after the matching ACK rather
-      // than waiting indefinitely for a visually identical JPEG to load again.
-      const renderedRelayFrame = this._lastRenderedRelayFrame;
-      if (renderedRelayFrame) {
-        this.observeFreshResumeFrame({
-          source: 'relay-frame',
-          frameSeq: renderedRelayFrame.frameSeq,
-          connectionAttemptId: renderedRelayFrame.connectionAttemptId,
-        });
-      }
+      // Only a frame observed against this exact request baseline can be replayed.
+      const earlyFrame = this._mediaResumeEarlyFrame;
+      if (earlyFrame) this.observeFreshResumeFrame(earlyFrame);
     }
     if (result.phase === 'suspended') {
-      this._mediaResumeFramePending = false;
-      this._mediaResumeBaseline = null;
-      this._mediaResumeArmPending = false;
-      this.clearMediaResumeFallback();
+      this.clearRelayOrigin();
+      this.clearMediaResumeProof();
     }
     this.syncDesktopInputGate();
   },
 
   observeFreshResumeFrame({
     source = 'unknown',
-    framesDecoded = null,
     frameSeq = null,
     connectionAttemptId = null,
     pc = null,
+    generation = null,
+    scope = null,
   } = {}) {
-    if (!this._mediaResumeFramePending || !this.mediaActivityRuntime) return false;
-    if (this.getMediaAppliedPhase() !== 'resuming') return false;
-    if (!this.hasActiveControl()) return false;
-
+    if (!this.mediaActivityRuntime || this.getMediaAppliedPhase() !== 'resuming') return false;
+    if (!this.hasActiveControl() || this._mediaIntent?.state !== 'active') return false;
+    // Stats and timing notices are diagnostics, never proof that a frame painted.
+    if (source !== 'video-callback' && source !== 'relay-frame') return false;
     const baseline = this._mediaResumeBaseline;
-    if (!baseline) return false;
-
+    if (!this.mediaResumeScopeMatches(baseline)) return false;
+    if (scope && !this.mediaResumeScopeMatches(scope)) return false;
+    const runtime = this.mediaActivityRuntime.snapshot();
+    if (runtime.connectionAttemptId !== baseline.connectionAttemptId
+      || runtime.desiredGeneration !== baseline.generation) return false;
     const attemptId = connectionAttemptId || this.currentConnectionAttemptId || null;
-    if (baseline.connectionAttemptId && attemptId && attemptId !== baseline.connectionAttemptId) {
+    if (attemptId !== baseline.connectionAttemptId) return false;
+    if (generation != null && generation !== baseline.generation) return false;
+    if (pc && pc !== baseline.pc) return false;
+    const seq = Number(frameSeq);
+    if (!Number.isFinite(seq) || seq <= Number(baseline.videoFrameSeq || 0)) return false;
+    const frame = { source, frameSeq: seq, connectionAttemptId: attemptId,
+      pc: baseline.pc, generation: baseline.generation, scope: baseline };
+    if (!this._mediaResumeFramePending) {
+      this._mediaResumeEarlyFrame = frame;
       return false;
     }
-    if (baseline.pc && pc && baseline.pc !== pc) {
-      return false;
-    }
-    if (baseline.pc && this.pc && baseline.pc !== this.pc && !pc) {
-      return false;
-    }
-
-    let isFresh = false;
-    if (source === 'stats' || framesDecoded != null) {
-      const decoded = Number(framesDecoded);
-      if (Number.isFinite(decoded) && decoded > Number(baseline.framesDecoded || 0)) {
-        isFresh = true;
-      }
-    }
-    if (source === 'video-callback' || frameSeq != null) {
-      const seq = Number(frameSeq);
-      if (Number.isFinite(seq) && seq > Number(baseline.videoFrameSeq || 0)) {
-        isFresh = true;
-      }
-    }
-    if (!isFresh) return false;
-
-    const result = this.mediaActivityRuntime.noteRenderedFrame({
-      connectionAttemptId: attemptId,
-      afterResume: true,
-    });
+    const ack = runtime.lastAck;
+    if (!ack?.applied || ack.state !== 'active' || ack.generation !== baseline.generation
+      || ack.connectionAttemptId !== baseline.connectionAttemptId) return false;
+    const result = this.mediaActivityRuntime.noteRenderedFrame({ connectionAttemptId: attemptId });
     if (!result.accepted) return false;
     this.markMediaAttemptReady(attemptId);
-    this._mediaResumeFramePending = false;
-    this._mediaResumeBaseline = null;
-    this._mediaResumeArmPending = false;
-    this.clearMediaResumeFallback();
+    this.clearMediaResumeProof();
     this.noMediaTicks = 0;
     this.syncDesktopInputGate();
     return true;
@@ -1105,10 +1181,12 @@ const WebRTC = {
     // while the viewer is readonly still prove this attempt has painted; a later
     // control-grant can enable input without waiting for another frame — critical
     // on full-relay paths that regularly sit at 0 FPS for multi-second gaps.
-    if (!attemptId || attemptId !== this.currentConnectionAttemptId) return false;
+    if (!attemptId || attemptId !== this.currentConnectionAttemptId || !this.startupAllowed()) return false;
     this._mediaReadyConnectionAttemptId = attemptId;
     this.ensureDesktopSessionState()?.applyMedia({ attemptId, event: 'fresh-frame', fresh: true });
     this.clearFirstFrameDeadline();
+    this.checkStartupEpisode({ painted: true });
+    if (['retired', 'failed'].includes(this._startupEpisode?.state)) return false;
     if (this.hasPaintedFrame && this.uiPhase !== 'disconnected') {
       this.setUiPhase('connected', { reason: 'media-ready' });
     }
@@ -1213,10 +1291,119 @@ const WebRTC = {
     }
   },
 
+  latencyScope() {
+    return {
+      connectionAttemptId: this.currentConnectionAttemptId,
+      generation: Number(this.connectionAttemptSequence) || 0,
+      leaseEpoch: typeof Input !== 'undefined' ? (Input.activeControlLease?.leaseEpoch ?? 0) : 0,
+    };
+  },
+
+  syncLatencyScope() {
+    if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.setScope?.(this.latencyScope());
+  },
+
+  captureControlledTransportSnapshot() {
+    const reliable = this.inputChannel;
+    const move = this.inputMoveChannel?.readyState === 'open' ? this.inputMoveChannel : reliable;
+    const selected = channel => channel?.readyState === 'open'
+      && channel !== this._quarantinedInputChannel ? channel : null;
+    const socket = this.socket || null;
+    const socketId = socket?.id;
+    return {
+      pc: this.pc || null,
+      datachannel: { selectedMoveSendSource: selected(move),
+        selectedReliableSendSource: selected(reliable), reliableAckSource: reliable || null },
+      socket: { selectedSendSource: socket?.connected ? socket : null,
+        reliableAckSource: socket?.connected ? socket : null, object: socket,
+        id: typeof socketId === 'string' && socketId.length > 0 && socketId.length <= 128 ? socketId : null },
+    };
+  },
+
+  acceptObservedInputAck(data, context = {}) {
+    let controlledArrival = null;
+    try {
+      const viewerClockMs = performance.now();
+      controlledArrival = {
+        viewerClockMs, scope: this.latencyScope(),
+        leaseId: typeof Input !== 'undefined' ? Input.activeControlLease?.leaseId : null,
+        streamId: this.currentFrameTraceIdentity().streamId,
+        transport: context.transport,
+        source: context.transport === 'socket' ? context.socket : context.dataChannel,
+        socketId: context.transport === 'socket' ? (context.socket?.id || null) : null,
+        pc: this.pc || null,
+      };
+    } catch (_) { /* Raw evidence cannot affect ACK validation. */ }
+    // Finish C's validation first. Timing never grants or repairs authority.
+    const source = context.socket || context.dataChannel ? context : undefined;
+    let metadata = null;
+    try { metadata = typeof Input !== 'undefined' ? Input.peekInputAckMetadata?.(data, source) : null; } catch (_) {}
+    const results = [];
+    try {
+      if (typeof Input !== 'undefined') {
+        if (typeof Input.acceptMouseAck === 'function') results.push(Input.acceptMouseAck(data, source, { deferTrace: true }));
+        if ((data?.inputType === 'keyboard' || data?.schemaVersion !== 2)
+          && typeof Input.acceptKeyboardAck === 'function') results.push(Input.acceptKeyboardAck(data, source, { deferTrace: true }));
+      }
+      if (data?.schemaVersion === 2) {
+        const positive = data.status === 'applied' || data.status === 'duplicate';
+        const validated = results.some(result => result && (positive
+          ? result.status === 'applied' || result.status === 'duplicate'
+          : result.status !== 'stale'));
+        if (!validated) {
+          // Moves deliberately bypass C's reliable sequence ledger. The observer
+          // may settle only its own accepted unordered submission, with the exact
+          // current scope, lease, ID and actual receiving transport.
+          if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onUnorderedInputAck?.(data, {
+            scope: this.latencyScope(), transport: context.transport,
+          });
+          try {
+            if (controlledArrival && typeof LatencyMonitor !== 'undefined') {
+              LatencyMonitor.observeControlledAck?.(data, { ...controlledArrival,
+                scope: this.latencyScope(),
+                leaseId: typeof Input !== 'undefined' ? Input.activeControlLease?.leaseId : null,
+                pc: this.pc || null,
+                live: this.captureControlledTransportSnapshot(), verdict: 'unordered-applied' });
+            }
+          } catch (_) { /* Observation cannot change M1 or the early return. */ }
+          return;
+        }
+      }
+      if (typeof LatencyMonitor !== 'undefined') {
+        this.syncLatencyScope();
+        LatencyMonitor.onInputAck(data, { scope: this.latencyScope() });
+      }
+      try {
+        if (controlledArrival && results.some(result => result?.status === 'applied')
+            && typeof LatencyMonitor !== 'undefined') {
+          LatencyMonitor.observeControlledAck?.(data, { ...controlledArrival,
+            scope: this.latencyScope(),
+            leaseId: typeof Input !== 'undefined' ? Input.activeControlLease?.leaseId : null,
+            pc: this.pc || null,
+            live: this.captureControlledTransportSnapshot(), verdict: 'reliable-applied' });
+        }
+      } catch (_) { /* Observation cannot change C/M1 or final tracing. */ }
+    } finally {
+      // Passive tracing is last, including the unordered/stale early return.
+      // Observer failures cannot alter the ACK result or M1 routing.
+      try {
+        if (typeof Input !== 'undefined') {
+          const result = results.find(item => item && item.status !== 'stale') || results[0];
+          Input.recordObservedInputAck?.(data, result, metadata);
+        }
+      } catch (_) {}
+    }
+  },
+
   beginConnectionAttempt(trigger = 'viewer-open') {
+    if (!this.startupAllowed()) return;
+    if (this.startupPending()) this._startupEpisode.paint = null;
+    this.cancelDataChannelWatchdog();
     this.clearRefreshDcWaitTimer();
+    this.clearMediaResumeProof();
     this.connectionAttemptSequence = (Number(this.connectionAttemptSequence) || 0) + 1;
     this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    this.syncLatencyScope();
     this.ensureFrameTraceCollector(this.currentFrameTraceIdentity());
     this._recordInputTrace('lifecycle', {
       inputType: 'control', action: 'active', state: 'active',
@@ -1230,6 +1417,12 @@ const WebRTC = {
       socket: this.socket?.connected ? 'online' : 'connecting',
     });
     this._mediaReadyConnectionAttemptId = null;
+    this.clearRelayOrigin();
+    if (this._mediaIntent && this.mediaActivityRuntime) {
+      this.mediaActivityRuntime.beginDesired(this._mediaIntent.state, {
+        generation: this._mediaIntent.generation, connectionAttemptId: this.currentConnectionAttemptId,
+      });
+    }
     this._mediaFailureHandledKey = null;
     this._mediaRequestRetryUsed = false;
     this._mediaResumeSoftRecoverUsed = false;
@@ -1237,14 +1430,14 @@ const WebRTC = {
     this.clearMediaResumeFallback();
     this.hasPaintedFrame = false;
     this._lastInboundFramesDecoded = 0;
-    this._lastInboundFramesDecodedAt = 0;
+    this._lastInboundFramesDecodedAt = null;
     this._paintDecodedBaseline = 0;
     this._paintObservationWindow = null;
     this._lastPaintObservation = null;
     this._stallSince = null;
     this._keyframeRequestGeneration = '';
     this._keyframeRequestSequence = 0;
-    this._lastKeyframeRequestAt = 0;
+    this._lastKeyframeRequestAt = null;
     this.clearPaintIssueTimers();
     this.setUiPhase('signaling', { reason: trigger });
 
@@ -1422,6 +1615,7 @@ const WebRTC = {
   },
 
   enterUnavailableRelayState(message) {
+    if (this.startupPending()) this.retireStartupEpisode('relay-unavailable', { cleanup: true });
     this.markRefreshSettled('unavailable-relay');
     this.offerInProgress = false;
     this._offerEpoch += 1;
@@ -1429,10 +1623,7 @@ const WebRTC = {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this._dcTimeout) {
-      clearTimeout(this._dcTimeout);
-      this._dcTimeout = null;
-    }
+    this.cancelDataChannelWatchdog();
     if (this._disconnectedTimer) {
       clearTimeout(this._disconnectedTimer);
       this._disconnectedTimer = null;
@@ -1458,6 +1649,7 @@ const WebRTC = {
       this.pc.onicegatheringstatechange = null;
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
@@ -1592,16 +1784,17 @@ const WebRTC = {
   hidePaintLoading() {
     const el = document.getElementById('loading');
     if (el) {
-      el.classList.add('hidden');
-      el.classList.remove('is-connecting');
+      renderViewerChromeClass(el, 'hidden', true);
+      renderViewerChromeClass(el, 'is-connecting', false);
     }
-    document.body.classList.add('stream-connected');
+    renderViewerChromeClass(document.body, 'stream-connected', true);
     const videoEl = document.getElementById('remoteVideo');
-    if (videoEl) videoEl.classList.add('connected');
+    renderViewerChromeClass(videoEl, 'connected', true);
     this.hideReconnectHud();
   },
 
   setUiPhase(phase, { reason, attemptId } = {}) {
+    if (['retired', 'failed'].includes(this._startupEpisode?.state) && phase !== 'disconnected') return this.uiPhase;
     if (phase === 'connected' && this.hasPaintedFrame !== true) {
       phase = 'media-pending';
     }
@@ -1702,6 +1895,7 @@ const WebRTC = {
         : (streamReady && this.hasActiveControl() && transportReady ? 'armed' : 'off');
     return {
       uiPhase: this.uiPhase,
+      authVerified: typeof Auth !== 'undefined' && Auth.isVerified?.() === true,
       streamReady,
       activeControl: this.hasActiveControl(),
       controlTransition: Boolean(transition),
@@ -1709,6 +1903,13 @@ const WebRTC = {
       modalOpen,
       transportReady,
       mobileInputMode,
+      // Shared writers use the same final mobile/port capability projection.
+      mobileTextInputSupported: typeof Input !== 'undefined' && typeof Input.supportsMobileTextInput === 'function'
+        ? Input.supportsMobileTextInput() : true,
+      mobileTextInputActive: typeof Input === 'undefined' || Input.isActive !== false,
+      portSearchDisabled: (this._operatorToolsState || 'loading') === 'loading'
+        || (this._operatorToolsState !== 'failed'
+          && !this.isPortSearchActive() && !this.canStartPortSearch()),
       terminalActive,
       mediaActivityReasons: Array.isArray(mediaActivity?.reasons)
         ? mediaActivity.reasons.slice(0, 8) : [],
@@ -1774,26 +1975,34 @@ const WebRTC = {
   },
 
   schedulePaintPendingCopyTimers() {
+    const owner = this.captureStartupOwner();
+    if (this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
     if (!this._paintPending3sTimer) {
       this._paintPending3sTimer = setTimeout(() => {
+        if (!this.ownsStartupOwner(owner)) return;
         this._paintPending3sTimer = null;
-        if (this.uiPhase !== 'media-pending') return;
+        if (this.uiPhase !== 'media-pending'
+            || this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
         this.announcePaintIssue('media-pending-3s');
       }, 3000);
     }
     if (!this._paintPending8sTimer) {
       this._paintPending8sTimer = setTimeout(() => {
+        if (!this.ownsStartupOwner(owner)) return;
         this._paintPending8sTimer = null;
-        if (this.uiPhase !== 'media-pending') return;
+        if (this.uiPhase !== 'media-pending'
+            || this.getMediaActivitySnapshot().state === 'suspended' || document.hidden) return;
         this.announcePaintIssue('media-pending-8s');
-        this.autoSendPaintFailure('paint-pending-timeout');
+        if (!this.startupPending()) this.autoSendPaintFailure('paint-pending-timeout');
       }, 8000);
     }
   },
 
   schedulePaintStalledCopyTimer() {
+    const owner = this.captureStartupOwner();
     if (this.networkMode !== 'relay' || this._paintStalled6sTimer) return;
     this._paintStalled6sTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this._paintStalled6sTimer = null;
       if (this.uiPhase !== 'media-stalled') return;
       this.announcePaintIssue('media-stalled-6s');
@@ -1801,8 +2010,10 @@ const WebRTC = {
   },
 
   schedulePaintStalledAutoSend() {
+    const owner = this.captureStartupOwner();
     if (this._paintStalled3sTimer) return;
     this._paintStalled3sTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this._paintStalled3sTimer = null;
       if (this.uiPhase !== 'media-stalled') return;
       this.autoSendPaintFailure('media-stalled');
@@ -1850,6 +2061,7 @@ const WebRTC = {
   },
 
   notePaintStats(stats = {}) {
+    if (!this.startupAllowed()) return;
     const canonical = this.canonicalMediaStats(stats);
     const videoWidth = Number(stats.videoWidth || 0);
     const decodedDelta = canonical.decodedDelta;
@@ -1862,7 +2074,7 @@ const WebRTC = {
       receivedDelta,
       derivedFps,
       warmup: canonical.warmup,
-      jitterBufferMs: Number(stats.jitterBufferMs || 0),
+      jitterBufferMs: canonical.jitterBufferMs,
       bytesDelta: canonical.bytesDelta,
       framesDroppedDelta: canonical.framesDroppedDelta,
       packetsReceivedDelta: canonical.packetsReceivedDelta,
@@ -1947,13 +2159,13 @@ const WebRTC = {
 
   requestKeyframe(reason = 'media-stalled') {
     if (this.isMediaHealthSuppressed()) return false;
-    const now = Date.now();
+    const now = performance.now();
     const generation = `${this.currentConnectionAttemptId || ''}|${Number(this.connectionAttemptSequence) || 0}`;
     if (this._keyframeRequestGeneration !== generation) {
       this._keyframeRequestGeneration = generation;
-      this._lastKeyframeRequestAt = 0;
+      this._lastKeyframeRequestAt = null;
     }
-    if (this._lastKeyframeRequestAt && now - this._lastKeyframeRequestAt < 1000) {
+    if (Number.isFinite(this._lastKeyframeRequestAt) && now - this._lastKeyframeRequestAt < 1000) {
       return false;
     }
     const lease = this.activeLeaseEnvelope();
@@ -2204,8 +2416,211 @@ const WebRTC = {
     return { effectiveMode: preferredMode, changed: false, unavailable: false, reason: '' };
   },
   
-  async init({ bootstrapSnapshot = null, trigger = 'viewer-open', reuseSocket = false } = {}) {
+  // Initial media supervision belongs to an explicit Start, not to individual
+  // retries. Completed episodes deliberately leave established recovery alone.
+  beginStartupEpisode(controller = null) {
+    if (this._startupEpisode) {
+      this.retireStartupEpisode('replaced', { cleanup: true });
+      // Retired supersession may retain an inert config promise for reclaim. A
+      // new Start cancels that dependency before asking the controller to load.
+      this._startupEpisode.controller?.cancel?.();
+      this._pendingBootstrapConfig = null;
+    }
+    const episode = { state: 'pending', controller, started: false, remaining: 72000,
+      feedbackRemaining: 8000, paint: null, timer: null, lastNow: null, paused: false };
+    this._startupEpisode = episode;
+    this.manualDisconnect = false;
+    if (!this._startupVisibilityBound) {
+      this._startupVisibilityBound = true;
+      document.addEventListener('visibilitychange', () => this.checkStartupEpisode());
+    }
+    this.renderStartupControls(false);
+    return episode;
+  },
+
+  startupPending() {
+    return this.networkMode !== 'tunnel' && ['pending', 'slow'].includes(this._startupEpisode?.state);
+  },
+
+  startupAllowed(episode = this._startupEpisode || null) {
+    if (episode !== (this._startupEpisode || null)) return false;
+    if (!episode) return true;
+    if (this.startupPending()) this.checkStartupEpisode();
+    return episode.state === 'pending' || episode.state === 'slow' || episode.state === 'complete';
+  },
+
+  captureStartupOwner() {
+    return { episode: this._startupEpisode || null, peer: this.pc, socket: this.socket,
+      attempt: this.currentConnectionAttemptId, sequence: this.connectionAttemptSequence };
+  },
+
+  ownsStartupOwner(owner) {
+    // Reject stale owners before checking time: even rearming the current timer
+    // is a mutation that an older producer must not perform.
+    return !owner.retired && owner.peer === this.pc
+      && (!this.startupPending() || owner.socket === this.socket) && owner.attempt === this.currentConnectionAttemptId
+      && owner.sequence === this.connectionAttemptSequence && this.startupAllowed(owner.episode);
+  },
+
+  checkStartupEpisode({ connected = false, painted = false, suspended = null } = {}) {
+    const e = this._startupEpisode;
+    if (!this.startupPending() || !e.started) return;
+    const now = this.signalingMonotonicNow();
+    const paused = Boolean(document.hidden || (suspended == null
+      ? this._mediaIntent?.state === 'suspended' || this.getMediaActivitySnapshot()?.state === 'suspended'
+      : suspended));
+    // Invalid time is conservative: it cannot create another active allowance.
+    const elapsed = now === null || e.lastNow === null || now < e.lastNow
+      ? 72000 : now - e.lastNow;
+    if (!e.paused) {
+      e.remaining = Math.max(0, e.remaining - elapsed);
+      e.feedbackRemaining = Math.max(0, e.feedbackRemaining - elapsed);
+      if (e.paint) e.paint.remaining = Math.max(0, e.paint.remaining - elapsed);
+    }
+    e.lastNow = now;
+    e.paused = paused;
+    if (e.timer != null) clearTimeout(e.timer);
+    e.timer = null;
+    const expired = e.remaining <= 0 || e.paint?.remaining <= 0;
+    if (!paused && expired) {
+      this.retireStartupEpisode(e.paint ? 'startup-paint-timeout' : 'startup-media-timeout', { cleanup: true, failure: true });
+      return;
+    }
+    if (connected && this.pc && e.paint?.peer !== this.pc) {
+      e.paint = { peer: this.pc, remaining: 12000 };
+    }
+    if (!expired && painted && this.uiPhase !== 'disconnected' && this.hasPaintedFrame && this.isCurrentAttemptMediaReady()) {
+      e.state = 'complete';
+      this.renderStartupControls(false);
+      return;
+    }
+    if (paused) return;
+    if (e.feedbackRemaining <= 0 && e.state === 'pending') {
+      e.state = 'slow';
+      this.showSlowStartup();
+    }
+    const delay = Math.min(e.remaining, e.paint?.remaining ?? Infinity,
+      e.state === 'pending' ? e.feedbackRemaining : Infinity);
+    e.timer = setTimeout(() => {
+      if (this._startupEpisode === e) this.checkStartupEpisode();
+    }, delay);
+    e.timer?.unref?.();
+  },
+
+  startStartupMediaBudget() {
+    const e = this._startupEpisode;
+    if (!this.startupPending() || e.started || this.networkMode === 'tunnel') return;
+    e.started = true;
+    e.lastNow = this.signalingMonotonicNow();
+    e.paused = Boolean(document.hidden || this._mediaIntent?.state === 'suspended'
+      || this.getMediaActivitySnapshot()?.state === 'suspended');
+    this.checkStartupEpisode();
+  },
+
+  retireStartupMediaOwner() {
+    const e = this._startupEpisode;
+    if (e) e.paint = null;
+    for (const key of ['reconnectTimer', '_disconnectedTimer', '_iceDisconnectedTimer', '_stableResetTimer']) {
+      if (this[key] != null) clearTimeout(this[key]);
+      this[key] = null;
+    }
+    this.clearRefreshDcWaitTimer();
+    this.cancelDataChannelWatchdog();
+    this.clearPaintIssueTimers();
+    this.clearMediaResumeProof();
+    this.stopMediaTelemetry();
+    this.stopVideoFrameTracking();
+    this.stopDcKeepalive();
+    this._offerEpoch += 1;
+    this.offerInProgress = false;
+    const peer = this.pc;
+    this.pc = null;
+    this.inputChannel = null;
+    this.inputMoveChannel = null;
+    this.hasPaintedFrame = false;
+    this._mediaReadyConnectionAttemptId = null;
+    if (peer) {
+      for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',
+        'onsignalingstatechange', 'onicegatheringstatechange', 'onicecandidate', 'ontrack']) peer[event] = null;
+      peer.close?.();
+    }
+    const video = document.getElementById('remoteVideo');
+    if (video) { video.onloadedmetadata = null; video.onplaying = null; video.srcObject = null; }
+    this.syncDesktopInputGate();
+  },
+
+  retireStartupEpisode(reason, { cleanup = false, failure = false, retainReclaimConfig = false } = {}) {
+    const e = this._startupEpisode;
+    if (!e || ['retired', 'failed'].includes(e.state)) return;
+    // Retire before closing producers: close/disconnect may synchronously call back.
+    e.state = failure ? 'failed' : 'retired';
+    e.reason = reason;
+    if (e.timer != null) clearTimeout(e.timer);
+    e.timer = null;
+    if (!retainReclaimConfig) {
+      e.controller?.cancel?.();
+      this._pendingBootstrapConfig = null;
+    }
+    this._deferPeerUntilConfig = false;
+    this.renderStartupControls(false);
+    if (!cleanup) return;
+    this.clearFirstFrameDeadline();
+    this.clearSignalingRecovery();
+    this.markRefreshSettled(reason);
+    for (const key of ['reconnectTimer', '_disconnectedTimer', '_iceDisconnectedTimer', '_dcReconnectTimer', '_stableResetTimer']) {
+      if (this[key] != null) clearTimeout(this[key]);
+      this[key] = null;
+    }
+    this._cancelControlAcquireIntent();
+    this.freezeControl(reason);
+    this.retireStartupMediaOwner();
+    const socket = this.socket;
+    this.socket = null;
+    socket?.disconnect?.();
+    this.setUiPhase('disconnected', { reason });
+    document.getElementById('loading')?.classList.remove('is-connecting');
+    const start = document.getElementById('startBtn');
+    if (start) start.style.display = '';
+    if (reason === 'startup-cancelled') updateLoadingText('连接已取消，可以重新开始');
+    if (failure) {
+      updateLoadingText(reason === 'startup-paint-timeout'
+        ? '媒体链路已连接，但等待画面超时，请重试' : '等待媒体连接超时，请重试');
+      this.renderStartupControls(true, false);
+    }
+  },
+
+  showSlowStartup() {
+    document.getElementById('loading')?.classList.remove('is-connecting');
+    updateLoadingText('连接较慢，仍在等待画面；可以重试或取消');
+    this.renderStartupControls(true);
+  },
+
+  renderStartupControls(show, cancel = true) {
+    let controls = document.getElementById('startupWaitControls');
+    if (!controls && show && document.createElement) {
+      controls = document.createElement('div');
+      controls.id = 'startupWaitControls';
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'start-btn'; retry.textContent = '重试连接';
+      retry.addEventListener('click', () => this.startViewer(this._startupEpisode?.controller));
+      const stop = document.createElement('button');
+      stop.type = 'button'; stop.className = 'start-btn'; stop.textContent = '取消连接'; stop.dataset.startupCancel = 'true';
+      stop.addEventListener('click', () => this.retireStartupEpisode('startup-cancelled', { cleanup: true }));
+      controls.append(retry, stop);
+      document.getElementById('loading')?.append(controls);
+    }
+    if (controls) {
+      controls.hidden = !show;
+      const stop = controls.querySelector?.('[data-startup-cancel]');
+      if (stop) stop.hidden = !cancel;
+    }
+  },
+
+  async init({ bootstrapSnapshot = null, trigger = 'viewer-open', reuseSocket = false, episode = this._startupEpisode || null } = {}) {
+    if (!this.startupAllowed(episode)) return false;
+    this.startStartupMediaBudget();
     const token = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
     if (!token) {
       console.error('No token available');
       if (typeof Auth.logout === 'function') Auth.logout();
@@ -2217,6 +2632,11 @@ const WebRTC = {
     } else {
       await this.loadServerConfig();
     }
+    if (this._superseded || !this.startupAllowed(episode)) return false;
+    if (Auth.getToken() !== token || Auth.getGeneration?.() !== authGeneration) {
+      this.retireStartupEpisode('auth-changed', { cleanup: true });
+      return false;
+    }
     this.clearFailureRecommendation();
     const modeState = this.enforceSupportedNetworkMode(this.networkMode);
     this.beginConnectionAttempt(trigger);
@@ -2227,7 +2647,10 @@ const WebRTC = {
     this._deferPeerUntilConfig = false;
     this.createSignalingSocket(!reuseSocket);
     this.bindControlLifecycle();
-    if (this.networkMode !== 'tunnel') this.createPeerConnection();
+    if (this.networkMode !== 'tunnel') {
+      this.createPeerConnection();
+      this.reconcileConfiguredControlMedia();
+    }
   },
 
   applyBootstrapSnapshot(snapshot = null) {
@@ -2271,6 +2694,11 @@ const WebRTC = {
   },
 
   beginFirstFrameDeadline(attemptId, timeoutMs = 8000) {
+    if (this.startupPending() && this.networkMode !== 'tunnel') {
+      this.clearFirstFrameDeadline();
+      this.startStartupMediaBudget();
+      return;
+    }
     this.clearFirstFrameDeadline();
     const expectedAttemptId = attemptId || this.currentConnectionAttemptId;
     if (this.hasPaintedFrame
@@ -2289,6 +2717,10 @@ const WebRTC = {
   },
 
   endConnectingWithFailure(reason = 'first-frame-timeout') {
+    if (this.startupPending() && this.networkMode !== 'tunnel') {
+      this.retireStartupEpisode(reason, { cleanup: true, failure: true });
+      return;
+    }
     this.clearFirstFrameDeadline();
     document.getElementById('loading')?.classList.remove('is-connecting');
     this.setUiPhase('disconnected', { reason });
@@ -2304,6 +2736,7 @@ const WebRTC = {
   },
 
   enterBootstrapFailure(error) {
+    this.retireStartupEpisode('bootstrap-failure', { cleanup: true });
     this.clearFirstFrameDeadline();
     document.getElementById('loading')?.classList.remove('is-connecting');
     this.setUiPhase('disconnected', { reason: 'bootstrap-failure' });
@@ -2315,6 +2748,24 @@ const WebRTC = {
   },
 
   async startViewer(controller = null) {
+    const startRequest = this._startRequest = (this._startRequest || 0) + 1;
+    // Token presence is not verification. Await the initial check only; retry is explicit.
+    const verified = typeof Auth !== 'undefined' && (typeof Auth.whenReady === 'function'
+      ? await Auth.whenReady() : Auth.isVerified?.() === true);
+    if (startRequest !== this._startRequest) return false;
+    if (!verified || Auth.isVerified?.() !== true) {
+      if (typeof Auth !== 'undefined' && !Auth.getToken()) return Auth.logout();
+      if (typeof Auth !== 'undefined') Auth.showRetry?.(true);
+      updateLoadingText('登录验证暂不可用，请重试验证');
+      this.syncChromeCapabilities();
+      return false;
+    }
+    const episode = this.beginStartupEpisode(controller);
+    this.resetSignalingSession();
+    this._controlUserReleased = false;
+    this._cancelControlAcquireIntent();
+    const authToken = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
     const startBtn = document.getElementById('startBtn');
     if (startBtn) startBtn.style.display = 'none';
     document.getElementById('loading')?.classList.add('is-connecting');
@@ -2324,11 +2775,17 @@ const WebRTC = {
       StartupTelemetry.mark('bootstrap-start');
     }
     try {
-      if (typeof Auth !== 'undefined' && !Auth.isLoggedIn()) {
-        return Auth.logout();
+      await this.requestExplicitViewerAdmission(episode);
+      if (!this.startupAllowed(episode)) return false;
+      if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+          || Auth.getGeneration?.() !== authGeneration) {
+        this.retireStartupEpisode('auth-changed', { cleanup: true });
+        return false;
       }
+      this._superseded = false;
+      this.hideSupersededUI();
       if (!controller) {
-        await this.init({ trigger: 'start-button' });
+        await this.init({ trigger: 'start-button', episode });
         return;
       }
       // Open signaling immediately; ICE/config can arrive in parallel via bootstrap.
@@ -2336,10 +2793,37 @@ const WebRTC = {
       this.manualDisconnect = false;
       this._deferPeerUntilConfig = true;
       this.createSignalingSocket(true);
-      const bootstrapSnapshot = await controller.load({
+      const pendingBootstrap = controller.load({
         mode: this.networkMode,
         turnServerId: this.selectedTurnServerId,
+      }).then((snapshot) => {
+        const reclaimOnly = this._startupEpisode === episode
+          && episode.state === 'retired' && episode.reason === 'viewer-superseded';
+        if ((!this.startupAllowed(episode) && !reclaimOnly) || Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+            || Auth.getGeneration?.() !== authGeneration
+            || this._pendingBootstrapConfig !== pendingBootstrap) {
+          throw Object.assign(new Error('superseded'), { code: 'superseded' });
+        }
+        // A superseded Start can only return inert config to a future explicit
+        // reclaim; it cannot publish config/UI or revive its media producer.
+        if (reclaimOnly) episode.reclaimConfig = { snapshot, authToken, authGeneration };
+        return snapshot;
       });
+      this._pendingBootstrapConfig = pendingBootstrap;
+      let bootstrapSnapshot;
+      try { bootstrapSnapshot = await pendingBootstrap; }
+      finally {
+        if (this._pendingBootstrapConfig === pendingBootstrap) {
+          this._pendingBootstrapConfig = null;
+          this._deferPeerUntilConfig = false;
+        }
+      }
+      // The promise settles before this continuation; authentication may have
+      // changed in another queued microtask after configuration validation.
+      if (!this.startupAllowed(episode) || Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+          || Auth.getGeneration?.() !== authGeneration) {
+        throw Object.assign(new Error('superseded'), { code: 'superseded' });
+      }
       if (typeof StartupTelemetry !== 'undefined' && StartupTelemetry?.mark) {
         if (bootstrapSnapshot?.degraded) {
           StartupTelemetry.mark('bootstrap-degraded');
@@ -2347,13 +2831,21 @@ const WebRTC = {
           StartupTelemetry.mark('bootstrap-ready');
         }
       }
-      await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true });
+      if (this._superseded) return false;
+      await this.init({ bootstrapSnapshot, trigger: 'start-button', reuseSocket: true, episode });
     } catch (error) {
-      this._deferPeerUntilConfig = false;
-      if (controller && controller.getSnapshot && controller.getSnapshot().state === 'auth-required') {
+      if (!this.startupAllowed(episode)) return false;
+      if (!this._pendingBootstrapConfig) this._deferPeerUntilConfig = false;
+      if (error?.code === 'auth-invalid' && Auth.getToken() === authToken
+          && Auth.getGeneration?.() === authGeneration
+          && controller?.getSnapshot?.().state === 'auth-required') {
         return Auth.logout();
       }
-      this.enterBootstrapFailure(error);
+      if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
+      else if (Auth.isVerified?.() !== true || Auth.getToken() !== authToken
+          || Auth.getGeneration?.() !== authGeneration) {
+        this.retireStartupEpisode('auth-changed', { cleanup: true });
+      }
     }
   },
 
@@ -2370,6 +2862,11 @@ const WebRTC = {
   quiesceDisconnectedSocket() {
     const socket = this.socket;
     if (!socket || socket.connected) return false;
+    // Retire this socket's watchdog without discarding the elapsed outage budget.
+    if (this._signalRecoveryTimer != null) {
+      clearTimeout(this._signalRecoveryTimer);
+      this._signalRecoveryTimer = null;
+    }
     // Invalidate the old listener closures before disconnecting. Socket.IO may
     // already have a reconnect callback queued; those callbacks must not
     // create a PeerConnection while init() is waiting for fresh config.
@@ -2383,6 +2880,7 @@ const WebRTC = {
   },
 
   createSignalingSocket(forceRecreate = false) {
+    if (!this.startupAllowed()) return null;
     if (this._superseded) {
       return null;
     }
@@ -2400,6 +2898,7 @@ const WebRTC = {
     const socketBase = (typeof RuntimeConfig !== 'undefined')
       ? RuntimeConfig.getSocketBase()
       : window.location.origin;
+    this.ensureSignalingSession();
     const socketOptions = this.buildSignalingSocketOptions({
       token,
       reconnection: !this._superseded,
@@ -2409,7 +2908,122 @@ const WebRTC = {
     return this.socket;
   },
 
+  readProofAdmission() {
+    try {
+      if (typeof sessionStorage === 'undefined') return null;
+      const raw = sessionStorage.getItem('wrdProofAdmission');
+      if (raw == null) return null;
+      try { return JSON.parse(raw) || { invalid: true }; }
+      catch (_error) { return { invalid: true }; }
+    } catch (_error) { return null; }
+  },
+
+  readInitialAdmissionPolicy() {
+    try {
+      const values = new URLSearchParams(window.location.search).getAll('wrdAdmission');
+      if (values.length === 0) return null;
+      if (values.length === 1 && values[0] === 'vacant-only-v1') return values[0];
+    } catch (_error) { /* Unreadable location is not ordinary admission. */ }
+    throw Object.assign(new Error('桌面连接授权暂不可用，请手动重试'), { code: 'invalid-initial-policy' });
+  },
+
+  async requestExplicitViewerAdmission(episode = this._startupEpisode || null) {
+    const initialPolicy = this.readInitialAdmissionPolicy();
+    // A proof-bearing page must never upgrade itself to ordinary human takeover.
+    if (this.readProofAdmission()) {
+      if (initialPolicy) {
+        throw Object.assign(new Error('桌面连接授权暂不可用，请手动重试'), { code: 'invalid-initial-policy' });
+      }
+      this._viewerAdmission = null;
+      return;
+    }
+    const token = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
+    if (!token || Auth.isVerified?.() !== true) throw new Error('请重新验证登录');
+    const sequence = ++this._explicitAdmissionSequence;
+    const base = typeof RuntimeConfig !== 'undefined' ? RuntimeConfig.getApiBase() : window.location.origin;
+    const result = await fetchJsonWithin(`${base}/api/auth/viewer-admission`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ viewerSessionId: this.resolveViewerSessionId(), ...(initialPolicy ? { initialPolicy } : {}) }),
+    }, { timeoutMs: 5000 });
+    if (!this.startupAllowed(episode) || sequence !== this._explicitAdmissionSequence || Auth.getToken() !== token
+        || Auth.getGeneration?.() !== authGeneration || Auth.isVerified?.() !== true
+        || this.readInitialAdmissionPolicy() !== initialPolicy || this.readProofAdmission()) {
+      throw Object.assign(new Error('superseded'), { code: 'superseded' });
+    }
+    if (!result.ok || typeof result.data?.admission?.ticket !== 'string') {
+      throw new Error('桌面连接授权暂不可用，请手动重试');
+    }
+    this._viewerAdmission = { mode: 'explicit', ticket: result.data.admission.ticket };
+  },
+
   signalingConnectBudgetMs: 5000,
+
+  // This identity follows explicit user connections, independently of media attempts.
+  resetSignalingSession() {
+    this._signalingSession = { preferPolling: false, failure: null, capturedAtMs: null };
+    return this._signalingSession;
+  },
+
+  ensureSignalingSession() {
+    return this._signalingSession || this.resetSignalingSession();
+  },
+
+  signalingMonotonicNow() {
+    try {
+      const now = performance.now();
+      return typeof now === 'number' && Number.isFinite(now) && now >= 0 ? now : null;
+    } catch (_) { return null; }
+  },
+
+  getSignalingFailureSnapshot() {
+    const session = this._signalingSession;
+    if (!session?.failure) return null;
+    const now = this.signalingMonotonicNow();
+    const elapsed = now !== null && session.capturedAtMs !== null ? now - session.capturedAtMs : null;
+    return Object.freeze({ ...session.failure,
+      ageMs: typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 3600000 ? elapsed : null });
+  },
+
+  recordSignalingFailure(error, socket, manager, session) {
+    if (this.socket !== socket || this._signalingSession !== session) return null;
+    const read = getter => { try { return getter(); } catch (_) { return undefined; } };
+    if (read(() => socket.io) !== manager) return null;
+    const message = read(() => error?.message);
+    const failureClass = message === 'timeout' ? 'timeout' : read(() => error?.type) === 'TransportError' ? 'transport-error'
+      : message === 'Authentication required' ? 'auth-required' : message === 'Invalid token' ? 'auth-invalid' : 'unknown';
+    const engine = read(() => manager.engine);
+    const transport = read(() => engine.transport.name);
+    const engineState = read(() => engine.readyState);
+    const socketConnected = read(() => socket.connected);
+    const socketActive = read(() => socket.active);
+    let fallbackSelected = false;
+    // Manager timeout emits after Manager closes, before its opening Engine closes.
+    // Read only known options; an exception/unknown eligibility must leave policy alone.
+    try {
+      const options = manager.opts;
+      const transports = options.transports;
+      const names = Array.isArray(transports) ? transports.map(item => typeof item === 'string' ? item : item.prototype.name) : [];
+      if (failureClass === 'timeout' && transport === 'websocket' && engineState === 'opening'
+        && socketConnected === false && socketActive === true && names.includes('polling')
+        && names.every(name => name === 'polling' || name === 'websocket')) {
+        const nextTransports = ['polling', 'websocket'];
+        options.transports = nextTransports;
+        if (options.transports === nextTransports) {
+          session.preferPolling = true;
+          fallbackSelected = true;
+        }
+      }
+    } catch (_) {}
+    const summary = { scope: 'last-connect-error', failureClass, transport, engineState,
+      managerState: read(() => manager._readyState), socketConnected, socketActive, fallbackSelected,
+      connectBudgetMs: read(() => manager.opts.timeout), ageMs: 0 };
+    // Shared whitelist is also used by runtime/core/full/storage/server boundaries.
+    if (typeof sanitizeSignalingFailure !== 'function') return null;
+    session.failure = Object.freeze(sanitizeSignalingFailure(summary));
+    session.capturedAtMs = this.signalingMonotonicNow();
+    return session.failure;
+  },
 
   resolveViewerSessionId() {
     const key = 'wrd_viewer_session_id';
@@ -2440,11 +3054,12 @@ const WebRTC = {
   resolveSignalingTransports({ allowPolling = true } = {}) {
     // Websocket-first keeps formal cold path fast; polling remains a fallback when WS is blocked.
     if (allowPolling === false) return ['websocket'];
-    return ['websocket', 'polling'];
+    return this._signalingSession?.preferPolling ? ['polling', 'websocket'] : ['websocket', 'polling'];
   },
 
   buildSignalingSocketOptions({ token, reconnection = true, allowPolling = true } = {}) {
     const transports = this.resolveSignalingTransports({ allowPolling });
+    const proofAdmission = this.readProofAdmission();
     const timeout = Number(this.signalingConnectBudgetMs) > 0
       ? Number(this.signalingConnectBudgetMs)
       : 5000;
@@ -2454,19 +3069,17 @@ const WebRTC = {
         role: 'viewer',
         inputProtocolVersion: 2,
         viewerSessionId: this.resolveViewerSessionId(),
-        proofAdmission: (() => {
-          try {
-            if (typeof sessionStorage === 'undefined') return null;
-            return JSON.parse(sessionStorage.getItem('wrdProofAdmission') || 'null');
-          } catch (_err) { return null; }
-        })(),
+        proofAdmission,
+        ...(proofAdmission ? {} : {
+          viewerAdmission: this._viewerAdmission || { mode: 'resume', generation: null },
+        }),
       },
       reconnection: Boolean(reconnection),
       // Prefer WebSocket; keep polling as bounded fallback for proxy/firewall paths.
       transports,
       // When the first transport fails hard, continue through the list (WS → polling).
       tryAllTransports: true,
-      // Bound dual-transport failure so Start does not silently hang past 5s budgets.
+      // Each Engine-open attempt is bounded; namespace auth and all retries may take longer.
       timeout,
     };
   },
@@ -2532,6 +3145,8 @@ const WebRTC = {
     if (!capabilities || typeof capabilities !== 'object') {
       return this.serverConfig;
     }
+    this.serverConfig.inputFrameCorrelationVersion = capabilities.inputFrameCorrelationVersion === 1 ? 1 : null;
+    if (this.serverConfig.inputFrameCorrelationVersion !== 1) this.inputFrameCollector = null;
     if (Object.prototype.hasOwnProperty.call(capabilities, 'turnReady')) {
       this.serverConfig.hostTurnReady = Boolean(capabilities.turnReady);
     }
@@ -2628,8 +3243,12 @@ const WebRTC = {
   },
 
   async loadServerConfig({ turnServerId } = {}) {
+    const episode = this._startupEpisode || null;
+    const token = Auth.getToken();
+    const authGeneration = Auth.getGeneration?.();
+    const ownsConfig = () => Auth.getToken() === token && Auth.getGeneration?.() === authGeneration
+      && this.startupAllowed(episode);
     try {
-      const token = Auth.getToken();
       const apiBase = (typeof RuntimeConfig !== 'undefined')
         ? RuntimeConfig.getApiBase()
         : '';
@@ -2646,7 +3265,9 @@ const WebRTC = {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      this.serverConfig = await response.json();
+      const config = await response.json();
+      if (!ownsConfig()) return;
+      this.serverConfig = config;
       const resolvedId = this.setSelectedTurnServerId(
         this.serverConfig.selectedTurnServerId || requestedId || this.selectedTurnServerId,
         { persist: true },
@@ -2665,7 +3286,9 @@ const WebRTC = {
           },
         );
         if (retry.ok) {
-          this.serverConfig = await retry.json();
+          const config = await retry.json();
+          if (!ownsConfig()) return;
+          this.serverConfig = config;
         }
       }
       this.populateTurnServerSelect();
@@ -2680,6 +3303,7 @@ const WebRTC = {
         turnServers: (this.serverConfig.turnServers || []).map((server) => server.id),
       });
     } catch (err) {
+      if (!ownsConfig()) return;
       console.warn('[NETWORK] Failed to load WebRTC config, using built-in STUN only:', err);
       this.serverConfig = {
         stunUrls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
@@ -2992,6 +3616,9 @@ const WebRTC = {
       }
     }
 
+    // Reconcile the controller's own loader/retry state with the shared phase
+    // and Terminal gate, including when the derived Chrome model is unchanged.
+    this.syncChromeCapabilities();
     if (!candidateEl || !snap) {
       return;
     }
@@ -3191,9 +3818,14 @@ const WebRTC = {
   setupSocketListeners() {
     const socket = this.socket;
     if (!socket || typeof socket.on !== 'function') return;
+    if ((this._relayPendingStart && this._relayPendingStart.socket !== socket)
+      || (this._relayScopeContext && this._relayScopeContext.socket !== socket)) this.clearRelayOrigin();
+    const episode = this._startupEpisode || null;
+    const signalingSession = this.ensureSignalingSession();
+    const signalingManager = socket.io;
     const onCurrentSocket = (event, handler) => {
       socket.on(event, (...args) => {
-        if (this.socket !== socket) return undefined;
+        if (this.socket !== socket || !this.startupAllowed(episode)) return undefined;
         return handler(...args);
       });
     };
@@ -3215,7 +3847,7 @@ const WebRTC = {
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.replayPendingDiagnostics === 'function') {
         await Diagnostic.replayPendingDiagnostics(this.socket);
       }
-      if (this.socket !== socket) return;
+      if (this.socket !== socket || !this.startupAllowed(episode)) return;
       // Reset offerInProgress on reconnect to prevent stuck state
       if (this.offerInProgress) {
         console.warn('[OFFER-DBG] Resetting stuck offerInProgress on reconnect');
@@ -3235,11 +3867,24 @@ const WebRTC = {
 
     onCurrentSocket('connect_error', (error) => {
       if (this._superseded || this.manualDisconnect) return;
-      console.warn('[RECOVERY] Signaling connect error:', error?.message || error || 'unknown');
+      if (this._signalingSession !== signalingSession) return;
+      try { if (socket.io !== signalingManager) return; } catch (_) { return; }
+      const failure = this.recordSignalingFailure(error, socket, signalingManager, signalingSession);
+      console.warn('[RECOVERY] Signaling connect error:', failure?.failureClass || 'unknown');
+      try {
+        if (typeof Diagnostic !== 'undefined') {
+          Promise.resolve(Diagnostic.autoSendFailure?.('signal-connect-error')).catch(() => {});
+        }
+      } catch (_) {}
       this.scheduleSignalingRecovery('signal-connect-error');
     });
 
     onCurrentSocket('connected', (data) => {
+      if (!this.readProofAdmission() && data.viewerAdmission?.mode === 'resume') {
+        this._viewerAdmission = { mode: 'resume', generation: data.viewerAdmission.generation };
+        // Socket.IO retries the same auth object; drop the consumed ticket now.
+        if (socket.auth) socket.auth.viewerAdmission = this._viewerAdmission;
+      }
       console.log('[OFFER-DBG] Connected event: hostOnline=%s offerInProgress=%s pc=%s pcState=%s',
         data.hostOnline, this.offerInProgress, !!this.pc, this.pc?.connectionState);
 
@@ -3260,6 +3905,7 @@ const WebRTC = {
         this.controlState.hostOnline = true;
         this.applyHostCapabilities(data.hostCapabilities);
         this.renderPortSearchStatus();
+        if (this.startupPending()) this.setUiPhase('signaling', { reason: 'host-online' });
         updateLoadingText('Host已上线，正在连接...');
         if (!this._deferPeerUntilConfig
           && (!this.pc || ['failed', 'closed'].includes(this.pc.connectionState))) {
@@ -3281,6 +3927,7 @@ const WebRTC = {
         } else {
           this.renderPortSearchStatus();
         }
+        if (this.startupPending()) this.retireStartupMediaOwner();
         this.freezeControl('host-offline');
         this.setUiPhase('disconnected', { reason: 'host-offline' });
         updateLoadingText('Host已离线');
@@ -3292,6 +3939,7 @@ const WebRTC = {
     });
 
     onCurrentSocket('answer', async (data) => {
+      const answerEpisode = this._startupEpisode || null;
       console.log('Received answer');
       if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
         console.warn('[NETWORK] Ignoring stale answer: pc=%s, signalingState=%s',
@@ -3299,7 +3947,15 @@ const WebRTC = {
         return;
       }
       try {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        const peer = this.pc, socket = this.socket, attempt = this.currentConnectionAttemptId;
+        const sequence = this.connectionAttemptSequence, epoch = this._offerEpoch;
+        const watchdog = this._dataChannelWatchdog;
+        if (this.manualDisconnect || this._superseded) return;
+        await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+        if (this.pc !== peer || this.socket !== socket || this.currentConnectionAttemptId !== attempt
+            || this.connectionAttemptSequence !== sequence || this._offerEpoch !== epoch
+            || this.manualDisconnect || this._superseded || !this.startupAllowed(answerEpisode)) return;
+        this.finishDataChannelNegotiation(watchdog);
       } catch (err) {
         console.error('Failed to set remote description:', err);
       }
@@ -3319,17 +3975,11 @@ const WebRTC = {
       }
     });
 
-    onCurrentSocket('input-ack', (data) => {
-      if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
-        Input.acceptMouseAck(data);
-      }
-      if (data?.inputType === 'keyboard'
-        && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
-        Input.acceptKeyboardAck(data);
-      }
-      if (typeof LatencyMonitor !== 'undefined') {
-        LatencyMonitor.onInputAck(data);
-      }
+    onCurrentSocket('input-ack', (data) => { this.acceptObservedInputAck(data, { transport: 'socket', socket }); });
+
+    onCurrentSocket('viewer-admission-rejected', (data) => {
+      this._viewerAdmission = null;
+      this.handleViewerSuperseded(data || {});
     });
 
     onCurrentSocket('viewer-superseded', (data) => {
@@ -3337,6 +3987,7 @@ const WebRTC = {
     });
 
     onCurrentSocket('disconnect', (reason) => {
+      this.clearRelayOrigin();
       this.ensureDesktopSessionState()?.applyConnection({
         attemptId: this.currentConnectionAttemptId,
         state: 'offline',
@@ -3364,6 +4015,7 @@ const WebRTC = {
       this.scheduleSignalingRecovery('signal-disconnected');
     });
 
+    onCurrentSocket('relay-frame-feedback', (data) => this.handleRelayFrameFeedback(data));
     onCurrentSocket('relay-frame', (data) => {
       this.handleRelayFrame(data);
     });
@@ -3404,15 +4056,74 @@ const WebRTC = {
     return { schemaVersion: 2, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch };
   },
 
+  _cancelControlAcquireIntent() {
+    this._controlAcquireIntent = null;
+    this._controlAcquireRequestId = null;
+  },
+
+  _currentControlAcquireIntent() {
+    const intent = this._controlAcquireIntent;
+    return intent && intent.socket === this.socket && intent.socketId === (this.socket?.id || null)
+      ? intent : null;
+  },
+
+  _rememberControlAcquireIntent() {
+    let intent = this._currentControlAcquireIntent();
+    if (!intent) {
+      intent = { socket: this.socket, socketId: this.socket?.id || null,
+        generation: (this._controlRecoveryGeneration || 0) + 1,
+        remaining: 1, waiting: false, resetEpoch: null, releaseSent: false };
+      this._controlRecoveryGeneration = intent.generation;
+      this._controlAcquireIntent = intent;
+    }
+    return intent;
+  },
+
+  _resumeControlAcquireIntent() {
+    const intent = this._currentControlAcquireIntent();
+    if (!intent?.waiting || intent.remaining <= 0 || !this.socket?.connected
+      || !this.controlState.hostOnline || this._controlUserReleased || this.manualDisconnect
+      || this._superseded || this.isControlResetBlocked() || this.controlState.state !== 'FREE') return false;
+    intent.waiting = false;
+    intent.remaining -= 1;
+    return this.requestControl({ allowTakeover: false });
+  },
+
+  requestControlRecovery(generation) {
+    if (!this.hasActiveControl() || !this.socket?.connected || this._controlUserReleased
+      || this.manualDisconnect || this._superseded) return false;
+    const intent = this._rememberControlAcquireIntent();
+    if (intent.releaseSent || intent.remaining <= 0) return false;
+    intent.releaseSent = true;
+    intent.waiting = true;
+    intent.inputGeneration = generation;
+    intent.resetEpoch = this.controlState.lease?.leaseEpoch ?? null;
+    if (typeof Input !== 'undefined') {
+      Input._preserveRecoveryDraft = true;
+      Input._recoveryControlReacquireRequired = true;
+      if (Input._recoveryCycle) Input._recoveryCycle.retryAvailable = false;
+    }
+    this.releaseControl('input-recovery-timeout', { preserveAcquireIntent: true });
+    return true;
+  },
+
   requestControl({ allowTakeover = true } = {}) {
-    if (!this.socket?.connected || !this.controlState.hostOnline) return false;
+    if (!this.socket?.connected || !this.controlState.hostOnline || this._superseded || this.manualDisconnect) return false;
+    if (allowTakeover) {
+      this._controlUserReleased = false;
+      this._cancelControlAcquireIntent();
+    } else if (this._controlUserReleased) return false;
+    const intent = this._rememberControlAcquireIntent();
     if (this.isControlResetBlocked() || this.controlState.state === 'GRANTING' || this.controlState.state === 'REVOKING') {
+      intent.waiting = true;
+      intent.resetEpoch = this.controlState.leaseEpoch ?? intent.resetEpoch;
       // Do not paint a sticky "切换中" that ignores later acquire-result.
       this.updateControlUI();
       return false;
     }
     // Automatic paths must not silently steal an existing ACTIVE controller.
     if (this.controlState.state === 'ACTIVE' && !this.controlState.controller && !allowTakeover) {
+      intent.waiting = true;
       return false;
     }
     const requestId = `control-${Date.now()}-${++this._controlRequestId}`;
@@ -3425,10 +4136,17 @@ const WebRTC = {
   },
 
   handleControlAcquireResult(data = {}) {
-    if (data.requestId && this._controlAcquireRequestId && data.requestId !== this._controlAcquireRequestId) {
+    if (data.requestId && data.requestId !== this._controlAcquireRequestId) {
       return;
     }
+    const intent = this._currentControlAcquireIntent();
+    if (!intent || this._controlUserReleased || this._superseded) return;
     const state = data.state || this.controlState.state;
+    if (data.reason === 'reset-in-progress' || state === 'REVOKING') {
+      intent.waiting = true;
+      intent.resetEpoch = data.leaseEpoch ?? intent.resetEpoch;
+    }
+    if (data.reason === 'host-offline') this._cancelControlAcquireIntent();
     this.controlState = {
       ...this.controlState,
       state,
@@ -3470,6 +4188,12 @@ const WebRTC = {
     // During GRANTING/REVOKING, controller is false for everyone — do not treat as
     // permanent readonly freeze (that raced with acquire and left sticky UI).
     const transitioning = data.state === 'GRANTING' || data.state === 'REVOKING';
+    const intent = this._currentControlAcquireIntent();
+    if (intent && data.state === 'REVOKING') {
+      intent.waiting = true;
+      intent.resetEpoch = data.leaseEpoch ?? intent.resetEpoch;
+    }
+    if (data.hostOnline === false) this._cancelControlAcquireIntent();
     if (!data.controller && !transitioning) {
       this.freezeControl(data.reason || 'control-readonly', false);
     } else if (!data.controller && transitioning) {
@@ -3487,19 +4211,61 @@ const WebRTC = {
       this.renderPortSearchStatus();
     }
     this.updateControlUI();
+    if (data.state === 'FREE') this._resumeControlAcquireIntent();
   },
 
   handleControlGrant(data = {}) {
+    if (!this.startupAllowed()) return;
+    if (this._controlUserReleased || this._superseded || this.manualDisconnect) {
+      if (this.socket?.connected) this.socket.emit('control-release', { reason: 'released' });
+      return;
+    }
+    const recovering = this._currentControlAcquireIntent();
+    if (recovering?.releaseSent && data.leaseEpoch <= recovering.resetEpoch) return;
     if (!data.controller || typeof data.leaseId !== 'string' || !Number.isInteger(data.leaseEpoch)) {
       this.freezeControl('invalid-control-grant');
       return;
     }
+    // Keep only correlation metadata through a control freeze; it grants no
+    // authority. A fresh lease needs a fresh wire attempt because media ACKs
+    // carry attempt/generation, not lease identity.
+    const previousLease = this._mediaControlLease || this.controlState?.lease;
+    const mediaLeaseChanged = previousLease
+      && (previousLease.leaseId !== data.leaseId || previousLease.leaseEpoch !== data.leaseEpoch);
+    const peerLease = this.pc?._wrdControlLease;
+    const differentPeerLease = peerLease && (peerLease.leaseId !== data.leaseId || peerLease.leaseEpoch !== data.leaseEpoch);
+    // A new attempt cannot inherit an unleased peer's old callback owner.
+    const unleasedPeerChangesAttempt = this.pc && mediaLeaseChanged && !peerLease;
+    if (differentPeerLease || unleasedPeerChangesAttempt) {
+      this.cancelDataChannelWatchdog();
+      const oldPeer = this.pc;
+      for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',
+        'onsignalingstatechange', 'onicegatheringstatechange', 'onicecandidate', 'ontrack']) {
+        oldPeer[event] = null;
+      }
+      this.pc = null;
+      this.inputChannel = null;
+      this.inputMoveChannel = null;
+      this._offerEpoch += 1;
+      this.offerInProgress = false;
+      this._mediaReadyConnectionAttemptId = null;
+      this.hasPaintedFrame = false;
+      this.stopDcKeepalive();
+      oldPeer.close();
+    }
     this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch } };
+    this._mediaControlLease = { ...this.controlState.lease };
+    if (mediaLeaseChanged) this.beginConnectionAttempt('control-identity-changed');
     this.ensureDesktopSessionState()?.applyControl({ attemptId: this.currentConnectionAttemptId, state: 'active' });
     if (typeof Input !== 'undefined') {
       Input.init();
-      Input.setControlLease(this.controlState.lease);
+      if (Input.setControlLease(this.controlState.lease) === false) {
+        this.requestControlRecovery(Input._recoveryCycle?.generation);
+        return;
+      }
     }
+    if (!this.hasActiveControl()) return;
+    this._cancelControlAcquireIntent();
     this.startControlHeartbeat();
     this.updateControlUI();
     this.bindCurrentConnectionAttempt();
@@ -3513,30 +4279,63 @@ const WebRTC = {
       if (this.getMediaActivitySnapshot().state === 'active') this.startTunnelRelay();
       this.replayMediaActivityIntent('control-regrant');
     } else {
-      const pcState = this.pc?.connectionState;
-      const dcOpen = this.inputChannel?.readyState === 'open';
-      const live = pcState === 'connected' && (dcOpen || this._refreshing);
-      if (!live) {
-        if (!this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) {
-          this.createPeerConnection();
-        }
-        this.createOffer();
-      }
+      this.reconcileConfiguredControlMedia();
       this.replayMediaActivityIntent('control-regrant');
     }
   },
 
+  reconcileConfiguredControlMedia() {
+    if (!this.startupAllowed() || this._deferPeerUntilConfig || !this.hasActiveControl()
+      || this.networkMode === 'tunnel') return false;
+    // WebRTC ACTIVE precedes Input's acceptance. Read its existing authority and
+    // recovery state; replaying setControlLease here could clear safety state.
+    if (typeof Input !== 'undefined') {
+      const lease = this.controlState.lease;
+      if (Input._recoveryControlReacquireRequired
+        || Input.keyboardTransport?.getSnapshot?.().state === 'reacquire-required'
+        || Input.activeControlLease?.leaseId !== lease.leaseId
+        || Input.activeControlLease?.leaseEpoch !== lease.leaseEpoch) {
+        this.requestControlRecovery(Input._recoveryCycle?.generation);
+        return false;
+      }
+    }
+    const pcState = this.pc?.connectionState;
+    const live = pcState === 'connected' && (this.inputChannel?.readyState === 'open' || this._refreshing);
+    if (live) return false;
+    if (!this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) this.createPeerConnection();
+    // A pending matching local offer already joins these two prerequisites.
+    // Stable/completed peers remain eligible for ordinary regrant recovery.
+    const peer = this.pc;
+    if (peer?.signalingState === 'have-local-offer' && peer.localDescription?.type === 'offer'
+      && peer._wrdEmittedOffer?.socket === this.socket
+      && peer._wrdEmittedOffer?.attemptId === this.currentConnectionAttemptId
+      && peer._wrdEmittedOffer?.attemptSequence === (Number(this.connectionAttemptSequence) || 1)
+      && peer._wrdConnectionAttemptId === this.currentConnectionAttemptId
+      && peer._wrdControlLease?.leaseId === this.controlState.lease.leaseId
+      && peer._wrdControlLease?.leaseEpoch === this.controlState.lease.leaseEpoch) return false;
+    this.createOffer();
+    return true;
+  },
+
   freezeControl(reason, reset = true) {
+    this.clearRelayOrigin();
+    if (['signal-disconnect', 'host-offline', 'viewer-superseded', 'control-revoked'].includes(reason)) {
+      this._cancelControlAcquireIntent();
+    }
     this.stopControlHeartbeat();
     // Do not clear _mediaReadyConnectionAttemptId here. Control ownership and
     // "has this attempt painted" are independent; clearing readiness on every
     // revoke/visibility freeze left re-grant blocked until the next frame, which
     // may not arrive for seconds on full-relay survival profiles.
     if (typeof Input !== 'undefined') {
+      const suspended = reason === 'signal-disconnect'
+        && Input.suspendControlLease?.() === true;
       // Reset keyboard while lease is still present so the envelope can send.
-      if (reset) Input.resetKeyboard?.(reason || 'control-lost');
-      Input.releasePointer?.(reason || 'control-lost');
-      Input.setControlLease(null);
+      if (!suspended) {
+        if (reset) Input.resetKeyboard?.('control-revoked');
+        if (reason !== 'input-recovery-timeout') Input.releasePointer?.(reason || 'control-lost');
+        Input.setControlLease(null);
+      }
       Input.setActive(false, { resetKeyboard: false, reason: reason || 'control-lost' });
     }
     this.controlState = { ...this.controlState, controller: false, lease: null };
@@ -3555,12 +4354,15 @@ const WebRTC = {
 
   startControlHeartbeat() {
     this.stopControlHeartbeat();
-    this._controlHeartbeatTimer = setInterval(() => {
+    if (!this.hasActiveControl() || !this.socket?.connected) return;
+    const heartbeat = () => {
       const lease = this.controlState.lease;
       if (this.hasActiveControl() && this.socket?.connected) {
         this.socket.emit('control-heartbeat', { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch });
       }
-    }, 3000);
+    };
+    heartbeat();
+    this._controlHeartbeatTimer = setInterval(heartbeat, 3000);
   },
 
   stopControlHeartbeat() {
@@ -3597,11 +4399,15 @@ const WebRTC = {
     this._dcKeepaliveTimer = null;
   },
 
-  releaseControl(reason) {
+  releaseControl(reason, { preserveAcquireIntent = false } = {}) {
+    if (!preserveAcquireIntent) {
+      this._controlUserReleased = true;
+      this._cancelControlAcquireIntent();
+    }
     const wasActive = this.hasActiveControl();
-    if (typeof Input !== 'undefined') Input.resetKeyboard?.(reason);
-    if (wasActive && this.socket?.connected) this.socket.emit('control-release', { reason });
+    if (!preserveAcquireIntent && typeof Input !== 'undefined') Input.resetKeyboard?.('deactivated');
     this.freezeControl(reason, false);
+    if (wasActive && this.socket?.connected) this.socket.emit('control-release', { reason });
   },
 
   bindControlLifecycle() {
@@ -3752,7 +4558,9 @@ const WebRTC = {
   STABLE_RECOVERY_RESET_MS: 5000,
   armStableRecoveryReset() {
     if (this._stableResetTimer) clearTimeout(this._stableResetTimer);
+    const owner = this.captureStartupOwner();
     this._stableResetTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this._stableResetTimer = null;
       if (this.pc?.connectionState !== 'connected') return;
       this._reconnectAttempt = 0;
@@ -3764,6 +4572,10 @@ const WebRTC = {
   },
 
   onPeerConnected() {
+    if (!this.startupAllowed()) return;
+    this.checkStartupEpisode({ connected: true });
+    if (!this.startupAllowed()) return;
+    const owner = this.captureStartupOwner();
     if (this._refreshing) {
       if (this.inputChannel?.readyState === 'open') {
         this.markRefreshSettled('pc-connected');
@@ -3803,7 +4615,27 @@ const WebRTC = {
       this.ensureMediaResumeFallbackArmed('pc-connected');
     }
     // Connected + visible ⇒ do not stay black due to a stuck page-hidden suspend.
-    this.ensureMediaActiveIfVisible('pc-connected');
+    const visibleMediaEnsured = this.ensureMediaActiveIfVisible('pc-connected');
+    // A resume sent before the new offer is installed can receive `closed`
+    // from the previous Host peer. A hidden tab can still desire active media
+    // during its five-minute grace period, so peer readiness must retry that
+    // request without waiting for a visibility event or clearing pause reasons.
+    if (!visibleMediaEnsured && this._mediaIntent?.state === 'active'
+        && this.getMediaActivitySnapshot().state === 'active'
+        && this.getMediaAppliedPhase() === 'resuming') {
+      const generation = this._mediaIntent.generation;
+      const attemptId = this.currentConnectionAttemptId;
+      const ack = this.mediaActivityRuntime?.snapshot?.().lastAck;
+      const acknowledged = ack?.applied === true && ack.state === 'active'
+        && ack.generation === generation && ack.connectionAttemptId === attemptId;
+      const prior = this._mediaResumeReadyReplay;
+      const alreadyReplayed = prior?.pc === this.pc && prior.attemptId === attemptId
+        && prior.generation === generation;
+      if (!acknowledged && !alreadyReplayed) {
+        this._mediaResumeReadyReplay = { pc: this.pc, attemptId, generation };
+        this.replayMediaActivityIntent('pc-ready-resume');
+      }
+    }
     if (this.isPortSearchActive()) {
       this.armPortSearchDeadline();
     }
@@ -3824,22 +4656,17 @@ const WebRTC = {
     }
     // Start latency clock sync after connection is stable
     setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.requestClockSync();
-        // Re-sync every 30 seconds
-        if (!this._latencySyncInterval) {
-          this._latencySyncInterval = setInterval(() => {
-            if (typeof LatencyMonitor !== 'undefined') {
-              LatencyMonitor.requestClockSync();
-            }
-          }, 30000);
-        }
       }
     }, 2000);
     this.armStableRecoveryReset();
   },
 
   createPeerConnection() {
+    if (!this.startupAllowed() || this._deferPeerUntilConfig) return;
+    this.cancelDataChannelWatchdog();
     this.clearRefreshDcWaitTimer();
     if (this.networkMode === 'tunnel') {
       return;
@@ -3855,8 +4682,26 @@ const WebRTC = {
     this._noRelayReceiveCount = 0;
     this.lastCandidateType = '';
     this.selectedCandidatePair = null;
-    if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+    const previousPeer = this.pc;
+    if (previousPeer) {
+      // ACKs identify attempt/generation, not PC objects. Retiring a producer
+      // must advance the wire attempt before createOffer or intent replay.
+      if (!previousPeer._wrdConnectionAttemptId
+        || previousPeer._wrdConnectionAttemptId === this.currentConnectionAttemptId) {
+        this.beginConnectionAttempt('peer-replaced');
+      }
+      for (const event of ['oniceconnectionstatechange', 'onconnectionstatechange',
+        'onsignalingstatechange', 'onicegatheringstatechange', 'onicecandidate', 'ontrack']) {
+        previousPeer[event] = null;
+      }
+      previousPeer.close?.();
+    }
+    this.clearMediaResumeProof();
     this.pc = new RTCPeerConnection(this.config);
+    this.pc._wrdConnectionAttemptId = this.currentConnectionAttemptId;
+    // Bind before the asynchronous offer finishes: media replay can run first.
+    this.bindCurrentConnectionAttempt();
+    this.pc._wrdControlLease = this.controlState?.lease ? Object.freeze({ ...this.controlState.lease }) : null;
     this.videoTransceiver = null;
     this.inputChannel = null;
     this.inputMoveChannel = null;
@@ -3864,8 +4709,14 @@ const WebRTC = {
     console.log('Creating RTCPeerConnection with config:', this.config);
     this.updateNetworkUI('正在建立媒体链路...');
     this.createInputChannel();
+    this.bindPeerCallbacks();
+  },
 
+  bindPeerCallbacks() {
+    if (this._peerCallbackOwner) this._peerCallbackOwner.retired = true;
+    const startupOwner = this._peerCallbackOwner = this.captureStartupOwner();
     this.pc.onicecandidate = (event) => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer ICE candidate:', event.candidate);
       if (event.candidate) {
         this.recordPortSearchCandidate('viewer', event.candidate);
@@ -3878,12 +4729,15 @@ const WebRTC = {
     };
 
     this.pc.onicegatheringstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer ICE gathering state:', this.pc.iceGatheringState);
     };
 
     this.pc.oniceconnectionstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer ICE connection state:', this.pc.iceConnectionState);
       if (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') {
+        this.checkStartupEpisode({ connected: true });
         if (this._mediaResumeArmPending) {
           this.ensureMediaResumeFallbackArmed('ice-connected');
         }
@@ -3894,6 +4748,7 @@ const WebRTC = {
         if (this._iceDisconnectedTimer) return;
         console.warn('[RECOVERY] ICE disconnected, waiting 5s for auto-recovery...');
         this._iceDisconnectedTimer = setTimeout(() => {
+          if (!this.ownsStartupOwner(startupOwner)) return;
           this._iceDisconnectedTimer = null;
           if (this.pc && this.pc.iceConnectionState === 'connected') {
             console.log('[RECOVERY] ICE recovered, skipping reconnect');
@@ -3907,6 +4762,7 @@ const WebRTC = {
     };
 
     this.pc.onconnectionstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer Connection state:', this.pc.connectionState);
       if (this.pc.connectionState === 'connected') {
         this.onPeerConnected();
@@ -3930,6 +4786,7 @@ const WebRTC = {
           if (this._disconnectedTimer) return;
           console.warn('[RECOVERY] PC disconnected, waiting 5s for auto-recovery...');
           this._disconnectedTimer = setTimeout(() => {
+            if (!this.ownsStartupOwner(startupOwner)) return;
             this._disconnectedTimer = null;
             if (this.pc && this.pc.connectionState === 'connected') {
               console.log('[RECOVERY] PC recovered, skipping reconnect');
@@ -3944,10 +4801,12 @@ const WebRTC = {
     };
 
     this.pc.onsignalingstatechange = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Viewer Signaling state:', this.pc.signalingState);
     };
 
     this.pc.ontrack = (event) => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
       console.log('Received remote track:', event.track.kind, 'streams:', event.streams.length);
       this.remoteStream = event.streams[0];
 
@@ -3967,37 +4826,12 @@ const WebRTC = {
         console.error('Video play failed:', err);
       });
 
-      const tryPaintGate = () => {
-        if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0 && videoElement.readyState >= 2) {
-          this.notePaintStats({
-            framesDecoded: this._lastInboundFramesDecoded || 0,
-            framesReceived: 0,
-            fps: 0,
-            videoWidth: videoElement.videoWidth,
-            videoHeight: videoElement.videoHeight,
-            source: 'video-element',
-          });
-        }
-      };
-
       this.markRemoteTrack({
         readyState: videoElement.readyState,
         paused: videoElement.paused,
       });
 
-      if (videoElement.readyState >= 1) {
-        tryPaintGate();
-      } else {
-        videoElement.onloadedmetadata = () => {
-          console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
-          tryPaintGate();
-        };
-      }
-
-      videoElement.onplaying = () => {
-        console.log('Video is now playing');
-        tryPaintGate();
-      };
+      this.bindRemoteVideoCallbacks(startupOwner);
 
       this.remoteStream.getTracks().forEach(track => {
         console.log('Track:', track.kind, 'enabled:', track.enabled, 'state:', track.readyState);
@@ -4008,6 +4842,7 @@ const WebRTC = {
 
       // Last-resort fallback: stay media-pending unless a decoded frame actually landed.
       setTimeout(() => {
+        if (!this.ownsStartupOwner(startupOwner)) return;
         const video = document.getElementById('remoteVideo');
         console.warn('[LOADING] Fallback timeout: readyState=%s paused=%s size=%sx%s painted=%s',
           video ? video.readyState : 'no-video',
@@ -4020,6 +4855,144 @@ const WebRTC = {
     };
   },
 
+  bindRemoteVideoCallbacks(startupOwner, { observeCurrent = true } = {}) {
+    const videoElement = document.getElementById('remoteVideo');
+    if (!videoElement) return;
+    const tryPaintGate = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
+      if (videoElement.videoWidth > 0 && videoElement.videoHeight > 0 && videoElement.readyState >= 2) {
+        this.notePaintStats({
+          framesDecoded: this._lastInboundFramesDecoded || 0,
+          framesReceived: 0,
+          fps: 0,
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight,
+          source: 'video-element',
+        });
+      }
+    };
+
+    if (observeCurrent && videoElement.readyState >= 1) {
+      tryPaintGate();
+    } else {
+      videoElement.onloadedmetadata = () => {
+        if (!this.ownsStartupOwner(startupOwner)) return;
+        console.log('Video metadata loaded:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+        tryPaintGate();
+      };
+    }
+
+    videoElement.onplaying = () => {
+      if (!this.ownsStartupOwner(startupOwner)) return;
+      console.log('Video is now playing');
+      tryPaintGate();
+    };
+  },
+
+  ownsDataChannelOwner(owner, channel = owner?.channel) {
+    return !!owner && !owner.retired && this.pc === owner.peer && this.inputChannel === channel
+      && this.socket === owner.socket && this.currentConnectionAttemptId === owner.attempt
+      && this.connectionAttemptSequence === owner.sequence && !this.manualDisconnect && !this._superseded
+      && this.startupAllowed();
+  },
+
+  cancelDataChannelWatchdog(retireChannel = true) {
+    // Teardown must also fence synchronous/queued channel-close callbacks.
+    // Open and unexpected connected-close only finish the phase timer.
+    if (retireChannel && this._inputChannelOwner) this._inputChannelOwner.retired = true;
+    const record = this._dataChannelWatchdog;
+    if (record?.timer != null) clearTimeout(record.timer);
+    this._dataChannelWatchdog = null;
+    this._dataChannelWatchdogFailure = null;
+    this._dcTimeout = null;
+    if (this._dcReconnectTimer != null) clearTimeout(this._dcReconnectTimer);
+    this._dcReconnectTimer = null;
+  },
+
+  dataChannelWatchdogNow(record) {
+    let now;
+    try { now = performance.now(); } catch (_) { now = NaN; }
+    if (!Number.isFinite(now) || now < 0 || (record && now < record.lastNow)) {
+      if (record) record.clockValid = false;
+      return null;
+    }
+    if (record) { record.lastNow = now; if (!record.clockValid) return null; }
+    return now;
+  },
+
+  getDataChannelWatchdogSnapshot() {
+    if (this._dataChannelWatchdogFailure) return this._dataChannelWatchdogFailure;
+    const record = this._dataChannelWatchdog;
+    const current = record && this.ownsDataChannelOwner(record);
+    const now = current ? this.dataChannelWatchdogNow(record) : null;
+    const safe = (obj, key) => { try { return obj?.[key] ?? null; } catch (_) { return null; } };
+    const raw = { phase: current ? record.phase : 'inactive', timedOut: current ? record.timedOut : false,
+      elapsedMs: now === null ? null : now - record.startedAt,
+      remainingMs: now === null ? null : Math.max(0, record.deadline - now),
+      extensions: current ? record.extensions : 0,
+      pcState: safe(this.pc, 'connectionState'), iceState: safe(this.pc, 'iceConnectionState'),
+      signalingState: safe(this.pc, 'signalingState'), sctpState: safe(safe(this.pc, 'sctp'), 'state'),
+      inputState: safe(this.inputChannel, 'readyState'), moveState: safe(this.inputMoveChannel, 'readyState'),
+      socketConnected: safe(this.socket, 'connected'), localDescriptionSet: this.pc ? !!safe(this.pc, 'localDescription') : null,
+      remoteDescriptionSet: this.pc ? !!safe(this.pc, 'remoteDescription') : null };
+    return typeof sanitizeDataChannelWatchdog === 'function' ? sanitizeDataChannelWatchdog(raw) : null;
+  },
+
+  startDataChannelWatchdog(channel) {
+    this.cancelDataChannelWatchdog();
+    this._dataChannelWatchdogFailure = null;
+    if (!channel || channel.readyState === 'open') return;
+    const now = this.dataChannelWatchdogNow();
+    const phase = this.pc.connectionState === 'connected' || this.pc.remoteDescription ? 'channel-open' : 'negotiation';
+    const record = { peer: this.pc, channel, socket: this.socket, attempt: this.currentConnectionAttemptId,
+      sequence: this.connectionAttemptSequence, phase, timedOut: false, extensions: 0,
+      startedAt: now, lastNow: now, clockValid: now !== null, deadline: now === null ? null : now + (phase === 'negotiation' ? 30000 : 10000), timer: null };
+    this._dataChannelWatchdog = record;
+    this.armDataChannelWatchdog(record, phase === 'negotiation' ? 30000 : 10000);
+  },
+
+  armDataChannelWatchdog(record, delay) {
+    record.timer = setTimeout(() => this.checkDataChannelWatchdog(record), delay);
+    this._dcTimeout = record.timer;
+  },
+
+  checkDataChannelWatchdog(record) {
+    if (this._dataChannelWatchdog !== record || !this.ownsDataChannelOwner(record) || record.timedOut) return;
+    if (record.channel.readyState === 'open') { this.cancelDataChannelWatchdog(false); return; }
+    const now = this.dataChannelWatchdogNow(record);
+    if (now !== null && now < record.deadline) {
+      if (record.timer != null) clearTimeout(record.timer);
+      this.armDataChannelWatchdog(record, record.deadline - now); return;
+    }
+    if (record.phase === 'channel-open' && now !== null && record.extensions < 2
+        && (record.peer.connectionState === 'connecting' || record.peer.iceConnectionState === 'checking')) {
+      record.extensions++; record.deadline = now + 10000;
+      if (record.timer != null) clearTimeout(record.timer);
+      this.armDataChannelWatchdog(record, 10000); return;
+    }
+    record.timedOut = true;
+    if (record.timer != null) clearTimeout(record.timer);
+    record.timer = null; this._dcTimeout = null;
+    try { this._dataChannelWatchdogFailure = this.getDataChannelWatchdogSnapshot(); } catch (_) {}
+    const reason = record.phase === 'negotiation' ? 'negotiation-timeout' : 'dc-stuck';
+    try { if (typeof Diagnostic !== 'undefined') Diagnostic.autoSendFailure?.(reason); } catch (_) {}
+    if (record.phase === 'negotiation') this.scheduleReconnect(reason);
+    else this.noteDataChannelFault(reason);
+  },
+
+  finishDataChannelNegotiation(record) {
+    if (!record || this._dataChannelWatchdog !== record || !this.ownsDataChannelOwner(record)
+        || record.phase !== 'negotiation' || record.timedOut) return;
+    if (record.channel.readyState === 'open') { this.cancelDataChannelWatchdog(false); return; }
+    const now = this.dataChannelWatchdogNow(record);
+    // Unknown monotonic time cannot purchase a fresh budget. Keep the finite timer.
+    if (now === null) return;
+    if (now >= record.deadline) { this.checkDataChannelWatchdog(record); return; }
+    if (record.timer != null) clearTimeout(record.timer);
+    record.phase = 'channel-open'; record.startedAt = now; record.deadline = now + 10000;
+    this.armDataChannelWatchdog(record, 10000);
+  },
+
   createInputChannel() {
     if (!this.pc || this.inputChannel) {
       return;
@@ -4029,6 +5002,7 @@ const WebRTC = {
       ordered: true
     });
     this.inputChannel = inputChannel;
+    this._quarantinedInputChannel = null;
     inputChannel.bufferedAmountLowThreshold = 32 * 1024;
     this.inputMoveChannel = this.pc.createDataChannel('input-move', {
       ordered: false,
@@ -4036,30 +5010,20 @@ const WebRTC = {
     });
     this.inputMoveChannel.bufferedAmountLowThreshold = 4 * 1024;
 
-    // Timeout detection: check PC state before forcing reconnect.
-    // If ICE/DTLS is still in progress, extend timeout instead of cascading.
-    this._dcTimeoutExtensions = 0;
-    const checkDcTimeout = () => {
-      if (this.inputChannel && this.inputChannel.readyState !== 'open') {
-        const pcState = this.pc ? this.pc.connectionState : 'closed';
-        const iceState = this.pc ? this.pc.iceConnectionState : 'closed';
-        console.warn('[INPUT-DC] DataChannel stuck state=%s pc=%s ice=%s ext=%d',
-          this.inputChannel.readyState, pcState, iceState, this._dcTimeoutExtensions);
-        if ((pcState === 'connecting' || iceState === 'checking') && this._dcTimeoutExtensions < 2) {
-          this._dcTimeoutExtensions += 1;
-          this._dcTimeout = setTimeout(checkDcTimeout, 10000);
-          return;
-        }
-        this.noteDataChannelFault('dc-stuck');
-      }
-    };
-    this._dcTimeout = setTimeout(checkDcTimeout, 10000);
+    this.startDataChannelWatchdog(inputChannel);
+    this.bindInputChannelCallbacks();
+  },
 
+  bindInputChannelCallbacks() {
+    const inputChannel = this.inputChannel;
+    if (!inputChannel) return;
+    if (this._inputChannelOwner) this._inputChannelOwner.retired = true;
+    const channelOwner = this._inputChannelOwner = { peer: this.pc, socket: this.socket, attempt: this.currentConnectionAttemptId, sequence: this.connectionAttemptSequence };
     inputChannel.onopen = () => {
-      if (this.inputChannel !== inputChannel) return;
+      if (!this.ownsDataChannelOwner(channelOwner, inputChannel)) return;
       if (this._refreshing) this.markRefreshSettled('dc-open');
       console.log('[INPUT-DC] DataChannel open');
-      if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      this.cancelDataChannelWatchdog(false);
       this._inputDcDegraded = false;
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(true);
       if (typeof Input !== 'undefined') Input.updateKeyboardUI?.();
@@ -4069,51 +5033,58 @@ const WebRTC = {
       this.startDcKeepalive();
     };
     inputChannel.onclose = () => {
-      if (this.inputChannel !== inputChannel) return;
+      if (!this.ownsDataChannelOwner(channelOwner, inputChannel)) return;
       const sctpState = this.pc && this.pc.sctp ? this.pc.sctp.state : 'no-sctp';
       console.log('[INPUT-DC] DataChannel closed, sctp=%s pc=%s ice=%s',
         sctpState,
         this.pc ? this.pc.connectionState : 'no-pc',
         this.pc ? this.pc.iceConnectionState : 'no-pc');
-      if (this._dcTimeout) { clearTimeout(this._dcTimeout); this._dcTimeout = null; }
+      if (this.pc?.connectionState === 'connected') this.cancelDataChannelWatchdog(false);
       this.stopDcKeepalive();
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Defer reconnect to avoid cascading on brief DC hiccups
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
-        if (this._dcReconnectTimer) return;
+        if (this._dcReconnectTimer != null) return;
         console.warn('[INPUT-DC] Unexpected close while PC connected, will reconnect in 3s if not recovered');
-        this._dcReconnectTimer = setTimeout(() => {
-          this._dcReconnectTimer = null;
-          if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
-          this.noteDataChannelFault('dc-closed');
-        }, 3000);
+        this.scheduleDataChannelRecovery(channelOwner, inputChannel, 'dc-closed');
       }
     };
     inputChannel.onerror = (event) => {
-      if (this.inputChannel !== inputChannel) return;
+      if (!this.ownsDataChannelOwner(channelOwner, inputChannel)) return;
       console.warn('[INPUT-DC] DataChannel error:', event);
       if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
       // Error typically precedes close; defer reconnect to avoid cascading
       if (!this._refreshing && !this.manualDisconnect && this.pc &&
           this.pc.connectionState === 'connected') {
-        if (this._dcReconnectTimer) return;
-        this._dcReconnectTimer = setTimeout(() => {
-          this._dcReconnectTimer = null;
-          if (this.manualDisconnect || !this.pc || this.pc.connectionState !== 'connected') return;
-          this.noteDataChannelFault('dc-error');
-        }, 3000);
+        if (this._dcReconnectTimer != null) return;
+        this.scheduleDataChannelRecovery(channelOwner, inputChannel, 'dc-error');
       }
     };
     inputChannel.onmessage = (event) => {
+      if (channelOwner.retired || (this.startupPending()
+          && !this.ownsDataChannelOwner(channelOwner, inputChannel))) return;
       try {
         const data = JSON.parse(event.data);
 
         // Latency measurement messages
         if (data.type === 'frame_timing') {
           if (typeof LatencyMonitor !== 'undefined') {
-            LatencyMonitor.onFrameTiming(data);
+            LatencyMonitor.onFrameTiming(data, { scope: this.latencyScope() });
           }
+          return;
+        }
+        if (data.type === 'input_frame_binding') {
+          const collector = this.ensureInputFrameCollector();
+          collector?.acceptBinding(data, this.latencyScope());
+          // Keep detailed marker joins opt-in. Ordinary production sessions
+          // retain M2 post-apply evidence but never infer content visibility
+          // from an arbitrary next frame.
+          if (this._controlledSceneMarkerRoi) {
+            this.ensureFrameTraceCollector().acceptBinding(data, this.latencyScope());
+          }
+          this.consumeInputFrameMatches();
+          this.consumeControlledVisibleEffects();
           return;
         }
         if (data.type === 'frame_trace_batch') {
@@ -4134,21 +5105,12 @@ const WebRTC = {
         }
         if (data.type === 'clock_sync_resp') {
           if (typeof LatencyMonitor !== 'undefined') {
-            LatencyMonitor.handleClockSyncResponse(data);
+            LatencyMonitor.handleClockSyncResponse(data, { scope: this.latencyScope() });
           }
           return;
         }
         if (data.type === 'input_ack') {
-          if (typeof Input !== 'undefined' && typeof Input.acceptMouseAck === 'function') {
-            Input.acceptMouseAck(data);
-          }
-          if (data?.inputType === 'keyboard'
-            && typeof Input !== 'undefined' && typeof Input.acceptKeyboardAck === 'function') {
-            Input.acceptKeyboardAck(data);
-          }
-          if (typeof LatencyMonitor !== 'undefined') {
-            LatencyMonitor.onInputAck(data);
-          }
+          this.acceptObservedInputAck(data, { transport: 'datachannel', dataChannel: inputChannel });
           return;
         }
         // Host capture fps is not playback fps; keep it off the status-bar counter.
@@ -4163,23 +5125,42 @@ const WebRTC = {
       }
     };
     this.inputMoveChannel.onopen = () => {
+      if (channelOwner.retired) return;
       console.log('[INPUT-DC] Move DataChannel open');
     };
     this.inputMoveChannel.onclose = () => {
+      if (channelOwner.retired) return;
       console.log('[INPUT-DC] Move DataChannel closed');
     };
     this.inputMoveChannel.onerror = (event) => {
+      if (channelOwner.retired) return;
       console.warn('[INPUT-DC] Move DataChannel error:', event);
     };
   },
 
+  scheduleDataChannelRecovery(owner, channel, reason, deadline = performance.now() + 3000) {
+    this._dcReconnectDeadline = deadline;
+    this._dcReconnectReason = reason;
+    const recoveryTimer = setTimeout(() => {
+      if (this._dcReconnectTimer !== recoveryTimer) return;
+      this._dcReconnectTimer = null;
+      if (!this.ownsDataChannelOwner(owner, channel) || this._refreshing || this.pc.connectionState !== 'connected') return;
+      this.noteDataChannelFault(reason);
+    }, Math.max(0, deadline - performance.now()));
+    this._dcReconnectTimer = recoveryTimer;
+  },
+
   sendInput(data) {
     const isMouseMove = data.type === 'mouse' && data.action === 'move';
+    // Safety barriers must not queue behind an apparently open, stalled SCTP
+    // stream. Keyboard resets already use Socket.IO for the same reason.
+    if (data.type === 'mouse' && data.action === 'reset' && this.socket?.connected) return false;
     const channel = isMouseMove && this.inputMoveChannel?.readyState === 'open'
       ? this.inputMoveChannel
       : this.inputChannel;
 
-    if (!channel || channel.readyState !== 'open') {
+    if (!channel || channel.readyState !== 'open'
+        || channel === this._quarantinedInputChannel) {
       return false;
     }
 
@@ -4196,19 +5177,238 @@ const WebRTC = {
       ...data,
       transport: 'datachannel'
     }));
+    try {
+      const viewerClockMs = performance.now();
+      if (typeof LatencyMonitor !== 'undefined' && typeof Input !== 'undefined'
+          && data.leaseId === Input.activeControlLease?.leaseId
+          && data.leaseEpoch === Input.activeControlLease?.leaseEpoch) LatencyMonitor.observeControlledSend?.({
+        inputId: data.inputIds?.length === 1 ? data.inputIds[0] : null,
+        leaseId: data.leaseId, leaseEpoch: data.leaseEpoch,
+        inputType: data.type, action: data.action, seq: data.seq ?? null,
+      }, {
+        viewerClockMs, scope: this.latencyScope(), streamId: this.currentFrameTraceIdentity().streamId,
+        transport: 'datachannel', sendSource: channel, ackSource: this.inputChannel,
+        socketId: null, pc: this.pc || null, live: this.captureControlledTransportSnapshot(),
+      });
+    } catch (_) { /* Observation cannot change an accepted delivery. */ }
     return true;
   },
 
-  startTunnelRelay() {
+  quarantineReliableInputChannel(reason = 'input-ack-timeout', channel = this.inputChannel) {
+    if (!channel || channel !== this.inputChannel || this._quarantinedInputChannel === channel) return false;
+    this._quarantinedInputChannel = channel;
+    this._inputDcDegraded = true;
+    console.warn('[INPUT-DC] Reliable input ACK timed out; using Socket.IO reason=%s', reason);
+    if (typeof Input !== 'undefined') Input.setKeyboardDataChannelAvailable?.(false);
+    return true;
+  },
+
+  validRelayScope(scope) {
+    const nonce = (v, max) => typeof v === 'string' && v.length > 0 && v.length <= max && !(/[^\x20-\x7e]/.test(v));
+    return Boolean(scope && typeof scope === 'object' && !Array.isArray(scope)
+      && Object.keys(scope).length === 5
+      && ['producerId', 'productionGeneration', 'connectionAttemptId', 'mediaGeneration', 'leaseEpoch']
+        .every(key => Object.prototype.hasOwnProperty.call(scope, key))
+      && nonce(scope.producerId, 64)
+      && nonce(scope.connectionAttemptId, 128)
+      && Number.isSafeInteger(scope.productionGeneration) && scope.productionGeneration >= 1
+      && Number.isSafeInteger(scope.mediaGeneration) && scope.mediaGeneration >= 0
+      && Number.isSafeInteger(scope.leaseEpoch) && scope.leaseEpoch >= 1);
+  },
+
+  clearRelayOrigin() {
+    clearTimeout(this._relayFreshnessTimer);
+    this._relayFreshnessTimer = null;
+    this._relayFreshnessToken = (this._relayFreshnessToken || 0) + 1;
+    this._relayPendingStart = null;
+    this._relayAcceptedStartRequestId = null;
+    this._relayExpectedScope = null;
+    this._relayScopeContext = null;
+    this._relayOriginDigest = null;
+    this._relayOriginToken = (this._relayOriginToken || 0) + 1;
+    this._relayImageRequestToken = (this._relayImageRequestToken || 0) + 1;
+    this._relayLastLoadedAtMs = null;
+    this._relayLoadTimes = [];
+    this._relayFrameStale = false;
+    this._relayFeedbackSequence = 0;
+    this._relaySampleSequence = 0;
+    this._relayFeedbackSummary = null;
+    this._relayRttView = null;
+    this.tunnelLastFrameId = 0;
+    this._lastRenderedRelayFrame = null;
+    const image = document.getElementById('relayImage');
+    if (image) image.onload = null;
+    for (const key of ['tunnelPendingObjectUrl', 'tunnelLastObjectUrl']) {
+      if (this[key]) URL.revokeObjectURL(this[key]);
+      this[key] = '';
+    }
+    // This cleanup also runs for WebRTC attempts/control loss; their RTT label
+    // belongs to the WebRTC stats renderer. Reset only an active relay display.
+    if (this.tunnelRelayActive) this.renderRelayFeedbackRtt();
+  },
+
+  invalidateRelayInputProof(reason) {
+    this.hasPaintedFrame = false;
+    this._mediaReadyConnectionAttemptId = null;
+    this.ensureDesktopSessionState()?.applyMedia({ attemptId: this.currentConnectionAttemptId,
+      state: 'stalled', fresh: false });
+    if (typeof Input !== 'undefined') {
+      const wasActive = Input.isActive;
+      Input.setActive(false, { resetKeyboard: true, reason, keyboardResetReason: 'deactivated' });
+      const keyboard = Input.keyboardController?.getSnapshot?.() || {};
+      if (!wasActive && (keyboard.pressedKeyCount > 0 || keyboard.state === 'RESET_REQUIRED')) {
+        Input.resetKeyboard?.('deactivated');
+      }
+    }
+    this.syncDesktopInputGate();
+  },
+
+  relayScopeMatches(scope) {
+    const current = this._relayExpectedScope, context = this._relayScopeContext;
+    const lease = this.activeLeaseEnvelope();
+    return Boolean(this.validRelayScope(scope) && current && context && lease
+      && context.socket === this.socket && this.socket?.connected
+      && context.leaseId === lease.leaseId && current.leaseEpoch === lease.leaseEpoch
+      && current.connectionAttemptId === this.currentConnectionAttemptId
+      && current.mediaGeneration === (this._mediaIntent?.generation ?? this.getMediaActivitySnapshot().generation ?? 0)
+      && Object.keys(current).every(key => scope[key] === current[key]));
+  },
+
+  acceptRelayScope(scope) {
+    const lease = this.activeLeaseEnvelope();
+    if (!this.validRelayScope(scope) || !lease || !this.socket?.connected
+      || scope.connectionAttemptId !== this.currentConnectionAttemptId || scope.leaseEpoch !== lease.leaseEpoch
+      || scope.mediaGeneration !== (this._mediaIntent?.generation ?? this.getMediaActivitySnapshot().generation ?? 0)) return false;
+    if (this.relayScopeMatches(scope)) return true;
+    this.clearRelayOrigin();
+    const origin = Object.freeze({ ...scope });
+    this._relayExpectedScope = origin;
+    this._relayScopeContext = { socket: this.socket, leaseId: lease.leaseId };
+    const token = this._relayOriginToken, socket = this.socket;
+    // SHA-256 is optional diagnostics. Media admission never awaits it.
+    if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
+      const canonical = JSON.stringify([origin.producerId, origin.productionGeneration,
+        origin.connectionAttemptId, origin.mediaGeneration, origin.leaseEpoch]);
+      try {
+        Promise.resolve(crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical))).then(bytes => {
+          if (token !== this._relayOriginToken || socket !== this.socket || !this.relayScopeMatches(origin)) return;
+          this._relayOriginDigest = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');
+        }).catch(() => {});
+      } catch (_) {}
+    }
+    return true;
+  },
+
+  handleRelayStartAck(data) {
+    const pending = this._relayPendingStart, lease = this.activeLeaseEnvelope();
+    if (!pending || !lease || pending.socket !== this.socket || !this.socket?.connected
+      || pending.leaseId !== lease.leaseId || pending.leaseEpoch !== lease.leaseEpoch
+      || pending.attempt !== this.currentConnectionAttemptId || data.connectionAttemptId !== pending.attempt
+      || data.generation !== pending.mediaGeneration || data.relayStartRequestId !== pending.requestId
+      || data.applied !== true || data.state !== 'active' || data.relayFrameSchemaVersion !== 1
+      || !this.validRelayScope(data.relayScope)
+      || data.relayScope.connectionAttemptId !== pending.attempt
+      || data.relayScope.mediaGeneration !== pending.mediaGeneration
+      || data.relayScope.leaseEpoch !== pending.leaseEpoch
+      || this.getMediaActivitySnapshot().state !== 'active') return false;
+    if (!this.acceptRelayScope(data.relayScope)) return false;
+    this._relayPendingStart = null;
+    this._relayAcceptedStartRequestId = data.relayStartRequestId;
+    // The ACK authenticates the producer; only its next qualified onload proves media.
+    this.syncDesktopInputGate();
+    return true;
+  },
+
+  noteRelayImageLoaded(origin) {
+    const now = performance.now();
+    this._relayLastLoadedAtMs = now;
+    this._relayFrameStale = false;
+    this._relayLoadTimes = (this._relayLoadTimes || []).filter(at => now - at < 5000).slice(-255);
+    this._relayLoadTimes.push(now);
+    const span = now - this._relayLoadTimes[0];
+    document.getElementById('fpsDisplay').textContent = `${span > 0 ? Math.round((this._relayLoadTimes.length - 1) * 1000 / span) : 0} FPS`;
+  },
+
+  armRelayFreshnessTimer(origin) {
+    clearTimeout(this._relayFreshnessTimer);
+    this._relayFreshnessTimer = null;
+    const token = this._relayFreshnessToken = (this._relayFreshnessToken || 0) + 1;
+    if (!this.relayScopeMatches(origin)) return;
+    const now = performance.now(), deadlines = [];
+    if (this._relayLastLoadedAtMs != null && !this._relayFrameStale
+      && this.getMediaActivitySnapshot().state === 'active' && !this.isMediaHealthSuppressed()) {
+      deadlines.push(this._relayLastLoadedAtMs + 5000);
+    }
+    if (this._relayRttView && now - this._relayRttView.receivedAtMs < 5000) deadlines.push(this._relayRttView.receivedAtMs + 5000);
+    if (!deadlines.length) return;
+    // One current-scope timer handles both image-load age and RTT display expiry.
+    // Feedback can expire its own UI sample, but cannot advance image freshness.
+    this._relayFreshnessTimer = setTimeout(() => {
+      if (token !== this._relayFreshnessToken) return;
+      this._relayFreshnessTimer = null;
+      if (!this.relayScopeMatches(origin) || !this.tunnelRelayActive) return;
+      this.renderRelayFeedbackRtt();
+      const age = this._relayLastLoadedAtMs == null ? null : performance.now() - this._relayLastLoadedAtMs;
+      if (this.getMediaActivitySnapshot().state === 'active' && !this.isMediaHealthSuppressed()
+        && age != null && age >= 5000 && !this._relayFrameStale) {
+        this._relayFrameStale = true;
+        this.setUiPhase('media-stalled', { reason: 'relay-frame-stale' });
+        document.getElementById('fpsDisplay').textContent = '0 FPS';
+        this.invalidateRelayInputProof('relay-frame-stale');
+        this.updateNetworkUI(`JPEG 图像加载年龄 ${Math.round(age)} ms，等待新画面。`, 'warning');
+      }
+      this.armRelayFreshnessTimer(origin);
+    }, Math.max(0, Math.min(...deadlines) - now));
+  },
+
+  renderRelayFeedbackRtt() {
+    const el = document.getElementById('latencyDisplay');
+    if (!el) return;
+    const sample = this._relayRttView;
+    const available = sample && performance.now() - sample.receivedAtMs < 5000;
+    el.textContent = available ? `${Math.round(sample.value)} ms` : '未测量';
+    el.title = 'JPEG反馈往返：TTL内且每间隔最新反馈样本，含解码、调度和回程；不代表单向或可见时延';
+  },
+
+  handleRelayFrameFeedback(data = {}) {
+    const receivedAtMs = performance.now();
+    if (data.relayFrameSchemaVersion !== 1 || !this.relayScopeMatches(data.relayScope)) return false;
+    const counters = ['feedbackSequence', 'pendingCount', 'expiredCount', 'unmatchedAckCount', 'timeoutCount', 'coalescedCount'];
+    if (!counters.every(k => Number.isSafeInteger(data[k]) && data[k] >= (k === 'feedbackSequence' ? 1 : 0))) return false;
+    const ages = ['oldestPendingAgeMs', 'lastSentAgeMs', 'lastAckAgeMs'];
+    if (!ages.every(k => data[k] === null || (typeof data[k] === 'number' && Number.isFinite(data[k]) && data[k] >= 0))) return false;
+    if (data.feedbackSequence <= this._relayFeedbackSequence) return false;
+    const sample = data.sample;
+    if (sample !== null && (!sample || !Number.isSafeInteger(sample.sampleSequence) || sample.sampleSequence < 1
+      || typeof sample.relayFrameAckRttMs !== 'number' || !Number.isFinite(sample.relayFrameAckRttMs)
+      || sample.relayFrameAckRttMs < 0 || sample.relayFrameAckRttMs >= 2000)) return false;
+    this._relayFeedbackSequence = data.feedbackSequence;
+    this._relayFeedbackSummary = { relayScope: this._relayExpectedScope, receivedAtMs,
+      ...Object.fromEntries([...counters, ...ages].map(k => [k, data[k]])) };
+    if (sample && sample.sampleSequence > this._relaySampleSequence) {
+      this._relaySampleSequence = sample.sampleSequence;
+      if (this._relayOriginDigest && typeof LatencyMonitor !== 'undefined') {
+        const accepted = LatencyMonitor.recordStage?.('relayFrameAckRttMs', sample.relayFrameAckRttMs,
+          { scope: this.latencyScope(), atMs: receivedAtMs,
+            sampleKey: `relay:${this._relayOriginDigest}:${sample.sampleSequence}` });
+        if (accepted) this._relayRttView = { value: sample.relayFrameAckRttMs, receivedAtMs };
+      }
+    }
+    this.renderRelayFeedbackRtt();
+    this.armRelayFreshnessTimer(this._relayExpectedScope);
+    return true;
+  },
+
+  startTunnelRelay({ allowResuming = false, sendRequest = true } = {}) {
     if (!this.hasActiveControl()) {
       this.requestControl({ allowTakeover: false });
-      return;
+      return false;
     }
-    if (!this.canStartTunnelRelay()) {
-      return;
+    if (!this.canStartTunnelRelay({ allowResuming })) {
+      return false;
     }
     if (!this.socket || !this.socket.connected) {
-      return;
+      return false;
     }
     if (this.pc) {
       // Closing the old WebRTC transport is intentional when tunnel takes
@@ -4220,12 +5420,17 @@ const WebRTC = {
       this.pc.onicegatheringstatechange = null;
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
     this.stopMediaTelemetry();
+    this.clearRelayOrigin();
+    if (!sendRequest) this.invalidateRelayInputProof('relay-start');
     this._tunnelLockUntil = Date.now() + 30000;
     this.tunnelRelayActive = true;
+    this._mediaRelayRevision = (Number(this._mediaRelayRevision) || 0) + 1;
+    this.clearMediaResumeProof();
     this.tunnelFrameCount = 0;
     // Host start() restarts its sequence from zero. A prior producer must not
     // cause the new stream's first frame to be discarded as stale.
@@ -4238,7 +5443,8 @@ const WebRTC = {
     updateLoadingText('正在启动隧道中继...');
     this.setUiPhase('signaling', { reason: 'tunnel-start' });
     this.updateNetworkUI('隧道中继正在启动。该模式走 Cloudflare/Socket.IO，不依赖 WebRTC UDP。', 'warning');
-    this.emitRelayStreamControl();
+    if (sendRequest) this.emitRelayStreamControl({ allowResuming });
+    return true;
   },
 
   getTunnelRelayRequestSize() {
@@ -4271,7 +5477,21 @@ const WebRTC = {
       height,
       fps,
     };
-    if (!mediaControl && enabled) this.bindCurrentConnectionAttempt();
+    if (!mediaControl && enabled) {
+      if (!this.bindCurrentConnectionAttempt()) return false;
+      this.clearRelayOrigin();
+      this.invalidateRelayInputProof('relay-start');
+      const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID() : `start-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${this._relayOriginToken}`;
+      const mediaGeneration = this._mediaIntent?.generation ?? this.getMediaActivitySnapshot().generation ?? 0;
+      payload.relayFrameSchemaVersion = 1;
+      payload.relayStartRequestId = requestId;
+      payload.connectionAttemptId = this.currentConnectionAttemptId;
+      payload.relayMediaGeneration = mediaGeneration;
+      this._relayPendingStart = { socket: this.socket, leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch,
+        attempt: this.currentConnectionAttemptId, mediaGeneration, requestId };
+      this.beginFirstFrameDeadline(this.currentConnectionAttemptId);
+    }
     if (mediaControl && typeof mediaControl === 'object') {
       payload.schemaVersion = mediaControl.schemaVersion === 2 ? 2 : payload.schemaVersion;
       payload.mediaControlSchemaVersion = 1;
@@ -4303,9 +5523,12 @@ const WebRTC = {
   },
 
   stopTunnelRelay() {
+    this.clearRelayOrigin();
     const lease = this.activeLeaseEnvelope();
     if (lease && this.socket?.connected && this.tunnelRelayActive) this.socket.emit('relay-stream-control', { ...lease, enabled: false });
     this.tunnelRelayActive = false;
+    this._mediaRelayRevision = (Number(this._mediaRelayRevision) || 0) + 1;
+    this.clearMediaResumeProof();
     document.body?.classList?.remove?.('tunnel-relay-active');
     const relayImage = document.getElementById('relayImage');
     if (relayImage) {
@@ -4330,6 +5553,11 @@ if (this.tunnelLastObjectUrl) {
     if (!this.tunnelRelayActive) {
       return;
     }
+    if (data?.relayFrameSchemaVersion !== 1 || !this.relayScopeMatches(data.relayScope)) {
+      if (data?.relayFrameSchemaVersion !== 1) this.updateNetworkUI('JPEG 来源尚未验证，请刷新页面并升级 Host。', 'warning');
+      return;
+    }
+    const origin = this._relayExpectedScope;
     if (data?.connectionAttemptId
       && this.currentConnectionAttemptId
       && data.connectionAttemptId !== this.currentConnectionAttemptId) {
@@ -4348,13 +5576,24 @@ if (this.tunnelLastObjectUrl) {
     if ('fetchPriority' in relayImage) {
       relayImage.fetchPriority = 'high';
     }
-    const frameId = Number(data.frameId || 0);
-    if (frameId && frameId <= this.tunnelLastFrameId) {
+    if (!Number.isSafeInteger(data.frameId) || data.frameId < 1) return;
+    const frameId = data.frameId;
+    if (frameId <= this.tunnelLastFrameId) {
       return;
     }
-    this.tunnelLastFrameId = frameId || this.tunnelLastFrameId + 1;
+    this.tunnelLastFrameId = frameId;
 
+    const frameScope = this.mediaResumeScope();
+    const imageToken = this._relayImageRequestToken = (this._relayImageRequestToken || 0) + 1;
+    let loaded = false;
     const ackLoadedFrame = (objectUrl = '') => {
+      if (loaded || imageToken !== this._relayImageRequestToken
+        || !this.relayScopeMatches(origin) || !this.mediaResumeScopeMatches(frameScope)) {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      loaded = true;
+      this.noteRelayImageLoaded(origin);
       relayImage.classList.remove('hidden');
       document.getElementById('loading')?.classList.add('hidden');
       document.getElementById('loading')?.classList.remove('is-connecting');
@@ -4377,26 +5616,31 @@ if (this.tunnelLastObjectUrl) {
         fresh: true,
       });
       this._lastRenderedRelayFrame = {
-        frameId: frameId || this.tunnelLastFrameId,
+        frameId,
         frameSeq,
-        connectionAttemptId: this.currentConnectionAttemptId || null,
+        connectionAttemptId: frameScope.connectionAttemptId,
+        relayScope: origin,
+        scope: frameScope,
       };
-      if (this._mediaResumeFramePending) {
-        this.observeFreshResumeFrame({
-          source: 'relay-frame',
-          frameSeq,
-          connectionAttemptId: this.currentConnectionAttemptId || null,
-        });
-      }
+      this.observeFreshResumeFrame({
+        scope: frameScope,
+        source: 'relay-frame',
+        frameSeq,
+        connectionAttemptId: frameScope.connectionAttemptId,
+      });
+      this.armRelayFreshnessTimer(origin);
       const lease = this.activeLeaseEnvelope();
       if (lease && this.socket?.connected) {
         this.socket.emit('relay-frame-ack', {
           ...lease,
-          frameId: frameId || this.tunnelLastFrameId,
-          renderedAt: Date.now(),
-          latencyMs: data.timestamp ? Math.max(0, Date.now() - Number(data.timestamp)) : 0
+          frameId,
+          relayFrameSchemaVersion: 1,
+          relayScope: { ...origin }
         });
       }
+      this.syncDesktopInputGate();
+      this.clearFailureRecommendation();
+      this.updateNetworkUI('隧道中继已连接。JPEG反馈往返包含转发、解码、调度及回程。', 'warning');
     };
 
     // Revoke any previous pending load before accepting a newer generation frame.
@@ -4423,11 +5667,7 @@ if (this.tunnelLastObjectUrl) {
     // Keep the media element box mounted; only toggle visibility class. Media
     // readiness is committed by ackLoadedFrame after the image has loaded.
     relayImage.classList.remove('hidden');
-    const latencyEl = document.getElementById('latencyDisplay');
-    const latency = data.timestamp ? Math.max(0, Date.now() - Number(data.timestamp)) : 0;
-    if (latencyEl) {
-      latencyEl.textContent = latency ? `${latency} ms` : '- ms';
-    }
+    this.renderRelayFeedbackRtt();
     const candidateEl = document.getElementById('candidateDisplay');
     if (candidateEl) {
       candidateEl.textContent = '链路 tunnel';
@@ -4436,16 +5676,10 @@ if (this.tunnelLastObjectUrl) {
       // Source resolution may adapt; viewport size stays stable via CSS contain.
       document.getElementById('resolutionDisplay').textContent = `tunnel (${data.width}x${data.height})`;
     }
-    if (!this.isMediaHealthSuppressed()) {
-      this.tunnelFrameCount += 1;
-      const elapsed = Math.max(1, (performance.now() - this.tunnelStartedAt) / 1000);
-      document.getElementById('fpsDisplay').textContent = `${Math.round(this.tunnelFrameCount / elapsed)} FPS`;
-    }
-    this.clearFailureRecommendation();
-    this.updateNetworkUI(`隧道中继已连接。当前经 Cloudflare/Socket.IO 转发，延迟约 ${latency || '-'} ms。`, 'warning');
   },
   
   async createOffer() {
+    if (!this.startupAllowed() || this._deferPeerUntilConfig) return;
     console.log('[OFFER-DBG] createOffer called: networkMode=%s pc=%s offerInProgress=%s',
       this.networkMode, !!this.pc, this.offerInProgress);
     if (!this.hasActiveControl()) {
@@ -4470,47 +5704,60 @@ if (this.tunnelLastObjectUrl) {
     this.offerInProgress = true;
     this._offerEpoch += 1;
     const epoch = this._offerEpoch;
+    const peer = this.pc;
+    const socket = this.socket;
+    if (!this.currentConnectionAttemptId) this.currentConnectionAttemptId = this.createConnectionAttemptId();
+    const attemptId = this.currentConnectionAttemptId;
+    const attemptSequence = Number(this.connectionAttemptSequence) || 1;
+    const lease = Object.freeze({ ...this.controlState.lease });
+    peer._wrdControlLease = lease;
+    const startupEpisode = this._startupEpisode || null;
+    const ownsOffer = () => epoch === this._offerEpoch && this.pc === peer
+      && this.socket === socket && this.currentConnectionAttemptId === attemptId
+      && (Number(this.connectionAttemptSequence) || 1) === attemptSequence
+      && this.controlState?.lease?.leaseId === lease.leaseId
+      && this.controlState?.lease?.leaseEpoch === lease.leaseEpoch && this.startupAllowed(startupEpisode);
 
     try {
-      if (epoch !== this._offerEpoch) return;
-      const existingVideoTransceiver = this.pc.getTransceivers().find((transceiver) => {
+      if (!ownsOffer()) return;
+      const existingVideoTransceiver = peer.getTransceivers().find((transceiver) => {
         return transceiver.receiver?.track?.kind === 'video' || transceiver.mid === '0';
       });
       this.videoTransceiver = existingVideoTransceiver || this.videoTransceiver;
       if (!this.videoTransceiver) {
-        this.videoTransceiver = this.pc.addTransceiver('video', { direction: 'recvonly' });
+        this.videoTransceiver = peer.addTransceiver('video', { direction: 'recvonly' });
         this.preferH264(this.videoTransceiver);
       }
 
-      const offer = await this.pc.createOffer();
-      if (epoch !== this._offerEpoch) return;
-      await this.pc.setLocalDescription(offer);
+      const offer = await peer.createOffer();
+      if (!ownsOffer()) return;
+      await peer.setLocalDescription(offer);
+      if (!ownsOffer()) return;
       if (this.networkMode === 'relay') {
         await this.waitForIceGatheringComplete(8000);
       }
-      if (epoch !== this._offerEpoch) return;
+      if (!ownsOffer()) return;
 
-      if (!this.currentConnectionAttemptId) {
-        this.currentConnectionAttemptId = this.createConnectionAttemptId();
-      }
       console.log('[OFFER-DBG] Emitting offer: socketConnected=%s epoch=%d', this.socket.connected, epoch);
       const session = this.getSessionPresentation();
-      this.socket.emit('offer', {
-        offer: this.pc.localDescription,
+      socket.emit('offer', {
+        offer: peer.localDescription,
         epoch,
         schemaVersion: 2,
         networkMode: this.networkMode,
         iceMode: this.networkMode,
         turnServerId: this.selectedTurnServerId || this.serverConfig?.selectedTurnServerId || undefined,
-        leaseId: this.controlState.lease.leaseId,
-        leaseEpoch: this.controlState.lease.leaseEpoch,
-        connectionAttemptId: this.currentConnectionAttemptId,
-        connectionAttemptSequence: Number(this.connectionAttemptSequence) || 1,
+        leaseId: lease.leaseId,
+        leaseEpoch: lease.leaseEpoch,
+        connectionAttemptId: attemptId,
+        connectionAttemptSequence: attemptSequence,
         width: session.width,
         height: session.height,
       });
+      if (ownsOffer()) peer._wrdEmittedOffer = { socket, attemptId, attemptSequence };
       console.log('Offer sent (epoch=%d attempt=%s)', epoch, this.currentConnectionAttemptId);
     } catch (err) {
+      if (!ownsOffer()) return;
       console.error('Failed to create offer:', err);
       this.scheduleReconnect('offer-error');
     } finally {
@@ -4983,29 +6230,34 @@ if (this.tunnelLastObjectUrl) {
     }
   },
   
-  startStats() {
+  startStats({ preserveConnection = false } = {}) {
     if (!this.pc || typeof WebRtcStats === 'undefined') return;
     if (this._statsSampler && this._statsPc !== this.pc) {
+      if (this._statsOwner) this._statsOwner.retired = true;
       this._statsSampler.stop();
       this._statsSampler = null;
       this._statsPc = null;
     }
     if (!this._statsSampler) {
       const pc = this.pc;
+      const owner = this._statsOwner = this.captureStartupOwner();
       this._statsPc = pc;
-      this.syncLinkQualityPath({ applyProfile: false, reason: 'stats-start' });
-      this.ensureLinkQualityController()?.beginConnection?.();
+      if (!preserveConnection) {
+        this.syncLinkQualityPath({ applyProfile: false, reason: 'stats-start' });
+        this.ensureLinkQualityController()?.beginConnection?.();
+      }
       this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
         getStats: () => pc.getStats(),
         intervalMs: 1000,
-        onSample: (snapshot) => this.processStatsSnapshot(snapshot),
-        onError: (error) => console.warn('[STATS] getStats failed:', error?.message || error),
+        onSample: (snapshot) => { if (this.ownsStartupOwner(owner)) this.processStatsSnapshot(snapshot); },
+        onError: (error) => { if (this.ownsStartupOwner(owner)) console.warn('[STATS] getStats failed:', error?.message || error); },
       });
     }
     this._statsSampler.start();
   },
 
   stopVideoFrameTracking() {
+    if (this._videoFrameOwner) this._videoFrameOwner.retired = true;
     const video = this._videoFrameElement;
     if (video && this._videoFrameCallbackId != null
         && typeof video.cancelVideoFrameCallback === 'function') {
@@ -5023,9 +6275,10 @@ if (this.tunnelLastObjectUrl) {
     if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
     const attemptId = this.currentConnectionAttemptId || null;
     const trackedPc = this.pc || null;
+    const startupOwner = this._videoFrameOwner = this.captureStartupOwner();
     this._videoFrameElement = video;
     const onFrame = (now, metadata) => {
-      if (this._videoFrameElement !== video
+      if (!this.ownsStartupOwner(startupOwner) || this._videoFrameElement !== video
           || this.currentConnectionAttemptId !== attemptId
           || this.pc !== trackedPc) return;
       if (Number(video.videoWidth || 0) > 0) {
@@ -5033,7 +6286,7 @@ if (this.tunnelLastObjectUrl) {
         this._stallSince = null;
       }
       this._videoFrameSeq = (Number(this._videoFrameSeq) || 0) + 1;
-      this.markMediaAttemptReady(attemptId);
+      if (!this.markMediaAttemptReady(attemptId)) return;
       this.ensureDesktopSessionState()?.applyMedia({
         attemptId,
         event: 'fresh-frame',
@@ -5042,22 +6295,24 @@ if (this.tunnelLastObjectUrl) {
       if (typeof LatencyMonitor !== 'undefined') {
         LatencyMonitor.onVideoFrame(now, metadata);
       }
-      this.ensureFrameTraceCollector().observeVideoFrame({
-        attemptId,
-        generation: Number(this.connectionAttemptSequence) || 0,
-        streamId: 'video',
-        rtpTimestamp: metadata?.rtpTimestamp,
-      }, { metadata, marker: this.decodeControlledMarkerFromVideo(video) });
-      this.recordLossLabRvfc(metadata, video);
-      this.observePaintFrame(now, metadata, video);
-      if (this._mediaResumeFramePending) {
-        this.observeFreshResumeFrame({
-          source: 'video-callback',
-          frameSeq: this._videoFrameSeq,
-          connectionAttemptId: attemptId,
-          pc: trackedPc,
-        });
+      const identity = this.verifiedVideoFrameIdentity(trackedPc, video, metadata);
+      if (identity) {
+        if (this._frameTraceEnabled || this._controlledSceneMarkerRoi || this._lossLabTrace) {
+          this.ensureFrameTraceCollector().observeVideoFrame(identity,
+            { metadata, marker: this.decodeControlledMarkerFromVideo(video) }, now);
+        }
+        this.ensureInputFrameCollector()?.observeVideoFrame(identity, {}, now);
+        this.consumeInputFrameMatches();
       }
+      this.recordLossLabRvfc(metadata, video);
+      this.consumeControlledVisibleEffects();
+      this.observePaintFrame(now, metadata, video);
+      this.observeFreshResumeFrame({
+        source: 'video-callback',
+        frameSeq: this._videoFrameSeq,
+        connectionAttemptId: attemptId,
+        pc: trackedPc,
+      });
       this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
     };
     this._videoFrameCallbackId = video.requestVideoFrameCallback(onFrame);
@@ -5100,6 +6355,40 @@ if (this.tunnelLastObjectUrl) {
     }
   },
 
+  verifiedVideoFrameIdentity(pc, video, metadata) {
+    if (!pc || pc !== this.pc || typeof pc.getReceivers !== 'function') return null;
+    const tracks = video?.srcObject?.getVideoTracks?.() || [];
+    const receivers = pc.getReceivers().filter(r => r.track?.kind === 'video' && tracks.some(t => t.id === r.track.id));
+    if (receivers.length !== 1) return null;
+    const sources = [...new Set((receivers[0].getSynchronizationSources?.() || []).map(s => s.source))];
+    if (sources.length !== 1 || !Number.isSafeInteger(sources[0])) return null;
+    return { ...this.currentFrameTraceIdentity(), ssrc: sources[0], rtpTimestamp: metadata?.rtpTimestamp };
+  },
+
+  ensureInputFrameCollector() {
+    if (this.serverConfig?.inputFrameCorrelationVersion !== 1 || typeof LatencyMonitor === 'undefined'
+        || !LatencyMonitor.hasPendingFrameInputs?.()) { this.inputFrameCollector = null; return null; }
+    const scope = this.latencyScope(), key = JSON.stringify(scope);
+    if (!this.inputFrameCollector || this._inputFrameScope !== key) {
+      this.inputFrameCollector = new FrameTraceCollector(); this._inputFrameScope = key;
+      this.inputFrameCollector.setScope({ attemptId: scope.connectionAttemptId, generation: scope.generation, streamId: 'video' });
+    }
+    return this.inputFrameCollector;
+  },
+
+  consumeInputFrameMatches() {
+    for (const row of this.inputFrameCollector?.takeMatched() || []) {
+      if (typeof LatencyMonitor !== 'undefined') LatencyMonitor.onPostApplyFrame?.(row, { scope: this.latencyScope() });
+    }
+  },
+
+  consumeControlledVisibleEffects() {
+    if (!this._controlledSceneMarkerRoi || typeof LatencyMonitor === 'undefined') return;
+    for (const row of this.frameTraceCollector?.takeControlledVisualEvidence() || []) {
+      LatencyMonitor.onVisibleEffect?.(row, { scope: this.latencyScope() });
+    }
+  },
+
   ensureFrameTraceCollector(scope = this.currentFrameTraceIdentity()) {
     if (!this.frameTraceCollector) this.frameTraceCollector = new FrameTraceCollector();
     this.frameTraceCollector.setScope(scope);
@@ -5107,6 +6396,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   acceptFrameTraceBatch(batch) {
+    this._frameTraceEnabled = true;
     return this.ensureFrameTraceCollector().acceptBatch(batch);
   },
 
@@ -5303,6 +6593,7 @@ if (this.tunnelLastObjectUrl) {
   },
 
   stopMediaTelemetry() {
+    if (this._statsOwner) this._statsOwner.retired = true;
     if (this._statsSampler) this._statsSampler.stop();
     this._statsSampler = null;
     this._statsPc = null;
@@ -5313,10 +6604,16 @@ if (this.tunnelLastObjectUrl) {
     this.stopVideoFrameTracking();
   },
 
+  nullableMediaLatency(value) {
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  },
+
   canonicalMediaStats(stats = {}) {
       const number = (canonical, legacy) => Number(stats[canonical] ?? stats[legacy] ?? 0) || 0;
       return {
         ...stats,
+        rttMs: this.nullableMediaLatency(stats.rttMs),
+        jitterBufferMs: this.nullableMediaLatency(stats.jitterBufferMs),
         derivedFps: number('derivedFps', 'fps'),
         receivedDelta: number('receivedDelta', 'framesReceived'),
         decodedDelta: number('decodedDelta', 'framesDecoded'),
@@ -5335,8 +6632,8 @@ if (this.tunnelLastObjectUrl) {
   processStatsSnapshot(stats = {}) {
       const canonical = this.canonicalMediaStats(stats);
       const fps = canonical.derivedFps;
-      const latencyMs = Number(stats.rttMs || 0);
-      const jitterBufferDelay = Number(stats.jitterBufferMs || 0);
+      const latencyMs = canonical.rttMs;
+      const jitterBufferDelay = canonical.jitterBufferMs;
       const framesReceived = canonical.receivedDelta;
       const framesDecoded = canonical.decodedDelta;
       const packetsLost = canonical.packetsLostDelta;
@@ -5355,27 +6652,32 @@ if (this.tunnelLastObjectUrl) {
           ? totalsDecoded
           : Number(stats.framesDecoded ?? framesDecoded) || 0;
         // Each positive delta is progress, even when smaller than the prior interval.
-        this._lastInboundFramesDecodedAt = Date.now();
+        this._lastInboundFramesDecodedAt = performance.now();
       }
-      this.selectedCandidatePair = stats.selectedCandidatePair || {
+      this.selectedCandidatePair = stats.selectedCandidatePair ? {
+        ...stats.selectedCandidatePair,
+        rttMs: this.nullableMediaLatency(stats.selectedCandidatePair.rttMs),
+      } : {
         localType: '', remoteType: '', protocol: '', localAddress: '', remoteAddress: '',
-        localAddressFamily: '', remoteAddressFamily: '', rttMs: 0,
+        localAddressFamily: '', remoteAddressFamily: '', rttMs: null,
       };
 
       const fpsEl = document.getElementById('fpsDisplay');
       if (fpsEl) fpsEl.textContent = `${Math.round(fps)} FPS`;
       const latencyEl = document.getElementById('latencyDisplay');
       if (latencyEl) {
-        if (latencyMs > 0 && jitterBufferDelay > 0) {
-          latencyEl.textContent = `RTT ${Math.round(latencyMs)} · 缓冲 ${Math.round(jitterBufferDelay)} ms`;
-          latencyEl.title = `网络 RTT ${Math.round(latencyMs)} ms；播放缓冲 ${Math.round(jitterBufferDelay)} ms`;
-        } else if (latencyMs > 0) {
-          latencyEl.textContent = `RTT ${Math.round(latencyMs)} ms`;
-          latencyEl.title = `网络 RTT ${Math.round(latencyMs)} ms`;
-        } else {
-          latencyEl.textContent = '- ms';
-          latencyEl.title = '';
+        const labels = [];
+        const descriptions = [];
+        if (latencyMs !== null) {
+          labels.push(`RTT ${Math.round(latencyMs)} ms`);
+          descriptions.push(`网络 RTT ${Math.round(latencyMs)} ms`);
         }
+        if (jitterBufferDelay !== null) {
+          labels.push(`缓冲 ${Math.round(jitterBufferDelay)} ms`);
+          descriptions.push(`播放缓冲 ${Math.round(jitterBufferDelay)} ms`);
+        }
+        latencyEl.textContent = labels.join(' · ') || '未测量';
+        latencyEl.title = descriptions.join('；') || '未测量';
       }
       const candidateEl = document.getElementById('candidateDisplay');
       const portSearchStatus = this.portSearchController?.snapshot?.()?.status || null;
@@ -5384,7 +6686,7 @@ if (this.tunnelLastObjectUrl) {
         || portSearchStatus === 'exhausted';
       if (candidateEl && !portSearchOwnsDisplay) {
         const linkLabel = selectedCandidateType === 'relay' ? 'TURN中继' : selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx' ? 'STUN直连' : selectedCandidateType === 'host' ? '本地直连' : selectedCandidateType || '-';
-        candidateEl.textContent = `当前链路：${linkLabel}${latencyMs > 0 ? ` · ${latencyMs} ms` : ''}`;
+        candidateEl.textContent = `当前链路：${linkLabel}${latencyMs !== null ? ` · ${latencyMs} ms` : ''}`;
       }
       this.lastCandidateType = selectedCandidateType || '';
       if (this.networkMode === 'relay' || selectedCandidateType === 'relay') {
@@ -5424,7 +6726,7 @@ if (this.tunnelLastObjectUrl) {
       } else if (selectedCandidateType === 'relay') {
         if (!this.shouldPreservePaintIssueAdvisor()) {
           this.clearFailureRecommendation();
-          this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs || '-'} ms，适合受限外网但延迟会高于本地直连。`);
+          this.updateNetworkUI(`当前通过 TURN 中继传输。RTT ${latencyMs !== null ? latencyMs : '未测量'} ms，适合受限外网但延迟会高于本地直连。`);
         }
 
         // TURN channel dead detection: ICE stays "completed" via STUN consent probes
@@ -5446,12 +6748,12 @@ if (this.tunnelLastObjectUrl) {
       } else if (selectedCandidateType === 'host') {
         if (!this.shouldPreservePaintIssueAdvisor()) {
           this.clearFailureRecommendation();
-          this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs || '-'} ms，这是最低延迟路径。`);
+          this.updateNetworkUI(`当前为本地/直连链路。RTT ${latencyMs !== null ? latencyMs : '未测量'} ms，这是最低延迟路径。`);
         }
       } else if (selectedCandidateType === 'srflx' || selectedCandidateType === 'prflx') {
         if (!this.shouldPreservePaintIssueAdvisor()) {
           this.clearFailureRecommendation();
-          this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs || '-'} ms；若画面不稳定可切换外网中继。`);
+          this.updateNetworkUI(`当前为外网穿透直连。RTT ${latencyMs !== null ? latencyMs : '未测量'} ms；若画面不稳定可切换外网中继。`);
         }
       } else if (this.noMediaTicks >= 3) {
         const hasTurn = this.hasTurnConfigured();
@@ -5473,7 +6775,7 @@ if (this.tunnelLastObjectUrl) {
         );
       }
 
-      console.log(`[STATS] DerivedFPS=${fps.toFixed(1)}, RTT=${latencyMs}ms, Jitter=${jitterBufferDelay}ms, ` +
+      console.log(`[STATS] DerivedFPS=${fps.toFixed(1)}, RTT=${latencyMs !== null ? `${latencyMs}ms` : 'unavailable'}, Jitter=${jitterBufferDelay !== null ? `${jitterBufferDelay}ms` : 'unavailable'}, ` +
                   `Codec=${codec || 'unknown'}, Candidate=${selectedCandidateType || 'unknown'}, ` +
                   `RecvDelta=${framesReceived}, DecodedDelta=${framesDecoded}, LostDelta=${packetsLost}, ` +
                   `Dropped=${framesDropped}, Packets=${packetsReceived}, NACK=${nackCount}, ` +
@@ -5484,7 +6786,7 @@ if (this.tunnelLastObjectUrl) {
       }
 
       if (typeof LatencyMonitor !== 'undefined' && typeof LatencyMonitor.onMediaStats === 'function') {
-        LatencyMonitor.onMediaStats(stats);
+        LatencyMonitor.onMediaStats({ ...stats, rttMs: latencyMs, jitterBufferMs: jitterBufferDelay });
       }
 
       if (!canonical.warmup && !this.isMediaHealthSuppressed()) {
@@ -5492,7 +6794,7 @@ if (this.tunnelLastObjectUrl) {
           ...canonical,
           interval: true,
           rttMs: latencyMs,
-          jitterBufferMs: Number(jitterBufferDelay) || 0,
+          jitterBufferMs: jitterBufferDelay,
           codec,
           selectedCandidateType,
         });
@@ -5503,7 +6805,7 @@ if (this.tunnelLastObjectUrl) {
           derivedFps: fps,
           browserReportedFps: Number(stats.browserReportedFps || 0),
           rttMs: latencyMs,
-          jitterBufferMs: Number(jitterBufferDelay) || 0,
+          jitterBufferMs: jitterBufferDelay,
           receivedDelta: framesReceived,
           decodedDelta: framesDecoded,
           packetsLostDelta: packetsLost,
@@ -5573,8 +6875,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   hideReconnectHud() {
-    document.getElementById('reconnectHud')?.classList.add('hidden');
-    document.getElementById('lastFrameHold')?.classList.add('hidden');
+    renderViewerChromeClass(document.getElementById('reconnectHud'), 'hidden', true);
+    renderViewerChromeClass(document.getElementById('lastFrameHold'), 'hidden', true);
   },
 
   RECOVERY_REFRESH_COOLDOWN_MS: 3000,
@@ -5596,7 +6898,8 @@ if (this.tunnelLastObjectUrl) {
       return false;
     }
     if (this.isForcedRefreshReason(reason)) return true;
-    if (Date.now() - (this._lastRefreshAt || 0) < this.RECOVERY_REFRESH_COOLDOWN_MS) {
+    if (Number.isFinite(this._lastRefreshAt)
+      && performance.now() - this._lastRefreshAt < this.RECOVERY_REFRESH_COOLDOWN_MS) {
       console.warn('[RECOVERY] Suppressing refresh reason=%s', reason);
       return false;
     }
@@ -5618,11 +6921,47 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this._signalRecoveryTimer);
       this._signalRecoveryTimer = null;
     }
-    this._signalRecoveryStartedAt = 0;
+    this._signalRecoveryStartedAt = null;
     this._signalRecoveryPending = false;
   },
 
+  transferRetainedStartupPeer() {
+    // A surviving initial PC keeps its attempt and all elapsed budgets. Its
+    // producers still need fresh socket ownership; mutating old owner records
+    // would incorrectly authorize callbacks already queued before recovery.
+    if (!this.startupPending() || this._peerCallbackOwner?.socket === this.socket) return;
+    for (const owner of [this._peerCallbackOwner, this._statsOwner, this._videoFrameOwner]) {
+      if (owner) owner.retired = true;
+    }
+    for (const key of ['_iceDisconnectedTimer', '_disconnectedTimer']) {
+      if (this[key] != null) clearTimeout(this[key]);
+      this[key] = null;
+    }
+    this.bindPeerCallbacks();
+    if (this.remoteStream) this.bindRemoteVideoCallbacks(this._peerCallbackOwner, { observeCurrent: false });
+    this.bindInputChannelCallbacks();
+    const watchdog = this._dataChannelWatchdog;
+    if (watchdog) {
+      if (watchdog.timer != null) clearTimeout(watchdog.timer);
+      // Copy the deadline/phase/extensions, never restart a DC allowance.
+      const current = this._dataChannelWatchdog = { ...watchdog, socket: this.socket, timer: null };
+      this.checkDataChannelWatchdog(current);
+    }
+    if (this._dcReconnectTimer != null) {
+      clearTimeout(this._dcReconnectTimer);
+      this.scheduleDataChannelRecovery(this._inputChannelOwner, this.inputChannel,
+        this._dcReconnectReason, this._dcReconnectDeadline);
+    }
+    if (this._statsSampler) this._statsSampler.stop();
+    this._statsSampler = null;
+    this._statsPc = null;
+    this.startStats({ preserveConnection: true });
+    this.startVideoFrameTracking();
+    this.armStableRecoveryReset();
+  },
+
   handleSignalingRecoveryConnected() {
+    if (!this.startupAllowed()) return false;
     if (!this._signalRecoveryPending || this.manualDisconnect || this._superseded) return false;
     this.clearSignalingRecovery();
 
@@ -5636,6 +6975,8 @@ if (this.tunnelLastObjectUrl) {
       this.refresh({ reason: 'signal-reconnected' });
       return true;
     }
+
+    this.transferRetainedStartupPeer();
 
     // The disconnect handler moves the paint gate to `disconnected`, and the
     // socket connect handler moves it to `signaling`.  When the existing peer
@@ -5653,38 +6994,47 @@ if (this.tunnelLastObjectUrl) {
   },
 
   scheduleSignalingRecovery(reason = 'signal-disconnected') {
+    if (!this.startupAllowed()) return false;
     if (this.manualDisconnect || this._superseded) return false;
     this._signalRecoveryPending = true;
-    if (!this._signalRecoveryStartedAt) this._signalRecoveryStartedAt = Date.now();
+    if (this._signalRecoveryStartedAt == null) this._signalRecoveryStartedAt = performance.now();
     if (this._signalRecoveryTimer != null) return true;
 
-    const elapsed = Date.now() - this._signalRecoveryStartedAt;
+    const elapsed = performance.now() - this._signalRecoveryStartedAt;
     const remaining = Math.max(0, this.SIGNAL_RECOVERY_MAX_WAIT_MS - elapsed);
     const delay = Math.min(this.SIGNAL_RECOVERY_RETRY_MS, remaining || this.SIGNAL_RECOVERY_RETRY_MS);
-    this._signalRecoveryTimer = setTimeout(() => {
+    const episode = this._startupEpisode || null;
+    const recoverySocket = this.socket;
+    const recoveryTimer = setTimeout(() => {
+      // A cancelled callback may already be queued; only its own handle can
+      // retire or act, never a successor socket's freshly armed watchdog.
+      if (this._signalRecoveryTimer !== recoveryTimer) return;
       this._signalRecoveryTimer = null;
+      if (!this.startupAllowed(episode) || this.socket !== recoverySocket) return;
       if (this.manualDisconnect || this._superseded) return;
       if (this.socket?.connected) {
         this.handleSignalingRecoveryConnected();
         return;
       }
 
-      const waited = Date.now() - this._signalRecoveryStartedAt;
+      const waited = performance.now() - this._signalRecoveryStartedAt;
       if (waited >= this.SIGNAL_RECOVERY_MAX_WAIT_MS) {
         // Socket.IO's manager can remain attached to a dead transport after a
         // laptop sleep or proxy reset. Recreate only the signaling socket;
         // the current media context is retained until the new socket connects.
         console.warn('[RECOVERY] Recreating signaling socket after %sms reason=%s', waited, reason);
         this.createSignalingSocket(true);
-        this._signalRecoveryStartedAt = Date.now();
+        this._signalRecoveryStartedAt = performance.now();
       }
       this.scheduleSignalingRecovery(reason);
     }, delay);
+    this._signalRecoveryTimer = recoveryTimer;
     this._signalRecoveryTimer?.unref?.();
     return true;
   },
 
   async refresh(options = {}) {
+    if (!this.startupAllowed()) return;
     let reason = null;
     if (typeof options === 'string') {
       reason = options;
@@ -5724,11 +7074,13 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this._refreshSettleTimer);
       this._refreshSettleTimer = null;
     }
+    const episode = this._startupEpisode || null;
     this._refreshSettleTimer = setTimeout(() => {
+      if (!this.startupAllowed(episode)) return;
       this.markRefreshSettled('timeout');
     }, 8000);
     this._refreshSettleTimer.unref?.();
-    this._lastRefreshAt = Date.now();
+    this._lastRefreshAt = performance.now();
     this.manualDisconnect = false;
     this.offerInProgress = false;
     this._offerEpoch += 1;
@@ -5737,10 +7089,7 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this._dcTimeout) {
-      clearTimeout(this._dcTimeout);
-      this._dcTimeout = null;
-    }
+    this.cancelDataChannelWatchdog();
     if (this._disconnectedTimer) {
       clearTimeout(this._disconnectedTimer);
       this._disconnectedTimer = null;
@@ -5766,8 +7115,12 @@ if (this.tunnelLastObjectUrl) {
       videoElement?.classList.remove('connected');
       document.body.classList.remove('stream-connected');
       document.getElementById('loading')?.classList.remove('hidden');
-      document.getElementById('loading')?.classList.add('is-connecting');
-      updateLoadingText('正在重新连接...');
+      if (this._startupEpisode?.state === 'slow') {
+        this.showSlowStartup();
+      } else {
+        document.getElementById('loading')?.classList.add('is-connecting');
+        updateLoadingText('正在重新连接...');
+      }
     }
     this.stopTunnelRelay();
 
@@ -5779,6 +7132,7 @@ if (this.tunnelLastObjectUrl) {
       this.pc.onicegatheringstatechange = null;
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
@@ -5810,11 +7164,11 @@ if (this.tunnelLastObjectUrl) {
   },
 
   isInboundVideoHealthy(maxAgeMs = 5000) {
-    const at = Number(this._lastInboundFramesDecodedAt) || 0;
+    const at = this._lastInboundFramesDecodedAt;
     const frames = Number(this._lastInboundFramesDecoded) || 0;
     // Unknown (no growth sample) is not healthy — avoids suppressing DC recovery on freeze.
-    if (frames <= 0 || !at) return false;
-    return (Date.now() - at) <= maxAgeMs;
+    if (frames <= 0 || !Number.isFinite(at)) return false;
+    return (performance.now() - at) <= maxAgeMs;
   },
 
   shouldReconnectForDataChannelFault(reason) {
@@ -5840,6 +7194,7 @@ if (this.tunnelLastObjectUrl) {
       // Un-negotiated DataChannels can be created on an existing PC without re-offer;
       // the host receives them via @pc.on("datachannel") and does NOT need to rebuild
       // ScreenCaptureTrack. Calling createOffer() here would cause host full teardown.
+      this.cancelDataChannelWatchdog();
       this.stopDcKeepalive();
       this.inputChannel = null;
       this.inputMoveChannel = null;
@@ -5874,6 +7229,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   scheduleReconnect(reason) {
+    if (!this.startupAllowed()) return;
+    const owner = this.captureStartupOwner();
     if (this._superseded) {
       return;
     }
@@ -5885,7 +7242,7 @@ if (this.tunnelLastObjectUrl) {
     }
     // Prevent rapid reconnect storm: brief PC connect resets _reconnectAttempt to 0,
     // which would loop at 1500ms forever. Suppress if a refresh fired within 3s.
-    if (Date.now() - (this._lastRefreshAt || 0) < 3000) {
+    if (Number.isFinite(this._lastRefreshAt) && performance.now() - this._lastRefreshAt < 3000) {
       console.warn('[RECOVERY] Suppressing rapid reconnect — last refresh was <3s ago reason=%s', reason);
       return;
     }
@@ -5905,7 +7262,7 @@ if (this.tunnelLastObjectUrl) {
     if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
       Diagnostic.autoSendFailure(reason);
     }
-    this.setUiPhase('disconnected', { reason });
+    this.setUiPhase(this.startupPending() ? 'signaling' : 'disconnected', { reason });
     this._autoFailCount += 1;
 
     const hasTurn = this.hasTurnConfigured();
@@ -5926,6 +7283,7 @@ if (this.tunnelLastObjectUrl) {
         console.warn('[RECOVERY] restartIce failed, will fall back to full refresh', err);
       }
       this.reconnectTimer = setTimeout(() => {
+        if (!this.ownsStartupOwner(owner)) return;
         this.reconnectTimer = null;
         if (this.manualDisconnect || !this.socket || !this.socket.connected) {
           return;
@@ -5940,11 +7298,12 @@ if (this.tunnelLastObjectUrl) {
       this.updateNetworkUI('自动穿透失败；Strict STUN 默认不自动切 TURN，可手动选择外网中继。', 'warning');
       updateLoadingText('直连异常，正在尝试恢复...');
     } else if (this.networkMode === 'auto' && this._autoFailCount >= 2) {
+      if (this.startupPending()) this.retireStartupEpisode('strict-stun-exhausted', { cleanup: true });
       console.warn('[RECOVERY] Strict STUN auto exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.useRelayFallback = false;
       this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
       this.updateNetworkUI('Strict STUN 直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
-      updateLoadingText('直连失败，诊断日志已发送。');
+      updateLoadingText('直连失败，已尝试提交诊断日志。');
       document.getElementById('loading').classList.remove('hidden');
       document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
@@ -5953,10 +7312,11 @@ if (this.tunnelLastObjectUrl) {
       }
       return;
     } else if (this.networkMode === 'stun' && this._autoFailCount >= 2) {
+      if (this.startupPending()) this.retireStartupEpisode('strict-stun-exhausted', { cleanup: true });
       console.warn('[RECOVERY] Strict STUN mode exhausted (failCount=%d), not using tunnel', this._autoFailCount);
       this.setFailureRecommendation(hasTurn ? 'direct-failed-suggest-relay' : 'direct-failed-suggest-tunnel', 'danger');
       this.updateNetworkUI('外网直连失败，未自动切换 TURN 或媒体隧道。', 'danger');
-      updateLoadingText('直连失败，诊断日志已发送。');
+      updateLoadingText('直连失败，已尝试提交诊断日志。');
       document.getElementById('loading').classList.remove('hidden');
       document.getElementById('loading').classList.remove('is-connecting');
       document.body.classList.remove('stream-connected');
@@ -5965,6 +7325,7 @@ if (this.tunnelLastObjectUrl) {
       }
       return;
     } else if (this.networkMode === 'relay' && !this.getTurnServers().length) {
+      if (this.startupPending()) this.retireStartupEpisode('relay-unavailable', { cleanup: true });
       this.setFailureRecommendation('relay-unavailable-no-turn', 'danger');
       this.updateNetworkUI('外网中继无 TURN 配置，建议切换到隧道中继。', 'danger');
       updateLoadingText('TURN 未配置，无法中继…');
@@ -5976,10 +7337,11 @@ if (this.tunnelLastObjectUrl) {
       updateLoadingText('连接中断，正在自动重连...');
     }
     document.getElementById('loading').classList.remove('hidden');
-    document.getElementById('loading').classList.add('is-connecting');
+    if (this._startupEpisode?.state !== 'slow') document.getElementById('loading').classList.add('is-connecting');
     document.body.classList.remove('stream-connected');
 
     if (this.networkMode === 'relay' && (Number(this._relayHardRefreshCount) || 0) >= 5) {
+      if (this.startupPending()) this.retireStartupEpisode('relay-reconnect-exhausted', { cleanup: true });
       console.warn('[RECOVERY] relay-reconnect-exhausted');
       if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.autoSendFailure === 'function') {
         Diagnostic.autoSendFailure('relay-reconnect-exhausted');
@@ -5991,12 +7353,14 @@ if (this.tunnelLastObjectUrl) {
       return;
     }
 
+    if (this._startupEpisode?.state === 'slow') this.showSlowStartup();
     const attempt = Number(this._reconnectAttempt) || 0;
     const delay = Math.min(1500 * (2 ** attempt), 15000);
     this._reconnectAttempt = attempt + 1;
     console.warn('[RECOVERY] Scheduling WebRTC reconnect after %s in %sms', reason, delay);
 
     this.reconnectTimer = setTimeout(() => {
+      if (!this.ownsStartupOwner(owner)) return;
       this.reconnectTimer = null;
       if (this.manualDisconnect) {
         return;
@@ -6009,10 +7373,14 @@ if (this.tunnelLastObjectUrl) {
   },
 
   disconnect() {
+    this._startRequest = (this._startRequest || 0) + 1;
+    this.retireStartupEpisode('manual-disconnect');
+    this._signalingSession = null;
     this.markRefreshSettled('disconnect');
     this.clearSignalingRecovery();
     this.stopPortSearch('disconnect');
     this.manualDisconnect = true;
+    this.cancelDataChannelWatchdog();
     this.offerInProgress = false;
     this._offerEpoch += 1;
     if (this.reconnectTimer) {
@@ -6039,6 +7407,7 @@ if (this.tunnelLastObjectUrl) {
     this.stopMediaTelemetry();
     this.stopTunnelRelay();
     if (this.pc) {
+      this.cancelDataChannelWatchdog();
       this.pc.close();
       this.pc = null;
     }
@@ -6059,12 +7428,16 @@ if (this.tunnelLastObjectUrl) {
   },
 
   handleViewerSuperseded(payload = {}) {
+    this._startRequest = (this._startRequest || 0) + 1;
+    this.retireStartupEpisode('viewer-superseded', { retainReclaimConfig: true });
     if (this._superseded) {
       return;
     }
     console.warn('[VIEWER] superseded', payload?.reason || 'unknown', payload?.bySocketId || '');
+    this._signalingSession = null;
     this._superseded = true;
     this.manualDisconnect = true;
+    this.cancelDataChannelWatchdog();
     this.offerInProgress = false;
     this._offerEpoch += 1;
     this.clearSignalingRecovery();
@@ -6082,10 +7455,7 @@ if (this.tunnelLastObjectUrl) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this._dcTimeout) {
-      clearTimeout(this._dcTimeout);
-      this._dcTimeout = null;
-    }
+    this.cancelDataChannelWatchdog();
     if (this._disconnectedTimer) {
       clearTimeout(this._disconnectedTimer);
       this._disconnectedTimer = null;
@@ -6117,6 +7487,7 @@ if (this.tunnelLastObjectUrl) {
       this.pc.onicecandidate = null;
       this.pc.ontrack = null;
       try {
+        this.cancelDataChannelWatchdog();
         this.pc.close();
       } catch (_err) {}
       this.pc = null;
@@ -6169,6 +7540,48 @@ if (this.tunnelLastObjectUrl) {
   },
 
   reclaimDesktopSession() {
+    if (this._reclaimPromise) return this._reclaimPromise;
+    this._reclaimPromise = this.reclaimDesktopSessionOnce().finally(() => { this._reclaimPromise = null; });
+    return this._reclaimPromise;
+  },
+
+  async reclaimDesktopSessionOnce() {
+    const previousEpisode = this._startupEpisode;
+    let episode;
+    try {
+      // Keep the old Start superseded until its configuration has settled. It
+      // cannot initialize media on behalf of this newer explicit operation.
+      if (this._pendingBootstrapConfig) await this._pendingBootstrapConfig;
+      if (previousEpisode !== this._startupEpisode) return false;
+      episode = this.beginStartupEpisode(previousEpisode?.controller);
+      const retained = previousEpisode?.reclaimConfig;
+      if (retained && (Auth.getToken() !== retained.authToken
+          || Auth.getGeneration?.() !== retained.authGeneration || Auth.isVerified?.() !== true)) {
+        this.retireStartupEpisode('stale-reclaim-config');
+        return false;
+      }
+      await this.requestExplicitViewerAdmission(episode);
+      if (!this.startupAllowed(episode)) return false;
+      if (retained && (Auth.getToken() !== retained.authToken
+          || Auth.getGeneration?.() !== retained.authGeneration || Auth.isVerified?.() !== true)) {
+        this.retireStartupEpisode('stale-reclaim-config', { cleanup: true });
+        return false;
+      }
+      // Only the newly authorized reclaim may consume an inert snapshot.
+      if (retained) this.applyBootstrapSnapshot(retained.snapshot);
+    }
+    catch (error) {
+      // Rejection bypasses admission's post-await guard. Before enrollment the
+      // pending bootstrap belongs to previousEpisode; afterward it belongs to
+      // episode. Neither failure may clean up a newer explicit Start.
+      if ((episode || previousEpisode) !== this._startupEpisode
+          || (episode && !this.startupAllowed(episode))) return false;
+      if (error?.code !== 'superseded') this.enterBootstrapFailure(error);
+      return false;
+    }
+    this._controlUserReleased = false;
+    this._cancelControlAcquireIntent();
+    this.resetSignalingSession();
     this.hideSupersededUI();
     this._superseded = false;
     this.manualDisconnect = false;
@@ -6176,6 +7589,7 @@ if (this.tunnelLastObjectUrl) {
     this._autoFailCount = 0;
     this.offerInProgress = false;
     this._offerEpoch += 1;
+    this.startStartupMediaBudget();
     this.beginConnectionAttempt('reclaim');
     document.getElementById('loading')?.classList?.remove('hidden');
     document.getElementById('loading')?.classList?.add('is-connecting');
@@ -6191,9 +7605,17 @@ if (typeof globalThis !== 'undefined') {
   globalThis.WebRTC = WebRTC;
 }
 
+function renderViewerChromeClass(node, name, active) {
+  if (!node?.classList || node.classList.contains?.(name) === active) return;
+  if (active) node.classList.add(name);
+  else node.classList.remove(name);
+}
+
 function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');
-  statusEl.className = 'status ' + status;
+  if (!statusEl) return;
+  const className = 'status ' + status;
+  if (statusEl.className !== className) statusEl.className = className;
   
   const statusText = {
     idle: '未开始',
@@ -6204,7 +7626,8 @@ function updateConnectionStatus(status) {
     'media-stalled': '画面卡顿',
     disconnected: '已断开',
   };
-  statusEl.textContent = statusText[status] || status;
+  const label = statusText[status] || status;
+  if (statusEl.textContent !== label) statusEl.textContent = label;
 }
 
 function updateLoadingText(text) {
@@ -6234,22 +7657,37 @@ function bootViewerShell() {
   const ViewerBootstrap = (typeof createViewerBootstrap === 'function')
     ? createViewerBootstrap({
       timeoutMs: 3000,
+      getScope: () => Auth.getGeneration?.(),
       async fetchSnapshot({ turnServerId, signal }) {
         const apiBase = (typeof RuntimeConfig !== 'undefined')
           ? RuntimeConfig.getApiBase()
           : '';
         const query = turnServerId ? `?turnServerId=${encodeURIComponent(turnServerId)}` : '';
+        const tokenAtStart = Auth.getToken();
+        const authGeneration = Auth.getGeneration?.();
         const response = await fetch(`${apiBase}/api/viewer-bootstrap${query}`, {
           cache: 'no-store',
           signal,
-          headers: { Authorization: `Bearer ${Auth.getToken()}` },
+          headers: { Authorization: `Bearer ${tokenAtStart}` },
         });
+        let data;
+        try { data = await response.json(); }
+        catch { throw Object.assign(new Error('invalid-response'), { code: 'invalid-response', status: response.status }); }
         if (!response.ok) {
-          const error = new Error(`Viewer bootstrap HTTP ${response.status}`);
-          error.status = response.status;
-          throw error;
+          // Bootstrap's existing middleware returns error-only JSON, unlike /auth/verify.
+          const applicationInvalid = response.status === 401
+            && ['Invalid token', 'Missing bearer token'].includes(data?.error);
+          const typedInvalid = (response.status === 401 || response.status === 403)
+            && data?.valid === false && ['Invalid token', 'No token provided'].includes(data.error);
+          const current = tokenAtStart === Auth.getToken() && authGeneration === Auth.getGeneration?.();
+          const code = !current ? 'superseded'
+            : applicationInvalid || typedInvalid ? 'auth-invalid' : 'bootstrap-unavailable';
+          throw Object.assign(new Error(code), { code, status: response.status });
         }
-        return response.json();
+        if (tokenAtStart !== Auth.getToken() || authGeneration !== Auth.getGeneration?.()) {
+          throw Object.assign(new Error('superseded'), { code: 'superseded' });
+        }
+        return data;
       },
       fallbackFactory({ mode, error }) {
         return {
@@ -6270,14 +7708,34 @@ function bootViewerShell() {
     })
     : null;
 
-  // Align preload key with startViewer (mode + selected TURN) so Start reuses the inflight fetch.
-  if (ViewerBootstrap) {
+  // Auth.subscribe calls back immediately, so install it only after the controller
+  // exists. Defer the one page warmup until Auth has verified its current scope.
+  let bootstrapPreloaded = false;
+  function preloadVerifiedBootstrap() {
+    if (!ViewerBootstrap || bootstrapPreloaded || typeof Auth === 'undefined'
+        || Auth.isVerified?.() !== true) return;
+    bootstrapPreloaded = true;
     ViewerBootstrap.load({
       mode: WebRTC.networkMode,
       turnServerId: WebRTC.selectedTurnServerId || '',
     }).catch(() => {});
-  } else {
+  }
+  if (typeof Auth !== 'undefined' && typeof Auth.subscribe === 'function') {
+    Auth.subscribe((check) => {
+      if (check?.state === 'unauthorized') {
+        WebRTC._startRequest = (WebRTC._startRequest || 0) + 1;
+        WebRTC.retireStartupEpisode('auth-invalid', { cleanup: true });
+      }
+      window.__WRD_SHELL__?.setAuthCheck?.(check);
+      WebRTC.syncChromeCapabilities();
+      preloadVerifiedBootstrap();
+    });
+  }
+  preloadVerifiedBootstrap();
+  if (!ViewerBootstrap) {
+    const episode = WebRTC._startupEpisode || null;
     WebRTC.loadServerConfig().then(() => {
+      if (!WebRTC.startupAllowed(episode)) return;
       WebRTC.configureNetworkControls();
       WebRTC.updateNetworkUI('请根据访问环境选择网络模式。');
     }).catch(() => {});
@@ -6300,71 +7758,70 @@ function bootViewerShell() {
     }
   }
 
-  // Non-critical operator tools: load after core-interactive without blocking Start.
-  // Diagnostic + port-search stay disabled until this succeeds or fails with retry.
+  // Non-critical operator tools: each operation has a deadline; requests remain cached.
+  const deferredAssets = typeof createAssetLoader === 'function' ? createAssetLoader({ document,
+    onRefreshRequired() {
+      if (WebRTC._operatorToolsState !== 'failed') return;
+      WebRTC._retryOperatorTools = refreshIncompleteModule;
+      if (typeof Diagnostic !== 'undefined') Diagnostic.markDeferredFailed?.(refreshIncompleteModule);
+      const button = document.getElementById('diagBtn');
+      if (button) { button.textContent = '刷新诊断组件'; button.title = '页面版本已淘汰，请先保存未完成草稿，然后刷新页面'; }
+    },
+  }) : null;
+  let deferredGeneration = 0;
   WebRTC._operatorToolsState = WebRTC._operatorToolsState || 'loading';
   WebRTC._retryOperatorTools = null;
-  (function loadDeferredDesktop(attempt = 0) {
+  function refreshIncompleteModule() {
+    if (window.confirm?.('模块未完成注册。刷新前请保存未完成草稿。是否刷新页面？')) window.location.reload();
+  }
+  (function loadDeferredDesktop() {
+    const operation = ++deferredGeneration;
     const src = window.__WRD_ASSETS__ && window.__WRD_ASSETS__.desktopDeferredJs;
-    function markOperatorToolsReady() {
+    function ready() {
+      if (operation !== deferredGeneration) return;
       WebRTC._operatorToolsState = 'ready';
       WebRTC._retryOperatorTools = null;
       WebRTC.renderPortSearchStatus?.();
     }
-    function markOperatorToolsFailed() {
-      WebRTC._operatorToolsState = 'failed';
-      WebRTC._retryOperatorTools = () => {
-        WebRTC._operatorToolsState = 'loading';
-        WebRTC.renderPortSearchStatus?.();
-        loadDeferredDesktop(attempt + 1);
-      };
-      WebRTC.renderPortSearchStatus?.();
-    }
-
     if (!src) {
       // Source mode already includes full scripts on the page.
       if (typeof Diagnostic !== 'undefined' && Diagnostic.panelState === 'loading'
-        && typeof Diagnostic.init === 'function' && Diagnostic.openPanel) {
-        Diagnostic.markDeferredReady?.();
-      }
-      markOperatorToolsReady();
+        && typeof Diagnostic.init === 'function' && Diagnostic.openPanel) Diagnostic.init();
+      ready();
       return;
     }
-    if (document.querySelector('script[data-wrd-deferred-desktop="loading"]')) return;
-
+    window.__WRD_DEFERRED_MANAGED__ = true;
     WebRTC._operatorToolsState = 'loading';
     WebRTC.renderPortSearchStatus?.();
-    if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredLoading === 'function') {
-      Diagnostic.markDeferredLoading();
-    }
-
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = true;
-    script.dataset.wrdDeferredDesktop = 'loading';
-    script.onload = () => {
-      script.dataset.wrdDeferredDesktop = 'ready';
-      markOperatorToolsReady();
-    };
-    script.onerror = () => {
-      script.dataset.wrdDeferredDesktop = 'failed';
-      script.remove();
-      console.warn('[viewer] deferred desktop tools failed to load');
-      markOperatorToolsFailed();
-      if (typeof Diagnostic !== 'undefined' && typeof Diagnostic.markDeferredFailed === 'function') {
-        Diagnostic.markDeferredFailed(() => {
-          if (typeof Diagnostic.markDeferredLoading === 'function') {
-            Diagnostic.markDeferredLoading();
-          }
-          if (typeof WebRTC._retryOperatorTools === 'function') {
-            WebRTC._retryOperatorTools();
-          } else {
-            loadDeferredDesktop(attempt + 1);
-          }
-        });
+    if (typeof Diagnostic !== 'undefined') Diagnostic.markDeferredLoading?.();
+    const pending = deferredAssets
+      ? deferredAssets.load({ url: src, kind: 'script', timeoutMs: 5000 })
+      : Promise.reject(new Error('Asset loader unavailable'));
+    pending.then(() => {
+      if (operation !== deferredGeneration) return;
+      if (typeof Diagnostic === 'undefined' || Diagnostic._panelDisposed || typeof Diagnostic.openPanel !== 'function'
+        || typeof Diagnostic.init !== 'function' || typeof LatencyMonitor === 'undefined'
+        || typeof TurnSelfTest === 'undefined' || typeof StunPortSearchController === 'undefined') {
+        throw Object.assign(new Error('Deferred module incomplete'), { code: 'refresh-required' });
       }
-    };
-    document.head.appendChild(script);
+      try { Diagnostic.init(); }
+      catch (error) { throw Object.assign(error, { code: 'refresh-required' }); }
+      ready();
+    }).catch((error) => {
+      if (operation !== deferredGeneration) return;
+      error = deferredAssets?.getRefreshError() || error;
+      // This operation is finished. Late script registration alone cannot publish ready.
+      deferredGeneration++;
+      WebRTC._operatorToolsState = 'failed';
+      WebRTC._retryOperatorTools = error.code === 'refresh-required' ? refreshIncompleteModule : loadDeferredDesktop;
+      WebRTC.renderPortSearchStatus?.();
+      if (typeof Diagnostic !== 'undefined') Diagnostic.markDeferredFailed?.(WebRTC._retryOperatorTools);
+      if (error.code === 'refresh-required') {
+        const button = document.getElementById('diagBtn');
+        if (button) { button.textContent = '刷新诊断组件'; button.title = '请先保存未完成草稿，然后刷新页面'; }
+      }
+      console.warn('[viewer] deferred desktop tools unavailable');
+    });
   }());
 
   const TerminalLoader = (typeof createTerminalLoader === 'function')
@@ -6372,6 +7829,7 @@ function bootViewerShell() {
       assets: window.__WRD_ASSETS__ || null,
       document,
       timeoutMs: 5000,
+      onRefreshRequired: setTerminalLoadFailure,
     })
     : null;
 
@@ -6382,10 +7840,16 @@ function bootViewerShell() {
       warning.textContent = error?.message || 'Terminal 资源加载失败';
       warning.classList.remove('hidden');
     }
-    if (retry) retry.hidden = false;
+    if (retry) {
+      retry.hidden = false;
+      retry.textContent = error?.code === 'refresh-required' ? '保存草稿后刷新页面' : '重试加载';
+      retry.dataset.refreshRequired = error?.code === 'refresh-required' ? 'true' : 'false';
+    }
   }
 
+  let terminalOpenGeneration = 0;
   async function openTerminal({ retry = false } = {}) {
+    const operation = ++terminalOpenGeneration;
     if (!TerminalLoader) {
       if (typeof TerminalPanel !== 'undefined' && TerminalPanel?.init) {
         TerminalPanel.init();
@@ -6395,17 +7859,21 @@ function bootViewerShell() {
     }
     try {
       const panel = retry ? await TerminalLoader.retry() : await TerminalLoader.load();
+      if (operation !== terminalOpenGeneration) return;
       document.getElementById('terminalWarning')?.classList.add('hidden');
       const retryButton = document.getElementById('terminalLoadRetryBtn');
       if (retryButton) retryButton.hidden = true;
       panel.showTerminal();
     } catch (error) {
-      setTerminalLoadFailure(error);
+      if (operation === terminalOpenGeneration) setTerminalLoadFailure(error);
     }
   }
 
   document.getElementById('terminalTabBtn')?.addEventListener('click', () => openTerminal());
-  document.getElementById('terminalLoadRetryBtn')?.addEventListener('click', () => openTerminal({ retry: true }));
+  document.getElementById('terminalLoadRetryBtn')?.addEventListener('click', (event) => {
+    if (event.currentTarget.dataset.refreshRequired === 'true') refreshIncompleteModule();
+    else openTerminal({ retry: true });
+  });
 
   const refreshBtn = document.getElementById('refreshBtn');
   if (refreshBtn) {

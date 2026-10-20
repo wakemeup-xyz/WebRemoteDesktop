@@ -1,0 +1,240 @@
+{
+  "startedEpoch": 1792345366.925778,
+  "finishedEpoch": 1792345367.852622,
+  "loadAverages": [
+    167.3662109375,
+    170.51708984375,
+    107.87255859375
+  ],
+  "logicalCPU": 12,
+  "processCount": 823,
+  "stateFirstCharCounts": {
+    "S": 732,
+    "R": 89,
+    "Z": 2
+  },
+  "topCommandNameCounts": [
+    [
+      "node",
+      123
+    ],
+    [
+      "node_repl",
+      77
+    ],
+    [
+      "npm exec chrome-devtools-mcp@latest",
+      27
+    ],
+    [
+      "chrome-devtools-mcp",
+      27
+    ],
+    [
+      "mcp@latest --isolated",
+      23
+    ],
+    [
+      "distnoted",
+      17
+    ],
+    [
+      "Python",
+      14
+    ],
+    [
+      "login",
+      9
+    ],
+    [
+      "browser_crashpad_handler",
+      8
+    ],
+    [
+      "Codex (Renderer)",
+      8
+    ],
+    [
+      "Code Helper",
+      6
+    ],
+    [
+      "-zsh",
+      6
+    ]
+  ],
+  "topCPU": [
+    {
+      "pid": 149,
+      "ppid": 1,
+      "state": "Ss",
+      "cpuPercent": 82.0,
+      "elapsed": "17-09:55:51",
+      "commandName": "WindowServer"
+    },
+    {
+      "pid": 47640,
+      "ppid": 47583,
+      "state": "R",
+      "cpuPercent": 76.6,
+      "elapsed": "01-01:31:05",
+      "commandName": "codex"
+    },
+    {
+      "pid": 47628,
+      "ppid": 47583,
+      "state": "R",
+      "cpuPercent": 72.3,
+      "elapsed": "01-01:31:06",
+      "commandName": "Codex (Renderer)"
+    },
+    {
+      "pid": 8590,
+      "ppid": 4629,
+      "state": "R",
+      "cpuPercent": 46.3,
+      "elapsed": "00:38",
+      "commandName": "node"
+    },
+    {
+      "pid": 80997,
+      "ppid": 80896,
+      "state": "S",
+      "cpuPercent": 40.0,
+      "elapsed": "11-22:34:00",
+      "commandName": "mysqld"
+    },
+    {
+      "pid": 7225,
+      "ppid": 47640,
+      "state": "Rs",
+      "cpuPercent": 35.7,
+      "elapsed": "02:46",
+      "commandName": "Python"
+    },
+    {
+      "pid": 8379,
+      "ppid": 47640,
+      "state": "Rs",
+      "cpuPercent": 35.4,
+      "elapsed": "01:00",
+      "commandName": "Python"
+    },
+    {
+      "pid": 8397,
+      "ppid": 47640,
+      "state": "Rs",
+      "cpuPercent": 34.8,
+      "elapsed": "00:55",
+      "commandName": "Python"
+    },
+    {
+      "pid": 6714,
+      "ppid": 47640,
+      "state": "Rs",
+      "cpuPercent": 34.3,
+      "elapsed": "03:40",
+      "commandName": "Python"
+    },
+    {
+      "pid": 2221,
+      "ppid": 47640,
+      "state": "Rs",
+      "cpuPercent": 34.2,
+      "elapsed": "11:56",
+      "commandName": "Python"
+    },
+    {
+      "pid": 5525,
+      "ppid": 47640,
+      "state": "Rs",
+      "cpuPercent": 33.6,
+      "elapsed": "06:26",
+      "commandName": "Python"
+    },
+    {
+      "pid": 7350,
+      "ppid": 47640,
+      "state": "Rs",
+      "cpuPercent": 33.4,
+      "elapsed": "02:39",
+      "commandName": "Python"
+    },
+    {
+      "pid": 47598,
+      "ppid": 47583,
+      "state": "S",
+      "cpuPercent": 31.2,
+      "elapsed": "01-01:31:14",
+      "commandName": "Codex (Service)"
+    },
+    {
+      "pid": 8986,
+      "ppid": 47640,
+      "state": "Ss",
+      "cpuPercent": 26.1,
+      "elapsed": "00:02",
+      "commandName": "Python"
+    },
+    {
+      "pid": 9023,
+      "ppid": 8992,
+      "state": "S",
+      "cpuPercent": 24.3,
+      "elapsed": "00:01",
+      "commandName": "(git)"
+    },
+    {
+      "pid": 8975,
+      "ppid": 47640,
+      "state": "Ss",
+      "cpuPercent": 16.7,
+      "elapsed": "00:02",
+      "commandName": "Python"
+    },
+    {
+      "pid": 8991,
+      "ppid": 47583,
+      "state": "S",
+      "cpuPercent": 15.8,
+      "elapsed": "00:02",
+      "commandName": "gh"
+    },
+    {
+      "pid": 2435,
+      "ppid": 1696,
+      "state": "Ss",
+      "cpuPercent": 12.8,
+      "elapsed": "11:30",
+      "commandName": "Python"
+    },
+    {
+      "pid": 23482,
+      "ppid": 1,
+      "state": "Ss",
+      "cpuPercent": 9.2,
+      "elapsed": "05-11:02:56",
+      "commandName": "com.apple.WebKit.WebContent"
+    },
+    {
+      "pid": 9025,
+      "ppid": 9023,
+      "state": "R",
+      "cpuPercent": 7.0,
+      "elapsed": "00:01",
+      "commandName": "(git)"
+    }
+  ],
+  "resources": {
+    "vmStat": {
+      "exitCode": 0,
+      "output": "Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free:                              564400.\nPages active:                           2943775.\nPages inactive:                         2950065.\nPages speculative:                        53957.\nPages throttled:                              0.\nPages wired down:                       1207915.\nPages purgeable:                           9612.\n\"Translation faults\":               29069470311.\nPages copy-on-write:                 1010482139.\nPages zero filled:                  11973357674.\nPages reactivated:                   2065861028.\nPages purged:                          45370731.\nFile-backed pages:                      2446794.\nAnonymous pages:                        3501003.\nPages stored in compressor:             6908823.\nPages occupied by compressor:            666064.\nDecompressions:                      1580228848.\nCompressions:                        1805183015.\nPageins:                              920372500.\nPageouts:                               4356697.\nSwapins:                             2786913790.\nSwapouts:                            2812951661.\n"
+    },
+    "swapUsage": {
+      "exitCode": 0,
+      "output": "total = 12288.00M  used = 11169.50M  free = 1118.50M  (encrypted)\n"
+    }
+  },
+  "errors": [],
+  "scope": "one bounded scalar snapshot, process names only; no args/env/signals; not unique cause or acceptance proof"
+}

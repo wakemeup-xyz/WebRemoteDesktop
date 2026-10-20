@@ -1,0 +1,1819 @@
+# Review package: ad0b723..HEAD
+
+## Commits
+b6570f7 test(recovery): add guarded ordinary session qualification
+1422671 docs(recovery): define current freshness and adapter construction
+
+## Files changed
+ .../2026-10-18-guarded-ordinary-recovery-plan.md   |   2 +-
+ .../2026-10-18-guarded-ordinary-recovery-design.md |   4 +-
+ scripts/ordinary_session_recovery.py               | 949 ++++++++++++++++++++-
+ scripts/test_ordinary_session_recovery.py          | 704 +++++++++++++++
+ 4 files changed, 1652 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md b/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md
+index 387f05f..3c3693d 100644
+--- a/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md
++++ b/docs/superpowers/plans/2026-10-18-guarded-ordinary-recovery-plan.md
+@@ -299,21 +299,21 @@ while not coordinator.done():
+ Implement caps from global constraints and reserve manager stop. If manager exists but start failed, attempt the existing manager stop/exit fallback. Never attach to shared CDP browser. Preserve preclose first terminal event if final export loses it. No raw exceptions in results.
+ - [ ] Implement only the exact phase/status/reason schemas in Fixed runtime evidence contracts, including preflight. Import unchanged ContinuitySummary for baseline/no-fault continuity. Recovery classifier requires server event order/current identity and gates; sampled continuing media alone is insufficient. Store separate continuity/recovery outcomes and all three NOT_RUN labels. Every unexpected auth/owner/build/Host/extra-Start/API change terminates without request or reclaim.
+ - [ ] Add RED classifier table: within success, expiry before rebind, rebind timeout/rejected/stale, after success, missing reset ACK, changed generation, mismatched reset epoch, wrong grace class, sampling loss, retained first-close, 30 s recovered stability incomplete, server clock jump (unknown timing), 60 s observation budget expiration, human supersession and cleanup failure. Demonstrate unchanged baseline/continuity rejects first disconnect/identity change.
+ - [ ] Projected current matched rebind failures use recovery-gates-unmet, because the fixed event schema omits the raw reason. Test raw timeout/rejected/cancelled inputs projecting to the same generic result, stale/foreign failures remaining unmatched, and incomplete server/Host/owner coverage yielding INCOMPLETE rather than known FAIL. Do not add a hidden reason API, infer missing cause, or expand the output schema.
+ - [ ] Run `python3.11 -m unittest scripts.test_ordinary_session_recovery scripts.test_passive_session_soak`; run no browser. Root verifies unchanged strict helper/sampler/SUP hashes and commits `test(recovery): add guarded ordinary session qualification`.
+ 
+ ## Task 5: Separately reviewed native-direct and routed page-local stimuli
+ 
+ **Owned files:** Create `scripts/ordinary_recovery_fault.py`, `scripts/test_ordinary_recovery_fault.py`; modify `scripts/ordinary_session_recovery.py` only for adapter integration and fixed scope labels. No production method changes.
+ 
+-**Interfaces:** `BrowserLocalFault.install(page, origin, *, scenario)`, `.trigger_once(page)`, `.disarm()`, `.snapshot()`. Scenario is within-grace/after-grace only, fixing native-direct/0 or playwright-routed/12. Snapshot includes instrumentation and the exact fixed fields above. Baseline/continuity instantiate no fault adapter and install no routes.
++**Interfaces:** synchronous `BrowserLocalFault(*, scenario)` before browser creation, with scenario-specific public API capability validation after manifest validation; awaited `.install(page, origin, scenario=scenario)`, `.trigger_once(page)`, `.disarm()`; synchronous `.snapshot()`. Install must match the immutable constructor scenario. Scenario is within-grace/after-grace only, fixing native-direct/0 or playwright-routed/12. Missing module/capability yields fault-capability-unavailable/NOT_RUN before browser. Snapshot includes instrumentation and the exact fixed fields above. Baseline/continuity skip adapter import/construction and install no routes.
+ 
+ - [ ] Record installed Playwright1.59.0 API and implementation facts from read-only source: routing replaces global WebSocket with a wrapper, its public close metadata may be synthetic, and forwarding affects stimulus timing. Required supported routing APIs are only a capability gate for after-grace. No private `_ws`/upstream access or CDP alternative.
+ - [ ] Write RED pure fake-page tests: baseline/continuity/within never call route or route_web_socket; within captures original constructor/prototype.close before app code and refuses changed references; current exact engine object only closes once via captured original close. Test wrong owner/auth/socket/path/transport/readyState and second trigger rejection without product-method invocation.
+ - [ ] Implement native-direct init closure: capture original constructor and prototype.close without replacing either; at trigger compare both still unchanged, require exact current object/expected path plus current owner/auth/gates, then invoke captured close.call(currentWs,1000,'wrd-local-recovery-check'). `instanceof` may validate against the captured original as one check but is never independent native provenance. Public trigger returns only fixed status. No HTTP/WebSocket routes exist on this fresh page/context/browser.
+ - [ ] Write RED fake-route tests for after-grace: exact owned origin/path/EIO4/transport predicate; open forwarding through supported connect_to_server without on_message; public current wrapper close explicitly labeled routed;12-second future-attempt block; no upstream for blocked WS; polling abort; combined32-attempt cap; monotonic deadline unchanged by retries; disarm and failure clear block. Test a wrapper that passes global instanceof but is not native: result must retain playwright-routed and cannot claim native-direct.
+ - [ ] Implement the supported routed branch under the complete Browser-local fault adapter contract above. Capture no Playwright-private native upstream. Apply routes before final navigation, so baseline and recovery share routed instrumentation. The independently owned fixed local status reader is unaffected by page Socket.IO routing and remains active during the block. Unknown alternate socket origin/transport fails closed.
+ - [ ] Integrate immutable qualificationEvidenceScope into summary, ordinaryRecovery and sample schemas, with nativeAfterGraceQualification NOT_RUN in the summary exactly as specified; test that after-grace PASS is ordinary-functional-playwright-routed-stimulus only, within-grace is ordinary-functional-native-direct-close, and both no-fault scenarios are native-passive-continuity. Any attempted promotion or instrumentation mismatch is schema-rejected, not silently normalized.
+ - [ ] Run only pure adapter/runner tests. Root separately reviews the fault capability, its narrowed evidence meaning and cleanup before committing `test(recovery): add explicit page-local recovery stimuli`. No live experiment is part of this source task.
+ 
+ ## Task 6: Complete authority regression, docs and combined source gate
+diff --git a/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md b/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md
+index 92c42e9..9c9520a 100644
+--- a/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md
++++ b/docs/superpowers/specs/2026-10-18-guarded-ordinary-recovery-design.md
+@@ -159,21 +159,21 @@ Total artifact budget is 64 MiB per run, same row cap 32768, summary and lifecyc
+ ## Browser-local fault adapter and scope of evidence
+ 
+ Use two explicit instrumentation paths. `fault.instrumentation` is exactly none / native-direct / playwright-routed. Baseline and fresh10800 continuity use none, no HTTP/WebSocket routes and no fault adapter; within-grace uses native-direct with no HTTP/WebSocket routes anywhere on its fresh browser/context/page; after-grace uses playwright-routed from before final navigation, so its entire300-second baseline, close and reconnect use routed signaling. Never carry a page/context between these scenarios.
+ 
+ Static installed Playwright1.59.0 source confirms `route_web_socket` installs `webSocketMockSource`, captures its original native constructor privately and replaces global WebSocket with a wrapper. Public wrapper close can supply synthetic clean-close metadata; message forwarding can alter timings. `instanceof globalThis.WebSocket` does not establish native identity under that API. Accept the supported routing behavior explicitly; do not access private `_ws` or other Playwright internals and do not introduce an unreviewed CDP alternative.
+ 
+ **Native-direct within grace:** before any application script in the newly owned route-free page, the adapter's init closure captures the original WebSocket constructor and its original prototype.close reference without replacing either. The application and unchanged passive sampler do not replace them. The closure exposes only a runner-owned one-shot trigger and fixed status snapshot, not a product method or grant. At trigger, require current ordinary owner/auth/socket/host/path/readiness; exact `WebRTC.socket.io.engine.transport.ws` object; transport websocket; original constructor and close still identical to the page globals; instance of the captured original constructor; OPEN state; exact expected origin/socket.io path. Then call the captured original close with that exact current object once, code1000 and fixed reason wrd-local-recovery-check. This provenance plus unchanged constructor/close is the direct native operation claim; global instanceof alone is never the claim. Constructor/prototype change or ambiguous target stops NOT_RUN before fault. All subsequent Manager retries remain the product's normal uninstrumented requests. No routes are installed to achieve within-grace timing; actual server evidence decides whether it landed within grace.
+ 
+ **Playwright-routed after grace:** capability-check Page.route, Page.route_web_socket, WebSocketRoute.connect_to_server/close before browser creation. Install supported routes before final Viewer navigation only on this owned page for exact origin `/socket.io/`, EIO4 and known websocket/polling transport with bounded standard parameters. Other requests pass untouched. Block service workers in the owned context. In the open phase use connect_to_server with automatic message forwarding and no on_message inspection/rewrite. At the end of the300-second routed baseline, arm a12-second local monotonic block and call public close once on the exact current engine transport.ws **wrapper**, after the same current owner/auth/path checks. Call it routed public close, not native close; do not inspect its private upstream. Future matching polling requests abort; future matching WebSocket routes close without upstream connection. Deadline does not extend on retries; at12 seconds normal future routes pass through and product Manager retries automatically. Maximum32 blocked attempts total; overflow fails the run, clears the block and records a fixed reason. No request is held asleep.
+ 
+-`BrowserLocalFault.install(page, origin, *, scenario)`, `trigger_once(page)` and `disarm()` are the adapter interfaces; scenario is within-grace/after-grace only and fixes instrumentation/blockSeconds respectively native-direct/0 and playwright-routed/12. Capability checks are scenario-specific: lack of route_web_socket does not block route-free within-grace or no-fault runs. Unknown/unsupported transport/origin or missing required APIs yields NOT_RUN without fallback. No Socket.IO Socket.disconnect/connect, Manager.close/open, Engine.close, product recovery call, admission request, timer/auth rewrite, global offline toggle or service/tunnel action.
++Construct `BrowserLocalFault(*, scenario)` synchronously after manifest validation and before browser creation; the constructor fixes scenario and validates its scenario-specific public API capabilities through bounded local optional imports. Await `install(page, origin, scenario=scenario)`, `trigger_once(page)` and `disarm()`; `snapshot()` is synchronous. The install scenario must equal the constructor scenario. Scenario is within-grace/after-grace only and fixes instrumentation/blockSeconds respectively native-direct/0 and playwright-routed/12. Missing module or capability yields fault-capability-unavailable/NOT_RUN before browser creation. No-fault runs skip the adapter import and construction entirely. Capability checks are scenario-specific: lack of route_web_socket does not block route-free within-grace or no-fault runs. Unknown/unsupported transport/origin yields NOT_RUN without fallback. No Socket.IO Socket.disconnect/connect, Manager.close/open, Engine.close, product recovery call, admission request, timer/auth rewrite, global offline toggle or service/tunnel action.
+ 
+ Disarm first during cleanup. Native-direct disarm retires its one-shot closure; no routes exist to remove. Routed disarm clears blocking and leaves supported WebSocket routes forwarding until this owned context closes; the API does not promise a symmetric unroute for its installed wrapper. HTTP unroute uses only the adapter's exact matcher/handler. In-flight handlers remain bounded/owned; failure or incomplete settlement prevents PASS. Close only the owned browser. Native-direct clean close and routed synthetic clean-close metadata both remain intentional stimuli and **neither reproduces natural WS1006**.
+ 
+ `qualificationEvidenceScope` is a mandatory fixed field in summary, ordinaryRecovery and every sample wrapper: native-passive-continuity / ordinary-functional-native-direct-close / ordinary-functional-playwright-routed-stimulus, selected respectively by baseline/continuity, within-grace, after-grace and immutable from preflight. An after-grace PASS qualifies real ordinary server/application admission, reset/regrant and fresh-media readiness **under the routed stimulus**; it does not qualify uninstrumented WebSocket performance, native after-grace network failure or natural1006 recovery. Persist `nativeAfterGraceQualification:'NOT_RUN'` for every scenario of this runner. A separately observed natural native after-grace event would require its own reviewed evidence record; this runner never silently promotes a routed PASS. Within-grace PASS covers ordinary recovery after the explicitly induced original-native close, not arbitrary natural outages. The clean no-route baseline/10800 continuity remains separate.
+ 
+ ## Exact runner result and phase schemas
+ 
+ All new output objects reject extra keys. Existing private sampler fields and `ContinuitySummary.result` retain their existing schema and validators; the wrapper below does not widen them. New unknown exception strings are mapped to `internal-error`, never copied into evidence. Counts reject bool, NaN and infinity. `seconds` means a finite number0..12000; nullable values stay null until observed. Hashes are null or exactly16 lowercase hex. Epochs/counts are integer0..999999999, server timestamps integer0..9999999999999.
+ 
+ - `scenario`: baseline / within-grace / after-grace / continuity.
+@@ -204,19 +204,21 @@ The finite reason enum is shared by spec, implementation and table-driven tests.
+ Continuity and ordinary recovery are different outcomes. Each result has its immutable qualificationEvidenceScope, nativeAfterGraceQualification NOT_RUN, bounded hostObservation and the unchanged ContinuitySummary result under `continuity`, a fixed `ordinaryRecovery` result with status/classification/requestedScenario/qualificationEvidenceScope/recoverySeconds/recoveredStableSeconds/serverCoverage/reason, `businessInput:'NOT_RUN'`, `visibleEffect:'NOT_RUN'`, `physical:'NOT_RUN'`. The no-fault baseline and fresh 10800 s run use the unchanged imported `ContinuitySummary`; original strict proof runner still uses proof. Induced-fault recovery runs record continuity interrupted, never rewrite it PASS. Recovery is NOT_RUN before a valid fault, INCOMPLETE for observation/capability/cleanup gaps, FAIL for observed unmet gates within the tool window, PASS only with complete ordered evidence. A scenario landing in the other grace class is recorded as observed class and does not count as a pass for the requested scenario.
+ 
+ Baseline requires verified same ordinary generation/auth, exact deployed source/build, stable Host-ID/status/log coverage, active lease and all existing input gate readiness booleans, actual selected network path, fresh frame progress and 300 s unchanged identities. Startup rendered frames alone do not establish this gate. Keep mandatory lifecycle acquire/reset permitted; no business input is generated.
+ 
+ Within grace uses native-direct original browser close with no routes installed and requires a matching server grace-started event followed by current rebind-confirmed, no matching expiry, unchanged ordinary admission/session and lease epoch, and fresh current media/reset readiness after rebind. Missing/rejected/timed-out/stale Host ACK must not grant eligibility. Offline handler tests prove the before-ACK barrier; passive one-second runtime samples prove only the sampled states, never every instant. Do not claim runtime alone proves absence of a transient gate bug.
+ 
+ After grace requires matched server grace-started and grace-expired, expiry-bound reset epoch followed by `control_reset_completed` status applied/FREE, unchanged ordinary owner/session generation, new active lease epoch and current fresh media/reset barriers. New PC/attempt may be required by existing product behavior; observe and report actual values, never inject one or require old identity continuity. Continuing old media without lease/reset completion is not recovered control readiness. This after-grace scenario is explicitly playwright-routed functional recovery, with nativeAfterGraceQualification NOT_RUN. Its baseline uses the same declared routing. The 12 s block is merely test stimulus; server lifecycle events determine classification. The 60 s observation bound is a test budget, not a changed production deadline or performance promise.
+ 
+ Require 30 s of stable recovered state before recovery PASS. A human supersession, auth change, new owner, unexpected Start/API issuance, build change or Host replacement ends the run without reclaim. A synthetic human B takeover is tested offline only; do not manufacture live B to evict the test or a real user. Existing ordinary behavior after server restart remains explicit reconnect required, not seamless recovery.
+ 
++Recovered stability uses current frame/relay-load age below the unchanged5000ms evidence threshold, actual selected path, complete current media/reset/input gates and monotonic callback/relay-sequence progress across the30-second observations. Lifetime maximum frame gaps include the intentional outage and remain immutable evidence; do not reset them or require historical maxima to disappear. Strict continuity remains interrupted, and no-fault scenarios use the unchanged ContinuitySummary. Missing observations, stale current frames or absent progress veto PASS. One-second observations establish sampled stability, not every inter-frame instant.
++
+ Root selects one combined guarded rollout after both source increments pass review, avoiding a separate maintenance cycle solely for qualification tooling. Do not redevelop the prerequisite fixes in this increment. Origin selection follows Authorized origin selection; formal configured entry does not depend on quick-URL-file presence. Root rollout sequence: finish Host reset-ACK and ordinary acquire-intent review/source gate (record separately if already deployed); review/commit this increment; targeted offline RED/GREEN and final review; guarded deployment of exact combined Host/Signal/Viewer source+assets through existing service skill with current Viewer0/relay0/Host-online and no pending human conflict. Preserve tunnel URL and process identity. After any authorized local restart report both passwords privately from runtime config. Record exact build/source per component, health/Host and cleanup status. Run fresh guarded baseline300, within-grace recovery, after-grace recovery, then a fresh no-fault10800 continuity, each one owned page with cleanup completed before next. Human arrival stops testing. Any failure is retained and diagnosed before further execution; never remint within a run or erase first-close provenance.
+ 
+ ## Verification matrix
+ 
+ Unit/API/real in-memory signaling handlers cover absent/valid/invalid policy; role/session/realm binding; occupied at issue/consume including grace; relay/Host changes; epoch admitted-then-gone; human intent before/between/after; human-ticket TTL crossing; pinned human/legacy owner after grace and TTL; prior guarded owner replacement only when vacant; guarded issue not advancing human sequence; multiple guards racing; human capacity priority without consumed eviction; capacity/expiry; duplicate/lost welcome; same-session new generation; newer human admitted then disconnected; server reset unknown resume; proof/guard consume in both orders; rejected guards preserve maps/lease/Host events/proof epoch and valid proof; no client epoch/policy trust.
+ 
+ Use current full authority suites for current/old Host, rebind stale attempt/lease/current operation, reset failure/timeout, no pre-ACK grant, media freshness/reset gates, paused/stale frames and no pending/uncertain business-input replay. Guarded ownership must run the same in-grace/after-grace handler scenarios as ordinary human ownership, not a simulated alternate handler.
+ 
+ Viewer behavioral tests cover selector duplicate/unknown/proof combination, actual Start and manual reconnection policy selection, auth/start episode/selector race before and after response, proof branch unchanged, manager resume without new ticket, denial stop and draft preservation. Runner behavioral RED tests use fake page/manager only: delayed core/auth, early click temptation, changed selector/auth, duplicate Start marks/API calls, forced unavailable routes, fault only the exact current transport once under its declared native-direct or playwright-routed scope, automatic retries untouched, unexpected transport fail-closed, incomplete server window, recovery classifications, first-close retention, privacy and every lifecycle failure/cancellation path. Add pure tests for status/log Host replacement during after-grace despite valid final gates, the two instrumentation scopes, and formal-origin selection without a quick URL. No browser/service/network/native imports are needed for these pure runner tests.
+diff --git a/scripts/ordinary_session_recovery.py b/scripts/ordinary_session_recovery.py
+index 172c42a..ed0b9c2 100644
+--- a/scripts/ordinary_session_recovery.py
++++ b/scripts/ordinary_session_recovery.py
+@@ -1,28 +1,38 @@
+ #!/usr/bin/env python3
+ """Bounded read-only recovery evidence primitives. No runtime/browser imports."""
+ from __future__ import annotations
+ 
++import argparse
+ import asyncio
++import inspect
+ from datetime import datetime
+ import hashlib
+ import json
+ import math
+ import os
+ import re
+ import stat
+ import time
++import secrets
++from pathlib import Path
++from urllib.parse import urlsplit
+ 
+-from scripts.passive_session_soak import (
+-    CancellationCooperationError, compact, lifecycle_stage, validate_delta,
+-    validate_gate_fields,
+-)
++# Both direct CLI execution and package tests use the unchanged pure helper.
++if __package__:
++    from . import passive_session_soak as passive
++else:
++    import passive_session_soak as passive
++CancellationCooperationError = passive.CancellationCooperationError
++compact, lifecycle_stage = passive.compact, passive.lifecycle_stage
++validate_delta, validate_gate_fields = passive.validate_delta, passive.validate_gate_fields
++empty_diagnostic = passive.empty_diagnostic
+ 
+ MAX_ROW_BYTES = 32768
+ SCOPES = {'baseline': 'native-passive-continuity', 'continuity': 'native-passive-continuity',
+           'within-grace': 'ordinary-functional-native-direct-close',
+           'after-grace': 'ordinary-functional-playwright-routed-stimulus'}
+ PHASES = ('preflight', 'startup', 'baseline', 'fault', 'recovering', 'recovered-stability', 'continuity', 'terminal')
+ EVENTS = {'viewer_disconnect_grace_started': 'grace-started',
+           'viewer_disconnect_grace_expired': 'grace-expired',
+           'viewer_rebind_confirmed': 'rebind-confirmed', 'viewer_rebind_failed': 'rebind-failed',
+           'control_reset_completed': 'reset-completed', 'signal_socket_disconnected': 'host-disconnected'}
+@@ -409,21 +419,22 @@ def _validate_private_sample(sample):
+     else:
+         _keys(transport, ('status', 'pathIdentity', 'localType', 'remoteType', 'protocol', 'remoteProtocol', 'relayProtocol',
+             'rttMs', 'bytesReceived', 'framesDecoded', 'framesDropped', 'codec'))
+         _enum(transport['status'], ('observed', 'unavailable'))
+         if transport['pathIdentity'] is not None and (type(transport['pathIdentity']) is not str or re.fullmatch(r'path-[1-9][0-9]{0,3}', transport['pathIdentity']) is None or int(transport['pathIdentity'][5:]) > 1024):
+             raise ValueError('schema-rejected')
+         for key in ('localType', 'remoteType'): _enum(transport[key], ('host', 'srflx', 'prflx', 'relay', 'unknown'))
+         for key in ('protocol', 'remoteProtocol'): _enum(transport[key], ('udp', 'tcp', 'unknown'))
+         _enum(transport['relayProtocol'], ('udp', 'tcp', 'tls', 'unknown'))
+         _enum(transport['codec'], ('video/h264', 'video/vp8', 'video/vp9', 'video/av1', 'unknown'))
+-        for key in ('rttMs', 'bytesReceived', 'framesDecoded', 'framesDropped'): _number(transport[key], 9999999999999, nullable=True)
++        _number(transport['rttMs'], 9999999999999, nullable=True)
++        for key in ('bytesReceived', 'framesDecoded', 'framesDropped'): _int(transport[key], 9999999999999, nullable=True)
+     _keys(sample['metrics'], _METRICS)
+     for metric in sample['metrics'].values():
+         if metric is None: continue
+         _keys(metric, ('available', 'count', 'last', 'p95', 'lastSampleAgeMs'))
+         if type(metric['available']) is not bool: raise ValueError('schema-rejected')
+         _int(metric['count'], nullable=True)
+         for key in ('last', 'p95', 'lastSampleAgeMs'): _number(metric[key], 9999999999999, nullable=True)
+ 
+ 
+ def validate_recovery_row(value):
+@@ -443,10 +454,938 @@ def validate_recovery_row(value):
+         if type(events) is not list or len(events) > 1024: raise ValueError()
+         previous = 0
+         for row in events:
+             validate_server_event(row)
+             if row['n'] <= previous: raise ValueError()
+             previous = row['n']
+         if len(compact(value)) > MAX_ROW_BYTES: raise ValueError()
+     except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+         raise ValueError('schema-rejected') from None
+     return value
++
++REASONS = frozenset(('none scenario-not-requested run-in-progress runtime-manifest-unavailable '
++    'runtime-manifest-invalid runtime-manifest-pin-mismatch runtime-manifest-stale runtime-manifest-changed '
++    'deployment-build-mismatch runtime-dependency-unavailable entry-unavailable authentication-unavailable '
++    'authentication-changed selector-invalid proof-conflict start-ui-unavailable start-ui-deadline '
++    'start-ui-not-fresh start-ui-state-changed start-ui-click-unproven admission-refused '
++    'extra-admission-request extra-start baseline-incomplete baseline-failed fault-capability-unavailable '
++    'fault-target-unavailable fault-already-triggered fault-handler-failed fault-attempt-cap '
++    'fault-trigger-unconfirmed server-log-unavailable server-log-identity-changed server-log-gap '
++    'server-log-schema server-log-capacity server-clock-regression sampling-gap schema-rejected '
++    'ordinary-owner-changed human-priority host-unavailable host-replaced host-observation-unavailable '
++    'host-observation-gap host-disconnect-observed rebind-rejected rebind-timeout reset-unconfirmed '
++    'recovery-deadline wrong-grace-class recovery-gates-unmet recovered-stability-incomplete cancelled '
++    'cleanup-incomplete evidence-write-failed evidence-budget-exceeded cancellation-noncooperative internal-error').split())
++VERIFIED_STARTUP = dict(status='verified', freshPage=True, authVerified=True, selector='vacant-only-v1',
++    startClickMarksBefore=0, startClickMarksAfter=1, guardedApiRequests=1)
++
++
++def _reason(exc):
++    if isinstance(exc, asyncio.CancelledError): return 'cancelled'
++    if isinstance(exc, CancellationCooperationError): return 'cancellation-noncooperative'
++    value = str(exc)
++    return value if value in REASONS else 'internal-error'
++
++
++def _hex(value, count):
++    if type(value) is not str or re.fullmatch('[0-9a-f]{%d}' % count, value) is None: raise ValueError()
++
++
++def normalized_origin(origin):
++    if type(origin) is not str: raise ValueError('runtime-manifest-invalid')
++    origin = origin.rstrip('/')
++    p = urlsplit(origin)
++    if (p.scheme not in ('http','https') or not p.hostname or not p.netloc or p.username is not None
++        or p.password is not None or p.path or p.query or p.fragment or any(c.isspace() for c in origin)):
++        raise ValueError('runtime-manifest-invalid')
++    return origin
++
++
++def _manifest_bytes(path):
++    try:
++        if not Path(path).is_absolute(): raise ValueError('runtime-manifest-invalid')
++        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
++        try:
++            info = os.fstat(fd)
++            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
++                raise ValueError('runtime-manifest-invalid')
++            data = os.read(fd, 16385)
++            if len(data) > 16384: raise ValueError('runtime-manifest-invalid')
++            return data, (info.st_dev, info.st_ino)
++        finally: os.close(fd)
++    except OSError: raise ValueError('runtime-manifest-unavailable') from None
++
++
++class PinnedManifest(dict):
++    def projection(self):
++        return dict(sha256=self.sha, runNonce=self['runNonce'], originSource=self['originSource'],
++            originEvidenceSha256=self['originEvidenceSha256'], signalSourceCommit=self['signal']['sourceCommit'],
++            hostSourceCommit=self['host']['sourceCommit'], viewerSourceCommit=self['viewer']['sourceCommit'],
++            viewerBuildId=self['viewer']['buildId'], sourceEvidence='root-attested')
++
++    def recheck(self, now_epoch_ms):
++        try:
++            data, identity = _manifest_bytes(self.path)
++            if identity != self.identity or hashlib.sha256(data).hexdigest() != self.sha: raise ValueError()
++            _int(now_epoch_ms, 9999999999999)
++            if not self.last_epoch <= now_epoch_ms < self['validUntilEpochMs']: raise ValueError()
++            self.last_epoch=now_epoch_ms
++        except (ValueError, OSError): raise ValueError('runtime-manifest-changed') from None
++
++
++def read_runtime_manifest(path, expected_sha256, *, origin, scenario, mode, now_epoch_ms):
++    try: _hex(expected_sha256,64)
++    except ValueError: raise ValueError('runtime-manifest-invalid') from None
++    data, identity = _manifest_bytes(path)
++    if hashlib.sha256(data).hexdigest() != expected_sha256: raise ValueError('runtime-manifest-pin-mismatch')
++    try:
++        value = _json(data)
++        _keys(value, ('schemaVersion','runNonce','createdAtEpochMs','validUntilEpochMs','scenario','mode',
++            'originSource','originEvidenceSha256','originSha256','deploymentEvidence','signal','host','viewer','signalLog'))
++        _int(value['schemaVersion'],1,minimum=1); _hex(value['runNonce'],32)
++        for key in ('createdAtEpochMs','validUntilEpochMs'): _int(value[key],9999999999999)
++        _int(now_epoch_ms,9999999999999)
++        if not 0 < value['validUntilEpochMs']-value['createdAtEpochMs'] <= 43200000: raise ValueError()
++        _enum(value['scenario'],SCOPES); _enum(value['mode'],('stun','relay','tunnel'))
++        if value['scenario'] != scenario or value['mode'] != mode: raise ValueError()
++        _enum(value['originSource'],('quick-url-file','formal-configured'))
++        for key in ('originEvidenceSha256','originSha256'): _hex(value[key],64)
++        if value['originSha256'] != hashlib.sha256(normalized_origin(origin).encode()).hexdigest(): raise ValueError()
++        _keys(value['deploymentEvidence'],('kind','sha256'))
++        if value['deploymentEvidence']['kind'] != 'root-verified-local-deployment': raise ValueError()
++        _hex(value['deploymentEvidence']['sha256'],64)
++        for component in ('signal','host'):
++            _keys(value[component],('sourceCommit','sourceTreeSha256'))
++            _hex(value[component]['sourceCommit'],40); _hex(value[component]['sourceTreeSha256'],64)
++        _keys(value['viewer'],('sourceCommit','buildId'))
++        _hex(value['viewer']['sourceCommit'],40); _hex(value['viewer']['buildId'],16)
++        log = value['signalLog']; _keys(log,('path','device','inode'))
++        if type(log['path']) is not str or not 1 <= len(log['path'].encode('utf-8')) <= 512 or not Path(log['path']).is_absolute(): raise ValueError()
++        _int(log['device'],2**53-1); _int(log['inode'],2**53-1,minimum=1)
++    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, OverflowError):
++        raise ValueError('runtime-manifest-invalid') from None
++    budget = 10800 if scenario == 'continuity' else 300 if scenario == 'baseline' else 390
++    if not 0 <= now_epoch_ms-value['createdAtEpochMs'] <= 900000 or value['validUntilEpochMs']-now_epoch_ms < (budget+120)*1000:
++        raise ValueError('runtime-manifest-stale')
++    try:
++        fd = os.open(log['path'],os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
++        try:
++            info = os.fstat(fd)
++            if not stat.S_ISREG(info.st_mode) or (info.st_dev,info.st_ino) != (log['device'],log['inode']):
++                raise ValueError('server-log-identity-changed')
++        finally: os.close(fd)
++    except OSError: raise ValueError('server-log-unavailable') from None
++    result = PinnedManifest(value); result.path, result.identity, result.sha = Path(path), identity, expected_sha256
++    result.last_epoch=now_epoch_ms
++    return result
++
++
++async def _await(value):
++    return await value if inspect.isawaitable(value) else value
++
++
++class OwnedBrowserLifecycle:
++    """One browser ownership chain; API completion never proves process exit."""
++    def __init__(self, *, limits=None):
++        self.caps = dict(managerStart=10,managerLaunch=15,export=1,browserClose=5,managerStop=3,cleanup=8)
++        for key,value in (limits or {}).items():
++            if key not in self.caps: raise ValueError('schema-rejected')
++            _number(value,self.caps[key]); self.caps[key] = value
++        self.manager = self.playwright = self.browser = self.context = self.page = None
++        self.disarm = None; self.diagnostic = empty_diagnostic()
++        self.capture_status, self.write_status = 'not-started','ok'
++        self.python = dict(failureDetectedMs=None,failureWallEpochMs=None,cleanupStatus='not-started',
++            **{k:dict(startedMs=None,finishedMs=None,status='not-created' if k=='browserClose' else 'not-started')
++               for k in ('managerStart','managerLaunch','managerStop','browserClose')})
++        self._cleaned = False
++
++    async def _tracked(self,key,operation,cap):
++        record = self.python[key]; record['startedMs'] = passive.monotonic_ms()
++        try:
++            result = await lifecycle_stage(_await(operation()),cap,settlement=min(.25,cap/4))
++            record['status'] = 'closed' if key == 'browserClose' else 'ok'
++            return result
++        except BaseException as exc:
++            record['status'] = ('cancelled' if isinstance(exc,asyncio.CancelledError) else
++                'noncooperative' if isinstance(exc,CancellationCooperationError) else
++                'timeout' if isinstance(exc,TimeoutError) else 'error')
++            raise
++        finally: record['finishedMs'] = passive.monotonic_ms()
++
++    async def start(self,manager_factory):
++        self.manager = manager_factory()
++        self.playwright = await self._tracked('managerStart',lambda: self.manager.start() if hasattr(self.manager,'start')
++            else self.manager.__aenter__(),self.caps['managerStart'])
++        self.browser = await self._tracked('managerLaunch',lambda:self.playwright.chromium.launch(headless=True),self.caps['managerLaunch'])
++        self.context = await lifecycle_stage(_await(self.browser.new_context(service_workers='block')),8)
++        self.page = await lifecycle_stage(_await(self.context.new_page()),8)
++        return self.page
++
++    async def cleanup(self,export):
++        if self._cleaned: return
++        self._cleaned = True
++        deadline = time.monotonic()+self.caps['cleanup']; self.python['cleanupStatus'] = 'running'
++        failed = self.page is None
++        remaining = lambda key: passive.cleanup_allowance(key,self.caps,deadline,time.monotonic())
++        prior_attribution=dict(self.diagnostic['attribution'])
++        async def final_capture():
++            if self.disarm is not None: await _await(self.disarm())
++            if self.page is None: return None
++            return await export()
++        try:
++            value = await lifecycle_stage(final_capture(),remaining('export'),settlement=min(.075,remaining('export')/4))
++            if value is None: self.capture_status='unavailable'; failed=True
++            else:
++                value = passive.validate_diagnostic(value)
++                first = prior_attribution['firstDisconnectEvent']
++                found = value['attribution']['firstDisconnectEvent']
++                if first is not None and (found is None or found['n'] > first['n']):
++                    value['attribution'] = prior_attribution
++                self.diagnostic = passive.validate_diagnostic(value); self.capture_status='ok'
++        except BaseException as exc:
++            failed=True
++            self.capture_status = ('cancelled' if isinstance(exc,asyncio.CancelledError) else
++                'noncooperative' if isinstance(exc,CancellationCooperationError) else 'timeout' if isinstance(exc,TimeoutError)
++                else ('schema-rejected' if str(exc) not in REASONS or str(exc)=='schema-rejected' else 'unavailable') if isinstance(exc,ValueError) else 'error')
++        for key, owned, operation in (
++            ('browserClose',self.browser,lambda:self.browser.close()),
++            ('managerStop',self.manager,lambda:self.playwright.stop() if self.playwright is not None and hasattr(self.playwright,'stop')
++                else self.manager.stop() if hasattr(self.manager,'stop') else self.manager.__aexit__(None,None,None))):
++            if owned is not None:
++                try: await self._tracked(key,operation,remaining(key))
++                except BaseException: failed=True
++        self.python['cleanupStatus'] = 'incomplete' if failed else 'api-finished-exit-unknown'
++
++    def snapshot(self):
++        return dict(captureStatus=self.capture_status,cleanupStatus=self.python['cleanupStatus'],
++            writeStatus=self.write_status,ownedProcessExitEvidence='not-observed')
++
++    def record(self):
++        value = dict(schemaVersion=1,diagnostics=self.diagnostic,python=self.python,captureStatus=self.capture_status,
++            writeStatus=self.write_status,ownedProcessExitEvidence='not-observed')
++        validate_lifecycle(value)
++        return value
++
++
++def _gates(sample,mode,*,recovery=False):
++    if sample is None: return False
++    gate = sample['inputGate']
++    yes = ('allowed','inputActive','hasInputLease','viewportSupported','hasPaintedFrame','currentAttemptReady','hasActiveControl','socketConnected')
++    no = ('manualDisconnect','superseded','mouseResetPending','draftComposing','draftPending','draftUncertain','firstFrameTimerHandlePresent')
++    if (gate['status'] != 'observed' or gate['blockedReasons'] or any(gate[k] is not True for k in yes)
++        or any(gate[k] is not False for k in no) or gate['uiPhase'] != 'connected'
++        or gate['desiredMediaState'] != 'active' or gate['mediaRuntimePhase'] != 'active'
++        or gate['keyboardControllerState'] != 'READY' or gate['keyboardTransportState'] != 'ready'
++        or gate['surfaceState'] != 'settled' or gate['desktopWriteRecoveryState'] not in ('none','reconciled')
++        or gate['recoveryState'] not in ('idle','recovered') or not sample['inputAllowed']): return False
++    # Recovery retains historical outage maxima as evidence; readiness uses
++    # current frame age, while stability separately requires fresh progress.
++    if recovery:
++        sample=dict(sample)
++        sample['maxFrameGapMs']=sample['frameAgeMs']
++        sample['maxRelayLoadGapMs']=sample['relayLoadAgeMs']
++    # The unchanged reducer supplies path, current identity and age gates.
++    probe = passive.ContinuitySummary(duration_s=1,mode=mode)
++    probe.observe(dict(elapsedSeconds=0,status='observed',sample=sample))
++    return not probe.failures
++
++
++def _recovered_identity(identity,sample):
++    transport=sample['transport']
++    path=tuple(transport.get(k) for k in ('pathIdentity','localType','remoteType','protocol','remoteProtocol','relayProtocol'))
++    return (identity['socketHash'],sample['pcIdentity'],sample['attemptHash'],sample['generation'],sample['leaseEpoch'],path)
++
++
++class OrdinaryRecoverySummary:
++    def __init__(self,scenario,mode):
++        _enum(scenario,SCOPES); _enum(mode,('stun','relay','tunnel'))
++        self.scenario,self.mode,self.phase = scenario,mode,'preflight'
++        self.continuity = passive.ContinuitySummary(duration_s=10800 if scenario=='continuity' else 300,mode=mode)
++        self.failure = self.startup = self.manifest = self.expected_build = None
++        self.host = HostContinuityObserver(b'').snapshot()
++        self.lifecycle = dict(captureStatus='not-started',cleanupStatus='not-started',writeStatus='ok',ownedProcessExitEvidence='not-observed')
++        self.fault = empty_fault(scenario)
++        self.server_coverage = 'not-started'; self.classification='not-attempted'
++        self.started = self.triggered = self.recovered = self.last = None
++        self.elapsed = self.stable = 0; self.identity = self.baseline_sample = self.stable_identity = None
++        self._startup_sample = None; self._events=[]; self._product_failure=False
++        self._stability_previous=None; self._progress_at=None
++        self.latest_sample=self.fault_sample=None
++        self.baseline_ready=False
++
++    def transition(self,phase):
++        allowed = {'preflight':('startup',),'startup':('continuity',) if self.scenario=='continuity' else ('baseline',),
++            'baseline':('fault',) if self.scenario in ('within-grace','after-grace') else (),
++            'fault':('recovering',),'recovering':('recovered-stability',),'recovered-stability':(),'continuity':(),'terminal':()}
++        if phase not in allowed[self.phase] and not (phase=='terminal' and self.phase!='terminal'): raise ValueError('schema-rejected')
++        self.phase=phase
++
++    def fail(self,reason,*,product=False):
++        _enum(reason,REASONS-{'none','scenario-not-requested','run-in-progress'})
++        if self.failure is None:
++            self.failure=dict(phase=self.phase,reason=reason); self._product_failure=product
++        if self.phase!='terminal': self.transition('terminal')
++
++    def confirm_fault(self,elapsed):
++        _number(elapsed)
++        if not self.baseline_ready or self.triggered is not None: raise ValueError('fault-already-triggered')
++        self.transition('fault'); self.triggered=elapsed; self.classification='unclassified'; self.fault_sample=self.latest_sample
++
++    def observe(self,row):
++        try: validate_recovery_row(row)
++        except ValueError: self.fail('schema-rejected'); return
++        if row['scenario']!=self.scenario or row['phase']!=self.phase: self.fail('schema-rejected'); return
++        self.host=row['hostObservation']; at=row['elapsedSeconds']; sample=row['sample']
++        if self.last is not None and not 0 <= at-self.last <= 1.5: self.fail('sampling-gap')
++        self.last=at
++        if self.host['coverage']!='complete' or self.host['status']!='stable' or self.host['hostDisconnectObserved']:
++            self.fail('host-replaced' if self.host['status']=='changed' else 'host-disconnect-observed'
++                if self.host['hostDisconnectObserved'] else 'host-observation-unavailable')
++        if sample is None: self.fail('sampling-gap'); return
++        if sample['buildId']!=self.expected_build: self.fail('deployment-build-mismatch')
++        if sample['inputGate']['superseded']: self.fail('human-priority')
++        identity=row['identity']; self.latest_sample=sample
++        if self.triggered is None and (sample['diagnostics']['firstDisconnectEvent'] is not None or row['serverEvents']):
++            self.fail('baseline-failed',product=True)
++        if self.identity is not None and any(identity[k]!=self.identity[k] for k in ('sessionHash','admissionHash')):
++            self.fail('ordinary-owner-changed')
++        if self.phase=='terminal': return
++        if self.phase=='startup':
++            ready = self.startup is not None and all(identity.values()) and _gates(sample,self.mode)
++            previous=self._startup_sample; self._startup_sample=sample
++            counter='relayLoadCallbacks' if self.mode=='tunnel' else 'callbacks'
++            if not ready or previous is None or not _gates(previous,self.mode) or sample[counter]<=previous[counter]: return
++            self.started=at; self.identity=dict(identity); self.baseline_sample=sample
++            self.transition('continuity' if self.scenario=='continuity' else 'baseline')
++        if self.phase in ('baseline','continuity'):
++            self.elapsed=at-self.started
++            self.continuity.observe(dict(elapsedSeconds=self.elapsed,status='observed',sample=sample))
++            if not _gates(sample,self.mode) or identity['socketHash']!=self.identity['socketHash'] or self.continuity.identity_changes or self.continuity.failures:
++                self.fail('baseline-failed',product=True); return
++            self.baseline_ready=self.continuity.result(elapsed_s=self.elapsed)['status']=='PASS'
++            return
++        for event in row['serverEvents']:
++            if self._events and (event['n']<=self._events[-1]['n'] or event['serverTimestampMs']<self._events[-1]['serverTimestampMs']):
++                self.fail('server-clock-regression'); return
++            if len(self._events)>=1024: self.fail('server-log-capacity'); return
++            self._events.append(event)
++            if event['event']=='host-disconnected': self.fail('host-disconnect-observed'); return
++            if self.phase=='recovered-stability':
++                if event['event']=='grace-expired' and self.classification=='within-grace-rebind' and event['sessionHash']==self.identity['sessionHash'] and event['viewerHash']==self.identity['socketHash']:
++                    self.classification='after-grace-reset'; self.fail('wrong-grace-class',product=True)
++                else: self.fail('recovery-gates-unmet',product=True)
++                return
++
++        self._classify(identity,sample,at)
++        if self.phase=='recovered-stability':
++            current=_recovered_identity(identity,sample)
++            if not _gates(sample,self.mode,recovery=True) or current!=self.stable_identity:
++                self.fail('recovery-gates-unmet',product=True); return
++            counter=sample['relayLoadCallbacks'] if self.mode=='tunnel' else sample['callbacks']
++            seq=sample['relayFrameSeq'] if self.mode=='tunnel' else counter
++            if self._stability_previous is not None:
++                old_counter,old_seq=self._stability_previous
++                if counter<old_counter or seq<old_seq: self.fail('recovery-gates-unmet',product=True); return
++                if counter>old_counter and seq>old_seq: self._progress_at=at
++            self._stability_previous=(counter,seq)
++            if self._progress_at is None: self._progress_at=at
++            if at-self._progress_at>=5: self.fail('recovery-gates-unmet',product=True); return
++            self.stable=at-self.recovered
++        self.expire(at)
++
++    def _classify(self,identity,sample,at):
++        if self.phase!='recovering': return
++        starts=[e for e in self._events if e['event']=='grace-started' and e['sessionHash']==self.identity['sessionHash'] and e['viewerHash']==self.identity['socketHash']]
++        if len(starts)!=1: return
++        start=starts[0]
++        failed=next((e for e in self._events if e['event']=='rebind-failed' and e['n']>start['n']
++            and e['sessionHash']==self.identity['sessionHash'] and e['viewerHash']==identity['socketHash']),None)
++        if failed:
++            self.fail('recovery-gates-unmet',product=self.server_coverage=='complete'); return
++        expiry=next((e for e in self._events if e['event']=='grace-expired' and e['n']>start['n'] and e['sessionHash']==self.identity['sessionHash'] and e['viewerHash']==self.identity['socketHash']),None)
++        rebind=next((e for e in self._events if e['event']=='rebind-confirmed' and e['n']>start['n'] and e['viewerHash']==identity['socketHash'] and e['sessionHash']==self.identity['sessionHash']),None)
++        if expiry:
++            self.classification='after-grace-reset'
++            reset=next((e for e in self._events if e['event']=='reset-completed' and e['n']>expiry['n'] and e['leaseEpoch']==expiry['leaseEpoch'] and e['state']=='FREE'),None)
++            matched=reset is not None and sample['leaseEpoch'] is not None and sample['leaseEpoch']>expiry['leaseEpoch'] and sample['leaseEpoch']>self.baseline_sample['leaseEpoch']
++        elif rebind:
++            self.classification='within-grace-rebind'
++            matched=rebind['leaseEpoch']==self.baseline_sample['leaseEpoch']==sample['leaseEpoch']
++        else: return
++        expected='within-grace-rebind' if self.scenario=='within-grace' else 'after-grace-reset'
++        if self.classification!=expected: self.fail('wrong-grace-class',product=True); return
++        counter='relayLoadCallbacks' if self.mode=='tunnel' else 'callbacks'
++        fresh=self.fault_sample is not None and sample[counter] is not None and self.fault_sample[counter] is not None and sample[counter]>self.fault_sample[counter]
++        if matched and fresh and at-self.triggered<=60 and _gates(sample,self.mode,recovery=True) and self.server_coverage=='complete':
++            self.recovered=at
++            self.stable_identity=_recovered_identity(identity,sample)
++            self.transition('recovered-stability')
++
++    def expire(self,elapsed):
++        if self.phase=='recovering' and elapsed-self.triggered>=60:
++            self.fail('reset-unconfirmed' if self.classification=='after-grace-reset' else 'recovery-deadline')
++
++    def result(self,*,cleanup_complete):
++        requested=self.scenario in ('within-grace','after-grace'); attempted=self.triggered is not None
++        passed=attempted and self.recovered is not None and self.recovered-self.triggered<=60 and self.stable>=30 and self.server_coverage=='complete' and self.failure is None
++        host_ok=self.host['status']=='stable' and self.host['coverage']=='complete' and not self.host['hostDisconnectObserved']
++        failure=self.failure
++        if not cleanup_complete and failure is None and (passed or self.lifecycle['cleanupStatus']=='incomplete'): failure=dict(phase=self.phase,reason='cleanup-incomplete')
++        reason=('scenario-not-requested' if not requested else failure['reason'] if failure else 'none' if passed and host_ok else 'run-in-progress')
++        status=('NOT_RUN' if not attempted else 'PASS' if passed and host_ok and cleanup_complete else 'FAIL' if self._product_failure and self.server_coverage=='complete' and host_ok and cleanup_complete else 'INCOMPLETE')
++        recovery=dict(status=status,classification=self.classification,requestedScenario=self.scenario,
++            qualificationEvidenceScope=SCOPES[self.scenario],recoverySeconds=None if self.recovered is None else self.recovered-self.triggered,
++            recoveredStableSeconds=self.stable,serverCoverage=self.server_coverage,reason=reason)
++        return dict(schemaVersion=1,scenario=self.scenario,mode=self.mode,phase=self.phase,
++            qualificationEvidenceScope=SCOPES[self.scenario],nativeAfterGraceQualification='NOT_RUN',hostObservation=self.host,
++            continuity=self.continuity.result(elapsed_s=self.elapsed,interrupted=attempted or failure is not None or not cleanup_complete),
++            ordinaryRecovery=recovery,failure=failure,startup=self.startup,manifest=self.manifest,lifecycle=self.lifecycle,
++            fault=self.fault,businessInput='NOT_RUN',visibleEffect='NOT_RUN',physical='NOT_RUN')
++
++
++def empty_fault(scenario):
++    return dict(capability='not-checked',status='not-requested',instrumentation='native-direct' if scenario=='within-grace'
++        else 'playwright-routed' if scenario=='after-grace' else 'none',triggerCount=0,blockedHttp=0,blockedWebSocket=0,
++        blockSeconds=12 if scenario=='after-grace' else 0)
++
++
++def validate_lifecycle(value):
++    _keys(value,('schemaVersion','diagnostics','python','captureStatus','writeStatus','ownedProcessExitEvidence'))
++    _int(value['schemaVersion'],1,minimum=1); passive.validate_diagnostic(value['diagnostics'])
++    _enum(value['captureStatus'],('not-started','ok','unavailable','timeout','error','cancelled','schema-rejected','noncooperative'))
++    _enum(value['writeStatus'],('ok','error'))
++    if value['ownedProcessExitEvidence']!='not-observed': raise ValueError('schema-rejected')
++    p=value['python']; _keys(p,('failureDetectedMs','failureWallEpochMs','managerStart','managerLaunch','managerStop','browserClose','cleanupStatus'))
++    for key in ('failureDetectedMs','failureWallEpochMs'): _int(p[key],9999999999999,nullable=True)
++    _enum(p['cleanupStatus'],('not-started','running','api-finished-exit-unknown','incomplete'))
++    for key in ('managerStart','managerLaunch','managerStop','browserClose'):
++        r=p[key]; _keys(r,('startedMs','finishedMs','status'))
++        for clock in ('startedMs','finishedMs'): _int(r[clock],9999999999999,nullable=True)
++        _enum(r['status'],('ok','timeout','error','cancelled','not-started','not-created','closed','noncooperative'))
++    if len(compact(value))>MAX_ROW_BYTES: raise ValueError('evidence-budget-exceeded')
++    return value
++
++# A private page-local closure compares auth and object identities. It does not
++# write product state or expose a token, ticket, product method or recovery API.
++OBSERVATION_INSTALL = r'''() => {
++  if (window.__wrdOrdinaryObservation) throw new Error('already-installed');
++  let auth=null, token=null, generation=null, shell=null, client=null;
++  const bounded=v => typeof v === 'string' && v.length>0 && v.length<=128 ? v : null;
++  window.__wrdOrdinaryObservation = () => {
++    const a=typeof Auth==='undefined'?null:Auth, c=typeof WebRTC==='undefined'?null:WebRTC;
++    const s=window.__WRD_SHELL__, state=typeof s?.snapshot==='function'?s.snapshot():null;
++    const verified=state?.authVerified===true && a?.isVerified?.()===true;
++    if (!auth && verified && typeof a.getToken?.()==='string' && a.getToken().length>0 && Number.isSafeInteger(a.getGeneration?.())) {
++      auth=a; token=a.getToken(); generation=a.getGeneration();
++    }
++    if (!shell && s) shell=s;
++    if (!client && c) client=c;
++    const marks=Array.isArray(state?.marks)&&state.marks.length<=1024?state.marks:null;
++    const count=name => marks?marks.filter(m=>m?.name===name).length:null;
++    return {shellAvailable:!!state,clientAvailable:!!c,marksAvailable:!!marks,
++      coreInstalled:state?.coreInstalled===true,authVerified:verified,authCaptured:!!auth,
++      authCurrent:!!auth&&auth===a&&verified&&a.getToken()===token&&a.getGeneration()===generation,
++      ownerCurrent:(!shell||shell===s)&&(!client||client===c),
++      selectorValid:location.pathname==='/viewer.html'&&location.search==='?wrdAdmission=vacant-only-v1',
++      proofPresent:sessionStorage.getItem('wrdProofAdmission')!==null||!!window.__wrdProofStartGuard,
++      queuedStart:state?.queuedStart===true,socketPresent:!!c?.socket,pcPresent:!!c?.pc,
++      attemptPresent:!!c?.currentConnectionAttemptId,htmlShellMarks:count('html-shell'),
++      coreInteractiveMarks:count('core-interactive'),startClickMarks:count('start-click'),
++      sessionId:bounded(c?._viewerSessionId),socketId:bounded(c?.socket?.id),
++      admissionId:c?._viewerAdmission?.mode==='resume'?bounded(c._viewerAdmission.generation):null,
++      networkMode:['stun','relay','tunnel'].includes(c?.networkMode)?c.networkMode:'unknown'};
++  };
++}'''
++OBSERVE_UI = '() => window.__wrdOrdinaryObservation()'
++OBSERVE_SAMPLE = '''async () => {
++  const sample=await window.__wrdPassiveSampler.sample();
++  return {state:window.__wrdOrdinaryObservation(),sample};
++}'''
++_UI_BOOLEANS = ('shellAvailable','clientAvailable','marksAvailable','coreInstalled','authVerified','authCaptured',
++    'authCurrent','ownerCurrent','selectorValid','proofPresent','queuedStart','socketPresent','pcPresent','attemptPresent')
++_UI_COUNTS = ('htmlShellMarks','coreInteractiveMarks','startClickMarks')
++
++
++def _ui_state(value):
++    _keys(value,(*_UI_BOOLEANS,*_UI_COUNTS,'sessionId','socketId','admissionId','networkMode'))
++    if any(type(value[k]) is not bool for k in _UI_BOOLEANS): raise ValueError('schema-rejected')
++    for key in _UI_COUNTS: _int(value[key],1024,nullable=True)
++    for key in ('sessionId','socketId','admissionId'):
++        if value[key] is not None and not _id(value[key]): raise ValueError('schema-rejected')
++    _enum(value['networkMode'],('stun','relay','tunnel','unknown'))
++    if not value['selectorValid']: raise ValueError('selector-invalid')
++    if value['proofPresent']: raise ValueError('proof-conflict')
++    if value['authCaptured'] and not value['authCurrent']: raise ValueError('authentication-changed')
++    if not value['ownerCurrent']: raise ValueError('start-ui-state-changed')
++    return value
++
++
++class _AdmissionObservation:
++    def __init__(self,page,origin):
++        self.page,self.origin=page,origin
++        self.requests=self.responses=0; self.reason=None
++        page.on('request',self.request); page.on('response',self.response)
++
++    def request(self,value):
++        try:
++            url=urlsplit(value.url)
++            if url.path=='/api/proof-admission': self.reason=self.reason or 'proof-conflict'; return
++            if url.path!='/api/auth/viewer-admission': return
++            self.requests=min(2,self.requests+1)
++            if self.requests>1: self.reason=self.reason or 'extra-admission-request'; return
++            if type(value.post_data) is not str or len(value.post_data.encode('utf-8'))>16384: raise ValueError()
++            body=_json(value.post_data.encode('utf-8'))
++            _keys(body,('viewerSessionId','initialPolicy'))
++            if (value.url!=self.origin+'/api/auth/viewer-admission' or value.method!='POST'
++                or body['initialPolicy']!='vacant-only-v1' or not _id(body['viewerSessionId'])): raise ValueError()
++        except Exception: self.reason=self.reason or 'admission-refused'
++
++    def response(self,value):
++        try:
++            if urlsplit(value.url).path!='/api/auth/viewer-admission': return
++            self.responses=min(2,self.responses+1)
++            if value.url!=self.origin+'/api/auth/viewer-admission' or value.status!=201 or self.responses>1:
++                self.reason=self.reason or 'admission-refused'
++        except Exception: self.reason=self.reason or 'admission-refused'
++
++    def check(self,*,started=False):
++        if self.reason: raise ValueError(self.reason)
++        if started and (self.requests!=1 or self.responses!=1): raise ValueError('start-ui-click-unproven')
++
++    def detach(self):
++        self.page.remove_listener('request',self.request); self.page.remove_listener('response',self.response)
++
++
++def _fresh(state):
++    if any(state[k] for k in ('socketPresent','pcPresent','attemptPresent','queuedStart')) or state['startClickMarks'] not in (None,0):
++        raise ValueError('start-ui-not-fresh')
++    if state['htmlShellMarks'] not in (None,0,1) or state['coreInteractiveMarks'] not in (None,0,1):
++        raise ValueError('start-ui-not-fresh')
++    return all(state[k] for k in ('shellAvailable','clientAvailable','marksAvailable','coreInstalled','authVerified','authCurrent')) and state['htmlShellMarks']==state['coreInteractiveMarks']==1
++
++
++async def start_guarded_via_ui(page,*,timeout_s=30,monotonic=time.monotonic,sleep=asyncio.sleep):
++    parsed=urlsplit(page.url)
++    if parsed.path!='/viewer.html' or parsed.query!='wrdAdmission=vacant-only-v1' or parsed.fragment:
++        raise ValueError('selector-invalid')
++    observer=getattr(page,'_wrd_ordinary_guard',None)
++    owned=observer is None
++    if owned: observer=_AdmissionObservation(page,normalized_origin(parsed.scheme+'://'+parsed.netloc))
++    if normalized_origin(parsed.scheme+'://'+parsed.netloc)!=observer.origin: raise ValueError('selector-invalid')
++    deadline=monotonic()+timeout_s; clicked=False; reason='start-ui-unavailable'
++    async def bounded(operation):
++        remaining=max(0,deadline-monotonic())
++        try: return await lifecycle_stage(operation,remaining,settlement=min(.075,remaining/4))
++        except CancellationCooperationError: raise
++        except TimeoutError: raise ValueError(reason) from None
++        except Exception: raise ValueError(reason if monotonic()>=deadline else 'start-ui-unavailable') from None
++    try:
++        try: button=page.locator('#startBtn')
++        except Exception: raise ValueError('start-ui-unavailable') from None
++        while monotonic()<deadline:
++            observer.check(); state=_ui_state(await bounded(page.evaluate(OBSERVE_UI)))
++            if clicked:
++                if state['startClickMarks'] not in (0,1): raise ValueError('extra-start')
++                if (state['startClickMarks']==1 and observer.requests==observer.responses==1):
++                    if not all(state[k] for k in ('shellAvailable','clientAvailable','marksAvailable','coreInstalled','authCurrent')) or state['htmlShellMarks']!=1 or state['coreInteractiveMarks']!=1:
++                        raise ValueError('start-ui-state-changed')
++                    return dict(VERIFIED_STARTUP)
++            elif _fresh(state):
++                reason='start-ui-deadline'
++                if await bounded(button.is_visible()) and await bounded(button.is_enabled()):
++                    visible=await bounded(button.is_visible()); enabled=await bounded(button.is_enabled())
++                    current=_ui_state(await bounded(page.evaluate(OBSERVE_UI)))
++                    observer.check()
++                    if not visible or not enabled or not _fresh(current): raise ValueError('start-ui-state-changed')
++                    if observer.requests: raise ValueError('extra-admission-request')
++                    await bounded(button.click(timeout=max(1,(deadline-monotonic())*1000)))
++                    clicked=True; reason='start-ui-click-unproven'; continue
++            await sleep(min(.1,max(0,deadline-monotonic())))
++        raise ValueError(reason)
++    finally:
++        if owned: observer.detach()
++
++
++async def _observation_pair(page_once,status_reader):
++    """Concurrent page/status work with one owner and cancellation settlement."""
++    # The production status function owns its 750ms budget itself; injected
++    # readers receive the identical budget without importing runtime packages.
++    async def status():
++        try:
++            if status_reader is read_local_host_status: return await status_reader()
++            return await lifecycle_stage(status_reader(),.75,settlement=.075)
++        except TimeoutError: raise ValueError('host-observation-unavailable') from None
++    tasks=[asyncio.create_task(page_once()),asyncio.create_task(status())]
++    try:
++        await asyncio.wait(tasks,return_when=asyncio.FIRST_EXCEPTION)
++        for task in tasks:
++            if task.done() and not task.cancelled() and task.exception() is not None: raise task.exception()
++        return [await task for task in tasks]
++    finally:
++        pending=[task for task in tasks if not task.done()]
++        for task in pending: task.cancel()
++        if pending:
++            # Both children remain owned until settlement; no detached reader or
++            # page work can silently survive the outer 2s / final 1s stage.
++            await lifecycle_stage(asyncio.gather(*pending,return_exceptions=True),.075,settlement=.025)
++
++
++async def _observe_start(action,tick,*,interval=1):
++    """Keep one observation flow alive during the one owned UI action."""
++    task=asyncio.create_task(action)
++    try:
++        while not task.done():
++            at=time.monotonic(); await tick()
++            if task.done(): break
++            await asyncio.wait({task},timeout=max(0,interval-(time.monotonic()-at)))
++        return task.result()
++    finally:
++        if not task.done():
++            task.cancel()
++            await lifecycle_stage(asyncio.gather(task,return_exceptions=True),.075,settlement=.025)
++
++
++def validate_fault(value,scenario):
++    _keys(value,('capability','status','instrumentation','triggerCount','blockedHttp','blockedWebSocket','blockSeconds'))
++    _enum(value['capability'],('not-checked','available','unavailable'))
++    _enum(value['status'],('not-requested','ready','triggered','disarmed','failed'))
++    expected=empty_fault(scenario)
++    if value['instrumentation']!=expected['instrumentation'] or type(value['blockSeconds']) is not int or value['blockSeconds']!=expected['blockSeconds']:
++        raise ValueError('schema-rejected')
++    _int(value['triggerCount'],1)
++    for key in ('blockedHttp','blockedWebSocket'): _int(value[key],32)
++    if value['blockedHttp']+value['blockedWebSocket']>32: raise ValueError('schema-rejected')
++    if scenario in ('baseline','continuity') and value!=expected: raise ValueError('schema-rejected')
++    if value['triggerCount'] and (value['capability']!='available' or value['status'] not in ('triggered','disarmed','failed')): raise ValueError('schema-rejected')
++    return value
++
++
++def validate_summary(value):
++    _keys(value,('schemaVersion','scenario','mode','phase','qualificationEvidenceScope','nativeAfterGraceQualification',
++        'hostObservation','continuity','ordinaryRecovery','failure','startup','manifest','lifecycle','fault','businessInput','visibleEffect','physical'))
++    _int(value['schemaVersion'],1,minimum=1); _enum(value['scenario'],SCOPES); _enum(value['mode'],('stun','relay','tunnel')); _enum(value['phase'],PHASES)
++    if value['qualificationEvidenceScope']!=SCOPES[value['scenario']]: raise ValueError('schema-rejected')
++    for key in ('nativeAfterGraceQualification','businessInput','visibleEffect','physical'):
++        if value[key]!='NOT_RUN': raise ValueError('schema-rejected')
++    validate_host_observation(value['hostObservation']); validate_fault(value['fault'],value['scenario'])
++    failure=value['failure']
++    if failure is not None:
++        _keys(failure,('phase','reason')); _enum(failure['phase'],PHASES)
++        _enum(failure['reason'],REASONS-{'none','scenario-not-requested','run-in-progress'})
++    if value['startup'] is not None:
++        _keys(value['startup'],VERIFIED_STARTUP)
++        if any(type(value['startup'][k]) is not type(v) or value['startup'][k]!=v for k,v in VERIFIED_STARTUP.items()): raise ValueError('schema-rejected')
++    m=value['manifest']
++    if m is not None:
++        _keys(m,('sha256','runNonce','originSource','originEvidenceSha256','signalSourceCommit','hostSourceCommit','viewerSourceCommit','viewerBuildId','sourceEvidence'))
++        for key in ('sha256','originEvidenceSha256'): _hex(m[key],64)
++        _hex(m['runNonce'],32); _hex(m['viewerBuildId'],16)
++        for key in ('signalSourceCommit','hostSourceCommit','viewerSourceCommit'): _hex(m[key],40)
++        _enum(m['originSource'],('quick-url-file','formal-configured'))
++        if m['sourceEvidence']!='root-attested': raise ValueError('schema-rejected')
++    lifecycle=value['lifecycle']; _keys(lifecycle,('captureStatus','cleanupStatus','writeStatus','ownedProcessExitEvidence'))
++    _enum(lifecycle['captureStatus'],('not-started','ok','unavailable','timeout','error','cancelled','schema-rejected','noncooperative'))
++    _enum(lifecycle['cleanupStatus'],('not-started','running','api-finished-exit-unknown','incomplete'))
++    _enum(lifecycle['writeStatus'],('ok','error'))
++    if lifecycle['ownedProcessExitEvidence']!='not-observed': raise ValueError('schema-rejected')
++    r=value['ordinaryRecovery']
++    _keys(r,('status','classification','requestedScenario','qualificationEvidenceScope','recoverySeconds','recoveredStableSeconds','serverCoverage','reason'))
++    _enum(r['status'],('NOT_RUN','INCOMPLETE','FAIL','PASS')); _enum(r['classification'],('not-attempted','unclassified','within-grace-rebind','after-grace-reset'))
++    _enum(r['serverCoverage'],('not-started','complete','incomplete')); _enum(r['reason'],REASONS)
++    if r['requestedScenario']!=value['scenario'] or r['qualificationEvidenceScope']!=value['qualificationEvidenceScope']: raise ValueError('schema-rejected')
++    _number(r['recoverySeconds'],nullable=True); _number(r['recoveredStableSeconds'])
++    if value['scenario'] in ('baseline','continuity') and (r['status']!='NOT_RUN' or r['classification']!='not-attempted' or r['reason']!='scenario-not-requested'):
++        raise ValueError('schema-rejected')
++    if r['status']=='NOT_RUN' and (r['classification']!='not-attempted' or r['recoverySeconds'] is not None or r['recoveredStableSeconds']!=0):
++        raise ValueError('schema-rejected')
++    if r['status']=='PASS':
++        expected='within-grace-rebind' if value['scenario']=='within-grace' else 'after-grace-reset'
++        host=value['hostObservation']
++        if (failure is not None or r['reason']!='none' or r['classification']!=expected or r['serverCoverage']!='complete'
++            or r['recoverySeconds'] is None or r['recoverySeconds']>60 or r['recoveredStableSeconds']<30
++            or lifecycle['cleanupStatus']!='api-finished-exit-unknown' or lifecycle['captureStatus']!='ok' or lifecycle['writeStatus']!='ok'
++            or host['status']!='stable' or host['coverage']!='complete' or host['hostDisconnectObserved']): raise ValueError('schema-rejected')
++    # Continuity is generated solely by the unchanged reducer. Validate every
++    # emitted key and scalar against its fixed result schema before persistence.
++    c=value['continuity']; template=passive.ContinuitySummary(duration_s=10800 if value['scenario']=='continuity' else 300,mode=value['mode']).result(elapsed_s=0)
++    _keys(c,template)
++    for key,expected in template.items():
++        item=c[key]
++        if key=='status': _enum(item,('PASS','FAIL','INCOMPLETE'))
++        elif type(expected) is bool:
++            if type(item) is not bool: raise ValueError('schema-rejected')
++        elif type(expected) in (int,float):
++            _number(item,9999999999999)
++            if type(expected) is int: _int(item,9999999999999)
++        elif item!=expected: raise ValueError('schema-rejected')
++    if len(compact(value))>MAX_ROW_BYTES: raise ValueError('evidence-budget-exceeded')
++    return value
++
++
++def _load_fault(scenario):
++    if scenario not in ('within-grace','after-grace'): return None
++    try:
++        if __package__:
++            from .ordinary_recovery_fault import BrowserLocalFault
++        else:
++            from ordinary_recovery_fault import BrowserLocalFault
++        return BrowserLocalFault(scenario=scenario)
++    except ImportError: raise ValueError('fault-capability-unavailable') from None
++
++
++async def run(args,*,manager_factory=None,status_reader=None,limits=None):
++    model=OrdinaryRecoverySummary(args.scenario,args.mode); life=OwnedBrowserLifecycle(limits=limits)
++    manifest=log=guard=fault=None; stream=None; observing=False; cancelled=False; observation_poisoned=False
++    origin=None; salt=secrets.token_bytes(16); host=HostContinuityObserver(salt)
++    current_ids=dict(sessionId=None,socketId=None,previousSocketId=None)
++    last_socket=None; began=time.monotonic(); output=Path(args.output_dir)
++    status_reader=status_reader or read_local_host_status
++    writer=None
++
++    def fail(exc):
++        model.fail(_reason(exc))
++        if life.python['failureDetectedMs'] is None:
++            life.python['failureDetectedMs']=passive.monotonic_ms()
++            life.python['failureWallEpochMs']=round(time.time()*1000)
++
++    def persist(*,initial=False):
++        model.lifecycle=life.snapshot(); model.host=host.snapshot()
++        complete=life.python['cleanupStatus']=='api-finished-exit-unknown'
++        ok=True; written=[]
++        for name in ('lifecycle.json','summary.json'):
++            try:
++                model.lifecycle=life.snapshot()
++                value=life.record() if name=='lifecycle.json' else validate_summary(model.result(cleanup_complete=complete))
++                passive.atomic_evidence(output/name,value,initial=initial); written.append(name)
++            except (OSError,ValueError,TypeError):
++                life.write_status='error'; fail(ValueError('evidence-write-failed')); ok=False
++        if not ok:
++            model.lifecycle=life.snapshot()
++            for name in written:
++                try:
++                    value=life.record() if name=='lifecycle.json' else validate_summary(model.result(cleanup_complete=complete))
++                    passive.atomic_evidence(output/name,value)
++                except (OSError,ValueError,TypeError): pass
++        return ok
++
++    def check_state(state):
++        nonlocal last_socket,current_ids
++        _ui_state(state); guard.check(started=model.startup is not None)
++        if state['networkMode']!=args.mode and (model.startup is not None or state['networkMode']!='unknown'): raise ValueError('recovery-gates-unmet')
++        if state['startClickMarks'] is not None and state['startClickMarks']>1: raise ValueError('extra-start')
++        if model.startup is not None and (state['startClickMarks']!=1 or not state['authCurrent'] or state['htmlShellMarks']!=1 or state['coreInteractiveMarks']!=1):
++            raise ValueError('start-ui-state-changed')
++        socket=state['socketId']
++        if socket is not None and socket!=last_socket:
++            current_ids['previousSocketId']=last_socket; last_socket=socket
++        current_ids.update(sessionId=state['sessionId'],socketId=socket or last_socket)
++        return dict(sessionHash=hash_identity(state['sessionId'],salt),socketHash=hash_identity(socket,salt),admissionHash=hash_identity(state['admissionId'],salt))
++
++    async def tick(*,final=False):
++        nonlocal observation_poisoned
++        if observation_poisoned: raise CancellationCooperationError('cancellation-noncooperative')
++        sample=None; identity=dict.fromkeys(('sessionHash','socketHash','admissionHash')); events=[]; diagnostic=None; log_read=False
++        async def page_once():
++            if final:
++                return await life.page.evaluate('''async () => {
++                  const sample=await window.__wrdPassiveSampler.sample();
++                  const state=window.__wrdOrdinaryObservation();
++                  const diagnostic=window.__wrdPassiveSampler.finalize();
++                  return {sample,state,diagnostic};
++                }''')
++            return await life.page.evaluate(OBSERVE_SAMPLE)
++        try:
++            if final: manifest.recheck(round(time.time()*1000))
++            # Cleanup supplies the 1s outer deadline; ordinary ticks own 2s.
++            operation=_observation_pair(page_once,status_reader)
++            result,status = await operation if final else await lifecycle_stage(operation,2,settlement=.1)
++            host.observe_status(status,time.monotonic()*1000)
++            _keys(result,('state','sample','diagnostic') if final else ('state','sample'))
++            identity=check_state(result['state'])
++            if fault is not None:
++                model.fault=validate_fault(fault.snapshot(),args.scenario)
++                if model.fault['status']=='failed': raise ValueError('fault-handler-failed')
++            raw=result['sample']
++            try:
++                _keys(raw,(*[k for k in _SAMPLE_KEYS if k!='attemptHash'],'attempt'))
++                if raw['attempt'] is not None and not _id(raw['attempt']): raise ValueError()
++                sample=passive.private_row(raw,salt); _validate_private_sample(sample)
++            except (ValueError,TypeError,KeyError,OverflowError):
++                sample=None; raise ValueError('schema-rejected') from None
++            if sample['buildId']!=model.expected_build: raise ValueError('deployment-build-mismatch')
++            prior=life.diagnostic['attribution']
++            life.diagnostic=passive.diagnostic_from_delta(life.diagnostic,sample['diagnostics'])
++            found=life.diagnostic['attribution']['firstDisconnectEvent']
++            if prior['firstDisconnectEvent'] is not None and (found is None or found['n']>prior['firstDisconnectEvent']['n']):
++                life.diagnostic['attribution']=prior
++            log_read=True
++            events=log.read_tick(current_ids); model.server_coverage=log.snapshot()['coverage']
++            if any(e['event']=='host-disconnected' for e in events): host.observe_host_disconnect()
++            if host.reason!='none': raise ValueError(host.reason)
++            if log.reason!='none': raise ValueError(log.reason)
++            if final:
++                diagnostic=passive.validate_diagnostic(result['diagnostic'])
++                if model.identity is not None and any(identity[k]!=model.identity[k] for k in ('sessionHash','admissionHash')):
++                    raise ValueError('ordinary-owner-changed')
++                if model.failure is None and model.triggered is None and (events or sample['diagnostics']['firstDisconnectEvent'] is not None):
++                    raise ValueError('baseline-failed')
++                if model.failure is None and model.triggered is None and model.identity is not None and identity['socketHash']!=model.identity['socketHash']:
++                    raise ValueError('ordinary-owner-changed')
++                if model.failure is None and model.triggered is not None and (events or _recovered_identity(identity,sample)!=model.stable_identity):
++                    raise ValueError('recovery-gates-unmet')
++                if model.failure is None and not _gates(sample,args.mode,recovery=model.triggered is not None):
++                    raise ValueError('recovery-gates-unmet' if model.triggered is not None else 'baseline-failed')
++        except BaseException as exc:
++            if isinstance(exc,CancellationCooperationError): observation_poisoned=True
++            if isinstance(exc,(TimeoutError,CancellationCooperationError)) or sample is None:
++                host._fail('host-observation-unavailable')
++            if log is not None: model.server_coverage=log.snapshot()['coverage']
++            fail(ValueError('sampling-gap') if isinstance(exc,TimeoutError) else exc)
++            raise
++        finally:
++            # Even a rejected page/status observation must not hide a Host
++            # disconnect. Drain once using only the last validated identities.
++            if not log_read and log is not None and log.snapshot()['status']=='reading':
++                try:
++                    events=log.read_tick(current_ids)
++                    if any(e['event']=='host-disconnected' for e in events): host.observe_host_disconnect()
++                except ValueError as exc: fail(exc)
++            if log is not None: model.server_coverage=log.snapshot()['coverage']
++            model.host=host.snapshot()
++            row=dict(schemaVersion=1,scenario=args.scenario,elapsedSeconds=min(12000,max(0,time.monotonic()-began)),
++                phase=model.phase,qualificationEvidenceScope=SCOPES[args.scenario],hostObservation=model.host,
++                sample=sample,identity=identity,serverEvents=events)
++            validate_recovery_row(row)
++            if writer is not None:
++                try: writer.write(row)
++                except (OSError,ValueError,RuntimeError) as exc:
++                    fail(ValueError('evidence-budget-exceeded') if str(exc)=='evidence-budget-exceeded' else ValueError('evidence-write-failed'))
++                    raise
++        if not final:
++            model.observe(row)
++            if model.failure: raise ValueError(model.failure['reason'])
++        return diagnostic
++
++    async def export():
++        if not observing: return None
++        return await tick(final=True)
++
++    try:
++        try:
++            manifest=read_runtime_manifest(args.runtime_manifest,args.runtime_manifest_sha256,origin=args.origin,
++                scenario=args.scenario,mode=args.mode,now_epoch_ms=round(time.time()*1000))
++            model.manifest=manifest.projection(); model.expected_build=manifest['viewer']['buildId']
++            origin=normalized_origin(args.origin)
++        except Exception as exc: fail(exc)
++        try:
++            output.mkdir(parents=True,exist_ok=False,mode=0o700)
++            fd=os.open(output/'samples.jsonl',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
++            stream=os.fdopen(fd,'w'); writer=passive.EvidenceWriter(stream,max_bytes=passive.MAX_RUN_BYTES-3*MAX_ROW_BYTES)
++        except OSError:
++            life.write_status='error'; return 1
++        if not persist(initial=True) or model.failure is not None: return 1
++        try:
++            from dotenv import dotenv_values
++            if manager_factory is None:
++                from playwright.async_api import async_playwright
++                manager_factory=async_playwright
++        except ImportError: raise ValueError('runtime-dependency-unavailable') from None
++        password=os.environ.get('VIEWER_ACCESS_PASSWORD') or dotenv_values(args.runtime_config).get('VIEWER_ACCESS_PASSWORD')
++        if not password: raise ValueError('authentication-unavailable')
++        fault=_load_fault(args.scenario)
++        if fault is not None: model.fault=validate_fault(fault.snapshot(),args.scenario)
++        model.transition('startup')
++        page=await life.start(manager_factory); page.set_default_timeout(8000)
++        guard=_AdmissionObservation(page,origin); page._wrd_ordinary_guard=guard
++        if fault is not None:
++            life.disarm=fault.disarm
++            await lifecycle_stage(fault.install(page,origin,scenario=args.scenario),8)
++            model.fault=validate_fault(fault.snapshot(),args.scenario)
++            if model.fault['capability']!='available': raise ValueError('fault-capability-unavailable')
++        await lifecycle_stage(page.add_init_script("localStorage.setItem('wrdNetworkMode',"+json.dumps(args.mode)+');'),8)
++        response=await lifecycle_stage(page.goto(origin,wait_until='domcontentloaded',timeout=30000),31)
++        if response is None or response.status!=200: raise ValueError('entry-unavailable')
++        async def login():
++            await page.locator('#password').fill(password)
++            await page.locator('#loginForm button[type="submit"]').click()
++            await page.wait_for_url('**/viewer.html',timeout=30000)
++        try: await lifecycle_stage(login(),39)
++        except CancellationCooperationError: raise
++        except Exception: raise ValueError('authentication-unavailable') from None
++        response=await lifecycle_stage(page.goto(origin+'/viewer.html?wrdAdmission=vacant-only-v1',wait_until='domcontentloaded',timeout=30000),31)
++        if response is None or response.status!=200: raise ValueError('entry-unavailable')
++        await lifecycle_stage(page.evaluate(OBSERVATION_INSTALL),8)
++        await lifecycle_stage(page.evaluate(Path(__file__).with_name('passive_session_sampler.js').read_text()),8)
++        log=ServerRecoveryEvidence(manifest['signalLog']['path'],salt); log.start()
++        if (log._device,log._inode)!=(manifest['signalLog']['device'],manifest['signalLog']['inode']): raise ValueError('server-log-identity-changed')
++        observing=True; began=time.monotonic(); model.server_coverage='complete'
++        # Initial observation is completed before the UI action is even created.
++        await tick()
++        model.startup=await _observe_start(start_guarded_via_ui(page),tick)
++        startup_deadline=time.monotonic()+45
++        while model.failure is None:
++            at=time.monotonic(); await tick()
++            if model.phase=='startup' and time.monotonic()>=startup_deadline: raise ValueError('baseline-incomplete')
++            if model.baseline_ready and model.triggered is None:
++                if fault is None: break
++                manifest.recheck(round(time.time()*1000))
++                # This tick has just completed status, log, identity and full gates.
++                await lifecycle_stage(fault.trigger_once(page),2,settlement=.1)
++                model.fault=validate_fault(fault.snapshot(),args.scenario)
++                if model.fault['triggerCount']!=1 or model.fault['status']!='triggered': raise ValueError('fault-trigger-unconfirmed')
++                model.confirm_fault(time.monotonic()-began); model.transition('recovering')
++            if model.recovered is not None and model.stable>=30: break
++            await asyncio.sleep(max(0,1-(time.monotonic()-at)))
++    except asyncio.CancelledError as exc:
++        cancelled=True; fail(exc)
++    except BaseException as exc:
++        if isinstance(exc,(KeyboardInterrupt,SystemExit)): raise
++        if isinstance(exc,CancellationCooperationError): observation_poisoned=True
++        fail(exc)
++    finally:
++        # Exactly one coordinator/deadline, including repeated external cancels.
++        coordinator=asyncio.create_task(life.cleanup(export))
++        while not coordinator.done():
++            try: await asyncio.shield(coordinator)
++            except asyncio.CancelledError:
++                cancelled=True; fail(ValueError('cancelled'))
++            except BaseException: break
++        try: coordinator.result()
++        except BaseException: life.python['cleanupStatus']='incomplete'
++        if guard is not None:
++            try: guard.detach()
++            except Exception: life.python['cleanupStatus']='incomplete'; fail(ValueError('cleanup-incomplete'))
++        if log is not None:
++            try: log.close()
++            except OSError:
++                life.python['cleanupStatus']='incomplete'; fail(ValueError('server-log-unavailable'))
++            model.server_coverage=log.snapshot()['coverage']
++            if log.reason!='none': fail(ValueError(log.reason))
++        if fault is not None:
++            try: model.fault=validate_fault(fault.snapshot(),args.scenario)
++            except ValueError: fail(ValueError('schema-rejected'))
++        model.lifecycle=life.snapshot(); model.host=host.snapshot()
++        if life.python['cleanupStatus']!='api-finished-exit-unknown' and model.failure is None: fail(ValueError('cleanup-incomplete'))
++        if model.phase!='terminal': model.transition('terminal')
++        if stream is not None:
++            persist()
++            try: stream.close()
++            except OSError:
++                life.write_status='error'; fail(ValueError('evidence-write-failed')); persist()
++    final=model.result(cleanup_complete=life.python['cleanupStatus']=='api-finished-exit-unknown')
++    selected=final['ordinaryRecovery'] if args.scenario in ('within-grace','after-grace') else final['continuity']
++    return 0 if not cancelled and not final['failure'] and life.write_status=='ok' and selected['status']=='PASS' else 1
++
++
++def main():
++    parser=argparse.ArgumentParser(description='Owned ordinary Viewer recovery qualification; no business input.')
++    parser.add_argument('--origin',required=True)
++    parser.add_argument('--mode',choices=('stun','relay','tunnel'),required=True)
++    parser.add_argument('--scenario',choices=tuple(SCOPES),required=True)
++    parser.add_argument('--runtime-manifest',type=Path,required=True)
++    parser.add_argument('--runtime-manifest-sha256',required=True)
++    parser.add_argument('--runtime-config',type=Path,default=Path(__file__).resolve().parents[1]/'signal-server'/'.env')
++    parser.add_argument('--output-dir',required=True)
++    return asyncio.run(run(parser.parse_args()))
++
++
++if __name__=='__main__': raise SystemExit(main())
+diff --git a/scripts/test_ordinary_session_recovery.py b/scripts/test_ordinary_session_recovery.py
+index 9252698..58b87e2 100644
+--- a/scripts/test_ordinary_session_recovery.py
++++ b/scripts/test_ordinary_session_recovery.py
+@@ -573,10 +573,714 @@ class DirectRebindCorrelationTests(unittest.TestCase):
+                     self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
+                     value = rebind_event(name)
+                     if correlation is None: value.pop('correlation')
+                     else: value['correlation'] = correlation
+                     self.append(value)
+                     with self.assertRaisesRegex(ValueError, '^server-log-schema$'): self.e.read_tick(IDS)
+                     self.assertEqual(self.e.snapshot()['coverage'], 'incomplete')
+                     projection = json.dumps(self.e.snapshot())
+                     for private in ('server-new-canary', 'session-canary', 'token-canary', 'https://url-canary'):
+                         self.assertNotIn(private, projection)
++
++# Task 4 tests exercise only owned fakes and temporary private artifacts.
++from scripts import ordinary_session_recovery as runner
++from types import SimpleNamespace
++
++
++def valid_manifest(log, now=1000000):
++    info = log.stat()
++    return dict(schemaVersion=1, runNonce='1'*32, createdAtEpochMs=now,
++        validUntilEpochMs=now+12000000, scenario='baseline', mode='stun',
++        originSource='formal-configured', originEvidenceSha256='2'*64,
++        originSha256=hashlib.sha256(b'https://example.invalid').hexdigest(),
++        deploymentEvidence={'kind':'root-verified-local-deployment','sha256':'3'*64},
++        signal={'sourceCommit':'4'*40,'sourceTreeSha256':'5'*64},
++        host={'sourceCommit':'6'*40,'sourceTreeSha256':'7'*64},
++        viewer={'sourceCommit':'8'*40,'buildId':'0123456789abcdef'},
++        signalLog={'path':str(log),'device':info.st_dev,'inode':info.st_ino})
++
++
++class ManifestTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
++        self.log = Path(self.temp.name)/'signal.jsonl'; self.log.write_bytes(b'')
++        self.path = Path(self.temp.name)/'manifest.json'; self.value = valid_manifest(self.log)
++        self.save()
++
++    def save(self, raw=None):
++        data = json.dumps(self.value).encode() if raw is None else raw
++        self.path.write_bytes(data); self.path.chmod(0o600)
++        self.sha = hashlib.sha256(data).hexdigest()
++
++    def read(self, **changes):
++        options = dict(origin='https://example.invalid', scenario='baseline', mode='stun', now_epoch_ms=1000000)
++        options.update(changes)
++        return runner.read_runtime_manifest(self.path, self.sha, **options)
++
++    def test_exact_pin_root_attestation_and_mutation(self):
++        manifest = self.read()
++        self.assertEqual(manifest['viewer']['buildId'], '0123456789abcdef')
++        self.assertEqual(manifest.projection()['sourceEvidence'], 'root-attested')
++        self.assertNotIn(str(self.log), json.dumps(manifest.projection()))
++        self.path.write_bytes(self.path.read_bytes()+b' ')
++        with self.assertRaisesRegex(ValueError, '^runtime-manifest-changed$'): manifest.recheck(1000001)
++
++    def test_invalid_schema_bytes_and_pin(self):
++        for field, value in [('schemaVersion',True),('createdAtEpochMs',float('inf')),('secret','canary'),
++                             ('originSha256','X'*64),('runNonce','x'*32)]:
++            with self.subTest(field=field):
++                self.value = valid_manifest(self.log); self.value[field] = value; self.save()
++                with self.assertRaisesRegex(ValueError, '^runtime-manifest-invalid$'): self.read()
++        for raw in (b'{"schemaVersion":1,"schemaVersion":1}', b'x'*16385, b'\xff'):
++            self.save(raw)
++            with self.assertRaisesRegex(ValueError, '^runtime-manifest-invalid$'): self.read()
++        self.value = valid_manifest(self.log); self.save(); self.sha = 'f'*64
++        with self.assertRaisesRegex(ValueError, '^runtime-manifest-pin-mismatch$'): self.read()
++
++    def test_time_cli_owner_permissions_and_file_identity(self):
++        for opts in ({'now_epoch_ms':999999},{'now_epoch_ms':1900001}, {'scenario':'continuity'},
++                     {'mode':'relay'},{'origin':'https://other.invalid'},{'origin':'https://example.invalid/path'}):
++            with self.subTest(opts=opts), self.assertRaises(ValueError): self.read(**opts)
++        self.value['validUntilEpochMs'] = 1100000; self.save()
++        with self.assertRaisesRegex(ValueError, '^runtime-manifest-stale$'): self.read()
++        self.value = valid_manifest(self.log); self.save(); self.path.chmod(0o644)
++        with self.assertRaises(ValueError): self.read()
++        self.path.chmod(0o600)
++        with patch.object(runner.os,'getuid',return_value=os.getuid()+1), self.assertRaises(ValueError): self.read()
++        self.path.rename(self.path.with_suffix('.real')); self.path.symlink_to(self.path.with_suffix('.real'))
++        with self.assertRaises(ValueError): self.read()
++        self.path.unlink(); self.path.mkdir()
++        with self.assertRaises(ValueError): self.read()
++
++    def test_log_identity_and_poststart_inode_substitution(self):
++        self.value['signalLog']['inode'] += 1; self.save()
++        with self.assertRaisesRegex(ValueError, '^server-log-identity-changed$'): self.read()
++        self.value = valid_manifest(self.log); self.save(); manifest = self.read()
++        data = self.path.read_bytes(); self.path.rename(self.path.with_suffix('.old')); self.save(data)
++        with self.assertRaisesRegex(ValueError, '^runtime-manifest-changed$'): manifest.recheck(1000001)
++
++
++def ready_sample(count=10, epoch=3):
++    value = private_sample()
++    value.update(inputAllowed=True, pcIdentity=1, generation=1, leaseEpoch=epoch,
++        attemptHash='a'*16, callbacks=count, frameAgeMs=10, maxFrameGapMs=20)
++    value['transport'] = dict(status='observed',pathIdentity='path-1',localType='host',remoteType='srflx',
++        protocol='udp',remoteProtocol='udp',relayProtocol='unknown',rttMs=1,bytesReceived=2000000000,
++        framesDecoded=count,framesDropped=0,codec='video/h264')
++    value['inputGate'].update(status='observed',
++        **dict.fromkeys(('allowed','inputActive','hasInputLease','viewportSupported','hasPaintedFrame',
++            'currentAttemptReady','hasActiveControl','socketConnected'),True),
++        **dict.fromkeys(('manualDisconnect','superseded','mouseResetPending','draftComposing','draftPending',
++            'draftUncertain','firstFrameTimerHandlePresent'),False),uiPhase='connected',desiredMediaState='active',
++        mediaRuntimePhase='active',keyboardControllerState='READY',keyboardTransportState='ready',
++        surfaceState='settled',desktopWriteRecoveryState='reconciled',recoveryState='recovered')
++    return value
++
++
++def model_row(model, at, *, sample=None, events=(), socket='b'*16):
++    return dict(schemaVersion=1,scenario=model.scenario,elapsedSeconds=at,phase=model.phase,
++        qualificationEvidenceScope=runner.SCOPES[model.scenario],hostObservation=recovery_row()['hostObservation'],
++        sample=ready_sample(10+int(at)) if sample is None else sample,
++        identity=dict(sessionHash='c'*16,socketHash=socket,admissionHash='d'*16),serverEvents=list(events))
++
++
++class ClassifierTests(unittest.TestCase):
++    def model(self, scenario='within-grace'):
++        m = runner.OrdinaryRecoverySummary(scenario,'stun'); m.transition('startup')
++        m.startup = dict(runner.VERIFIED_STARTUP); m.expected_build = '0123456789abcdef'
++        m.server_coverage = 'complete'
++        for n in range(302): m.observe(model_row(m,n))
++        self.assertTrue(m.baseline_ready)
++        return m
++
++    def events(self, after=False):
++        def e(n,name,epoch=None,viewer=None,session=None,state=None):
++            return dict(n=n,event=name,serverTimestampMs=1000+n,viewerHash=viewer,sessionHash=session,
++                        leaseEpoch=epoch,state=state)
++        start = e(1,'grace-started',viewer='b'*16,session='c'*16)
++        if not after: return [start,e(2,'rebind-confirmed',3,viewer='e'*16,session='c'*16)]
++        return [start,e(2,'grace-expired',4,viewer='b'*16,session='c'*16,state='REVOKING'),
++                e(3,'reset-completed',4,state='FREE')]
++
++    def test_fractional_counters_rejected_large_bytes_accepted(self):
++        row = recovery_row(); row['sample'] = ready_sample()
++        validate_recovery_row(row)
++        for key in ('bytesReceived','framesDecoded','framesDropped'):
++            row['sample'] = ready_sample(); row['sample']['transport'][key] = 1.5
++            with self.assertRaises(ValueError): validate_recovery_row(row)
++
++    def test_within_and_after_require_order_then_stability_and_cleanup(self):
++        for scenario in ('within-grace','after-grace'):
++            m = self.model(scenario); m.observe(model_row(m,302)); m.confirm_fault(302); self.assertEqual(m.phase,'fault'); m.transition('recovering')
++            after = scenario == 'after-grace'
++            m.observe(model_row(m,303,events=self.events(after),socket='e'*16,sample=ready_sample(400,5 if after else 3)))
++            self.assertEqual(m.phase,'recovered-stability')
++            for n in range(304,334): m.observe(model_row(m,n,socket='e'*16,sample=ready_sample(100+n,5 if after else 3)))
++            self.assertEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'PASS')
++            incomplete = m.result(cleanup_complete=False)
++            self.assertEqual(incomplete['ordinaryRecovery']['status'],'INCOMPLETE')
++            self.assertEqual(incomplete['ordinaryRecovery']['reason'],'cleanup-incomplete')
++            self.assertEqual(incomplete['continuity']['status'],'INCOMPLETE')
++
++    def test_wrong_class_missing_reset_host_change_and_owner_never_pass(self):
++        for kind in ('wrong','reset','host','disconnect','owner','stale','clock','gap','human'):
++            with self.subTest(kind=kind):
++                m = self.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
++                row = model_row(m,303,events=self.events(kind in ('wrong','reset')),socket='e'*16)
++                if kind == 'reset': row['serverEvents'][-1]['leaseEpoch'] = 8
++                if kind == 'host': row['hostObservation'].update(status='changed',coverage='incomplete')
++                if kind == 'disconnect': row['hostObservation'].update(status='unavailable',coverage='incomplete',hostDisconnectObserved=True)
++                if kind == 'owner': row['identity']['admissionHash'] = 'f'*16
++                if kind == 'stale': row['serverEvents'][1]['viewerHash'] = 'f'*16
++                if kind == 'clock': row['serverEvents'][1]['serverTimestampMs'] = 999
++                if kind == 'gap': row['sample'] = None
++                if kind == 'human': row['sample']['inputGate']['superseded'] = True
++                m.observe(row)
++                if m.phase != 'terminal': m.expire(363)
++                result = m.result(cleanup_complete=True)
++                self.assertNotEqual(result['ordinaryRecovery']['status'],'PASS')
++                self.assertIsNotNone(result['failure'])
++
++    def test_phase_graph_first_failure_and_baseline_disconnect(self):
++        m = runner.OrdinaryRecoverySummary('baseline','stun')
++        with self.assertRaises(ValueError): m.transition('fault')
++        m.transition('startup'); m.startup = dict(runner.VERIFIED_STARTUP); m.expected_build = '0'*16
++        m.observe(model_row(m,0)); m.fail('cleanup-incomplete')
++        self.assertEqual(m.result(cleanup_complete=False)['failure']['reason'],'deployment-build-mismatch')
++        self.assertEqual(m.result(cleanup_complete=False)['ordinaryRecovery']['reason'],'scenario-not-requested')
++        m = self.model('baseline'); row = model_row(m,302); row['sample']['socketConnected'] = False
++        m.observe(row); self.assertEqual(m.failure['reason'],'baseline-failed')
++
++
++class FakeManager:
++    def __init__(self, fail=None):
++        self.fail=fail; self.calls=[]; self.chromium=self
++    async def start(self):
++        self.calls.append('start')
++        if self.fail=='start': raise RuntimeError('secret')
++        return self
++    async def launch(self, **kwargs):
++        self.calls.append(('launch',kwargs))
++        if self.fail=='launch': raise RuntimeError('secret')
++        return self
++    async def new_context(self, **kwargs):
++        self.calls.append(('context',kwargs))
++        if self.fail=='context': raise RuntimeError('secret')
++        return self
++    async def new_page(self):
++        self.calls.append('page')
++        if self.fail=='page': raise RuntimeError('secret')
++        return self
++    async def close(self):
++        self.calls.append('close')
++        if self.fail=='close': raise RuntimeError('secret')
++    async def stop(self): self.calls.append('stop')
++
++
++class LifecycleTests(unittest.IsolatedAsyncioTestCase):
++    async def test_factory_and_all_partial_start_failures_owned(self):
++        for stage in ('factory','start','launch','context','page'):
++            manager=FakeManager(stage); life=runner.OwnedBrowserLifecycle()
++            def factory():
++                if stage=='factory': raise RuntimeError('secret')
++                return manager
++            with self.assertRaises(RuntimeError): await life.start(factory)
++            await life.cleanup(lambda: asyncio.sleep(0,result=runner.empty_diagnostic()))
++            self.assertEqual('stop' in manager.calls, stage!='factory')
++            self.assertEqual(life.snapshot()['ownedProcessExitEvidence'],'not-observed')
++
++    async def test_close_failure_export_timeout_and_independent_stop(self):
++        for kind in ('close','export'):
++            manager=FakeManager(kind); life=runner.OwnedBrowserLifecycle(limits={'export':.04,'cleanup':.2,'managerStop':.04,'browserClose':.06})
++            await life.start(lambda:manager)
++            async def export():
++                if kind=='export': await asyncio.sleep(5)
++                return runner.empty_diagnostic()
++            await life.cleanup(export)
++            self.assertIn('stop',manager.calls)
++            self.assertEqual(life.snapshot()['cleanupStatus'],'incomplete')
++            self.assertNotIn('secret',json.dumps(life.record()))
++
++    async def test_success_status_and_disarm_before_export(self):
++        manager=FakeManager(); life=runner.OwnedBrowserLifecycle(); await life.start(lambda:manager)
++        order=[]
++        async def disarm(): order.append('disarm')
++        async def export(): order.append('export'); return runner.empty_diagnostic()
++        life.disarm=disarm; await life.cleanup(export)
++        self.assertEqual(order,['disarm','export'])
++        self.assertEqual(life.record()['python']['browserClose']['status'],'closed')
++        self.assertEqual(life.record()['python']['managerStop']['status'],'ok')
++        self.assertEqual(life.snapshot()['cleanupStatus'],'api-finished-exit-unknown')
++
++
++def ui_state(**changes):
++    return dict(shellAvailable=True,clientAvailable=True,marksAvailable=True,coreInstalled=True,
++        authVerified=True,authCaptured=True,authCurrent=True,ownerCurrent=True,selectorValid=True,proofPresent=False,
++        queuedStart=False,socketPresent=False,pcPresent=False,attemptPresent=False,
++        htmlShellMarks=1,coreInteractiveMarks=1,startClickMarks=0,
++        sessionId=None,socketId=None,admissionId=None,networkMode='stun',**changes)
++
++
++class FakePage:
++    def __init__(self, states=None, kind=None):
++        self.url='https://example.invalid/viewer.html?wrdAdmission=vacant-only-v1'
++        self.states=states or [ui_state()]; self.kind=kind; self.listeners={}; self.clicks=0; self.checks=0
++    def on(self,name,fn): self.listeners.setdefault(name,[]).append(fn)
++    def remove_listener(self,name,fn): self.listeners[name].remove(fn)
++    def emit(self,name,value):
++        for fn in self.listeners.get(name,[]): fn(value)
++    def locator(self,selector): return self
++    async def evaluate(self,script):
++        value=dict(self.states.pop(0) if len(self.states)>1 else self.states[0])
++        if self.clicks:
++            value['startClickMarks']=2 if self.kind=='double-start' else 1
++            if self.kind=='selector-after': value['selectorValid']=False
++        return value
++    async def is_visible(self): return self.kind!='hidden'
++    async def is_enabled(self):
++        self.checks+=1
++        if self.kind=='auth-change' and self.checks==2: self.states[-1]['authCurrent']=False
++        return True
++    async def click(self,**kwargs):
++        self.clicks+=1
++        request=SimpleNamespace(url='https://example.invalid/api/auth/viewer-admission',method='POST',
++            post_data=json.dumps({'viewerSessionId':'raw-session-canary','initialPolicy':'vacant-only-v1'}))
++        self.emit('request',request)
++        if self.kind=='double-api': self.emit('request',request)
++        self.emit('response',SimpleNamespace(url=request.url,status=201))
++
++
++class GuardedUiTests(unittest.IsolatedAsyncioTestCase):
++    async def test_one_click_waits_for_delayed_core_and_auth(self):
++        first=ui_state(); first.update(coreInstalled=False,authVerified=False,authCaptured=False,authCurrent=False)
++        page=FakePage([first,ui_state()])
++        value=await runner.start_guarded_via_ui(page,timeout_s=.4)
++        self.assertEqual(value,runner.VERIFIED_STARTUP); self.assertEqual(page.clicks,1)
++        self.assertNotIn('canary',json.dumps(value))
++
++    async def test_stale_work_selector_proof_auth_and_duplicate_observations(self):
++        cases=[('socketPresent',True),('pcPresent',True),('attemptPresent',True),('queuedStart',True),
++               ('selectorValid',False),('proofPresent',True),('htmlShellMarks',2),('coreInteractiveMarks',2)]
++        for field,value in cases:
++            state=ui_state(); state[field]=value; page=FakePage([state])
++            with self.subTest(field=field), self.assertRaises((ValueError,RuntimeError)):
++                await runner.start_guarded_via_ui(page,timeout_s=.05)
++            self.assertEqual(page.clicks,0)
++        for kind in ('auth-change','selector-after','double-start','double-api','hidden'):
++            page=FakePage(kind=kind)
++            with self.subTest(kind=kind), self.assertRaises((ValueError,RuntimeError)):
++                await runner.start_guarded_via_ui(page,timeout_s=.06)
++            self.assertLessEqual(page.clicks,1)
++
++    async def test_wrong_url_rejected_before_click_and_unknown_state_private(self):
++        page=FakePage(); page.url='https://example.invalid/viewer.html'
++        with self.assertRaisesRegex(ValueError,'selector-invalid'): await runner.start_guarded_via_ui(page)
++        self.assertEqual(page.clicks,0)
++        state=ui_state(); state['token']='token-canary'; page=FakePage([state])
++        with self.assertRaisesRegex(ValueError,'schema-rejected'): await runner.start_guarded_via_ui(page)
++
++
++class OwnedObservationTests(unittest.IsolatedAsyncioTestCase):
++    async def test_pair_concurrent_failure_settles_other_and_no_default_reader(self):
++        entered=asyncio.Event(); cancelled=asyncio.Event()
++        async def page():
++            entered.set()
++            try: await asyncio.Event().wait()
++            finally: cancelled.set()
++        async def status():
++            await entered.wait(); raise ValueError('host-observation-unavailable')
++        with patch.object(runner,'read_local_host_status',side_effect=AssertionError('must inject')):
++            with self.assertRaises(ValueError): await runner._observation_pair(page,status)
++        self.assertTrue(cancelled.is_set())
++        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],[])
++
++    async def test_start_observations_continue_until_ui_finishes_and_settle_on_failure(self):
++        ticks=[]; stopped=asyncio.Event()
++        async def action():
++            try: await asyncio.sleep(.045); return 'verified'
++            finally: stopped.set()
++        async def tick(): ticks.append(1)
++        result=await runner._observe_start(action(),tick,interval=.01)
++        self.assertEqual(result,'verified'); self.assertGreaterEqual(len(ticks),3); self.assertTrue(stopped.is_set())
++        stopped.clear(); entered=asyncio.Event()
++        async def pending():
++            entered.set()
++            try: await asyncio.Event().wait()
++            finally: stopped.set()
++        async def failure():
++            await entered.wait(); raise ValueError('host-replaced')
++        with self.assertRaisesRegex(ValueError,'host-replaced'): await runner._observe_start(pending(),failure,interval=.01)
++        self.assertTrue(stopped.is_set())
++
++
++class RunPreflightTests(unittest.IsolatedAsyncioTestCase):
++    async def test_invalid_manifest_persists_preflight_without_optional_imports(self):
++        with tempfile.TemporaryDirectory() as folder:
++            args=SimpleNamespace(origin='https://example.invalid',scenario='within-grace',mode='stun',
++                runtime_manifest=str(Path(folder)/'missing'),runtime_manifest_sha256='a'*64,
++                output_dir=str(Path(folder)/'out'),runtime_config=str(Path(folder)/'env'))
++            import builtins
++            real=builtins.__import__; seen=[]
++            def restricted(name,*a,**kw):
++                if name in ('dotenv','playwright.async_api'): seen.append(name); raise AssertionError('optional-import')
++                return real(name,*a,**kw)
++            with patch('builtins.__import__',restricted): result=await runner.run(args,manager_factory=lambda:None,status_reader=lambda:None)
++            self.assertEqual(result,1); self.assertEqual(seen,[])
++            value=json.loads((Path(args.output_dir)/'summary.json').read_text())
++            self.assertEqual(value['failure'],{'phase':'preflight','reason':'runtime-manifest-unavailable'})
++            self.assertIsNone(value['manifest']); self.assertEqual(value['ordinaryRecovery']['status'],'NOT_RUN')
++
++
++class RecoveryBoundaryTests(unittest.TestCase):
++    def test_lifetime_gap_does_not_erase_recovery_but_current_stall_or_no_progress_does(self):
++        helper=ClassifierTests()
++        for case in ('fresh','stale','no-progress','regressed'):
++            m=helper.model('after-grace'); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
++            for n in range(303,334):
++                count=400+n if case!='no-progress' else 703
++                if case=='regressed' and n==308: count=1
++                sample=ready_sample(count,5); sample['maxFrameGapMs']=13000
++                if case=='stale' and n==308: sample['frameAgeMs']=5000
++                m.observe(model_row(m,n,sample=sample,socket='e'*16,events=helper.events(True) if n==303 else []))
++                if m.phase=='terminal': break
++            result=m.result(cleanup_complete=True)
++            self.assertEqual(result['ordinaryRecovery']['status']=='PASS',case=='fresh')
++            self.assertEqual(result['continuity']['status'],'INCOMPLETE')
++
++    def test_recovered_stability_not_finished_and_missing_reset_deadline(self):
++        h=ClassifierTests(); m=h.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
++        m.observe(model_row(m,303,socket='e'*16,events=h.events(),sample=ready_sample(500)))
++        self.assertEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'INCOMPLETE')
++        m=h.model('after-grace'); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
++        m.observe(model_row(m,303,events=h.events(True)[:2],sample=ready_sample(500,5)))
++        m.expire(362)
++        self.assertEqual(m.failure['reason'],'reset-unconfirmed')
++        self.assertEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'INCOMPLETE')
++
++    def test_actual_reader_failure_causes_share_generic_matched_outcome(self):
++        h=ClassifierTests()
++        with tempfile.TemporaryDirectory() as folder:
++            path=Path(folder)/'signal.jsonl'; path.write_bytes(b'')
++            for cause in ('rebind-timeout','rebind-rejected','rebind-cancelled'):
++                for coverage in ('complete','incomplete'):
++                    with self.subTest(cause=cause,coverage=coverage):
++                        e=ServerRecoveryEvidence(path,SALT); e.start()
++                        start=event(); failed=rebind_event('viewer_rebind_failed',viewerId='socket-new'); failed['meta']['reason']=cause
++                        with path.open('ab') as f:
++                            for raw in (start,failed): f.write(json.dumps(raw).encode()+b'\n')
++                        events=e.read_tick(IDS); e.close()
++                        m=h.model(); m.identity=dict(sessionHash=hash_identity('session-canary',SALT),socketHash=hash_identity('socket-old',SALT),admissionHash='d'*16)
++                        m.confirm_fault(301); m.transition('recovering'); m.server_coverage=coverage
++                        row=model_row(m,302,events=events,socket=hash_identity('socket-new',SALT)); row['identity']['sessionHash']=m.identity['sessionHash']
++                        m.observe(row); result=m.result(cleanup_complete=True)
++                        self.assertEqual(result['ordinaryRecovery']['reason'],'recovery-gates-unmet')
++                        self.assertEqual(result['ordinaryRecovery']['status'],'FAIL' if coverage=='complete' else 'INCOMPLETE')
++                        self.assertNotIn(cause,json.dumps(result))
++
++    def test_foreign_failure_never_binds_current_reducer(self):
++        h=ClassifierTests(); m=h.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
++        events=h.events(); events[1].update(event='rebind-failed',sessionHash='f'*16,leaseEpoch=None)
++        m.observe(model_row(m,303,events=events,socket='e'*16))
++        self.assertIsNone(m.failure); self.assertEqual(m.classification,'unclassified')
++
++    def test_first_disconnect_terminal_even_if_current_sample_looks_ready(self):
++        h=ClassifierTests(); m=h.model('baseline'); row=model_row(m,302)
++        row['sample']['diagnostics']['firstDisconnectEvent']={'t':10,'n':1,'k':'sd','o':'s1','c':True,'r':'transport-close'}
++        m.observe(row); self.assertEqual(m.failure['reason'],'baseline-failed')
++
++
++class RuntimePage(FakePage):
++    def __init__(self,kind=None):
++        super().__init__(kind=kind); self.navigation=[]; self.selected=None; self.samples=0; self.installations=[]
++        self.login_entered=asyncio.Event()
++    def set_default_timeout(self,value): pass
++    async def add_init_script(self,value): self.installations.append('mode')
++    async def goto(self,url,**kwargs):
++        self.url=url; self.navigation.append(url); return SimpleNamespace(status=200)
++    def locator(self,selector): self.selected=selector; return self
++    async def fill(self,value): pass
++    async def click(self,**kwargs):
++        if self.selected!='#startBtn':
++            self.url='https://example.invalid/viewer.html'; return
++        return await super().click(**kwargs)
++    async def wait_for_url(self,*a,**kw):
++        self.login_entered.set()
++        if self.kind=='login-wait': await asyncio.Event().wait()
++    async def evaluate(self,script):
++        if script==runner.OBSERVATION_INSTALL: self.installations.append('observation'); return None
++        if script==runner.OBSERVE_UI: return await super().evaluate(script)
++        if 'window.__wrdPassiveSampler.sample()' in script:
++            self.samples+=1
++            if self.samples>=3 and 'finalize' not in script: raise ValueError('human-priority')
++            state=ui_state(); state['startClickMarks']=int(self.clicks>0)
++            state.update(sessionId='session-canary',socketId='socket-canary',admissionId='admission-canary')
++            sample=ready_sample(10+self.samples); sample.pop('attemptHash'); sample['attempt']='attempt-canary'
++            value=dict(state=state,sample=sample)
++            if 'finalize' in script: value['diagnostic']=runner.empty_diagnostic()
++            return value
++        self.installations.append('sampler'); return None
++
++
++class RuntimeManager(FakeManager):
++    def __init__(self,page): super().__init__(); self.page=page
++    async def new_page(self): self.calls.append('page'); return self.page
++
++
++class RuntimeRunTests(unittest.IsolatedAsyncioTestCase):
++    def setUp(self):
++        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup); self.root=Path(self.temp.name)
++        self.log=self.root/'signal.jsonl'; self.log.write_bytes(b'')
++        value=valid_manifest(self.log,round(runner.time.time()*1000)); self.manifest=self.root/'manifest.json'
++        self.manifest.write_text(json.dumps(value)); self.manifest.chmod(0o600)
++        self.args=SimpleNamespace(origin='https://example.invalid',scenario='baseline',mode='stun',runtime_manifest=self.manifest,
++            runtime_manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest(),output_dir=str(self.root/'out'),runtime_config=self.root/'env')
++        self.patch=patch.dict('sys.modules',{'dotenv':SimpleNamespace(dotenv_values=lambda _: {'VIEWER_ACCESS_PASSWORD':'password-canary'})})
++        self.patch.start(); self.addCleanup(self.patch.stop)
++    async def status(self): return dict(hostOnline=True,hostId='host-canary')
++    def summary(self): return json.loads((Path(self.args.output_dir)/'summary.json').read_text())
++
++    async def test_login_redirect_final_guarded_navigation_one_start_and_private_terminal_evidence(self):
++        page=RuntimePage(); manager=RuntimeManager(page)
++        result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
++        self.assertEqual(result,1); self.assertEqual(page.clicks,1)
++        self.assertEqual(page.navigation,['https://example.invalid','https://example.invalid/viewer.html?wrdAdmission=vacant-only-v1'])
++        self.assertEqual(page.installations,['mode','observation','sampler'])
++        self.assertEqual(self.summary()['failure']['reason'],'human-priority')
++        self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
++        output=''.join(p.read_text() for p in Path(self.args.output_dir).iterdir())
++        for private in ('password-canary','session-canary','socket-canary','attempt-canary','host-canary',str(self.log)):
++            self.assertNotIn(private,output)
++        for path in Path(self.args.output_dir).iterdir(): self.assertEqual(path.stat().st_mode&0o777,0o600)
++
++    async def test_initial_write_failure_never_constructs_manager(self):
++        calls=[]
++        with patch.object(runner.passive,'atomic_evidence',side_effect=OSError('secret-error')):
++            result=await runner.run(self.args,manager_factory=lambda:calls.append(1),status_reader=self.status)
++        self.assertEqual(result,1); self.assertEqual(calls,[])
++
++    async def test_final_write_failure_still_closes_and_stops(self):
++        page=RuntimePage(); manager=RuntimeManager(page); original=runner.passive.atomic_evidence
++        def write(path,value,**kw):
++            if not kw.get('initial'): raise OSError('secret-write')
++            return original(path,value,**kw)
++        with patch.object(runner.passive,'atomic_evidence',write):
++            result=await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status)
++        self.assertEqual(result,1); self.assertIn('close',manager.calls); self.assertIn('stop',manager.calls)
++
++    async def test_repeated_cancel_keeps_one_cleanup_coordinator_and_original_deadline(self):
++        page=RuntimePage('login-wait'); manager=RuntimeManager(page); entered=asyncio.Event()
++        async def close():
++            manager.calls.append('close'); entered.set(); await asyncio.sleep(.03)
++        manager.close=close
++        task=asyncio.create_task(runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status,
++            limits={'cleanup':.3,'export':.05,'browserClose':.1,'managerStop':.1}))
++        await page.login_entered.wait(); task.cancel(); await entered.wait()
++        for _ in range(3): task.cancel(); await asyncio.sleep(.005)
++        self.assertEqual(await task,1); self.assertEqual(manager.calls.count('close'),1); self.assertEqual(manager.calls.count('stop'),1)
++        self.assertEqual(self.summary()['failure']['reason'],'cancelled')
++        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],[])
++
++    async def test_final_status_host_change_cannot_be_cleared_by_ready_viewer(self):
++        page=RuntimePage(); manager=RuntimeManager(page); calls=0
++        async def status():
++            nonlocal calls
++            calls+=1; return dict(hostOnline=True,hostId='replacement' if calls>=4 else 'host-canary')
++        await runner.run(self.args,manager_factory=lambda:manager,status_reader=status)
++        self.assertEqual(self.summary()['hostObservation']['status'],'changed')
++        self.assertEqual(self.summary()['ordinaryRecovery']['status'],'NOT_RUN')
++
++    async def test_dependency_absence_and_absent_fault_adapter_before_manager(self):
++        import builtins
++        real=builtins.__import__; calls=[]
++        def no_dotenv(name,*a,**kw):
++            if name=='dotenv': raise ImportError()
++            return real(name,*a,**kw)
++        with patch('builtins.__import__',no_dotenv):
++            self.assertEqual(await runner.run(self.args,manager_factory=lambda:calls.append(1),status_reader=self.status),1)
++        self.assertEqual(calls,[]); self.assertEqual(self.summary()['failure']['reason'],'runtime-dependency-unavailable')
++
++
++class TerminalSafetyTests(unittest.IsolatedAsyncioTestCase):
++    async def test_first_close_retained_when_export_mutates_last_delta(self):
++        life=runner.OwnedBrowserLifecycle(); await life.start(lambda:FakeManager())
++        first={'t':10,'n':1,'k':'sd','o':'s1','c':True,'r':'transport-close'}
++        life.diagnostic['attribution']=dict(firstDisconnectEvent=first,cause='unknown')
++        async def export():
++            life.diagnostic=runner.empty_diagnostic()
++            return runner.empty_diagnostic()
++        await life.cleanup(export)
++        self.assertEqual(life.record()['diagnostics']['attribution']['firstDisconnectEvent'],first)
++
++    async def test_noncooperative_browser_close_remains_incomplete_and_manager_stops(self):
++        manager=FakeManager(); released=asyncio.Event(); task_ref=[]
++        async def close():
++            task_ref.append(asyncio.current_task())
++            while not released.is_set():
++                try: await released.wait()
++                except asyncio.CancelledError: pass
++        manager.close=close
++        life=runner.OwnedBrowserLifecycle(limits={'cleanup':.2,'browserClose':.04,'managerStop':.05,'export':.03})
++        await life.start(lambda:manager)
++        await life.cleanup(lambda:asyncio.sleep(0,result=runner.empty_diagnostic()))
++        self.assertEqual(life.python['browserClose']['status'],'noncooperative')
++        self.assertIn('stop',manager.calls); self.assertEqual(life.snapshot()['cleanupStatus'],'incomplete')
++        released.set(); await task_ref[0]
++
++    async def test_status_timeout_is_host_unavailable_and_other_child_settles(self):
++        async def page(): await asyncio.Event().wait()
++        async def status(): raise TimeoutError()
++        with self.assertRaisesRegex(ValueError,'host-observation-unavailable'):
++            await runner._observation_pair(page,status)
++
++    def test_late_expiry_and_recovered_path_change_prevent_pass(self):
++        helper=ClassifierTests()
++        for kind in ('expiry','path'):
++            m=helper.model(); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
++            m.observe(model_row(m,303,sample=ready_sample(500),socket='e'*16,events=helper.events()))
++            row=model_row(m,304,sample=ready_sample(501),socket='e'*16)
++            if kind=='expiry':
++                event=helper.events(True)[1]; event['n']=3; row['serverEvents']=[event]
++            else: row['sample']['transport']['pathIdentity']='path-2'
++            m.observe(row)
++            self.assertIsNotNone(m.failure)
++            self.assertNotEqual(m.result(cleanup_complete=True)['ordinaryRecovery']['status'],'PASS')
++
++    def test_exact_summary_rejects_unknown_private_fields_and_impossible_pass(self):
++        m=runner.OrdinaryRecoverySummary('baseline','stun'); original=m.result(cleanup_complete=False)
++        self.assertIs(runner.validate_summary(original),original)
++        for container,key,value in (('root','url','https://canary'),('fault','error','error-canary'),
++                                   ('lifecycle','token','token-canary'),('ordinaryRecovery','status','PASS')):
++            item=json.loads(json.dumps(original)); target=item if container=='root' else item[container]; target[key]=value
++            with self.subTest(container=container), self.assertRaises(ValueError): runner.validate_summary(item)
++
++
++class AdditionalOwnershipTests(unittest.IsolatedAsyncioTestCase):
++    async def test_sync_start_and_manager_exit_fallback(self):
++        calls=[]
++        class Browser:
++            def new_context(self,**kwargs):
++                calls.append(kwargs); return self
++            def new_page(self): return self
++            async def close(self): calls.append('closed')
++        class Playwright:
++            def __init__(self): self.chromium=self
++            def launch(self,**kw): return Browser()
++        class Manager:
++            def __aenter__(self): return Playwright()
++            async def __aexit__(self,*args): calls.append(('exit',args))
++        life=runner.OwnedBrowserLifecycle(); await life.start(Manager)
++        await life.cleanup(lambda:asyncio.sleep(0,result=runner.empty_diagnostic()))
++        self.assertIn({'service_workers':'block'},calls); self.assertIn(('exit',(None,None,None)),calls)
++        self.assertEqual(life.snapshot()['cleanupStatus'],'api-finished-exit-unknown')
++
++    async def test_partial_final_export_cancels_status_inside_same_deadline(self):
++        stopped=asyncio.Event(); started=asyncio.Event()
++        async def status():
++            started.set()
++            try: await asyncio.Event().wait()
++            finally: stopped.set()
++        async def page(): await started.wait(); return runner.empty_diagnostic()
++        with self.assertRaises(TimeoutError):
++            await runner.lifecycle_stage(runner._observation_pair(page,status),.12,settlement=.08)
++        self.assertTrue(stopped.is_set())
++        self.assertEqual([t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],[])
++
++    async def test_status_gap_in_startup_stops_owned_ui_and_never_restarts(self):
++        entered=asyncio.Event(); stopped=asyncio.Event(); calls=[]; observer=HostContinuityObserver(SALT)
++        observer.observe_status(dict(hostOnline=True,hostId='host-canary'),0)
++        async def action():
++            calls.append('action'); entered.set()
++            try: await asyncio.Event().wait()
++            finally: stopped.set()
++        async def tick():
++            await entered.wait(); observer.observe_status(dict(hostOnline=True,hostId='host-canary'),1600)
++            raise ValueError(observer.reason)
++        with self.assertRaisesRegex(ValueError,'host-observation-gap'):
++            await runner._observe_start(action(),tick,interval=.01)
++        self.assertTrue(stopped.is_set()); self.assertEqual(calls,['action'])
++        self.assertEqual(observer.snapshot()['coverage'],'incomplete')
++
++
++class MoreRuntimeTests(unittest.IsolatedAsyncioTestCase):
++    setUp=RuntimeRunTests.setUp
++    status=RuntimeRunTests.status
++    summary=RuntimeRunTests.summary
++    async def test_manifest_changed_during_ui_final_export_preserves_first_failure(self):
++        page=RuntimePage(); manager=RuntimeManager(page)
++        async def status():
++            self.manifest.write_bytes(self.manifest.read_bytes()+b' ')
++            return await self.status()
++        await runner.run(self.args,manager_factory=lambda:manager,status_reader=status)
++        value=self.summary()
++        self.assertEqual(value['failure']['reason'],'human-priority')
++        self.assertEqual(value['lifecycle']['cleanupStatus'],'incomplete')
++        self.assertNotIn(str(self.manifest),json.dumps(value))
++
++    async def test_fault_module_absence_before_factory_and_no_fault_does_not_import(self):
++        self.args.scenario='within-grace'
++        value=json.loads(self.manifest.read_text()); value['scenario']='within-grace'; self.manifest.write_text(json.dumps(value))
++        self.args.runtime_manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest(); calls=[]
++        with patch.dict('sys.modules',{'scripts.ordinary_recovery_fault':None}):
++            result=await runner.run(self.args,manager_factory=lambda:calls.append(1),status_reader=self.status)
++        self.assertEqual(result,1); self.assertEqual(calls,[])
++        self.assertEqual(self.summary()['ordinaryRecovery']['status'],'NOT_RUN')
++        self.assertEqual(self.summary()['failure']['reason'],'fault-capability-unavailable')
++
++
++class CliTests(unittest.TestCase):
++    def test_direct_help_and_invalid_manifest_need_no_runtime(self):
++        import subprocess
++        executable='/Users/macstudio1/.homebrew/opt/python@3.11/bin/python3.11'
++        script=str(Path(runner.__file__).resolve())
++        help_result=subprocess.run([executable,script,'--help'],capture_output=True,text=True)
++        self.assertEqual(help_result.returncode,0); self.assertIn('--runtime-manifest',help_result.stdout)
++        with tempfile.TemporaryDirectory() as folder:
++            result=subprocess.run([executable,script,'--origin','https://example.invalid','--mode','stun','--scenario','baseline',
++                '--runtime-manifest',str(Path(folder)/'missing'),'--runtime-manifest-sha256','a'*64,
++                '--output-dir',str(Path(folder)/'out')],capture_output=True,text=True)
++            self.assertEqual(result.returncode,1); self.assertEqual(result.stderr,'')
++            summary=json.loads((Path(folder)/'out'/'summary.json').read_text())
++            self.assertEqual(summary['failure']['reason'],'runtime-manifest-unavailable')
++
++
++class FinalCoverageTests(unittest.IsolatedAsyncioTestCase):
++    setUp=RuntimeRunTests.setUp
++    status=RuntimeRunTests.status
++    summary=RuntimeRunTests.summary
++
++    async def test_wrong_loaded_build_stops_before_start(self):
++        page=RuntimePage(); evaluate=page.evaluate
++        async def changed(script):
++            result=await evaluate(script)
++            if type(result) is dict and 'sample' in result: result['sample']['buildId']='f'*16
++            return result
++        page.evaluate=changed; manager=RuntimeManager(page)
++        self.assertEqual(await runner.run(self.args,manager_factory=lambda:manager,status_reader=self.status),1)
++        self.assertEqual(page.clicks,0); self.assertEqual(self.summary()['failure']['reason'],'deployment-build-mismatch')
++
++    async def test_log_alarm_still_drained_when_page_sample_fails(self):
++        page=RuntimePage(); manager=RuntimeManager(page); count=0
++        async def status():
++            nonlocal count
++            count+=1
++            if count==3:
++                raw=event('signal_socket_disconnected',meta={'role':'host','reason':'transport close'})
++                raw['domain']='signaling'; raw['correlation']={}
++                with self.log.open('ab') as f: f.write(json.dumps(raw).encode()+b'\n')
++            return await self.status()
++        await runner.run(self.args,manager_factory=lambda:manager,status_reader=status)
++        self.assertTrue(self.summary()['hostObservation']['hostDisconnectObserved'])
++        self.assertEqual(self.summary()['failure']['reason'],'human-priority')
++
++    def test_after_grace_host_replacement_or_disconnect_remains_incomplete_with_good_final_gates(self):
++        h=ClassifierTests()
++        for kind in ('replacement','disconnect'):
++            m=h.model('after-grace'); m.observe(model_row(m,302)); m.confirm_fault(302); m.transition('recovering')
++            observer=HostContinuityObserver(SALT); observer.observe_status(dict(hostOnline=True,hostId='original'),0)
++            if kind=='replacement': observer.observe_status(dict(hostOnline=True,hostId='replacement'),1000)
++            else: observer.observe_host_disconnect()
++            host=observer.observe_status(dict(hostOnline=True,hostId='original'),2000)
++            row=model_row(m,303,socket='e'*16,sample=ready_sample(500,5),events=h.events(True)); row['hostObservation']=host
++            m.observe(row); result=m.result(cleanup_complete=True)
++            self.assertEqual(result['ordinaryRecovery']['status'],'INCOMPLETE')
++            self.assertEqual(result['hostObservation']['coverage'],'incomplete')
++            self.assertTrue(row['sample']['inputAllowed']); self.assertEqual(row['identity']['admissionHash'],'d'*16)

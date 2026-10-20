@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "classification": "source-applied",
+  "frozenSHA256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
+  "tip": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "startedSHA256": "389c413e55d342259eccca5555349b1efd0fbe02d4c5992b4769920e5318fc7d",
+  "assetReviewSHA256": "30bf20addd4a6afae627266b3b214037467dd4ab31ab2d5ed307c2f885cd6d97",
+  "appliedPaths": [
+    "scripts/ordinary_session_recovery.py",
+    "scripts/test_ordinary_session_recovery.py",
+    "web-client/js/webrtc.js",
+    "web-client/js/webrtc.test.js"
+  ],
+  "quiescence": {
+    "receiptSHA256": "923c2794e0deaa86f7c9307ff87bb8e2b97c179e3a866d0b8fe345a82bd196e3",
+    "checks": [
+      {
+        "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-checks/copy-000.json",
+        "sha256": "389cfa5f593bd5472c72dc0cd3db51a34a8fc3ce728286b9e2b4c48938281322",
+        "classification": "known-identities-quiescent"
+      },
+      {
+        "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-checks/copy-001.json",
+        "sha256": "653737c12021b1ec4fc0f3a676d9c6e7044ff02424e3ed497d0700e2955e7a66",
+        "classification": "known-identities-quiescent"
+      },
+      {
+        "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-checks/copy-002.json",
+        "sha256": "0004fec7223302479ebffe374ad00864a3c0a1c004c2a0e6bf5881bd300de124",
+        "classification": "known-identities-quiescent"
+      },
+      {
+        "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r4-fix1-2spiaymm/deployment-1a71096791fb71844ae08c95c50fb9cc/quiescence-checks/copy-003.json",
+        "sha256": "1077201538a017df84db85420f8715078c43cbe03bd9a4dd49bd315bd7efdbb4",
+        "classification": "known-identities-quiescent"
+      }
+    ],
+    "scope": "task-known-recorded-identities-only",
+    "fullProcessTreeExit": "unknown"
+  },
+  "errorClass": null,
+  "integrity": {
+    "knownRegularCount": 1016,
+    "oldDistPreserved": true,
+    "oldServicesPreserved": true
+  },
+  "currentReadiness": {
+    "observedAtEpoch": 1792348219.950346,
+    "health": {
+      "healthy": true,
+      "hostOnline": true,
+      "viewerCount": 0,
+      "relayViewerCount": 0,
+      "observedAtEpoch": 1792348220.1053782
+    },
+    "identities": {
+      "signal": {
+        "pid": 33747,
+        "birthEpoch": 1792336141.182036
+      },
+      "host": {
+        "pid": 36877,
+        "birthEpoch": 1792322600.528357
+      }
+    },
+    "preserved": {
+      "identities": {
+        "tunnel": {
+          "pid": 84671,
+          "birthEpoch": 1792151067.803588
+        },
+        "watcher": {
+          "pid": 897,
+          "birthEpoch": 1790840870.948583
+        }
+      },
+      "quickURL": "absent"
+    },
+    "errors": {}
+  },
+  "automaticRollbackOrRetry": false
+}

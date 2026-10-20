@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "kind": "guarded-ordinary-qualification",
+  "scenario": "within-grace",
+  "durationSeconds": 390,
+  "workerDeadlineSeconds": 518,
+  "attemptSHA256": "a7759c8d44ecdcbaf555ba627df63616322a50c410d4dd243cf51067b391b02d",
+  "sequenceId": "e0d817ad446b77398041d33d404cda2a",
+  "attemptId": "7c4cd88fd62b2cd6484c3f5b339b2d85",
+  "productTIP": "dfb15434e79da90b803b763c533836e16c080c71",
+  "toolTIP": "2822441791b59a021556c7e4eb24715df9d5b277",
+  "priorFailureSHA256": "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9",
+  "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+  "viewerSourceTIP": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+  "failedHistory": [
+    "2f0f2a2a0774b15f8b62adef72bb997d5deeae298a06640e71583d2d3cd33242",
+    "af76a8dbeb32083ec9f8c630d7138362b3cd45d0f60ad16ad75d1a95fa025cd6",
+    "5ef3358f1a1ee0bb5ef72e816952c5874d0826c8795c67616ba0a85ff73a42b9"
+  ],
+  "runtimeManifestSHA256": "7dfe245ed37e2ee7434e4091ccf97ec4989868c0308266421c62d9a7b16223f0",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "nativeAfterGraceQualification": "NOT_RUN",
+  "sourceEvidence": "root-attested",
+  "workerRegistration": {
+    "registered": true,
+    "registrationErrorClass": null,
+    "deadlineMonotonic": 1509151.092058679,
+    "status": "registered",
+    "exitCode": null,
+    "exitObservedMonotonic": null,
+    "unresolvedChild": false
+  },
+  "workerExitCode": 0,
+  "timedOut": false,
+  "errorClass": null,
+  "cleanupErrorClasses": [],
+  "validationErrorClass": null,
+  "validationStages": {
+    "stages": {
+      "rows": "passed",
+      "worker": "passed",
+      "coverage": "passed",
+      "signals": "passed",
+      "diagnostics": "passed",
+      "source-pins": "passed",
+      "manifest": "passed",
+      "runtime-integrity": "passed",
+      "sticky-observation": "passed",
+      "terminal-evidence": "passed"
+    },
+    "firstFailedStage": null
+  },
+  "processDiagnostics": {
+    "worker": {
+      "schemaVersion": 2,
+      "scope": "diagnostic-only",
+      "role": "worker",
+      "events": [
+        {
+          "eventId": 1,
+          "scanId": 981,
+          "role": "worker",
+          "stage": "worker-loop",
+          "context": "scan",
+          "operation": "children",
+          "pid": 62684,
+          "birth": null,
+          "exception": "NoSuchProcess",
+          "errno": null,
+          "monotonic": 1508988.471467367,
+          "wall": 1792356534.260291
+        }
+      ],
+      "dropped": 0,
+      "failed": false,
+      "expectedStateExitCounts": {
+        "worker-loop": 976,
+        "cleanup": 182,
+        "result": 7
+      },
+      "gaps": [
+        {
+          "scanId": 981,
+          "eventId": 1,
+          "association": "direct-scan-error",
+          "reason": "observation-unavailable",
+          "role": "worker",
+          "stage": "worker-loop",
+          "monotonic": 1508988.471915421,
+          "wall": 1792356534.2607381
+        }
+      ],
+      "gapsDropped": 0,
+      "overflow": {
+        "events": false,
+        "gaps": false,
+        "contexts": false,
+        "counters": false
+      },
+      "limits": {
+        "events": 32,
+        "gaps": 32,
+        "contextDepth": 8,
+        "counter": 2147483647
+      }
+    },
+    "sample": {
+      "schemaVersion": 2,
+      "scope": "diagnostic-only",
+      "role": "sample",
+      "events": [],
+      "dropped": 0,
+      "failed": false,
+      "expectedStateExitCounts": {
+        "worker-loop": 0,
+        "cleanup": 0,
+        "result": 0
+      },
+      "gaps": [],
+      "gapsDropped": 0,
+      "overflow": {
+        "events": false,
+        "gaps": false,
+        "contexts": false,
+        "counters": false
+      },
+      "limits": {
+        "events": 32,
+        "gaps": 32,
+        "contextDepth": 8,
+        "counter": 2147483647
+      }
+    }
+  },
+  "observedUnexpectedCoverage": {
+    "worker": [
+      "observation-unavailable"
+    ],
+    "sample": []
+  },
+  "owned": {
+    "identities": [
+      {
+        "birth": 1792356178.875791,
+        "parent": null,
+        "firstObservedEpoch": 1792356178.879473,
+        "lastObservedEpoch": 1792356178.879473,
+        "pid": 62664,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356179.075638,
+        "parent": {
+          "pid": 62664,
+          "birth": 1792356178.875791
+        },
+        "firstObservedEpoch": 1792356179.1690528,
+        "lastObservedEpoch": 1792356534.178802,
+        "pid": 62665,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356179.7489,
+        "parent": {
+          "pid": 62665,
+          "birth": 1792356179.075638
+        },
+        "firstObservedEpoch": 1792356180.044644,
+        "lastObservedEpoch": 1792356534.1984372,
+        "pid": 62667,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356179.989274,
+        "parent": {
+          "pid": 62667,
+          "birth": 1792356179.7489
+        },
+        "firstObservedEpoch": 1792356180.0647511,
+        "lastObservedEpoch": 1792356534.216625,
+        "pid": 62668,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356180.003384,
+        "parent": {
+          "pid": 62667,
+          "birth": 1792356179.7489
+        },
+        "firstObservedEpoch": 1792356180.065079,
+        "lastObservedEpoch": 1792356534.217289,
+        "pid": 62669,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356180.070605,
+        "parent": {
+          "pid": 62667,
+          "birth": 1792356179.7489
+        },
+        "firstObservedEpoch": 1792356180.394759,
+        "lastObservedEpoch": 1792356182.4827032,
+        "pid": 62670,
+        "status": "exited"
+      },
+      {
+        "birth": 1792356182.750707,
+        "parent": {
+          "pid": 62667,
+          "birth": 1792356179.7489
+        },
+        "firstObservedEpoch": 1792356182.842616,
+        "lastObservedEpoch": 1792356534.217726,
+        "pid": 62684,
+        "status": "exited"
+      }
+    ],
+    "signals": [],
+    "allRecordedIdentitiesExited": true,
+    "completeProcessTreeExitEstablished": false,
+    "coverage": [
+      "observation-unavailable",
+      "polling-may-miss-fast-orphan",
+      "macos-check-to-signal-race",
+      "no-CDP-no-manager-proxy"
+    ]
+  },
+  "sampleOwned": {
+    "identities": [],
+    "signals": [],
+    "allRecordedIdentitiesExited": true,
+    "completeProcessTreeExitEstablished": false,
+    "coverage": [
+      "polling-may-miss-fast-orphan",
+      "macos-check-to-signal-race",
+      "no-CDP-no-manager-proxy"
+    ]
+  },
+  "sampleTriggered": false,
+  "sampling": {
+    "status": "disabled-for-entire-recovery-scenario",
+    "scope": "no Host sample during baseline, fault, recovery or stability; passive/log evidence only"
+  },
+  "completedRows": 348,
+  "observationFailure": null,
+  "samplingEnabled": false,
+  "qualification": {
+    "summarySHA256": "fbbdf19c226526a61dc26658d03d15b3ad714748a278b1e15868fdce957689f8",
+    "lifecycleSHA256": "9c8b6e2ea89986c89908b0748060d54fd66f44de20c5079f6b2e54ef194945c5",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "nativeAfterGraceQualification": "NOT_RUN",
+    "sourceEvidence": "root-attested"
+  },
+  "finalRuntimeIntegrity": {
+    "health": {
+      "healthy": true,
+      "hostOnline": true,
+      "viewerCount": 0,
+      "relayViewerCount": 0,
+      "observedAtEpoch": 1792356546.994067
+    },
+    "identities": {
+      "signal": {
+        "pid": 33179,
+        "birthEpoch": 1792348311.587397
+      },
+      "host": {
+        "pid": 36877,
+        "birthEpoch": 1792322600.528357
+      }
+    },
+    "assets": {
+      "buildId": "a3671ba674ad7516",
+      "builtAt": 1792348315201,
+      "exactFinalFileMap": {
+        "index.html": {
+          "sha256": "f1bdf0005e79c1a6d4a18bd28028e05ffa0ec8f6e0673ce29d4ac06112388721",
+          "filesystemMode": 420,
+          "bytes": 980
+        },
+        "THIRD_PARTY_LICENSES.txt": {
+          "sha256": "22d4385b199a68d9f79a0f0431f1ab32de10f12a5973070c0dcdac47958b973a",
+          "filesystemMode": 420,
+          "bytes": 3556
+        },
+        "asset-manifest.json": {
+          "sha256": "22ceb8f5040de080fc1c558a83f083cbfb516d8f23a9573bfade24d6fe62945c",
+          "filesystemMode": 420,
+          "bytes": 1456
+        },
+        "viewer.html": {
+          "sha256": "629195cde357311a63d15989fcba49845feef229073a65dd73fe5ec5011c06e0",
+          "filesystemMode": 420,
+          "bytes": 27225
+        },
+        "css/login.css": {
+          "sha256": "9c7a65725ed6e765e1b2b1f1cf2909746ad67ee3bcfafe71d3ab18dbabceadef",
+          "filesystemMode": 420,
+          "bytes": 1703
+        },
+        "css/tokens.css": {
+          "sha256": "46080bf96e2ad5564b79512d32f98079c80fcdc7f8d9d0f02875f74563b6ddab",
+          "filesystemMode": 420,
+          "bytes": 1141
+        },
+        "assets/desktop-core.aa4f7d67b87d81bf.js": {
+          "sha256": "aa4f7d67b87d81bf18370a7918064dd67aa1cc1916ccf135f1f88fe6922cc73e",
+          "filesystemMode": 420,
+          "bytes": 499722
+        },
+        "assets/desktop-core.6910769b4fc68e56.js": {
+          "sha256": "6910769b4fc68e56f0520c329c6e7a725f363e004e16e5a6eed8c349d9570ed9",
+          "filesystemMode": 420,
+          "bytes": 499705
+        },
+        "assets/viewer.47a1f5e1301264d3.css": {
+          "sha256": "47a1f5e1301264d356e74cfda6a388c1fd5c53660de3a9ba5623bbba7e917499",
+          "filesystemMode": 420,
+          "bytes": 49178
+        },
+        "assets/terminal.854a7c0fb70e8b1a.css": {
+          "sha256": "854a7c0fb70e8b1a083c16797ab827299fb18744f5ad34f227b48337e33293c6",
+          "filesystemMode": 420,
+          "bytes": 7112
+        },
+        "assets/terminal.4f94c01b7bb6c365.js": {
+          "sha256": "4f94c01b7bb6c365ef2ec10fbefced8b4c7c215d92b16da9cc49edd6f707f2d5",
+          "filesystemMode": 420,
+          "bytes": 555545
+        },
+        "assets/login.a41c71f9960c3ac7.js": {
+          "sha256": "a41c71f9960c3ac76d500aeba8a8646d6bed58219de2f6ae4e0a24fb4011e017",
+          "filesystemMode": 420,
+          "bytes": 4441
+        },
+        "assets/desktop-core.23d4e5e6416b1792.js": {
+          "sha256": "23d4e5e6416b17929c4adfcb79227687831e74455d723a02d1943b18d90bc76e",
+          "filesystemMode": 420,
+          "bytes": 500889
+        },
+        "assets/desktop-deferred.f2e69b29163ddf2c.js": {
+          "sha256": "f2e69b29163ddf2c70c0c7daefd4e308f21c2adb12d09da67c876ad20e81f77f",
+          "filesystemMode": 420,
+          "bytes": 28618
+        }
+      },
+      "fullProcessTreeExit": "unknown"
+    },
+    "preserved": true,
+    "sourceTIP": "41c7b0998859a7e9d088cefcc0f3a1eeab190684",
+    "frozenSHA256": "e5dfd7c1b9ef5a8f3a1f342268bd5784ce37d518a6e72b6b04384a0b9c957618",
+    "componentPins": {
+      "signal": "dfb15434e79da90b803b763c533836e16c080c71",
+      "host": "dfb15434e79da90b803b763c533836e16c080c71",
+      "viewer": "fefc555aea9640b563bfd22f5b36b6b8ca6365ec",
+      "tools": "2822441791b59a021556c7e4eb24715df9d5b277"
+    }
+  },
+  "postCloseOccupancy": {
+    "viewerCount": 0,
+    "relayViewerCount": 0,
+    "observedAtEpoch": 1792356546.994067,
+    "classification": "idle-observed"
+  },
+  "nextRunAdmission": "NOT_ESTABLISHED",
+  "strictFreshPreflightRequired": true,
+  "serverMapDrainEstablished": false,
+  "currentReadiness": {
+    "observedAtEpoch": 1792356547.213644,
+    "health": {
+      "healthy": true,
+      "hostOnline": true,
+      "viewerCount": 0,
+      "relayViewerCount": 0,
+      "observedAtEpoch": 1792356547.240631
+    },
+    "identities": {
+      "signal": {
+        "pid": 33179,
+        "birthEpoch": 1792348311.587397
+      },
+      "host": {
+        "pid": 36877,
+        "birthEpoch": 1792322600.528357
+      }
+    },
+    "preserved": {
+      "identities": {
+        "tunnel": {
+          "pid": 84671,
+          "birthEpoch": 1792151067.803588
+        },
+        "watcher": {
+          "pid": 897,
+          "birthEpoch": 1790840870.948583
+        }
+      },
+      "quickURL": "absent"
+    },
+    "errors": {}
+  },
+  "fullProcessTreeExit": "unknown",
+  "classification": "observed-qualification-completed",
+  "automaticNextRun": false
+}

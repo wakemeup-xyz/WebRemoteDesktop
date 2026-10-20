@@ -1,0 +1,20 @@
+{
+  "scope": "root-verified-formal-entry-to-current-local-instance",
+  "checkedAtEpochMs": 1792348604328,
+  "origin": "https://link.stockhub.wiki",
+  "hostIdEquality": true,
+  "hostIdHash": "8169c3af4d087e31",
+  "hostOnline": true,
+  "viewerCount": 0,
+  "relayViewerCount": 0,
+  "viewerBuildId": "a3671ba674ad7516",
+  "publicViewerHtmlSha256": "58fadd72521ca734ae5e913dba2c6e4e3d137945fda189abed81dfa38e33f767",
+  "localViewerHtmlSha256": "629195cde357311a63d15989fcba49845feef229073a65dd73fe5ec5011c06e0",
+  "htmlApplicationBytesExact": true,
+  "edgeFooterInsertionBytes": 367,
+  "edgeFooterInsertionSha256": "93c60d8259fef2575cae5fbccb61090109dc77933548e1d2afeb3d4c75635eb3",
+  "publicCoreSha256": "23d4e5e6416b17929c4adfcb79227687831e74455d723a02d1943b18d90bc76e",
+  "readinessClientUserAgent": "Mozilla/5.0",
+  "browserUserAgentOverridden": false,
+  "sourceEvidence": "root-attested"
+}

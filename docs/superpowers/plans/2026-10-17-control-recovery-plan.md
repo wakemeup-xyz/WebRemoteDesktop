@@ -1,5 +1,7 @@
 # Control Recovery Implementation Plan
 
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复 R1–R11，使同页短断、可靠输入 ACK 失联和异步 Host 操作都通过当前身份的 reset/lease/media 屏障自动收敛，不重放不确定输入。
@@ -10,13 +12,13 @@
 
 **Spec:** [控制恢复设计](../specs/2026-10-17-control-recovery-design.md)，服从[整改总设计](../specs/2026-10-17-reliability-latency-remediation-design.md) §5。
 
-本轮状态：计划已编写，以下所有实施、测试、构建、提交与生产验收步骤均未执行。获得后续实施授权后才能开始。以下命令默认从仓库根目录执行，括号内的 `cd python-host` 仅用于离线测试，不调用服务脚本。
+执行状态：实现、测试、独立复核及提交记录见实施记录；以下步骤保留为审查版计划，复选框不作为执行账本。真实验收逐项登记，未运行项不因离线测试通过而关闭。
 
 ## Global Constraints
 
 以下内容须逐字复制到各执行计划的 Global Constraints：
 
-1. 本轮仅诊断和文档；业务代码、运行配置、服务、tunnel 均不修改或重启。
+1. 用户后续已明确授权本轮开发、验收、启动本地 Signal/Host 并保持可用；不得停止、重启或重建 tunnel。生产 Viewer 仍须避开正在使用的会话。
 2. 后续实施沿用严格单桌面 Viewer、控制租约和 fail-closed reset 屏障；不重放投递结果不确定的点击、文本或命令。
 3. 不自动切换网络模式、TURN 节点或公网地址；保留 Quality Lock，不自动降低用户选择的分辨率。
 4. 生产 Viewer 验收必须有明确维护窗口；普通检查不得创建会抢占用户控制的 Viewer。
@@ -27,7 +29,7 @@
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-“仅诊断和文档”约束描述当前授权。计划中的代码步骤是后续获实施授权后执行的内容，不是本轮完成声明；本地部署和tunnel操作继续遵守runbook及用户直接授权。
+用户后续已授权实施和本地部署，原仅诊断约束已解除；tunnel 操作仍须直接授权。
 
 ---
 
@@ -409,7 +411,7 @@ node --test signal-server/lib/desktop-control-lease.test.js signal-server/websoc
 | R10 | 新 attempt frame 在新 ACK 前不能 active；合法早帧保留 |
 | R11 | pending legacy companion 无 stream/control/frame/ACK 权限，实际旧 producer 可被清理 |
 
-- [ ] 独立 review：重点找“检查后 await 再无条件写入”、同 epoch 不同操作、按新 map 清旧资源、无限 acquire/reset 循环、异常清新 binding，以及测试只测 helper 而绕过真实 handler 的盲点。更新需求文档只能在后续用户授权的实施任务内单独列明，不把本轮计划当作已落地功能。
-- [ ] 维护窗口验收另行授权后执行：同页短断、DC 半开、Host reset failure、不同 Viewer 顶替、媒体暂停/恢复，按 direct/TURN/显式 tunnel 分别记录。每路径至少 3 小时长会话、真实设备/Quartz/IME/公网均在本轮标 **NOT RUN**。加载与回退采用经过验证的三端匹配版本；只重启授权本地服务，不操作 tunnel。
+- [ ] 独立 review：重点找“检查后 await 再无条件写入”、同 epoch 不同操作、按新 map 清旧资源、无限 acquire/reset 循环、异常清新 binding，以及测试只测 helper 而绕过真实 handler 的盲点。更新需求文档须对应实际实现和验证结果，不把计划步骤本身当作已落地证据。
+- [ ] 在已授权的维护窗口验收：同页短断、DC 半开、Host reset failure、不同 Viewer 顶替、媒体暂停/恢复，按 direct/TURN/显式 tunnel 分别记录。每路径至少 3 小时长会话、真实设备/Quartz/IME/公网按实际完成项记录，缺测仍标 **NOT RUN**。加载与回退采用经过验证的三端匹配版本；只重启授权本地服务，不操作 tunnel。
 
-本轮完成记录：只生成 spec/plan；测试、构建、提交、生产加载及上述验收均 **NOT RUN**。
+本轮完成记录见实施报告：C1–C4 已通过代码复核并部署，真实验收发现的 C5 缺陷正在修复；业务原生输入和长会话未验收项仍保持 NOT RUN。

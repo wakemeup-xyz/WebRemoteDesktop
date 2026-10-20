@@ -8,6 +8,9 @@ function createHarness(options = {}) {
   let time = 1000;
   let nextId = 0;
   let connectionAttemptId = options.connectionAttemptId || 'attempt-1';
+  let timerId = 0;
+  const timers = new Map();
+  const timeouts = [];
   const dataChannel = [];
   const socket = [];
   const transport = KeyboardTransport.create({
@@ -24,6 +27,9 @@ function createHarness(options = {}) {
         : options.socketResult ?? true;
     },
     now: () => time,
+    setTimeoutFn(fn, ms) { const id = ++timerId; timers.set(id, { fn, due: time + ms }); return id; },
+    clearTimeoutFn(id) { timers.delete(id); },
+    onReliableAckTimeout(record) { timeouts.push(record); },
     makeInputId: () => `input-${++nextId}`,
     getConnectionAttemptId: () => connectionAttemptId,
     ackTimeoutMs: options.ackTimeoutMs || 3000,
@@ -33,7 +39,8 @@ function createHarness(options = {}) {
     transport,
     dataChannel,
     socket,
-    advance(ms) { time += ms; },
+    timeouts, timers,
+    advance(ms) { time += ms; for (const [id, t] of [...timers]) { if (t.due <= time) { timers.delete(id); t.fn(); } } },
     setConnectionAttempt(id) { connectionAttemptId = id; },
   };
 }
@@ -52,7 +59,7 @@ test('late DataChannel key is invalidated by a higher Socket reset after DataCha
   assert.equal(validateRemoteInput(h.socket[0]).ok, true);
   assert.equal(h.transport.canSendNewInput(), false);
 
-  h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'applied' });
+  h.transport.acceptAck({ schemaVersion: 2, inputIds: h.socket.at(-1).inputIds, leaseEpoch: 7, appliedSeq: 2, status: 'applied' });
   assert.equal(h.transport.canSendNewInput(), true);
   assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'duplicate' }).status, 'stale');
   assert.equal(keyId, 'input-1');
@@ -61,7 +68,7 @@ test('late DataChannel key is invalidated by a higher Socket reset after DataCha
 test('a DataChannel adapter can be re-enabled after an initial unavailable state', () => {
   const h = createHarness();
   h.transport.markAdapterUnavailable('dataChannel');
-  h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'applied' });
+  h.transport.acceptAck({ schemaVersion: 2, inputIds: h.socket.at(-1).inputIds, leaseEpoch: 7, appliedSeq: 1, status: 'applied' });
 
   h.transport.markAdapterAvailable('dataChannel');
   h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyD' } });
@@ -76,11 +83,11 @@ test('reset barrier blocks new input until its applied or duplicate acknowledgem
   const resetId = h.transport.resetBarrier('focus-lost');
   assert.equal(h.socket.length, 1);
   assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyB' } }), null);
-  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'applied' }).status, 'applied');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, inputIds: [resetId], leaseEpoch: 7, appliedSeq: 1, status: 'applied' }).status, 'applied');
   assert.equal(h.transport.canSendNewInput(), true);
 
   const secondReset = h.transport.resetBarrier('focus-lost-again');
-  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 2, status: 'duplicate' }).status, 'duplicate');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, inputIds: [secondReset], leaseEpoch: 7, appliedSeq: 2, status: 'duplicate' }).status, 'duplicate');
   assert.equal(h.transport.canSendNewInput(), true);
   assert.equal(resetId, 'input-1');
   assert.equal(secondReset, 'input-2');
@@ -122,7 +129,7 @@ test('resync-required and sequence gaps preserve one Socket reset barrier', () =
   assert.deepEqual(h.socket[0].payload, { reason: 'transport-change' });
   assert.equal(validateRemoteInput(h.socket[0]).ok, true);
   assert.equal(h.transport.canSendNewInput(), false);
-  assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 3, status: 'applied' }).status, 'resync-required');
+  assert.equal(h.transport.acceptAck({ schemaVersion: 2, inputIds: h.socket.at(-1).inputIds, leaseEpoch: 7, appliedSeq: 3, status: 'applied' }).status, 'resync-required');
   assert.equal(h.socket.length, 1);
   assert.equal(h.transport.canSendNewInput(), false);
 });
@@ -161,7 +168,7 @@ test('terminal v2 acknowledgement errors revoke the local lease without advancin
     }).status, 'reacquire-required');
     assert.equal(h.transport.getSnapshot().state, 'reacquire-required');
     assert.equal(h.transport.getSnapshot().lastApplied, 0);
-    assert.equal(h.transport.getSnapshot().pendingCount, 1);
+    assert.equal(h.transport.getSnapshot().pendingCount, 0);
     assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyB' } }), null);
   }
 });
@@ -185,14 +192,17 @@ test('expired reset barrier requires lease reacquisition before accepting new in
   assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyR' } }), 'input-2');
 });
 
-test('pending ledger is bounded at 256', () => {
+test('pending capacity freezes before numbering and does not invent applied progress', () => {
   const h = createHarness();
-  for (let index = 0; index < 300; index += 1) {
-    const id = h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: `Key${index}` } });
-    assert.equal(id, `input-${index + 1}`);
+  for (let index = 0; index < 32; index += 1) {
+    assert.equal(h.transport.send({ action: 'keydown', payload: { code: `Key${index}` } }), `input-${index + 1}`);
   }
-  assert.equal(h.transport.getSnapshot().pendingCount, 256);
-  assert.equal(h.dataChannel.length, 300);
+  assert.equal(h.transport.send({ action: 'keydown', payload: { code: 'Overflow' } }), null);
+  assert.equal(h.transport.getSnapshot().pendingCount, 32);
+  assert.equal(h.transport.getSnapshot().lastSent, 32);
+  assert.equal(h.transport.getSnapshot().lastApplied, 0);
+  assert.equal(h.timeouts.length, 1);
+  assert.equal(h.dataChannel.length, 32);
 });
 
 test('a rejected DataChannel keyup fails closed through one Socket reset barrier', () => {
@@ -216,7 +226,7 @@ test('a rejected DataChannel keyup fails closed through one Socket reset barrier
     assert.equal(h.transport.canSendNewInput(), false);
     assert.equal(h.transport.send({ type: 'keyboard', action: 'keydown', payload: { code: 'KeyB' } }), null);
 
-    h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 3, status: 'applied' });
+    h.transport.acceptAck({ schemaVersion: 2, inputIds: h.socket.at(-1).inputIds, leaseEpoch: 7, appliedSeq: 3, status: 'applied' });
     assert.equal(h.transport.canSendNewInput(), true);
   }
 });
@@ -334,7 +344,7 @@ test('no-argument reset barrier uses the valid unspecified reason', () => {
   assert.equal(validateRemoteInput(h.socket[0]).ok, true);
 });
 
-test('pending reset exposes only its safe identity fields and records send attempt internally', () => {
+test('pending reset returns memory-only scope while public snapshot omits socket identity', () => {
   const h = createHarness();
   const resetId = h.transport.resetBarrier('attempt-boundary');
   assert.deepEqual(h.transport.getPendingReset(), {
@@ -342,6 +352,7 @@ test('pending reset exposes only its safe identity fields and records send attem
     seq: 1,
     leaseEpoch: 7,
     connectionAttemptId: 'attempt-1',
+    socket: null, socketId: null,
   });
   assert.equal(h.transport.getPendingReset().connectionAttemptId, 'attempt-1');
 });
@@ -375,4 +386,68 @@ test('a reset barrier from an old attempt is replaced instead of being relabeled
     status: 'applied',
   }).status, 'applied');
   assert.equal(h.transport.canSendNewInput(), true);
+});
+
+
+test('ordinary pending keyboard owns a real earliest deadline without polling snapshots', () => {
+  const h = createHarness();
+  h.transport.send({ action: 'keydown', payload: { code: 'KeyA' } });
+  h.advance(1000);
+  h.transport.send({ action: 'keyup', payload: { code: 'KeyA' } });
+  assert.equal(h.timers.size, 1);
+  h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'applied' });
+  h.advance(2001);
+  assert.equal(h.timeouts.length, 0);
+  h.advance(1000);
+  assert.equal(h.timeouts.length, 1);
+  assert.equal(h.timeouts[0].seq, 2);
+  assert.equal(h.transport.canSendNewInput(), false);
+  h.advance(10000);
+  assert.equal(h.timeouts.length, 1);
+});
+
+test('changing lease cancels ordinary pending deadline', () => {
+  const h = createHarness();
+  h.transport.send({ action: 'keydown', payload: { code: 'KeyA' } });
+  h.transport.setLease({ leaseId: 'new-lease', leaseEpoch: 8 });
+  h.advance(4000);
+  assert.equal(h.timeouts.length, 0);
+  assert.equal(h.timers.size, 0);
+});
+
+
+test('attempt invalidation cancels timer without resetting sequence or claiming progress', () => {
+  const h = createHarness();
+  h.transport.send({ action: 'keydown', payload: { code: 'KeyA' } });
+  h.setConnectionAttempt('attempt-2');
+  h.transport.connectionScopeChanged();
+  assert.equal(h.timers.size, 0);
+  h.advance(5000);
+  assert.equal(h.timeouts.length, 0);
+  assert.equal(h.transport.getSnapshot().lastSent, 1);
+  assert.equal(h.transport.getSnapshot().lastApplied, 0);
+  assert.equal(h.transport.canSendNewInput(), false);
+});
+
+
+test('peekAckMetadata is payload free, detached and does not expire or mutate pending resets', () => {
+  let now = 1000;
+  const sent = [];
+  const transport = KeyboardTransport.create({ now: () => now, makeInputId: () => 'peek-id',
+    getConnectionAttemptId: () => 'peek-attempt', setTimeoutFn: () => 1, clearTimeoutFn() {},
+    sendSocket(payload) { sent.push(payload); return true; } });
+  transport.setLease({ leaseId: 'lease-for-test-0001', leaseEpoch: 7 });
+  const id = transport.resetBarrier('focus-lost');
+  const before = transport.getSnapshot();
+  now = 30000;
+  const meta = transport.peekAckMetadata({ inputIds: [id] });
+  assert.deepEqual(meta, { action: 'reset', reliable: true, matchedReliablePending: true,
+    connectionAttemptId: 'peek-attempt' });
+  meta.action = 'modified';
+  assert.equal(transport.peekAckMetadata({ inputIds: [id] }).action, 'reset');
+  // getSnapshot itself expires barriers, so restore the clock before asking it.
+  now = 1000;
+  assert.deepEqual(transport.getSnapshot(), before);
+  assert.equal(sent.length, 1);
+  assert.equal(transport.peekAckMetadata({ inputIds: ['unknown'] }), null);
 });

@@ -43,6 +43,43 @@ function decide(env, state) {
   return { result, out, statePath };
 }
 
+test('production entry exec preserves the actual coordinator as the lock owner', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-watch-exec-'));
+  const fixtureWatch = path.join(dir, 'watch-fixed-domain.sh');
+  fs.copyFileSync(watchPath, fixtureWatch);
+  fs.copyFileSync(path.join(__dirname, 'lib-fixed-domain.sh'), path.join(dir, 'lib-fixed-domain.sh'));
+  // Deliberately replace the coordinator with a harmless PID-only fixture:
+  // no observation, notification, network or recovery code can run.
+  fs.writeFileSync(path.join(dir, 'wrd_watch_coordinator.py'),
+    'import os,time\nprint(os.getpid(), flush=True)\ntime.sleep(30)\n');
+  const lock = path.join(dir, 'watch.lock');
+  const child = spawn('bash', [fixtureWatch], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, WRD_FIXED_WATCH_LOCK: lock,
+      WRD_FIXED_WATCH_PID_FILE: path.join(lock, 'pid'), WRD_FIXED_WATCH_START_FILE: path.join(lock, 'start'),
+      WRD_FIXED_WATCH_SIGNATURE_FILE: path.join(lock, 'signature'), WRD_FIXED_WATCH_INIT_MARKER: path.join(lock, 'initializing'),
+      WRD_FIXED_WATCH_SOURCE_ONLY: '0', WRD_FIXED_WATCH_ONCE: '0', WRD_FIXED_WATCH_LOG: path.join(dir, 'watch.log') },
+  });
+  const exit = new Promise(resolve => child.once('exit', resolve));
+  try {
+    const pid = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('fixture coordinator did not start')), 5000);
+      let output = '';
+      child.stdout.on('data', data => {
+        output += data;
+        if (/^\d+\n/.test(output)) { clearTimeout(timer); resolve(Number(output.trim())); }
+      });
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+    });
+    assert.equal(pid, child.pid, 'no surviving coordinator child after shell death');
+    assert.equal(Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8').trim()), pid);
+  } finally {
+    child.kill('SIGTERM');
+    await exit;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('watch never references quick tunnel or local app killers', () => {
   const src = fs.readFileSync(watchPath, 'utf8');
   assert.doesNotMatch(src, /run-safe-quicktunnel|pkill\s+-f\s+'?node server\.js|restart-host\.sh/);
@@ -57,6 +94,15 @@ test('origin-down does not restart', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(out.action, 'none');
   assert.equal(out.status, 'origin-down');
+});
+
+test('decide-only leaves the production writer state untouched', () => {
+  const original = { failStartedAt: 100, restarts: [], lastRestartAt: null };
+  const { out, statePath } = decide(
+    { NOW_EPOCH: '400', ORIGIN_OK: '1', FORMAL_OK: '0' }, original,
+  );
+  assert.equal(out.action, 'restart');
+  assert.deepEqual(JSON.parse(fs.readFileSync(statePath, 'utf8')), original);
 });
 
 test('formal-down below threshold does not restart', () => {

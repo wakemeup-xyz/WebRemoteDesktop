@@ -78,6 +78,7 @@ test('interval media stats derive canonical deltas instead of session averages',
     packetsLostDelta: 2,
     bytesDelta: 4000,
     jitterBufferMs: 120,
+    decodeMs: null,
     framesDroppedDelta: 3,
     packetsReceivedDelta: 60,
     nackCountDelta: 3,
@@ -170,4 +171,21 @@ test('sampler owns one timer and ignores overlapping samples', async () => {
 
   assert.equal(timers.size, 0);
   assert.equal(sampler.snapshot(), null);
+});
+
+test('missing interval timing and candidate RTT remain unavailable instead of zero', () => {
+  for (const value of [null, undefined, '', NaN, Infinity]) {
+    const snapshot = WebRtcStats.normalizeStats(stats([
+      { id: 'pair', type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: value },
+      { id: 'inbound', type: 'inbound-rtp', kind: 'video', jitterBufferDelay: value,
+        jitterBufferEmittedCount: value, totalDecodeTime: value },
+    ]), null, 1000);
+    assert.equal(snapshot.rttMs, null); assert.equal(snapshot.jitterBufferMs, null); assert.equal(snapshot.decodeMs, null);
+  }
+});
+
+test('decode averages use same-interval decoded frame count and time', () => {
+  const result = WebRtcStats.deriveIntervalMediaStats({ sampledAt: 1000, framesDecoded: 10, totalDecodeTime: .1 },
+    { sampledAt: 2000, framesDecoded: 20, totalDecodeTime: .3 });
+  assert.ok(Math.abs(result.decodeMs - 20) < .00001);
 });

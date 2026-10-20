@@ -1,0 +1,51 @@
+# Task 6 independent scoped review — c78a26e..a41d054
+
+## Findings first
+
+No Critical, Important or Minor actionable finding in the assigned Task 6 documentation scope. No source-code finding arose from the focused contract checks below.
+
+**Spec compliance: Approved for Task 6.** The two assigned documents accurately record the approved guarded-ordinary contract, the combined regression and the remaining root gates. The separately reviewed `c10f0aa` fixture correction is represented with its own owner, scope and actual 307-test result.
+
+**Quality: Approved for Task 6.** The report preserves the original failures, distinguishes historical/source/loopback/runtime evidence and states the limitations of privacy scans and cleanup. This approval is not the final whole-increment source/tool-boundary approval or permission to infer live qualification.
+
+## Scope and review basis
+
+Reviewed the supplied complete three-commit package `review-c78a26e..a41d054.diff`: `ec163c2`, `c10f0aa`, `a41d054`. Task 6 owns only:
+
+- `docs/superpowers/reports/2026-10-18-guarded-ordinary-recovery-review.md`
+- `docs/superpowers/specs/2026-10-17-viewer-admission-recovery-addendum.md`
+
+The package's additional one-line `web-client/js/webrtc.test.js` change belongs to the original Task 2 correction. Read its independent `task-2-fixture-fix-review.md`; the actual standard `URLSearchParams` global is supplied at the browser fixture boundary without parser/admission stubs, weaker assertions or product changes. No broader Task 2 review was substituted here.
+
+Read Task 6 brief, global constraints, implementation report, integration context, latest bounded-log context, the binding guarded-ordinary design/plan, relevant canonical Task 1/3/4/5 and fix reviews, and focused current source/tests. This is a task-scoped spec-and-quality review, not a commit-anchor/whole-branch review.
+
+## Contract checks
+
+- Human priority and capacity: `signal-server/lib/viewer-admission.js:35` checks retained human/legacy owner and every live unconsumed human intent, including stale pending human tickets. `:47` captures time once and validates before effective-capacity calculation; `:63` mutates only after success. Guard issuance captures the fence, human issuance advances it and revokes only unconsumed live guards. Live consumed records remain replay evidence through TTL. The addendum describes this distinction and the permanent loss of old guarded authority after later human admission without claiming that an unconsumed human intent revokes the current owner's resume.
+- Initial acceptance and rejection: admission `:74` verifies binding/TTL/fence and fresh server context before consuming. `signal-server/routes/auth.js:94` distinguishes absent own policy from invalid present values, checks role/proof-only constraints and emits the existing admission response. `signal-server/websocket/runtime-context.js:114` and `:120`, plus signaling `:1096` through map claim, support the documented synchronous snapshot/consume/epoch/claim sequence. Guard rejection does not use cleanup to mutate expired records, advance epochs or disturb the outstanding proof.
+- Proof interleavings: runtime proof success clears ordinary history; accepted ordinary admission clears proof reservations. Merely issuing/rejecting a guard does neither. The actual-handler tests exercise proof-first/guard-first and rejection preservation; documentation retains strict one-use/nonresumable proof.
+- ACK and ownership barriers: `signal-server/websocket/viewer-admission.integration.test.js:81` runs both human and guarded owners inside and after grace. It checks no pre-ACK grant, current rebind ACK inside grace, and reset-applied/FREE plus new grant after grace. The late operation/current-Host cases at `:323` remain separate fences. Fake offline ACKs are expressly not described as native acceptance.
+- Viewer selector/auth/episode contract: `web-client/js/webrtc.js:2864` parses exactly one exact selector; request code captures policy and rejects proof conflict before fetch, rechecks selector/proof/token/auth generation/request sequence/episode after the response, and never retries without policy. The documentation's fixture diagnosis agrees with the real parser and VM boundary.
+- Log/HTTP/browser singleton ownership: runner `ServerRecoveryEvidence.start()` is one-shot and enforces file identity, 65536-byte tick, 16384-byte line and 1024-event caps. `read_local_host_status()` reserves its own local task through wrapper settlement and clears only matching completed ownership. `OwnedBrowserLifecycle` uses one cleanup coordinator/deadline, attempts browser and manager teardown independently and labels successful API cleanup `api-finished-exit-unknown`, with process exit `not-observed`. The docs do not turn these into process-tree exit proof.
+- Output privacy and bounds: runner validators use exact-key schemas for row, identity, selected events, manifest projection, lifecycle, fault and summary. Raw browser/Host identities become salted hashes before persisted evidence; origin/log paths and raw exception messages are not projected into output. Relevant schema/privacy-canary tests cover extra raw ID/token/URL fields and fixed errors. The addendum/report do not claim a complete audit of all production logs.
+- Evidence scope and failure honesty: fixed scenario scopes agree with `ordinary_recovery_fault.py` and `validate_fault`/`validate_summary`. Within-grace captures unchanged constructor/prototype.close on a route-free page; after-grace uses the supported routed wrapper and 12-second own-page block. Native after-grace stays `NOT_RUN`. Failure is sticky, including final adapter snapshot; matched rebind failure projects to generic `recovery-gates-unmet`, not an inferred raw cause. Main dependency precedence remains the approved runtime-dependency branch before adapter capability. Missing coverage cannot create PASS.
+
+## Recorded regression evidence checked without rerun
+
+- Read initial `task-6-node.log` result at lines 4230–4237: **608 tests / 584 pass / 24 fail**, duration **31193.301565 ms**, and time tail **real 31.29 s**. Its **192444 bytes** and SHA256 `57045a6bf134eb8cc8d89bd185588f612886654314119951bf7b8c983bd65f16` match the report. Exit 1 is recorded by the implementation handback. The 24 failures and fixture explanation are retained, not relabeled PASS.
+- Read corrected `task-2-fixture-fix-node.log` tail and independent correction review: **307 / 307 PASS**, duration **29775.633427 ms**, exit 0 recorded by that implementation/review. The remaining **301** tests are expressly the unaffected initial passes; the documents never claim a new single-invocation 608/608 result.
+- Read `task-6-python.log`: **160 tests, OK**, unittest **40.746 s**, **real 40.98 s**, **292 bytes**, SHA256 `031496eff09d227ca2b70b22ef7561664244a9d35c2c49ebd608524934bcfb71`. Exit 0 is recorded by the implementation handback. The report distinguishes 79 runner + 26 adapter + 55 passive methods from 27 VM scenarios and does not add prior repeated runs to the total.
+- Read root API result JSON and log summary: exact pinned Node `--test --test-concurrency=1 signal-server/test/viewer-admission-api.test.js signal-server/test/proof-admission.test.js`; **exit 0 / 8 PASS**, **33343.015324 ms**, wall **34.53632996487431 s**, **1980 bytes**, SHA256 `0df94ccbfc75f23925c19f70f934bff2ad08b930c502d3708850b0dfd7ad3784`. This is the explicitly permitted root-only ephemeral-loopback gate, not production reachability or deployment evidence.
+- Exact scoped Node/Python command paths, executables, serial ordering, private log destinations, historical asyncio diagnostics and prior review scopes are documented. No cosmetic rerun or manufactured RED is required for this documentation-only task.
+
+## CannotVerify and remaining gates
+
+- **CannotVerify live state:** no current production source/assets, process/service health, Host online state, tunnel identity, runtime passwords, browser provenance or actual process-tree exit was checked here. The report explicitly says source is not deployed and separates older production identities from current source.
+- **CannotVerify qualification:** baseline300, native-direct within-grace, routed after-grace, fresh route-free10800 continuity, native after-grace and businessInput/visibleEffect/physical were not run in this review. Existing longA INCOMPLETE, natural WS1006 first-hop UNKNOWN and cleanup gaps remain unresolved; shortB/older three-hour PASS cannot qualify this release.
+- **CannotVerify final integration:** the actual purecollector/CLI/schema/count/startup integration and the final most-capable whole-increment source/tool-boundary review remain root-owned pending gates. Static R6/source-contract audit and purecollector R2 approvals are not execution receipts.
+- **CannotVerify independent preservation/secret audit:** this review did not re-establish the task-start hashes of four pre-existing dirty documents, strict helper/sampler/SUP, the node_modules link or the primary/W2 state. Nor did it independently repeat the reported all-37 archive digest check or root's 57-document/48-log exact-config-secret scan. Those remain explicitly attributed implementation/root evidence, with no claim of complete production-log coverage. The three task/API log byte lengths and digests above were independently checked.
+- **CannotVerify historical completeness:** the rolling72h summary is bounded archival evidence. Its missing Host prefix, mixed ownership/version close records, receipt tail gap, unavailable latency/visible/physical metrics and noncausal low-level connector observations are retained rather than promoted to an SLA or causal explanation. No new runtime sampling was performed.
+
+## Review actions and write boundary
+
+Performed only bounded file/diff/source/log reads and checksum/count inspection. No tests or product imports/execution, network/API request, process/status inspection, build, browser, service, native/proof/input operation, Git/index mutation, primary checkout edit or subagent was performed. The checksum utility emitted local locale-fallback warnings; these are reviewer command output, not alterations to the retained test logs. This private review file is the sole write.

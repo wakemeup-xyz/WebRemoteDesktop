@@ -1,0 +1,454 @@
+--- R2/CONTRACT.md
++++ R3/CONTRACT.md
+@@ -49,3 +49,7 @@
+ All identifiers are distinct fresh32lowerhex; old known nonces and second/third sequence/attempt IDs are rejected. Mode `relay`; origin formal `https://link.stockhub.wiki`. priorFailureSHA256 is third5ef3358..., failedHistory includes all3. First baseline previousResult=null; each later case references the actual successful immediately preceding scenario result in this same sequence. Budgets are300/390/390/10800 seconds. A scenario reservation is consumed before runtime preparation; its failure does not clear that reservation. Runtime-manifest schema remains producer-compatible with separate backend/source tree, Viewerfefc/build and final tool source file pins.
+ 
+ No automatic launch, next attempt, owner clearing, reclaim, proof/ticket operation or retry is included. Each real scenario requires fresh strict idle/human-priority preflight even if the prior final occupancy was idle. Ordinary terminal integrity may observe normal post-close occupancy without claiming it belongs to the worker or draining it.
++
++## R3 builder endpoint diagnostic evidence
++
++Each endpoint child result must now include processDiagnostics (exact schema2 diagnostic-only roleworker snapshot) and diagnosticsErrorClass=null. Snapshot fields are schemaVersion/scope/role/events/dropped/failed/expectedStateExitCounts/gaps/gapsDropped/overflow/limits. failed=false, all overflow flags=false, dropped/gapsDropped=0; limits events32/gaps32/contextDepth8/counter2147483647. Lists, counters, enums, nullable identity fields, finite clocks, event ordering, direct scan association and serialized≤32768bytes are validated. Supported events alone do not override unchanged Registry decisions; original coverage/signals/full-tree constraints are still mandatory. Old endpoint records without diagnostics are not valid new R3 build evidence. No actual diagnostic snapshot is pre-created by preparation.
+--- /dev/null
++++ R3/R3-HISTORICAL-FAILURES.json
+@@ -0,0 +1,22 @@
++{
++  "schemaVersion": 1,
++  "scope": "historical evidence only; never success or replay authority",
++  "records": {
++    "r1FreezeFailure": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
++      "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
++    },
++    "r2BuildFailure": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6/deployment-1a04390f599949ea9bf756f7b3390a36/build-result.json",
++      "sha256": "d6cdeec27ec086f43b97f1f2d79437bf27b203ae6addfb0817f1f0aa1a248c31"
++    },
++    "assessment": {
++      "path": "/tmp/wrd-private-build-observation-failure-assessment-20261019.md",
++      "sha256": "961eb1b80f3b7a3f67144f8a1152d8190b5b0565478269cd3f462eb9a10a1f8a"
++    },
++    "rejectedAssetReview": {
++      "path": "/tmp/wrd-startup-join-r2-actual-assets-review-20261019.md",
++      "sha256": "02933832a6c4885b329ae182aeddcf30745e2de3115c82071c780709465fab6f"
++    }
++  }
++}
+--- /dev/null
++++ R3/R3-static-verification.json
+@@ -0,0 +1,45 @@
++{
++  "kind": "r3-static-preparation-parity",
++  "changedInheritedCode": [
++    "build_primitives.py",
++    "deployment.py"
++  ],
++  "unchangedInheritedCode": [
++    "apply-frontend-context.py",
++    "asset_template.py",
++    "bindings.py",
++    "build-frontend-template.py",
++    "continuation_common.py",
++    "core.py",
++    "freeze-frontend-context.py",
++    "known_attempt_quiescence.py",
++    "mixed-native-integration.py",
++    "operational_common.py",
++    "ordinary-continuation-supervisor.py",
++    "owned_reload.py",
++    "policy.py",
++    "prepare-attempt.py",
++    "prepare-deployment-quiescence.py",
++    "prepare-frontend-sequence.py",
++    "private-builder-entry.js",
++    "process_observation_diagnostics.py",
++    "qualification_evidence.py",
++    "readiness-frontend.py",
++    "readiness_records.py",
++    "restart-signal-frontend.py",
++    "source_review_gate.py",
++    "test_continuation_guards.py",
++    "test_source_receipt_flow.py",
++    "test_successor_policy.py",
++    "test_supervisor_registration.py",
++    "validation_stages.py"
++  ],
++  "targetedMethods": 7,
++  "targetedResult": "PASS",
++  "nineteenAndThreeSuites": "NOT_RERUN",
++  "originalRegistrySHA256": "d03cc2025f41d26c0079d3f820fdb2cd5479ae14448fb1c6f91c4589d6bd5c7b",
++  "diagnosticsSHA256": "00bd2366d770b9e65b272acadf54027c77cde48050b12106a2fd79338059f82b",
++  "sourceBindingSHA256": "70f386dd393532b7c09656cb98e08aae7a8e7174f3c3eaf51fd0922907751453",
++  "operations": "NOT_RUN",
++  "pythonAST": "PASS"
++}
+--- R2/REPORT.md
++++ R3/REPORT.md
+@@ -1,10 +1,26 @@
+ # Viewer + ordinary-tools successor — prepared, operational review pending
+ 
+-Package: `/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6`.
++Package: `/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r3-_77m0ogi`.
+ 
+-This package is prepared and hash-sealed for independent review. No operational entrypoint, private build, native integration checker, source publication, service/status/network/browser/process observation, sequence, nonce, or execution receipt was run/created here. The name retains `draft` for path stability. A separate root-created EXECUTION-REVIEW.json and real per-stage receipts are mandatory before operations; none is supplied by preparation.
++This package is prepared and hash-sealed for independent review. No operational entrypoint, private build, native integration checker, source publication, service/status/network/browser/process observation, sequence, nonce, or execution receipt was run/created here. A separate root-created EXECUTION-REVIEW.json and real per-stage receipts are mandatory before operations; none is supplied by preparation.
+ 
+-## R2 exact delta and retained R1 failure
++## R3 current delta — builder observation only
++
++The new package changes exactly two inherited runtime files: build_primitives.py and deployment.py. Source41, Viewerfefc, tools282, final fix3 receipt, four existing source-copy paths, known1016 source map, Host/tunnel/watch and all earlier qualification constraints remain unchanged. All other inherited Python/JavaScript files are byte-identical. No actual R3 operation has run. Fresh independent review, EXECUTION-REVIEW, deployment decision and build window are required; no old context is replayable.
++
++Root's actual R2 freeze succeeded, but the first lower builder result failed with observation-unavailable despite helperExit0,5.472s, two recorded identities exited and zero recorded signals. The exception detail was not retained. No upper/template/source copy/reload followed; asset review rejected it. R3-HISTORICAL-FAILURES.json pins that result(d6cdeec...), the R1 reference-schema failure(da1d584...), the static assessment(961eb1...), and rejected asset review(029338...). Their classifications do not change.
++
++child_owned now constructs the unchanged approved module35 Diagnostics with worker role and instrument_registry(original Registry). Root registration uses diagnostic.process for the same already requested PID. Existing loop/scans/signals/cleanup bounds remain; it sets cleanup/result stages, snapshots diagnostics BEFORE ok, persists processDiagnostics/diagnosticsErrorClass, and vetoes diagnostic.failed or snapshot failure. The existing180s deadline placement and one3s owned cleanup remain unchanged. INHERENT, all-recorded exit, original coverage veto and full-tree unknown remain unchanged. A supported exception event is not automatically diagnostic.failed: a transient state AccessDenied may leave original coverage unchanged, while scan NoSuchProcess/AccessDenied/OSError still adds observation-unavailable and still fails.
++
++deployment.asset_context now explicitly consumes each endpoint's present bounded schema2 worker snapshot. It rejects missing/null/extra/malformed fields, failed, drop/overflow flags, incorrect limits, counters/tags/clocks/IDs or unbounded lists/serialization; requires diagnosticsErrorClass present and null. It preserves original cr classification/errors/coverage/signals checks. Direct scan gap association must refer to a matching recorded event; expected state exits have their separate counters. Diagnostic acceptance is not a replacement for ownership coverage.
++
++The separate builder Popen-registration latent gap is intentionally NOT fixed: deadline remains assigned after add_root, and an early registration failure does not gain a new Popen watcher. It remains a qualification veto and grants no unknown PID authority. The actual R2 failure had the root and child recorded, null errorClass and exit0, so this distinct path was not the observed failure. No extension to the original deadline or retry was introduced. This observability delta does not establish the historical gap cause or guarantee a future pass; retry-to-pass is not authorized.
++
++Actual targeted pure command in this R3 directory: `python3 -B -m unittest -v test_builder_diagnostics > builder-diagnostics-pure-run-1.log 2>&1`. Seven methods PASS in2.444s; no repeat. Tests execute actual child_owned, exact original Registry/Capacity AST, exact approved diagnostics definitions, and actual asset_context plus actual new validator AST. All process/Popen/Git-free filesystem/clocks are injected; only the child_owned local import is removed to supply fake psutil. No operational module is imported. R2/R3 child process-call ledgers and original ownership/coverage/signals/result fields match in normal, scan errors, supported state event, unsupported and overflow cases. Consumer positives and missing/null/failed/overflow/type/role/extra/count/limits/oversized/event/snapshot-error negatives execute the actual consumer. Existing coverage and signal vetoes are separately exercised. Old19 and source-ref3 suites are inherited evidence, NOT rerun.
++
++The next root window must be new and future, width≤600s; account for measured freeze/context-validation cost when choosing it. Never extend the consumed R2 window. Same CLI entrypoints below apply to this R3 path. Builder diagnostics add no new public/source/operator input schema, only bounded endpoint result evidence and its explicit consumer. The actual mixed checker remains NOT RUN here and must still run after approved actual private template and before source copy.
++
++## Historical R2 exact delta and retained R1 failure
+ 
+ R1 root execution attempted freeze once and exited1 at source_review_gate.py14: actual check_ref rejected canonicalPatch's extra bytes/gitDiffFlags keys. It stopped before decision validation or deployment mkdir; root verified no build/publication/reload or primary mutation. Original EXECUTION-REVIEW and deployment decision are consumed and retained. Root failure receipt is `/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json`, SHA256 `da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e`.
+ 
+@@ -31,7 +47,7 @@
+ 
+ `bindings.py` derives the actual1016 map and all3 failed histories; final binding is metadata-only FINAL-BINDING.json. `source_review_gate.py` verifies exact final receipt, all four component/preimage pins, explicit docs complement, reviewed tool and Viewer component identities, unchanged backend/builder/runtime dependencies, source4dirty/node guards and historical deployment linkage. `policy.py` contains pure partition/map/build-input rules.
+ 
+-`deployment.py` and `freeze-frontend-context.py` restrict the proven R5 machinery to four existing replacements. All Viewer source inputs plus five unchanged builder/package inputs are privately frozen. `build-frontend-template.py`, `build_primitives.py`, `private-builder-entry.js`, `asset_template.py`, apply/reload/readiness modules and original validators remain byte-identical to R5 except the explicitly listed adapters in static-verification.json/diffs. The build uses two endpoints within one600s window, explicit child022 mode profile, exact retention/output matching except permitted current builtAt spans, and unchanged lifecycle/no-signal acceptance. No dependency install or permission fallback exists.
++`deployment.py` and `freeze-frontend-context.py` restrict the proven R5 machinery to four existing replacements. All Viewer source inputs plus five unchanged builder/package inputs are privately frozen. `build-frontend-template.py`, `build_primitives.py`, `private-builder-entry.js`, `asset_template.py`, apply/reload/readiness modules and original validators remain byte-identical to R5 except the explicitly listed adapters in static-verification.json/diffs and the two current R3 changes described above. The build uses two endpoints within one600s window, explicit child022 mode profile, exact retention/output matching except permitted current builtAt spans, and unchanged lifecycle/no-signal acceptance. No dependency install or permission fallback exists.
+ 
+ `known_attempt_quiescence.py` retains R5 observation/TTL/per-action rules while binding all3 failed attempts and21 distinct known PID/birth identities. No arbitrary process discovery or signals are added to these observations; full-tree coverage remains unknown. `continuation_common.py`, sequence/attempt preparation and checker distinguish final archive41, Viewerfefc and tools282. Each scenario has its own root decision and fresh strict idle preflight. Final qualification permits occupied-unattributed post-close occupancy but never establishes next-run admission or server map drainage.
+ 
+--- R2/build_primitives.py
++++ R3/build_primitives.py
+@@ -1,16 +1,18 @@
+ import sys
+ from core import *
+ from asset_template import *
++from process_observation_diagnostics import Diagnostics,instrument_registry
+ NODE='/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node'
+ 
+ def child_owned(fixture_root,stamp,owned):
+  """One attempt; Registry may settle registered child identities only."""
+  import psutil
+- registry=owned.Registry();child=None;timedout=False;error=None;cleanup_error=None;exitcode=None;ownership={};ownership_error=None;start=time.monotonic()
++ diagnostic=Diagnostics(psutil.Process,(psutil.NoSuchProcess,psutil.AccessDenied,OSError),'worker',monotonic=time.monotonic,wall=time.time)
++ registry=instrument_registry(owned.Registry,diagnostic);child=None;timedout=False;error=None;cleanup_error=None;exitcode=None;ownership={};ownership_error=None;start=time.monotonic()
+  env=dict(ENV);env.pop('NODE_OPTIONS',None);env.pop('NODE_PATH',None)
+  try:
+   child=subprocess.Popen([NODE,str(R/'private-builder-entry.js'),str(fixture_root),str(stamp)],cwd=fixture_root,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+-  registry.add_root(psutil.Process(child.pid));deadline=start+180
++  registry.add_root(diagnostic.process(child.pid));deadline=start+180
+   while child.poll() is None and time.monotonic()<deadline:
+    try:registry.scan()
+    except owned.Capacity:registry.note('identity-capacity')
+@@ -21,16 +23,21 @@
+  finally:
+   # A clean Node exit does not establish that its recorded esbuild child exited.
+   # Exactly one bounded owned cleanup path, including normal exit and exceptions.
++  diagnostic.set_stage('cleanup')
+   try:registry.cleanup(grace=0,term_wait=2,kill_wait=1)
+   except BaseException as exc2:cleanup_error=type(exc2).__name__
+  if child is not None:exitcode=child.poll()
++ diagnostic.set_stage('result')
+  try:ownership=registry.result()
+  except BaseException as exc:ownership_error=type(exc).__name__
++ diagnostics=None;diagnostics_error=None
++ try:diagnostics=diagnostic.snapshot()
++ except BaseException as exc:diagnostics_error=type(exc).__name__
+  coverage=ownership.get('coverage');valid=isinstance(coverage,list) and len(coverage)<=64 and all(isinstance(x,str) and len(x)<=128 for x in coverage)
+  unexpected=sorted(set(coverage)-INHERENT) if valid else ['invalid-coverage']
+  signals=ownership.get('signals');intervened=bool(signals) if isinstance(signals,list) else None
+- ok=(intervened is False and exitcode==0 and not timedout and error is None and cleanup_error is None and ownership_error is None and not unexpected and ownership.get('allRecordedIdentitiesExited') is True and ownership.get('completeProcessTreeExitEstablished') is False)
+- return {'helperExit':exitcode,'timedOut':timedout,'errorClass':error,'cleanupErrorClass':cleanup_error,'elapsedSeconds':round(time.monotonic()-start,3),'ownership':ownership,'ownershipErrorClass':ownership_error,'intervened':intervened,'unexpectedCoverage':unexpected[:32],'fullProcessTreeExit':'unknown','classification':'observed-private-build-completed' if ok else 'failed-or-indeterminate'},ok
++ ok=(intervened is False and exitcode==0 and not timedout and error is None and cleanup_error is None and ownership_error is None and not unexpected and ownership.get('allRecordedIdentitiesExited') is True and ownership.get('completeProcessTreeExitEstablished') is False and diagnostics_error is None and not diagnostic.failed and type(diagnostics) is dict and diagnostics.get('failed') is False)
++ return {'processDiagnostics':diagnostics,'diagnosticsErrorClass':diagnostics_error,'helperExit':exitcode,'timedOut':timedout,'errorClass':error,'cleanupErrorClass':cleanup_error,'elapsedSeconds':round(time.monotonic()-start,3),'ownership':ownership,'ownershipErrorClass':ownership_error,'intervened':intervened,'unexpectedCoverage':unexpected[:32],'fullProcessTreeExit':'unknown','classification':'observed-private-build-completed' if ok else 'failed-or-indeterminate'},ok
+ 
+ def compare_outputs(lower_root,upper_root,m,resultdir):
+  left=lower_root/'web-client/dist';right=upper_root/'web-client/dist';a=manifest_info(left);b=manifest_info(right)
+--- /dev/null
++++ R3/builder-diagnostics-pure-run-1.log
+@@ -0,0 +1,12 @@
++test_actual_asset_consumer_accepts_valid_snapshot (test_builder_diagnostics.BuilderDiagnostics.test_actual_asset_consumer_accepts_valid_snapshot) ... ok
++test_actual_asset_consumer_missing_failed_malformed_reject (test_builder_diagnostics.BuilderDiagnostics.test_actual_asset_consumer_missing_failed_malformed_reject) ... ok
++test_actual_child_positive_exact_calls_and_lifecycle (test_builder_diagnostics.BuilderDiagnostics.test_actual_child_positive_exact_calls_and_lifecycle) ... ok
++test_actual_child_scan_exceptions_still_fail_unchanged_coverage (test_builder_diagnostics.BuilderDiagnostics.test_actual_child_scan_exceptions_still_fail_unchanged_coverage) ... ok
++test_actual_child_unsupported_and_overflow_veto (test_builder_diagnostics.BuilderDiagnostics.test_actual_child_unsupported_and_overflow_veto) ... ok
++test_consumer_preserves_coverage_and_signals_veto (test_builder_diagnostics.BuilderDiagnostics.test_consumer_preserves_coverage_and_signals_veto) ... ok
++test_supported_state_error_is_event_not_automatic_failure (test_builder_diagnostics.BuilderDiagnostics.test_supported_state_error_is_event_not_automatic_failure) ... ok
++
++----------------------------------------------------------------------
++Ran 7 tests in 2.444s
++
++OK
+--- R2/deployment.py
++++ R3/deployment.py
+@@ -1,5 +1,5 @@
+ """New deployed-state derivation. Entry points are explicit future operations only."""
+-import argparse,sys
++import argparse,sys,math
+ from bindings import *
+ from asset_template import *
+ 
+@@ -44,6 +44,41 @@
+  need(type(d['schemaVersion']) is int and d['schemaVersion']==1 and d['kind']=='root-new-frontend-deployment' and d['packageManifestSHA256']==pkg and d['sourceReviewSHA256']==source_sha and d['failedHistory']==FAILURES and d['operation']=='source-copy-and-restart-signal-only','explicit frontend decision')
+  hex32(d['deploymentId']);lo,hi=d['windowLowerMs'],d['windowUpperMs'];need(type(lo) is int and type(hi) is int and 0<=lo<hi<=9007199254740991 and hi-lo<=600000,'fresh600s window')
+ 
++def validate_builder_diagnostics(value):
++ """Exact bounded schema2 evidence; supported events alone do not veto Registry."""
++ exact(value,('schemaVersion','scope','role','events','dropped','failed','expectedStateExitCounts','gaps','gapsDropped','overflow','limits'))
++ need(type(value['schemaVersion']) is int and value['schemaVersion']==2 and value['scope']=='diagnostic-only' and value['role']=='worker' and value['failed'] is False,'builder diagnostics schema/failed')
++ stages=('worker-loop','cleanup','result');contexts=('state','scan','signal','outside');maximum=2147483647
++ def integer(v,lo=0):return type(v) is int and lo<=v<=maximum
++ def number(v):return type(v) in (int,float) and math.isfinite(v) and v>=0
++ for key in ('dropped','gapsDropped'):need(type(value[key]) is int and value[key]==0,'builder diagnostic drops')
++ exact(value['overflow'],('events','gaps','contexts','counters'));need(all(v is False for v in value['overflow'].values()),'builder diagnostic overflow')
++ exact(value['limits'],('events','gaps','contextDepth','counter'));need(all(type(v) is int for v in value['limits'].values()) and value['limits']=={'events':32,'gaps':32,'contextDepth':8,'counter':maximum},'builder diagnostic bounds')
++ exact(value['expectedStateExitCounts'],stages);need(all(integer(v) for v in value['expectedStateExitCounts'].values()),'expected exit counters')
++ for key in ('events','gaps'):need(type(value[key]) is list and len(value[key])<=32,'builder diagnostic list bounds')
++ events={};last=0
++ for event in value['events']:
++  exact(event,('eventId','scanId','role','stage','context','operation','pid','birth','exception','errno','monotonic','wall'))
++  need(integer(event['eventId'],1) and event['eventId']>last,'unique ordered event IDs');last=event['eventId'];events[last]=event
++  need(event['scanId'] is None or integer(event['scanId'],1),'event scan ID')
++  need(event['role']=='worker' and event['stage'] in stages and event['context'] in contexts and event['operation'] in ('resolve','pid','create_time','status','children','ppid','terminate','kill'),'bounded event tags')
++  need(event['exception'] in ('NoSuchProcess','AccessDenied','OSError'),'supported event classification')
++  need(event['context']!='scan' or event['scanId'] is not None,'scan event context')
++  need(event['pid'] is None or integer(event['pid'],1),'event PID');need(event['birth'] is None or number(event['birth']),'event birth')
++  need(event['errno'] is None or type(event['errno']) is int and -maximum<=event['errno']<=maximum,'event errno')
++  need(number(event['monotonic']) and number(event['wall']),'event clocks')
++ for gap in value['gaps']:
++  exact(gap,('scanId','eventId','association','reason','role','stage','monotonic','wall'))
++  need(gap['scanId'] is None or integer(gap['scanId'],1),'gap scan ID')
++  need(gap['role']=='worker' and gap['stage'] in stages and gap['reason']=='observation-unavailable' and gap['association'] in ('direct-scan-error','unassociated'),'bounded gap tags')
++  need(number(gap['monotonic']) and number(gap['wall']),'gap clocks')
++  if gap['association']=='unassociated':need(gap['eventId'] is None,'unassociated gap')
++  else:
++   need(integer(gap['eventId'],1) and gap['eventId'] in events,'gap event identity');event=events[gap['eventId']]
++   need(event['context']=='scan' and event['scanId']==gap['scanId'],'direct scan association')
++ need(len(json.dumps(value,allow_nan=False,separators=(',',':')).encode())<=32768,'builder diagnostic serialized bound')
++ return value
++
+ def asset_context(args,*,applied=False,dist=True):
+  f,m,b,changes=frozen(args.frozen_dir,args.frozen_sha256,applied=applied,dist=dist);v=private_json(args.asset_review,args.asset_review_sha256,32768)
+  exact(v,('schemaVersion','frozenSHA256','templateRelativePath','templateSHA256','buildResultSHA256','independentReview'))
+@@ -53,7 +88,7 @@
+  need(t['codeHashes']==m['codeHashes'],'template executable closure')
+  need(type(result['children']) is list and [v['endpoint'] for v in result['children']]==['lower','upper'],'two actual endpoint records')
+  for child in result['children']:
+-  cr=child['result'];need(cr['classification']=='observed-private-build-completed' and cr['intervened'] is False and cr['helperExit']==0 and cr['timedOut'] is False and all(cr[k] is None for k in ('errorClass','cleanupErrorClass','ownershipErrorClass')) and cr['unexpectedCoverage']==[],'endpoint lifecycle evidence');validate_owned_coverage(cr['ownership']);validate_no_signals(cr['ownership'])
++  cr=child['result'];validate_builder_diagnostics(cr.get('processDiagnostics'));need('diagnosticsErrorClass' in cr and cr['diagnosticsErrorClass'] is None,'builder diagnostic snapshot failure');need(cr['classification']=='observed-private-build-completed' and cr['intervened'] is False and cr['helperExit']==0 and cr['timedOut'] is False and all(cr[k] is None for k in ('errorClass','cleanupErrorClass','ownershipErrorClass')) and cr['unexpectedCoverage']==[],'endpoint lifecycle evidence');validate_owned_coverage(cr['ownership']);validate_no_signals(cr['ownership'])
+  need(t['kind']=='frontend-two-time-template' and t['tip']==m['tip'] and t['frozenSHA256']==args.frozen_sha256 and t['windowLowerMs']==m['windowLowerMs'] and t['windowUpperMs']==m['windowUpperMs'],'template source/window')
+  need(all(mode==0o755 for mode in t['directoryModes'].values()) and all(row['filesystemMode']==0o644 for row in t['files'].values()),'strict output mode profile')
+  for rel,row in t['files'].items():need(sha(checked_file(d/'expected',rel)[0])==row['templateSha256'],'template data drift')
+--- R2/provenance.json
++++ R3/provenance.json
+@@ -1,6 +1,6 @@
+ {
+   "schemaVersion": 1,
+-  "state": "fresh-r2-source-reference-shape-fix-prepared",
++  "state": "fresh-r3-builder-observation-integration",
+   "references": {
+     "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/bindings.py": {
+       "sha256": "22d381e37ea858ce5cc87cf5c53298eebc687178facc3c55b46f9827b3a90460",
+@@ -122,7 +122,7 @@
+     "sha256": "dc23bacc93adc81c06ae99247a27719390aff4a072770efd88ab63d1d16e9db1",
+     "role": "private file preparation only; not operational"
+   },
+-  "limitations": "No operational function or checker executed. No independent review authored by preparer.",
++  "limitations": "No operational entrypoint executed; only actual AST definitions with injected fake boundaries ran in the targeted pure tests. No independent review authored by preparer.",
+   "r1Package": {
+     "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/SHA256SUMS.json",
+     "sha256": "99cb70a0ebde7226df22a1bc39251d4a119d6e5d04ceecab5994f18c37ee5494"
+@@ -131,7 +131,64 @@
+     "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
+     "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
+   },
+-  "inheritedCodeByteIdentical": [
++  "scopeConstant": "viewer-tools-successor-r1 retained unchanged; fresh R3 directory and manifest require a new root EXECUTION-REVIEW",
++  "r2Package": {
++    "path": "/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6/SHA256SUMS.json",
++    "sha256": "a321ec51e966c5ad7ff247e61713100c498d251b27dd02583229b54bc244aa6b"
++  },
++  "r3HistoricalFailures": {
++    "r1FreezeFailure": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R1-FREEZE-FAILURE.json",
++      "sha256": "da1d584b766707d0c080751c11a9cc00540b6da63b9515fae2091deee875039e"
++    },
++    "r2BuildFailure": {
++      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6/deployment-1a04390f599949ea9bf756f7b3390a36/build-result.json",
++      "sha256": "d6cdeec27ec086f43b97f1f2d79437bf27b203ae6addfb0817f1f0aa1a248c31"
++    },
++    "assessment": {
++      "path": "/tmp/wrd-private-build-observation-failure-assessment-20261019.md",
++      "sha256": "961eb1b80f3b7a3f67144f8a1152d8190b5b0565478269cd3f462eb9a10a1f8a"
++    },
++    "rejectedAssetReview": {
++      "path": "/tmp/wrd-startup-join-r2-actual-assets-review-20261019.md",
++      "sha256": "02933832a6c4885b329ae182aeddcf30745e2de3115c82071c780709465fab6f"
++    }
++  },
++  "r3ChangedRuntimeFiles": [
++    "build_primitives.py",
++    "deployment.py"
++  ],
++  "r3UnchangedInheritedCode": [
++    "apply-frontend-context.py",
++    "asset_template.py",
++    "bindings.py",
++    "build-frontend-template.py",
++    "continuation_common.py",
++    "core.py",
++    "freeze-frontend-context.py",
++    "known_attempt_quiescence.py",
++    "mixed-native-integration.py",
++    "operational_common.py",
++    "ordinary-continuation-supervisor.py",
++    "owned_reload.py",
++    "policy.py",
++    "prepare-attempt.py",
++    "prepare-deployment-quiescence.py",
++    "prepare-frontend-sequence.py",
++    "private-builder-entry.js",
++    "process_observation_diagnostics.py",
++    "qualification_evidence.py",
++    "readiness-frontend.py",
++    "readiness_records.py",
++    "restart-signal-frontend.py",
++    "source_review_gate.py",
++    "test_continuation_guards.py",
++    "test_source_receipt_flow.py",
++    "test_successor_policy.py",
++    "test_supervisor_registration.py",
++    "validation_stages.py"
++  ],
++  "r2HistoricalInheritedCodeByteIdentical": [
+     "apply-frontend-context.py",
+     "asset_template.py",
+     "bindings.py",
+@@ -161,6 +218,5 @@
+     "test_successor_policy.py",
+     "test_supervisor_registration.py",
+     "validation_stages.py"
+-  ],
+-  "scopeConstant": "viewer-tools-successor-r1 retained unchanged; fresh directory+manifest+new root EXECUTION-REVIEW binds R2"
++  ]
+ }
+--- /dev/null
++++ R3/test_builder_diagnostics.py
+@@ -0,0 +1,112 @@
++"""Actual child_owned/Registry/consumer AST, injected clocks/process/Popen/I/O only."""
++import ast,hashlib,json,math,pathlib,types,unittest
++from contextlib import contextmanager
++from copy import deepcopy
++ROOT=pathlib.Path(__file__).resolve().parent
++OLD=pathlib.Path('/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-r2-orrzbxl6')
++SUP=pathlib.Path('/tmp/wrd-owned-turn-probe-private/supervisor.py')
++INHERENT={'polling-may-miss-fast-orphan','macos-check-to-signal-race','no-CDP-no-manager-proxy'}
++class NoSuchProcess(Exception):pass
++class AccessDenied(Exception):pass
++class Unsupported(Exception):pass
++class Clock:
++ def __init__(self):self.value=100.
++ def time(self):return self.value+1000
++ def monotonic(self):return self.value
++ def sleep(self,n):self.value+=n
++
++def need(ok,message):
++ if not ok:raise ValueError(message)
++def exact(value,keys):need(type(value) is dict and set(value)==set(keys),'exact keys required')
++def sha(value):return hashlib.sha256(value).hexdigest()
++def extract(path,names,scope,strip_import=False):
++ nodes=[n for n in ast.parse(path.read_bytes()).body if isinstance(n,(ast.FunctionDef,ast.ClassDef)) and n.name in names];assert len(nodes)==len(names)
++ if strip_import:
++  for n in nodes:n.body=[v for v in n.body if not isinstance(v,(ast.Import,ast.ImportFrom))]
++ exec(compile(ast.Module(body=nodes,type_ignores=[]),str(path)+'#pure-AST','exec'),scope)
++
++class Forest:
++ def __init__(self,clock,mode,error):self.clock=clock;self.mode=mode;self.error=error;self.end=110. if mode=='overflow' else 101.;self.ledger=[];self.counts={};self.dead=set();self.objects={p:Process(self,p) for p in (1,2)}
++ def call(self,pid,op,*args):
++  self.ledger.append((pid,op,args));key=(pid,op);self.counts[key]=self.counts.get(key,0)+1;n=self.counts[key]
++  if op=='resolve':
++   if self.mode=='state-error' and pid==1 and n==2:raise AccessDenied()
++   if self.clock.value>=self.end or pid in self.dead:raise NoSuchProcess()
++   return self.objects[pid]
++  if op=='pid':return pid
++  if op=='create_time':return pid*10.
++  if op=='status':return 'running'
++  if op=='ppid':return 1
++  if op=='children':
++   if pid==1 and (n==2 and self.error is not None or self.mode=='overflow' and n>=2):raise self.error
++   return [self.objects[2]] if pid==1 else []
++  if op in ('terminate','kill'):self.dead.add(pid);return None
++  raise AssertionError(op)
++ def process(self,pid):return self.call(pid,'resolve')
++class Process:
++ def __init__(self,f,p):self.f=f;self.ident=p
++ @property
++ def pid(self):return self.f.call(self.ident,'pid')
++ def create_time(self):return self.f.call(self.ident,'create_time')
++ def status(self):return self.f.call(self.ident,'status')
++ def children(self,recursive=False):return self.f.call(self.ident,'children',recursive)
++ def ppid(self):return self.f.call(self.ident,'ppid')
++ def terminate(self):return self.f.call(self.ident,'terminate')
++ def kill(self):return self.f.call(self.ident,'kill')
++
++class BuilderDiagnostics(unittest.TestCase):
++ def run_child(self,wrapped,mode='normal',error=None):
++  clock=Clock();forest=Forest(clock,mode,error);fakeps=types.SimpleNamespace(Process=forest.process,NoSuchProcess=NoSuchProcess,AccessDenied=AccessDenied,STATUS_ZOMBIE='zombie');regscope={'time':clock,'psutil':fakeps,'POLL':.25}
++  self.assertEqual(sha(SUP.read_bytes()),'d03cc2025f41d26c0079d3f820fdb2cd5479ae14448fb1c6f91c4589d6bd5c7b');extract(SUP,{'Registry','Capacity'},regscope)
++  diag={'contextmanager':contextmanager,'deepcopy':deepcopy,'math':math};raw=(ROOT/'process_observation_diagnostics.py').read_bytes();self.assertEqual(sha(raw),'00bd2366d770b9e65b272acadf54027c77cde48050b12106a2fd79338059f82b');nodes=[n for n in ast.parse(raw).body if isinstance(n,(ast.Assign,ast.ClassDef,ast.FunctionDef))];exec(compile(ast.Module(body=nodes,type_ignores=[]),'approved-diagnostic-definitions','exec'),diag)
++  class Child:
++   pid=1
++   def poll(self):return -15 if 1 in forest.dead else 0 if clock.value>=forest.end else None
++  child=Child();popen=[]
++  def launch(*args,**kw):popen.append((args,kw));return child
++  scope={'time':clock,'psutil':fakeps,'subprocess':types.SimpleNamespace(Popen=launch,DEVNULL=-3),'R':pathlib.Path('/private-fixture'),'NODE':'/fake/node','ENV':{},'INHERENT':INHERENT,'Diagnostics':diag['Diagnostics'],'instrument_registry':diag['instrument_registry']}
++  extract((ROOT if wrapped else OLD)/'build_primitives.py',{'child_owned'},scope,True)
++  record,ok=scope['child_owned'](pathlib.Path('/fake/build'),123,types.SimpleNamespace(Registry=regscope['Registry'],Capacity=regscope['Capacity']))
++  self.assertEqual(len(popen),1);return record,ok,forest.ledger
++ def pair(self,mode='normal',error=None):
++  old,oldok,oldcalls=self.run_child(False,mode,error);new,newok,newcalls=self.run_child(True,mode,error);self.assertEqual(oldcalls,newcalls);self.assertEqual({k:new[k] for k in old},old);return new,newok,oldok
++ def test_actual_child_positive_exact_calls_and_lifecycle(self):
++  r,ok,oldok=self.pair();self.assertTrue(ok and oldok);self.assertFalse(r['processDiagnostics']['failed']);self.assertEqual(r['processDiagnostics']['events'],[]);self.assertEqual(r['ownership']['signals'],[]);self.assertEqual(r['elapsedSeconds'],4.);self.assertGreater(r['processDiagnostics']['expectedStateExitCounts']['result'],0)
++ def test_actual_child_scan_exceptions_still_fail_unchanged_coverage(self):
++  for error in (NoSuchProcess(),AccessDenied(),OSError(5,'injected')):
++   r,ok,oldok=self.pair(error=error);self.assertFalse(ok or oldok);self.assertEqual(r['unexpectedCoverage'],['observation-unavailable']);self.assertEqual(r['ownership']['signals'],[]);self.assertFalse(r['processDiagnostics']['failed']);self.assertEqual(r['processDiagnostics']['events'][0]['context'],'scan')
++ def test_supported_state_error_is_event_not_automatic_failure(self):
++  r,ok,oldok=self.pair('state-error');self.assertTrue(ok and oldok);self.assertEqual(r['unexpectedCoverage'],[]);self.assertFalse(r['processDiagnostics']['failed']);self.assertEqual(r['processDiagnostics']['events'][0]['exception'],'AccessDenied');self.consumer(r)
++ def test_actual_child_unsupported_and_overflow_veto(self):
++  for mode,error in [('normal',Unsupported()),('overflow',AccessDenied())]:
++   r,ok,oldok=self.pair(mode,error);self.assertFalse(ok);self.assertTrue(r['processDiagnostics']['failed'])
++   if mode=='overflow':self.assertEqual(len(r['processDiagnostics']['events']),32);self.assertTrue(r['processDiagnostics']['overflow']['events'])
++ def consumer(self,child):
++  f=pathlib.Path('/fake/deployment');d=f/'two-time-template-fixture';m={'codeHashes':{},'tip':'source','windowLowerMs':1,'windowUpperMs':2};t={'codeHashes':{},'kind':'frontend-two-time-template','tip':'source','frozenSHA256':'f'*64,'windowLowerMs':1,'windowUpperMs':2,'directoryModes':{'assets':493},'files':{'asset':{'filesystemMode':420,'templateSha256':sha(b'asset')}}};v={'schemaVersion':1,'frozenSHA256':'f'*64,'templateRelativePath':d.name,'templateSHA256':'t'*64,'buildResultSHA256':'b'*64,'independentReview':{'path':'/fake/review','sha256':'r'*64}};result={'classification':'private-two-time-template-frozen','frozenSHA256':'f'*64,'templateSHA256':'t'*64,'templateDirectory':str(d),'children':[{'endpoint':e,'result':deepcopy(child)} for e in ('lower','upper')]};data={str(d/'template.json'):t,str(f/'build-result.json'):result,'/fake/asset-review':v}
++  scope={'need':need,'exact':exact,'math':math,'json':json,'INHERENT':INHERENT,'frozen':lambda *a,**k:(f,m,{},{}),'private_json':lambda path,*a:deepcopy(data[str(path)]),'check_ref':lambda v:None,'relative':lambda s:s,'checked_file':lambda *a:(b'asset',420),'sha':sha}
++  extract(ROOT/'bindings.py',{'validate_owned_coverage','validate_no_signals'},scope);extract(ROOT/'deployment.py',{'validate_builder_diagnostics','asset_context'},scope)
++  return scope['asset_context'](types.SimpleNamespace(frozen_dir=str(f),frozen_sha256='f'*64,asset_review='/fake/asset-review',asset_review_sha256='a'*64))
++ def test_actual_asset_consumer_accepts_valid_snapshot(self):self.assertEqual(len(self.consumer(self.run_child(True)[0])),7)
++ def test_actual_asset_consumer_missing_failed_malformed_reject(self):
++  base=self.run_child(True)[0]
++  for case in ('missing','null','failed','overflow','schema-bool','role','extra-key','dropped','count-bool','limits','oversized','event-malformed','snapshot-error'):
++   child=deepcopy(base);diag=child['processDiagnostics']
++   if case=='missing':del child['processDiagnostics']
++   elif case=='null':child['processDiagnostics']=None
++   elif case=='failed':diag['failed']=True
++   elif case=='overflow':diag['overflow']['events']=True
++   elif case=='schema-bool':diag['schemaVersion']=True
++   elif case=='role':diag['role']='sample'
++   elif case=='extra-key':diag['extra']=1
++   elif case=='dropped':diag['dropped']=1
++   elif case=='count-bool':diag['expectedStateExitCounts']['cleanup']=True
++   elif case=='limits':diag['limits']['events']=33
++   elif case=='oversized':diag['events']=[{}]*33
++   elif case=='event-malformed':diag['events']=[{}]
++   elif case=='snapshot-error':child['diagnosticsErrorClass']='RuntimeError'
++   with self.subTest(case=case),self.assertRaises(ValueError):self.consumer(child)
++ def test_consumer_preserves_coverage_and_signals_veto(self):
++  for field,value in [('coverage',list(INHERENT)+['observation-unavailable']),('signals',[{'kind':'term'}])]:
++   child=self.run_child(True)[0];child['ownership'][field]=value
++   with self.assertRaises(ValueError):self.consumer(child)
++if __name__=='__main__':unittest.main()

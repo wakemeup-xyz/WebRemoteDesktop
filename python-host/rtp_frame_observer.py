@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import weakref
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -66,17 +67,20 @@ def aiortc_observer_compatibility(*, version: str, next_signature: str, send_sig
 
 @dataclass
 class _Pending:
-    registry: FrameTraceRegistry
+    registry: FrameTraceRegistry | None
     key: object
     ssrc: int
     stream_scope: tuple[str, int, str]
+    host: object = None
+    scope: tuple = None
+    input_key: object = None
 
 
 class RtpFrameObserver:
     def __init__(self, registry: FrameTraceRegistry | None = None, *, rtx_payload_types: Iterable[int] = ()) -> None:
         self.registry = registry
         self.rtx_payload_types = {int(value) for value in rtx_payload_types}
-        self._pending_by_task: dict[asyncio.Task, _Pending] = {}
+        self._pending_by_task = weakref.WeakKeyDictionary()
         self.enabled = True
         self.unmatched_count = 0
         self.origin_mismatch_count = 0
@@ -91,30 +95,34 @@ class RtpFrameObserver:
             return False
         context = getattr(sender, "_wrd_frame_trace_context", None)
         registry = getattr(context, "registry", None) or self.registry
-        if registry is None:
-            self.unmatched_count += 1
-            return False
+        host = getattr(sender, "_wrd_input_frame_host", None)
+        if host is not None and getattr(host, "video_sender", None) is not sender:
+            host = None
+        causality = getattr(host, "_input_frame_causality", None)
+        input_key = causality.find_frame(int(encoder_timestamp)) if causality is not None else None
         key = registry.find_by_encoder_timestamp(
-            int(encoder_timestamp),
-            attempt_id=getattr(context, "attempt_id", None),
-            generation=getattr(context, "generation", None),
-            stream_id=getattr(context, "stream_id", None),
-        )
+            int(encoder_timestamp), attempt_id=getattr(context, "attempt_id", None),
+            generation=getattr(context, "generation", None), stream_id=getattr(context, "stream_id", None),
+        ) if registry is not None else None
         task = asyncio.current_task()
-        if key is None or task is None:
-            self.unmatched_count += 1
+        previous = self._pending_by_task.pop(task, None)
+        if previous is not None:
+            self.reject_outgoing_rtp((task, previous, None, None, None))
+        if (key is None and input_key is None) or task is None:
             return False
+        key = key or input_key
         rtx_payload_type = getattr(sender, "_RTCRtpSender__rtx_payload_type", None)
         if isinstance(rtx_payload_type, int) and 0 <= rtx_payload_type <= 127:
             self.rtx_payload_types.add(rtx_payload_type)
         self._pending_by_task[task] = _Pending(
-            registry=registry, key=key,
+            registry=registry, key=key, host=host, input_key=input_key,
+            scope=host._input_observation_scope() if input_key is not None else None,
             ssrc=int(ssrc if ssrc is not None else getattr(sender, "_ssrc", 0)),
             stream_scope=(str(key.attempt_id), int(key.generation), str(key.stream_id)),
         )
         return True
 
-    def observe_outgoing_rtp(self, data: bytes, *, ssrc: int | None = None) -> bool:
+    def prepare_outgoing_rtp(self, data: bytes, *, ssrc: int | None = None):
         if not self.enabled:
             return False
         task = asyncio.current_task()
@@ -141,7 +149,7 @@ class RtpFrameObserver:
         packet_ssrc = int.from_bytes(raw[8:12], "big") if ssrc is None else int(ssrc)
         if packet_ssrc != pending.ssrc:
             self.unmatched_count += 1
-            pending.registry.note_unmatched_wire()
+            if pending.registry is not None: pending.registry.note_unmatched_wire()
             return False
         origin = (int(timestamp) - int(pending.key.encoder_timestamp)) & 0xFFFFFFFF
         origin_key = (*pending.stream_scope, packet_ssrc)
@@ -149,22 +157,40 @@ class RtpFrameObserver:
         if origin == 0:
             self.zero_origin_count += 1
             self.unmatched_count += 1
-            pending.registry.note_unmatched_wire()
+            if pending.registry is not None: pending.registry.note_unmatched_wire()
             return False
-        if expected_origin is None:
-            self._origin_by_stream[origin_key] = origin
-        elif expected_origin != origin:
+        if expected_origin is not None and expected_origin != origin:
             self.origin_mismatch_count += 1
             self.unmatched_count += 1
-            pending.registry.note_unmatched_wire()
+            if pending.registry is not None: pending.registry.note_unmatched_wire()
             return False
-        # Only the first new RTP packet for this encoded frame owns the wire ID.
+        return (task, pending, packet_ssrc, timestamp, sequence)
+
+    def commit_outgoing_rtp(self, token):
+        if not token: return False
+        task, pending, ssrc, timestamp, sequence = token
+        if self._pending_by_task.get(task) is not pending: return False
         self._pending_by_task.pop(task, None)
-        bound = pending.registry.bind_wire(pending.key, packet_ssrc, timestamp)
+        self._origin_by_stream[(*pending.stream_scope, ssrc)] = (timestamp - pending.key.encoder_timestamp) & 0xffffffff
+        while len(self._origin_by_stream) > 64:
+            self._origin_by_stream.pop(next(iter(self._origin_by_stream)))
+        bound = pending.registry.bind_wire(pending.key, ssrc, timestamp) if pending.registry is not None else False
         if bound:
-            pending.registry.record_lab_rtp_send(pending.key, sequence=sequence,
-                                                 rtp_timestamp=timestamp, ssrc=packet_ssrc)
-        return bound
+            pending.registry.record_lab_rtp_send(pending.key, sequence=sequence, rtp_timestamp=timestamp, ssrc=ssrc)
+        if pending.input_key is not None:
+            pending.host._commit_input_frame(pending.input_key, pending.scope, ssrc, timestamp)
+        return bound or pending.input_key is not None
+
+    def reject_outgoing_rtp(self, token):
+        if not token: return
+        task, pending, *_ = token
+        if self._pending_by_task.get(task) is pending: self._pending_by_task.pop(task, None)
+        if pending.input_key is not None:
+            pending.host._input_frame_causality.release_capture(pending.input_key)
+
+    def observe_outgoing_rtp(self, data, *, ssrc=None):
+        """Synthetic test compatibility; production always awaits transport first."""
+        return self.commit_outgoing_rtp(self.prepare_outgoing_rtp(data, ssrc=ssrc))
 
     def observe_lab_rtcp_feedback(self, kind: str, *, sender: object) -> None:
         """Called only by the pass-through aiortc RTCP receiver wrapper."""
@@ -210,14 +236,26 @@ def install_aiortc_observer(observer: RtpFrameObserver):
         original_rtcp = sender_module.RTCRtpSender._handle_rtcp_packet
 
         async def observed_next(sender, codec):
-            encoded = await original_next(sender, codec)
+            try:
+                encoded = await original_next(sender, codec)
+            except BaseException:
+                try:
+                    host = getattr(sender, "_wrd_input_frame_host", None)
+                    causality = getattr(host, "_input_frame_causality", None)
+                    if causality is not None and getattr(host, "video_sender", None) is sender:
+                        causality.release_all()
+                except Exception:
+                    pass
+                raise
             if encoded is not None:
-                observer.observe_encoded_frame(sender, encoder_timestamp=encoded.timestamp, ssrc=getattr(sender, "_ssrc", 0))
+                try:
+                    observer.observe_encoded_frame(sender, encoder_timestamp=encoded.timestamp, ssrc=getattr(sender, "_ssrc", 0))
+                except Exception:
+                    _observation_failure(observer)
             return encoded
 
         async def observed_send(transport, data):
-            observer.observe_outgoing_rtp(data)
-            return await original_send(transport, data)
+            return await send_with_observation(observer, transport, data, original_send)
 
         async def observed_rtcp(sender, packet):
             # PLI/FIR are identified by aiortc's parsed RTCP object at the
@@ -239,3 +277,30 @@ def install_aiortc_observer(observer: RtpFrameObserver):
     except Exception:
         observer.enabled = False
         return False, "observer-install-failed"
+
+
+async def send_with_observation(observer, transport, data, send):
+    token = None
+    try:
+        token = observer.prepare_outgoing_rtp(data)
+    except Exception:
+        _observation_failure(observer)
+    try:
+        result = await send(transport, data)
+    except BaseException:
+        try: observer.reject_outgoing_rtp(token)
+        except Exception: pass
+        raise
+    try: observer.commit_outgoing_rtp(token)
+    except Exception:
+        _observation_failure(observer)
+    return result
+
+
+def _observation_failure(observer):
+    # Even a broken observer/counter must never change the underlying media call.
+    try:
+        observer.unmatched_count = min(2**53 - 1, getattr(observer, 'unmatched_count', 0) + 1)
+        observer.enabled = False
+    except Exception:
+        pass

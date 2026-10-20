@@ -1,0 +1,1108 @@
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/apply-frontend-context.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/apply-frontend-context.py
+@@ -0,0 +1,26 @@
++"""Future root-only one-use source publication; never publishes dist or restarts."""
++from deployment import *
++from known_attempt_quiescence import receipt_file,before_action,SCOPE
++
++def main():
++ os.umask(0o077);p=args_parser(__doc__)
++ for key in ('quiescence-receipt','quiescence-sha256'):p.add_argument('--'+key,required=True)
++ a=p.parse_args();f,m,b,changes,d,t,ts=asset_context(a);old_service_gate(b)
++ receipt_file(f,m,a.frozen_sha256,a.quiescence_receipt,a.quiescence_sha256,'apply',None,fresh=True)
++ need(not (f/'apply-started.json').exists() and not (f/'apply-result.json').exists(),'apply already consumed')
++ marker={'frozenSHA256':a.frozen_sha256,'tip':m['tip'],'epoch':time.time(),'paths':list(m['candidateFiles']),'quiescenceReceiptSHA256':a.quiescence_sha256,'scope':SCOPE,'oneUse':True}
++ startedsha=jsonwrite(f/'apply-started.json',marker);copied=[];checks=[];failure=None;integrity=None
++ try:
++  for i,(rel,row) in enumerate(m['candidateFiles'].items()):
++   if row['oldSha256'] is not None:
++    old,mode=checked_file(P,rel);need(sha(old)==row['oldSha256'] and mode==row['oldMode'],'backup old pin');write(f/'backups'/rel,old)
++   data,_=checked_file(f/'candidate',rel)
++   def guard():
++    preserved_gate();need(service_set()==b['expectedServices'],'service changed before publication');health();old_dist_gate(b)
++    before_action(f,m,a.frozen_sha256,a.quiescence_receipt,a.quiescence_sha256,'apply',None,'copy-%03d'%i,checks)
++   copy_one(rel,row,data,guard);copied.append(rel)
++  asset_context(a,applied=True);old_service_gate(b);integrity={'knownRegularCount':source_map_gate(b,changes),'oldDistPreserved':True,'oldServicesPreserved':True}
++ except BaseException as exc:failure=type(exc).__name__
++ result={'schemaVersion':1,'classification':'source-applied' if failure is None else 'failed-or-indeterminate','frozenSHA256':a.frozen_sha256,'tip':m['tip'],'startedSHA256':startedsha,'assetReviewSHA256':a.asset_review_sha256,'appliedPaths':copied,'quiescence':{'receiptSHA256':a.quiescence_sha256,'checks':checks,'scope':SCOPE,'fullProcessTreeExit':'unknown'},'errorClass':failure,'integrity':integrity,'currentReadiness':readiness_facts(),'automaticRollbackOrRetry':False}
++ digest=jsonwrite(f/'apply-result.json',result);print(json.dumps({'resultSHA256':digest,'classification':result['classification']}));return 0 if failure is None else 2
++if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/asset_template.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/asset_template.py
+@@ -0,0 +1,67 @@
++from core import *
++TOKEN=b'__WRD_REVIEWED_CURRENT_BUILT_AT__'
++
++def current_value_span(text,key):
++ """Return the single top-level JSON value span, rejecting duplicate keys recursively."""
++ obj=loads(text);need(isinstance(obj,dict) and key in obj,'JSON object/key required')
++ dec=json.JSONDecoder(object_pairs_hook=pairs);pos=0
++ while text[pos].isspace():pos+=1
++ need(text[pos]=='{','object opening required');pos+=1;found=[]
++ while True:
++  while text[pos].isspace():pos+=1
++  if text[pos]=='}':break
++  name,end=dec.raw_decode(text,pos);need(isinstance(name,str),'JSON key required');pos=end
++  while text[pos].isspace():pos+=1
++  need(text[pos]==':','JSON colon required');pos+=1
++  while text[pos].isspace():pos+=1
++  start=pos;value,end=dec.raw_decode(text,pos)
++  if name==key:found.append((start,end))
++  pos=end
++  while text[pos].isspace():pos+=1
++  if text[pos]=='}':break
++  need(text[pos]==',','JSON comma required');pos+=1
++ need(len(found)==1,'one top-level value required');return found[0]
++
++def manifest_info(folder):
++ data,_=checked_file(folder,'asset-manifest.json');need(len(data)<=65536,'manifest bound');m=loads(data)
++ need(set(m)=={'schemaVersion','buildId','builtAt','assets','retainedReleases'} and m['schemaVersion']==2,'exact schema2 manifest required')
++ need(isinstance(m['retainedReleases'],list) and len(m['retainedReleases'])<=2,'retention bound');ids=[];paths=set()
++ for release in [m]+m['retainedReleases']:
++  if release is not m:need(set(release)=={'buildId','builtAt','assets'},'retained release schema')
++  stamp=release['builtAt'];need(type(stamp) is int and 0<=stamp<=9007199254740991,'safe build timestamp required')
++  assets=release['assets'];need(isinstance(assets,dict) and 0<len(assets)<=32,'asset mapping bound')
++  for key,rel in assets.items():
++   need(re.fullmatch('[A-Za-z][A-Za-z0-9]{0,63}',key) is not None and isinstance(rel,str) and re.fullmatch(r'assets/[a-z0-9-]+\.[a-f0-9]{16}\.(js|css)',rel) is not None,'asset path/key rejected')
++   content,_=checked_file(folder,rel);need(sha(content)[:16]==rel.split('.')[1],'asset name/content digest mismatch');paths.add(rel)
++  identity=sha(json.dumps(dict(sorted(assets.items())),separators=(',',':'),ensure_ascii=True).encode())[:16]
++  need(release['buildId']==identity,'asset graph/build ID mismatch');ids.append(identity)
++ need(len(set(ids))==len(ids),'duplicate retained build ID')
++ expected=paths|{'asset-manifest.json','index.html','viewer.html','css/login.css','css/tokens.css','THIRD_PARTY_LICENSES.txt'}
++ need(set(distmap(folder))==expected,'dist exact graph/static path coverage mismatch');return m
++
++def normalized_file(name,data,stamp,buildid):
++ if name=='asset-manifest.json':
++  text=data.decode();obj=loads(text);need(obj['builtAt']==stamp,'current manifest timestamp mismatch');a,b=current_value_span(text,'builtAt');need(text[a:b]==str(stamp),'canonical integer timestamp required')
++  result=text[:a]+TOKEN.decode()+text[b:]
++ elif name in ('index.html','viewer.html'):
++  text=data.decode();matches=list(re.finditer(r'window\.__WRD_BUILD__=(\{[^<>\r\n]*\})</script>',text));need(len(matches)==1 and text.count('window.__WRD_BUILD__')==1,'exactly one inline build JSON required')
++  match=matches[0];inline=match.group(1);obj=loads(inline);need(set(obj)=={'id','builtAt'} and obj['id']==buildid and type(obj['builtAt']) is int and obj['builtAt']==stamp,'HTML current build mismatch')
++  a,b=current_value_span(inline,'builtAt');need(inline[a:b]==str(stamp),'canonical HTML integer timestamp required');a+=match.start(1);b+=match.start(1);result=text[:a]+TOKEN.decode()+text[b:]
++ else:return data
++ out=result.encode();need(out.count(TOKEN)==1 and TOKEN not in data,'timestamp template token count mismatch');return out
++
++def verify_rendered_dist(template_folder,template_sha,actual_folder):
++ """Future wrapper primitive only. Reads actual files; never builds/restarts/promotes."""
++ template_folder=pathlib.Path(template_folder);m=readjson(template_folder/'template.json',template_sha)
++ need(m['schemaVersion']==1 and m['kind']=='frontend-two-time-template','template identity mismatch')
++ actual_folder=pathlib.Path(actual_folder);actual=manifest_info(actual_folder);stamp=actual['builtAt']
++ need(type(stamp) is int and m['windowLowerMs']<=stamp<=m['windowUpperMs'] and actual['buildId']==m['buildId'],'startup timestamp/window/build mismatch')
++ observed=distmap(actual_folder);need(set(observed)==set(m['files']),'startup output path mismatch')
++ need(directory_modes(actual_folder)==m['directoryModes'],'startup directory path/mode mismatch')
++ for rel,row in m['files'].items():
++  data,mode=checked_file(actual_folder,rel);expect,private_mode=checked_file(template_folder/'expected',rel)
++  need(private_mode==0o600 and sha(expect)==row['templateSha256'] and mode==row['filesystemMode'],'template integrity/output mode mismatch')
++  if row['timestampTemplate']:
++   need(expect.count(TOKEN)==1,'one frozen timestamp token required');expect=expect.replace(TOKEN,str(stamp).encode())
++  need(data==expect,'startup exact rendered output mismatch: '+rel)
++ return {'buildId':actual['buildId'],'builtAt':stamp,'exactFinalFileMap':observed,'fullProcessTreeExit':'unknown'}
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/bindings.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/bindings.py
+@@ -72,7 +72,7 @@
+ 
+ def package_guard():
+  v=private_json(R/'EXECUTION-REVIEW.json',limit=32768);exact(v,('schemaVersion','scope','packageManifestSha256','independentReview'))
+- need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['scope']=='admission-tool-only-continuation-r1','new package review required');check_ref(v['independentReview'])
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['scope']=='viewer-tools-successor-r1','new package review required');check_ref(v['independentReview'])
+  sums=private_json(R/'SHA256SUMS.json',v['packageManifestSha256']);need(type(sums) is dict and 1<=len(sums)<=64,'package bound')
+  for name,digest in sums.items():need(sha(checked_file(R,relative(name))[0])==digest,'package drift')
+  return v['packageManifestSha256']
+@@ -113,3 +113,19 @@
+  return b,h,records
+ 
+ def reference():return history()[0]
++
++TOOL_TIP='2822441791b59a021556c7e4eb24715df9d5b277'
++from policy import COPY_PATHS,BUILD_INPUTS
++
++def final_binding():
++ v=private_json(R/'FINAL-BINDING.json',limit=32768);exact(v,('schemaVersion','sourceTIP','viewerSourceTIP','toolTIP','sourceReview'))
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['toolTIP']==TOOL_TIP,'final binding schema/tools')
++ for key in ('sourceTIP','viewerSourceTIP'):need(type(v[key]) is str and re.fullmatch('[a-f0-9]{40}',v[key]),'full final source identity required')
++ check_ref(v['sourceReview']);return v
++
++def final_source_tip():return final_binding()['sourceTIP']
++def viewer_source_tip():return final_binding()['viewerSourceTIP']
++
++def source_review(path,digest):
++ from source_review_gate import validate_source_review
++ return validate_source_review(path,digest)
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/build-frontend-template.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/build-frontend-template.py
+@@ -0,0 +1,24 @@
++"""Future two-time private build only. No primary output publication."""
++from deployment import *
++from build_primitives import *
++def fixture(f,out,m,b,label):
++ root=pathlib.Path(tempfile.mkdtemp(prefix=label+'-',dir=out));root.chmod(0o700)
++ for rel,row in m['buildInputs'].items():
++  data,mode=checked_file(f/'build-inputs',rel);write(root/rel,data,mode)
++ for rel,row in m['oldDistMap'].items():
++  data,mode=checked_file(f/'old-dist',rel);write(root/'web-client/dist'/rel,data,mode)
++ os.symlink(str(P/'signal-server/node_modules'),root/'signal-server/node_modules');need(nodeinfo(P/'signal-server/node_modules')==b['primaryNodeModules'],'trusted install metadata drift');return root
++
++def main():
++ os.umask(0o077);a=args_parser(__doc__,assets=False).parse_args();f,m,b,changes=frozen(a.frozen_dir,a.frozen_sha256);old_service_gate(b);need(int(time.time()*1000)<m['windowUpperMs'],'window expired');need(not (f/'build-started.json').exists() and not (f/'build-result.json').exists(),'build consumed');owned=load_owned()
++ jsonwrite(f/'build-started.json',{'frozenSHA256':a.frozen_sha256,'windowLowerMs':m['windowLowerMs'],'windowUpperMs':m['windowUpperMs'],'primaryMutated':False});out=pathlib.Path(tempfile.mkdtemp(prefix='two-time-template-',dir=f));out.chmod(0o700);children=[];failure=None;template_sha=None
++ try:
++  roots=[]
++  for label,stamp in (('lower',m['windowLowerMs']),('upper',m['windowUpperMs'])):
++   frozen(f,a.frozen_sha256);old_service_gate(b);root=fixture(f,out,m,b,label);roots.append(root);result,ok=child_owned(root,stamp,owned);children.append({'endpoint':label,'result':result});jsonwrite(out/(label+'-child-result.json'),result);need(ok,'private build lifecycle failed')
++  need(int(time.time()*1000)<m['windowUpperMs'],'window expired during build');template=compare_outputs(roots[0],roots[1],m,out);template['frozenSHA256']=a.frozen_sha256;template['codeHashes']=m['codeHashes'];template_sha=jsonwrite(out/'template.json',template)
++  for root in roots:verify_rendered_dist(out,template_sha,root/'web-client/dist')
++  frozen(f,a.frozen_sha256);old_service_gate(b)
++ except BaseException as exc:failure=type(exc).__name__
++ result={'schemaVersion':1,'frozenSHA256':a.frozen_sha256,'templateDirectory':str(out),'templateSHA256':template_sha,'children':children,'errorClass':failure,'classification':'private-two-time-template-frozen' if failure is None and template_sha else 'failed-or-indeterminate','primaryMutation':False,'fullProcessTreeExit':'unknown'};dg=jsonwrite(f/'build-result.json',result);print(json.dumps({'record':str(f/'build-result.json'),'sha256':dg,'classification':result['classification']}));return 0 if failure is None else 2
++if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/build_primitives.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/build_primitives.py
+@@ -0,0 +1,49 @@
++import sys
++from core import *
++from asset_template import *
++NODE='/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node'
++
++def child_owned(fixture_root,stamp,owned):
++ """One attempt; Registry may settle registered child identities only."""
++ import psutil
++ registry=owned.Registry();child=None;timedout=False;error=None;cleanup_error=None;exitcode=None;ownership={};ownership_error=None;start=time.monotonic()
++ env=dict(ENV);env.pop('NODE_OPTIONS',None);env.pop('NODE_PATH',None)
++ try:
++  child=subprocess.Popen([NODE,str(R/'private-builder-entry.js'),str(fixture_root),str(stamp)],cwd=fixture_root,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
++  registry.add_root(psutil.Process(child.pid));deadline=start+180
++  while child.poll() is None and time.monotonic()<deadline:
++   try:registry.scan()
++   except owned.Capacity:registry.note('identity-capacity')
++   time.sleep(min(.25,max(0,deadline-time.monotonic())))
++  if child.poll() is None:timedout=True
++ except BaseException as exc:
++  error=type(exc).__name__
++ finally:
++  # A clean Node exit does not establish that its recorded esbuild child exited.
++  # Exactly one bounded owned cleanup path, including normal exit and exceptions.
++  try:registry.cleanup(grace=0,term_wait=2,kill_wait=1)
++  except BaseException as exc2:cleanup_error=type(exc2).__name__
++ if child is not None:exitcode=child.poll()
++ try:ownership=registry.result()
++ except BaseException as exc:ownership_error=type(exc).__name__
++ coverage=ownership.get('coverage');valid=isinstance(coverage,list) and len(coverage)<=64 and all(isinstance(x,str) and len(x)<=128 for x in coverage)
++ unexpected=sorted(set(coverage)-INHERENT) if valid else ['invalid-coverage']
++ signals=ownership.get('signals');intervened=bool(signals) if isinstance(signals,list) else None
++ ok=(intervened is False and exitcode==0 and not timedout and error is None and cleanup_error is None and ownership_error is None and not unexpected and ownership.get('allRecordedIdentitiesExited') is True and ownership.get('completeProcessTreeExitEstablished') is False)
++ return {'helperExit':exitcode,'timedOut':timedout,'errorClass':error,'cleanupErrorClass':cleanup_error,'elapsedSeconds':round(time.monotonic()-start,3),'ownership':ownership,'ownershipErrorClass':ownership_error,'intervened':intervened,'unexpectedCoverage':unexpected[:32],'fullProcessTreeExit':'unknown','classification':'observed-private-build-completed' if ok else 'failed-or-indeterminate'},ok
++
++def compare_outputs(lower_root,upper_root,m,resultdir):
++ left=lower_root/'web-client/dist';right=upper_root/'web-client/dist';a=manifest_info(left);b=manifest_info(right)
++ need(a['builtAt']==m['windowLowerMs'] and b['builtAt']==m['windowUpperMs'],'endpoint build timestamps mismatch')
++ need(a['buildId']==b['buildId'] and a['assets']==b['assets'] and a['retainedReleases']==b['retainedReleases'],'build ID/assets/retention crosses time boundary')
++ dm=directory_modes(left);need(dm==directory_modes(right) and all(mode==0o755 for mode in dm.values()),'endpoint directory mode profile mismatch')
++ lm,rm=distmap(left),distmap(right);need(set(lm)==set(rm),'endpoint dist path mismatch');files={}
++ for rel in sorted(lm):
++  lb,lmode=checked_file(left,rel);rb,rmode=checked_file(right,rel);need(lmode==rmode==0o644,'endpoint file mode profile mismatch')
++  ln=normalized_file(rel,lb,m['windowLowerMs'],a['buildId']);rn=normalized_file(rel,rb,m['windowUpperMs'],b['buildId'])
++  need(ln==rn,'endpoint bytes differ outside current builtAt: '+rel)
++  istemplate=rel in ('asset-manifest.json','index.html','viewer.html')
++  need(not istemplate or ln.count(TOKEN)==1,'exact current timestamp field required')
++  write(resultdir/'expected'/rel,ln)
++  files[rel]={'templateSha256':sha(ln),'filesystemMode':lmode,'timestampTemplate':istemplate,'lowerByteSha256':sha(lb),'upperByteSha256':sha(rb)}
++ return {'schemaVersion':1,'kind':'frontend-two-time-template','tip':m['tip'],'windowLowerMs':m['windowLowerMs'],'windowUpperMs':m['windowUpperMs'],'buildId':a['buildId'],'assets':a['assets'],'retainedReleases':a['retainedReleases'],'files':files,'installedDependencies':'trusted-existing-installation; directory metadata only','directoryModes':dm,'fileModes':'explicit private child022 predicts files0644/dirs0755; actual startup exact equality required, no fallback','primaryMutated':False,'startupOrReadiness':'NOT_RUN','fullProcessTreeExit':'unknown'}
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/continuation_common.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/continuation_common.py
+@@ -1,46 +1,54 @@
+-"""Fresh two-tool promotion and mixed-component scenario chain. Definitions only."""
++"""Fresh mixed-component continuation; no old promotion/freeze replay."""
+ import argparse,secrets,sys,types
+-from final_source import *
++from deployment import *
++# Latest failure remains immediate predecessor; all three are separately bound.
++PRIOR_FAILURE=THIRD_FAILURE
++
++def deployment_args(m):return types.SimpleNamespace(**m['deployment'])
++
++def ready_context(m):
++ a=deployment_args(m);f,fm,b,changes,d,t,ts=asset_context(a,applied=True,dist=False)
++ r=private_json(f/'readiness-result.json',m['readinessSHA256'],1048576)
++ need(r['classification']=='runtime-ready-observed' and r['errorClass'] is None and r['frozenSHA256']==a.frozen_sha256 and r['assetReviewSHA256']==a.asset_review_sha256,'fresh deployment readiness required')
++ # Independently trace the successful or narrowly reconciled original reload.
++ from readiness_records import reload_record
++ reload=reload_record(f,fm,a.frozen_sha256,r['reloadSHA256'])
++ need(r['newIdentity']==reload['newIdentity'] and all(r['runtimeValidation'][k]==reload['runtimeValidation'][k] for k in ('assets','identities','sourceTIP','frozenSHA256','componentPins')),'readiness/reload exact runtime snapshot')
++ assets=r['runtimeValidation']['assets'];ref=dict(b,regularFiles=dict(b['regularFiles'],**changes),expectedServices=r['newIdentity'],assets=assets,directoryModes=t['directoryModes'],sourceTIP=fm['tip'])
++ ref['_deployment']=m['deployment'];return ref
++
++def sequence(folder,digest):
++ pkg=package_guard();folder=pathlib.Path(folder).resolve(strict=True);need(folder.parent==R and folder.name.startswith('sequence-') and stat.S_IMODE(folder.stat().st_mode)==0o700,'new private sequence')
++ m=private_json(folder/'sequence.json',digest)
++ exact(m,('schemaVersion','sequenceId','packageManifestSHA256','productTIP','toolTIP','sourceTIP','deployment','readinessSHA256','rootDecision','offlineIntegrationEvidence','failedHistory'))
++ need(type(m['schemaVersion']) is int and m['schemaVersion']==1 and m['packageManifestSHA256']==pkg and m['productTIP']==PRODUCT and m['toolTIP']==TOOL_TIP and m['sourceTIP']==final_source_tip() and m['failedHistory']==FAILURES,'mixed sequence pins')
++ hex32(m['sequenceId']);need(folder.name=='sequence-'+m['sequenceId'],'sequence ID')
++ exact(m['deployment'],('frozen_dir','frozen_sha256','asset_review','asset_review_sha256'));ref=ready_context(m)
++ d=private_json(m['rootDecision']['path'],m['rootDecision']['sha256']);validate_sequence_decision(d,pkg,m['deployment'],m['readinessSHA256'],m['offlineIntegrationEvidence'])
++ need(d['sequenceId']==m['sequenceId'],'sequence decision');integration(m['offlineIntegrationEvidence'],ref)
++ return folder,m,ref
++
++def integration(reference,ref):
++ v=loads(check_ref(reference));exact(v,('schemaVersion','kind','sourceTIP','toolTIP','viewerBuildId','componentPins','checker','independentReview','result','actualExitCode','classification'))
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['kind']=='root-mixed-native-pure-integration' and v['sourceTIP']==final_source_tip() and v['toolTIP']==TOOL_TIP and v['viewerBuildId']==ref['assets']['buildId'],'new mixed integration pins')
++ need(v['componentPins']=={'signal':PRODUCT,'host':PRODUCT,'viewer':viewer_source_tip(),'tools':TOOL_TIP} and type(v['actualExitCode']) is int and v['actualExitCode']==0 and v['classification']=='passed-offline-only','actual mixed integration receipt')
++ for key in ('checker','independentReview','result'):check_ref(v[key])
++ need(v['checker']['sha256']==sha(regular(R/'mixed-native-integration.py')[0]),'exact prepared checker')
++ result=loads(check_ref(v['result']));need(result=={'result':'pure-native-startup-integration-only','methods':4,'accepted':2,'rejected':10,'rows':1262,'sourceTIP':final_source_tip(),'viewerBuildId':ref['assets']['buildId'],'componentPins':v['componentPins']},'actual mixed checker result')
++ return v
++
++def validate_sequence_decision(d,pkg,deployment,readiness_sha,offline):
++ exact(d,('schemaVersion','kind','sequenceId','packageManifestSHA256','sourceTIP','toolTIP','deployment','readinessSHA256','offlineIntegrationEvidence','failedHistory','automaticLaunch'))
++ need(type(d['schemaVersion']) is int and d['schemaVersion']==1 and d['kind']=='root-new-frontend-context-sequence' and d['packageManifestSHA256']==pkg and d['sourceTIP']==final_source_tip() and d['toolTIP']==TOOL_TIP and d['deployment']==deployment and d['readinessSHA256']==readiness_sha and d['offlineIntegrationEvidence']==offline and d['failedHistory']==FAILURES and d['automaticLaunch'] is False,'explicit new sequence decision');hex32(d['sequenceId'])
++ _,_,hist=history();need(d['sequenceId'] not in (hist['secondAttempt']['sequenceId'],hist['thirdAttempt']['sequenceId']),'old sequence reused')
+ 
+ def source_assets_guard(ref,tools=None):
+- tools=tools if tools is not None else ref.get('_tools');expected=dict(ref['regularFiles']);expected.update({n:{'sha256':v['sha256'],'filesystemMode':v['filesystemMode']} for n,v in (tools or {}).items()})
+- need(git(P,'rev-parse','HEAD').decode().strip()==ref['head'],'primary HEAD drift')
+- ip=pathlib.Path(git(P,'rev-parse','--git-path','index').decode().strip());ip=ip if ip.is_absolute() else P/ip
+- need(sha(regular(ip)[0])==ref['indexSha256'] and sha(git(P,'ls-files','--stage','-z'))==ref['indexMetadataSha256'],'primary index drift')
+- for rel,row in expected.items():
+-  data,mode=checked_file(P,rel);need(sha(data)==row['sha256'] and mode==row['filesystemMode'],'known primary source/mode drift')
+- need(nodeinfo(P/'signal-server/node_modules')==ref['primaryNodeModules'] and nodeinfo(S/'signal-server/node_modules')==ref['sourceNodeModules'],'metadata-only dependency drift')
+- need(distmap(P/'web-client/dist')==ref['assets']['exactFinalFileMap'] and directory_modes(P/'web-client/dist')==ref['directoryModes'],'exact deployed dist graph drift')
+- return ref['assets']
++ a=types.SimpleNamespace(**ref['_deployment']);f,m,b,changes,d,t,ts=asset_context(a,applied=True,dist=False);assets=verify_rendered_dist(d,ts,P/'web-client/dist');need(assets==ref['assets'],'deployed assets changed');return assets
+ 
+ def deployed_gate(ref,tools=None,*,require_idle=True):
+- source_assets_guard(ref,tools);preserved_gate();need(service_set()==ref['expectedServices'],'deployed service births drift');h=health(require_idle=require_idle);preserved_gate();need(service_set()==ref['expectedServices'],'service identities raced')
+- return {'health':h,'identities':ref['expectedServices'],'assets':ref['assets'],'preserved':True,'productTIP':PRODUCT}
++ return runtime_gate(types.SimpleNamespace(**ref['_deployment']),ref['expectedServices'],require_idle=require_idle)
+ 
+-def promotion(folder,m,digest):
+- result=private_json(folder/'promotion-result.json',digest)
+- exact(result,('schemaVersion','sequenceId','sequenceSHA256','productTIP','toolTIP','sourceTIP','viewerSourceTIP','failedHistory','startedSHA256','copied','quiescence','errorClass','runtimeIntegrity','currentReadiness','classification','servicesReloaded','productBuildChanged','automaticRollbackOrRetry'))
+- need(type(result['schemaVersion']) is int and result['schemaVersion']==1 and result['sourceTIP']==FINAL_TIP and result['viewerSourceTIP']==VIEWER_TIP and result['failedHistory']==FAILURES and result['errorClass'] is None and result['productBuildChanged'] is False and result['automaticRollbackOrRetry'] is False,'promotion result schema')
+- marker=private_json(folder/'promotion-started.json',result['startedSHA256']);exact(marker,('sequenceSHA256','sequenceId','epoch','paths','oneUse','quiescenceReceiptSHA256','quiescenceScope'))
+- need(marker['sequenceSHA256']==result['sequenceSHA256'] and marker['sequenceId']==m['sequenceId'] and marker['paths']==list(TOOLS) and marker['oneUse'] is True,'promotion marker binding')
+- need(result['classification']=='tools-promoted' and result['sequenceSHA256']==sha(regular(folder/'sequence.json')[0]) and result['sequenceId']==m['sequenceId'] and result['toolTIP']==m['toolTIP'] and result['productTIP']==PRODUCT and result['copied']==list(TOOLS) and result['servicesReloaded'] is False,'successful exact promotion required')
+- from known_attempt_quiescence import validate_promotion_quiescence,SCOPE
+- need(marker['quiescenceReceiptSHA256']==result['quiescence']['receiptSHA256'] and marker['quiescenceScope']==SCOPE,'marker quiescence binding')
+- validate_promotion_quiescence(folder,m,reference(),result)
+- for rel,row in m['tools'].items():
+-  data,mode=checked_file(folder/'backups',rel);need(sha(data)==row['oldSha256'] and mode==row['filesystemMode'],'tool backup drift')
+- return result
+-
+-def unused_promotion(folder):
+- need(not (folder/'promotion-started.json').exists() and not (folder/'promotion-result.json').exists(),'promotion consumed')
+-def integration(reference,ref):
+- v=loads(check_ref(reference));exact(v,('schemaVersion','kind','sourceTIP','toolTIP','viewerBuildId','componentPins','checker','independentReview','result','actualExitCode','classification'))
+- need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['kind']=='root-mixed-native-pure-integration' and v['sourceTIP']==FINAL_TIP and v['toolTIP']==TOOL_TIP and v['viewerBuildId']==ref['assets']['buildId'],'new mixed integration pins')
+- need(v['componentPins']=={'signal':PRODUCT,'host':PRODUCT,'viewer':VIEWER_TIP,'tools':TOOL_TIP} and type(v['actualExitCode']) is int and v['actualExitCode']==0 and v['classification']=='passed-offline-only','actual mixed integration receipt')
+- for key in ('checker','independentReview','result'):check_ref(v[key])
+- need(v['checker']['sha256']==sha(regular(R/'mixed-native-integration.py')[0]),'exact prepared checker')
+- result=loads(check_ref(v['result']));need(result=={'result':'pure-native-startup-integration-only','methods':4,'accepted':2,'rejected':10,'rows':1262,'sourceTIP':FINAL_TIP,'viewerBuildId':ref['assets']['buildId'],'componentPins':v['componentPins']},'actual mixed checker result')
+- return v
++def reference():return base_reference()
+ 
+ def validate_attempt_decision(d,m,previous=None):
+  exact(d,('schemaVersion','kind','sequenceId','attemptId','runNonce','scenario','mode','origin','productTIP','toolTIP','priorFailureSHA256','failedHistory','sourceTIP','previousResult'))
+@@ -59,7 +67,8 @@
+   previous=loads(check_ref(d['previousResult']));index=SCENARIOS.index(d['scenario']);binding=readjson(folder/('attempt-'+SCENARIOS[index-1]+'.json'))
+   need(pathlib.Path(d['previousResult']['path']).resolve()==folder/'attempts'/binding['attemptId']/'qualification-result.json','foreign previous result')
+  validate_attempt_decision(d,m,previous)
+- old=reference()['historical']['oldRuntimeManifest'];_,_,hist=history();need(d['runNonce'] not in (loads(check_ref(old))['runNonce'],hist['secondAttempt']['runNonce'],hist['thirdAttempt']['runNonce']),'old runtime nonce reused');need(d['attemptId'] not in (hist['secondAttempt']['attemptId'],hist['thirdAttempt']['attemptId']) and d['sequenceId'] not in (hist['secondAttempt']['sequenceId'],hist['thirdAttempt']['sequenceId']),'old attempt/sequence identity reused')
++ old=reference()['historical']['oldRuntimeManifest'];_,_,hist=history();need(d['runNonce'] not in (loads(check_ref(old))['runNonce'],hist['secondAttempt']['runNonce'],hist['thirdAttempt']['runNonce']),'old runtime nonce reused')
++ need(d['attemptId'] not in (hist['secondAttempt']['attemptId'],hist['thirdAttempt']['attemptId']) and d['sequenceId'] not in (hist['secondAttempt']['sequenceId'],hist['thirdAttempt']['sequenceId']),'old attempt/sequence reused')
+  for scenario in SCENARIOS:
+   p=folder/('attempt-'+scenario+'.json')
+   if p.exists():
+@@ -73,7 +82,7 @@
+  now=int(time.time()*1000);need(manifest['createdAtEpochMs']<=now<=manifest['validUntilEpochMs'] and 0<manifest['validUntilEpochMs']-manifest['createdAtEpochMs']<=43200000,'runtime clock/expiry')
+  if admission:need(now-manifest['createdAtEpochMs']<=900000 and manifest['validUntilEpochMs']-now>=(BUDGET[pins['scenario']]+120)*1000,'fresh runtime admission budget')
+  for name in ('signal','host'):need(manifest[name]=={'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees'][name]},'product/tool identity conflation')
+- need(manifest['viewer']=={'sourceCommit':VIEWER_TIP,'buildId':ref['assets']['buildId']},'Viewer product identity')
++ need(manifest['viewer']=={'sourceCommit':viewer_source_tip(),'buildId':ref['assets']['buildId']},'Viewer product identity')
+  need(manifest['originSource']=='formal-configured' and manifest['originSha256']==sha(pins['origin'].encode()),'formal origin identity')
+  exact(manifest['deploymentEvidence'],('kind','sha256'));need(manifest['deploymentEvidence']['kind']=='root-verified-local-deployment' and valid_sha(manifest['deploymentEvidence']['sha256']) and valid_sha(manifest['originEvidenceSha256']),'attestation hashes')
+  log=manifest['signalLog'];exact(log,('path','device','inode'));need(log['path']==ref['signalLogPath'] and type(log['device']) is int and 0<=log['device']<=9007199254740991 and type(log['inode']) is int and 0<log['inode']<=9007199254740991,'configured log identity schema')
+@@ -84,7 +93,7 @@
+ 
+ def attempt_context(args,*,admission=False):
+  path=pathlib.Path(args.attempt_dir).resolve(strict=True);a=private_json(path/'attempt.json',args.attempt_sha256)
+- exact(a,('schemaVersion','sequenceDirectory','sequenceSHA256','sequenceId','attemptId','toolTIP','productTIP','readinessSHA256','promotionSHA256','decision','runtimeManifestSHA256','sourceFiles','scenario','mode','origin','runNonce','priorFailureSHA256','sourceTIP','failedHistory'))
++ exact(a,('schemaVersion','sequenceDirectory','sequenceSHA256','sequenceId','attemptId','toolTIP','productTIP','readinessSHA256','decision','runtimeManifestSHA256','sourceFiles','scenario','mode','origin','runNonce','priorFailureSHA256','sourceTIP','failedHistory'))
+  prepared=private_json(path/'preparation-result.json');exact(prepared,('classification','errorClass','attemptSHA256','automaticLaunch','scenarioReservationConsumed'))
+  need(prepared=={'classification':'attempt-prepared-not-run','errorClass':None,'attemptSHA256':args.attempt_sha256,'automaticLaunch':False,'scenarioReservationConsumed':True},'attempt preparation incomplete')
+  f,m,ref=sequence(a['sequenceDirectory'],a['sequenceSHA256']);need(type(a['schemaVersion']) is int and a['schemaVersion']==1,'attempt schema version');need(path==f/'attempts'/a['attemptId'] and a['sequenceId']==m['sequenceId'] and a['toolTIP']==m['toolTIP'] and a['productTIP']==PRODUCT,'attempt location/source binding')
+@@ -93,7 +102,7 @@
+  reservation=readjson(f/('attempt-'+a['scenario']+'.json'));need(reservation=={'attemptId':a['attemptId'],'runNonce':a['runNonce'],'decisionSHA256':a['decision']['sha256']},'one-use attempt reservation')
+  if previous is not None:
+   index=SCENARIOS.index(a['scenario']);pb=readjson(f/('attempt-'+SCENARIOS[index-1]+'.json'));need(pathlib.Path(d['previousResult']['path']).resolve()==f/'attempts'/pb['attemptId']/'qualification-result.json','prior result path')
+- need(a['readinessSHA256']==m['readinessSHA256'],'historical readiness pin');promotion(f,m,a['promotionSHA256']);ref=dict(ref,_tools=m['tools']);need(set(a['sourceFiles'])==set(RUNTIME),'runtime import pin closure')
++ need(a['readinessSHA256']==m['readinessSHA256'],'readiness pin');need(set(a['sourceFiles'])==set(RUNTIME),'runtime import pin closure')
+  for rel,digest in a['sourceFiles'].items():need(sha(blob(m['sourceTIP'],rel))==digest==sha(checked_file(P,rel)[0]),'tool runtime source drift')
+  for rel in RUNTIME[1:4]:need(blob(m['sourceTIP'],rel)==blob(PRODUCT,rel),'immutable runtime dependency changed')
+  args.runtime_manifest=str(path/'runtime-manifest.json');args.runtime_manifest_sha256=a['runtimeManifestSHA256'];args.sequence=m;args.reference=ref;args.attempt=a
+@@ -112,25 +121,5 @@
+ 
+ def current_gate(args,expected):
+  _,m,ref,_,_=attempt_context(args);need(expected==ref['expectedServices'],'current services');return deployed_gate(ref)
+-
+ def qualification_integrity(args,expected):
+- _,m,ref,_,_=attempt_context(args);need(expected==ref['expectedServices'],'current services');return deployed_gate(ref,m['tools'],require_idle=False)
+-
+-def root_decision(path,digest,pkg,review_sha,offline):
+- d=private_json(path,digest,16384);exact(d,('schemaVersion','kind','sequenceId','packageManifestSHA256','sourceReviewSHA256','offlineIntegrationEvidence','failedHistory','operation'))
+- need(type(d['schemaVersion']) is int and d['schemaVersion']==1 and d['kind']=='root-tool-only-new-sequence' and d['packageManifestSHA256']==pkg and d['sourceReviewSHA256']==review_sha and d['offlineIntegrationEvidence']==offline and d['failedHistory']==FAILURES and d['operation']=='two-existing-tools-only','explicit new two-tool sequence decision');hex32(d['sequenceId'])
+- _,_,old=history();need(d['sequenceId'] not in (old['secondAttempt']['sequenceId'],old['thirdAttempt']['sequenceId']),'old sequence replay')
+- return d
+-
+-def sequence(folder,digest):
+- pkg=package_guard();folder=pathlib.Path(folder).resolve(strict=True);need(folder.parent==R and folder.name.startswith('sequence-') and stat.S_IMODE(folder.stat().st_mode)==0o700,'new private sequence')
+- m=private_json(folder/'sequence.json',digest)
+- exact(m,('schemaVersion','sequenceId','packageManifestSHA256','productTIP','toolTIP','sourceTIP','viewerSourceTIP','sourceReview','rootDecision','referenceSHA256','readinessSHA256','tools','offlineIntegrationEvidence','failedHistory'))
+- need(type(m['schemaVersion']) is int and m['schemaVersion']==1 and m['packageManifestSHA256']==pkg and m['productTIP']==PRODUCT and m['toolTIP']==TOOL_TIP and m['sourceTIP']==FINAL_TIP and m['viewerSourceTIP']==VIEWER_TIP and m['failedHistory']==FAILURES,'exact mixed sequence pins')
+- review=source_review(m['sourceReview']['path'],m['sourceReview']['sha256']);d=root_decision(m['rootDecision']['path'],m['rootDecision']['sha256'],pkg,m['sourceReview']['sha256'],m['offlineIntegrationEvidence'])
+- need(m['sequenceId']==d['sequenceId'] and folder.name=='sequence-'+m['sequenceId'],'new sequence ID');b,h,_=history();need(m['referenceSHA256']==sha(regular(R/'deployment-history.json')[0]) and m['readinessSHA256']==h['records']['r5Readiness']['sha256'],'deployed reference lineage')
+- integration(m['offlineIntegrationEvidence'],b);need(set(m['tools'])==set(TOOLS),'exact two-tool map')
+- for name,row in m['tools'].items():
+-  exact(row,('oldSha256','sha256','filesystemMode'));data,mode=checked_file(folder/'tools',name);old=b['regularFiles'][name]
+-  need(row['oldSha256']==old['sha256']==sha(blob(OLD_TOOL_TIP,name)) and row['filesystemMode']==old['filesystemMode']==mode==0o600 and sha(data)==row['sha256']==review['fileSources'][name]['sha256']==sha(blob(TOOL_TIP,name)),'exact old/new frozen tool bytes/modes')
+- return folder,m,b
++ _,m,ref,_,_=attempt_context(args);need(expected==ref['expectedServices'],'current services');return deployed_gate(ref,require_idle=False)
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/deployment.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/deployment.py
+@@ -0,0 +1,100 @@
++"""New deployed-state derivation. Entry points are explicit future operations only."""
++import argparse,sys
++from bindings import *
++from asset_template import *
++
++def args_parser(description,assets=True):
++ p=argparse.ArgumentParser(description=description)
++ for key in ('frozen-dir','frozen-sha256'):p.add_argument('--'+key,required=True)
++ if assets:
++  for key in ('asset-review','asset-review-sha256'):p.add_argument('--'+key,required=True)
++ return p
++
++def frozen(folder,digest,*,applied=False,dist=True):
++ pkg=package_guard();folder=pathlib.Path(folder).resolve(strict=True);need(folder.parent==R and folder.name.startswith('deployment-'),'private deployment path')
++ m=private_json(folder/'frozen.json',digest,16*1024*1024)
++ exact(m,('schemaVersion','deploymentId','packageManifestSHA256','tip','toolTIP','productTIP','sourceReview','rootDecision','failedHistory','preMapSHA256','candidateFiles','buildInputs','windowLowerMs','windowUpperMs','oldDistMap','codeHashes','expectedPostCount'))
++ need(type(m['schemaVersion']) is int and m['schemaVersion']==1 and m['packageManifestSHA256']==pkg and m['productTIP']==PRODUCT and m['toolTIP']==TOOL_TIP and m['failedHistory']==FAILURES,'deployment identity')
++ hex32(m['deploymentId']);need(folder.name=='deployment-'+m['deploymentId'],'deployment ID');review=source_review(m['sourceReview']['path'],m['sourceReview']['sha256']);need(review['sourceTIP']==m['tip'],'source review TIP')
++ decision=private_json(m['rootDecision']['path'],m['rootDecision']['sha256']);validate_deployment_decision(decision,pkg,m['sourceReview']['sha256'])
++ for key in ('deploymentId','windowLowerMs','windowUpperMs'):need(m[key]==decision[key],'decision drift')
++ b,h,records=history();need(m['preMapSHA256']==sha(json.dumps(b['regularFiles'],sort_keys=True,separators=(',',':')).encode()) and m['oldDistMap']==b['assets']['exactFinalFileMap'],'deployed pre-state lineage')
++ need(list(m['candidateFiles'])==review['copyPaths']==list(COPY_PATHS),'candidate exact four allowlist');changes={}
++ candidate_tree,_=tree(m['tip'])
++ for rel,row in m['candidateFiles'].items():
++  exact(row,('sha256','filesystemMode','oldSha256','oldMode','gitMode','objectId'));data,mode=checked_file(folder/'candidate',rel);old=b['regularFiles'].get(rel);need(old is not None,'new primary paths forbidden')
++  need(mode==0o600 and sha(data)==row['sha256']==sha(blob(m['tip'],rel)) and row['gitMode']=='100644' and row['objectId']==candidate_tree[rel]['objectId'],'frozen candidate bytes')
++  need(row['oldSha256']==(old['sha256'] if old else None) and row['oldMode']==(old['filesystemMode'] if old else None) and row['filesystemMode']==(old['filesystemMode'] if old else 0o600),'candidate baseline modes')
++  if not applied and old is None:need(nodeinfo(P/rel)=={'type':'absent'},'addition already exists')
++  changes[rel]={'sha256':row['sha256'],'filesystemMode':row['filesystemMode']}
++ tr,_=tree(m['tip']);inputset={n for n in tr if n.startswith('web-client/')}|BUILD_INPUTS;need(set(m['buildInputs'])==inputset and not any(n.startswith('web-client/dist/') for n in inputset),'complete frozen build inputs')
++ for rel,row in m['buildInputs'].items():
++  data,mode=checked_file(folder/'build-inputs',rel);old=b['regularFiles'].get(rel)
++  need(tr[rel]['kind']=='blob' and tr[rel]['gitMode'] in ('100644','100755') and sha(data)==row['sha256']==sha(blob(m['tip'],rel)) and mode==row['filesystemMode']==(old['filesystemMode'] if old else 0o600),'build input pin/mode')
++ need(m['expectedPostCount']==len(b['regularFiles'])==len(set(b['regularFiles'])|set(changes))==1016,'four replacements preserve known map')
++ source_map_gate(b,changes if applied else None)
++ expected_code={n:dg for n,dg in private_json(R/'SHA256SUMS.json',pkg).items() if n.endswith(('.py','.js'))};need(m['codeHashes']==expected_code,'complete frozen code closure')
++ for name,dg in m['codeHashes'].items():need(sha(checked_file(R,name)[0])==dg,'frozen code pin')
++ need(distmap(folder/'old-dist')==m['oldDistMap'],'frozen old dist')
++ if dist:old_dist_gate(b)
++ return folder,m,b,changes
++
++def validate_deployment_decision(d,pkg,source_sha):
++ exact(d,('schemaVersion','kind','deploymentId','packageManifestSHA256','sourceReviewSHA256','failedHistory','windowLowerMs','windowUpperMs','operation'))
++ need(type(d['schemaVersion']) is int and d['schemaVersion']==1 and d['kind']=='root-new-frontend-deployment' and d['packageManifestSHA256']==pkg and d['sourceReviewSHA256']==source_sha and d['failedHistory']==FAILURES and d['operation']=='source-copy-and-restart-signal-only','explicit frontend decision')
++ hex32(d['deploymentId']);lo,hi=d['windowLowerMs'],d['windowUpperMs'];need(type(lo) is int and type(hi) is int and 0<=lo<hi<=9007199254740991 and hi-lo<=600000,'fresh600s window')
++
++def asset_context(args,*,applied=False,dist=True):
++ f,m,b,changes=frozen(args.frozen_dir,args.frozen_sha256,applied=applied,dist=dist);v=private_json(args.asset_review,args.asset_review_sha256,32768)
++ exact(v,('schemaVersion','frozenSHA256','templateRelativePath','templateSHA256','buildResultSHA256','independentReview'))
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['frozenSHA256']==args.frozen_sha256,'asset review binding');check_ref(v['independentReview']);rel=relative(v['templateRelativePath']);need('/' not in rel and rel.startswith('two-time-template-'),'template path')
++ d=f/rel;t=private_json(d/'template.json',v['templateSHA256'],1048576);result=private_json(f/'build-result.json',v['buildResultSHA256'],1048576)
++ need(result['classification']=='private-two-time-template-frozen' and result['frozenSHA256']==args.frozen_sha256 and result['templateSHA256']==v['templateSHA256'] and result['templateDirectory']==str(d),'actual build result binding')
++ need(t['codeHashes']==m['codeHashes'],'template executable closure')
++ need(type(result['children']) is list and [v['endpoint'] for v in result['children']]==['lower','upper'],'two actual endpoint records')
++ for child in result['children']:
++  cr=child['result'];need(cr['classification']=='observed-private-build-completed' and cr['intervened'] is False and cr['helperExit']==0 and cr['timedOut'] is False and all(cr[k] is None for k in ('errorClass','cleanupErrorClass','ownershipErrorClass')) and cr['unexpectedCoverage']==[],'endpoint lifecycle evidence');validate_owned_coverage(cr['ownership']);validate_no_signals(cr['ownership'])
++ need(t['kind']=='frontend-two-time-template' and t['tip']==m['tip'] and t['frozenSHA256']==args.frozen_sha256 and t['windowLowerMs']==m['windowLowerMs'] and t['windowUpperMs']==m['windowUpperMs'],'template source/window')
++ need(all(mode==0o755 for mode in t['directoryModes'].values()) and all(row['filesystemMode']==0o644 for row in t['files'].values()),'strict output mode profile')
++ for rel,row in t['files'].items():need(sha(checked_file(d/'expected',rel)[0])==row['templateSha256'],'template data drift')
++ return f,m,b,changes,d,t,v['templateSHA256']
++
++def runtime_gate(args,expected,*,require_idle=True):
++ f,m,b,changes,d,t,ts=asset_context(args,applied=True,dist=False);preserved_gate();need(service_set()==expected,'current service identities');need(expected['host']==b['expectedServices']['host'],'Host replacement forbidden')
++ assets=verify_rendered_dist(d,ts,P/'web-client/dist');h=health(require_idle=require_idle);preserved_gate();need(service_set()==expected,'service identity raced')
++ return {'health':h,'identities':expected,'assets':assets,'preserved':True,'sourceTIP':m['tip'],'frozenSHA256':args.frozen_sha256,'componentPins':{'signal':PRODUCT,'host':PRODUCT,'viewer':viewer_source_tip(),'tools':TOOL_TIP}}
++
++def applied_record(f,m,frozen_sha,digest):
++ r=private_json(f/'apply-result.json',digest,1048576)
++ exact(r,('schemaVersion','classification','frozenSHA256','tip','startedSHA256','assetReviewSHA256','appliedPaths','quiescence','errorClass','integrity','currentReadiness','automaticRollbackOrRetry'))
++ need(type(r['schemaVersion']) is int and r['schemaVersion']==1 and r['automaticRollbackOrRetry'] is False,'apply result schema')
++ marker=private_json(f/'apply-started.json',r['startedSHA256']);exact(marker,('frozenSHA256','tip','epoch','paths','quiescenceReceiptSHA256','scope','oneUse'))
++ need(marker['frozenSHA256']==frozen_sha and marker['tip']==m['tip'] and marker['paths']==list(m['candidateFiles']) and marker['oneUse'] is True and marker['quiescenceReceiptSHA256']==r['quiescence']['receiptSHA256'],'apply started binding')
++ from known_attempt_quiescence import validate_action_evidence,SCOPE
++ need(marker['scope']==SCOPE,'apply scope');validate_action_evidence(f,m,frozen_sha,r['quiescence'],'apply',None,['copy-%03d'%i for i in range(len(m['candidateFiles']))])
++ need(r['classification']=='source-applied' and r['frozenSHA256']==frozen_sha and r['tip']==m['tip'] and r['appliedPaths']==list(m['candidateFiles']) and r['errorClass'] is None,'exact successful apply')
++ for rel,row in m['candidateFiles'].items():
++  if row['oldSha256'] is not None:need(sha(checked_file(f/'backups',rel)[0])==row['oldSha256'],'source backup drift')
++ return r
++
++def copy_one(rel,row,data,before_replace):
++ need(sha(data)==row['sha256'],'frozen copy bytes');parent=P
++ for part in pathlib.PurePosixPath(relative(rel)).parts[:-1]:
++  parent=parent/part
++  try:parent.mkdir(mode=0o700)
++  except FileExistsError:pass
++  need(stat.S_ISDIR(parent.lstat().st_mode),'plain copy ancestor')
++ dest=P/rel
++ def check():
++  if row['oldSha256'] is None:need(nodeinfo(dest)=={'type':'absent'},'addition raced')
++  else:
++   old,mode=checked_file(P,rel);need(sha(old)==row['oldSha256'] and mode==row['oldMode'],'copy old bytes/mode')
++ check();fd,name=tempfile.mkstemp(prefix='.wrd-viewer-',dir=parent);tmp=pathlib.Path(name)
++ try:
++  with os.fdopen(fd,'wb') as stream:os.fchmod(stream.fileno(),row['filesystemMode']);stream.write(data);stream.flush();os.fsync(stream.fileno())
++  check();before_replace()
++  if row['oldSha256'] is None:os.link(tmp,dest,follow_symlinks=False);tmp.unlink()
++  else:os.replace(tmp,dest)
++  actual,mode=checked_file(P,rel);need(sha(actual)==row['sha256'] and mode==row['filesystemMode'],'copied bytes/mode')
++ finally:
++  if tmp.exists():tmp.unlink()
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/freeze-frontend-context.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/freeze-frontend-context.py
+@@ -0,0 +1,20 @@
++"""Future root source freeze only. Requires final F receipt, never current HEAD inference."""
++from deployment import *
++def main():
++ os.umask(0o077);p=argparse.ArgumentParser(description=__doc__)
++ for key in ('source-review','source-review-sha256','decision','decision-sha256'):p.add_argument('--'+key,required=True)
++ a=p.parse_args();pkg=package_guard();review=source_review(a.source_review,a.source_review_sha256);decision=private_json(a.decision,a.decision_sha256);validate_deployment_decision(decision,pkg,a.source_review_sha256)
++ need(decision['windowLowerMs']>=int(time.time()*1000),'future window required');b,h,records=history();source_map_gate(b);old_dist_gate(b);tip=review['sourceTIP'];tr,_=tree(tip)
++ f=R/('deployment-'+decision['deploymentId']);f.mkdir(mode=0o700);jsonwrite(f/'freeze-started.json',{'sourceReviewSHA256':a.source_review_sha256,'rootDecisionSHA256':a.decision_sha256,'primaryMutated':False});candidate={};inputs={}
++ for rel in review['copyPaths']:
++  data=blob(tip,rel);old=b['regularFiles'].get(rel);need(old is not None,'four existing source paths required')
++  if old is None:need(nodeinfo(P/rel)=={'type':'absent'},'new source already exists')
++  write(f/'candidate'/rel,data);candidate[rel]={'sha256':sha(data),'filesystemMode':old['filesystemMode'] if old else 0o600,'oldSha256':old['sha256'] if old else None,'oldMode':old['filesystemMode'] if old else None,'gitMode':tr[rel]['gitMode'],'objectId':tr[rel]['objectId']}
++ for rel in sorted({n for n in tr if n.startswith('web-client/')}|BUILD_INPUTS):
++  need(tr[rel]['kind']=='blob' and tr[rel]['gitMode'] in ('100644','100755'),'regular build input');data=blob(tip,rel);old=b['regularFiles'].get(rel);need(old is not None,'four existing source paths required');mode=old['filesystemMode'] if old else 0o600;write(f/'build-inputs'/rel,data,mode);inputs[rel]={'sha256':sha(data),'filesystemMode':mode}
++ for rel,row in b['assets']['exactFinalFileMap'].items():
++  data,mode=checked_file(P/'web-client/dist',rel);need(sha(data)==row['sha256'] and mode==row['filesystemMode'],'old asset changed');write(f/'old-dist'/rel,data,mode)
++ code={n:dg for n,dg in private_json(R/'SHA256SUMS.json',pkg).items() if n.endswith(('.py','.js'))}
++ m={'schemaVersion':1,'deploymentId':decision['deploymentId'],'packageManifestSHA256':pkg,'tip':tip,'toolTIP':TOOL_TIP,'productTIP':PRODUCT,'sourceReview':{'path':str(pathlib.Path(a.source_review).resolve()),'sha256':a.source_review_sha256},'rootDecision':{'path':str(pathlib.Path(a.decision).resolve()),'sha256':a.decision_sha256},'failedHistory':FAILURES,'preMapSHA256':sha(json.dumps(b['regularFiles'],sort_keys=True,separators=(',',':')).encode()),'candidateFiles':candidate,'buildInputs':inputs,'windowLowerMs':decision['windowLowerMs'],'windowUpperMs':decision['windowUpperMs'],'oldDistMap':b['assets']['exactFinalFileMap'],'codeHashes':code,'expectedPostCount':len(set(b['regularFiles'])|set(candidate))}
++ source_map_gate(b);old_dist_gate(b);digest=jsonwrite(f/'frozen.json',m);frozen(f,digest);print(json.dumps({'frozenDirectory':str(f),'frozenSHA256':digest,'primaryMutated':False}));return 0
++if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/known_attempt_quiescence.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/known_attempt_quiescence.py
+@@ -1,6 +1,5 @@
+-"""Known recorded identities only. Runtime process factory is injected; no discovery."""
+ import math
+-from continuation_common import *
++from bindings import *
+ SCOPE='task-known-recorded-identities-only'
+ STATUSES=('running','sleeping','disk-sleep','stopped','tracing-stop','zombie','dead','wake-kill','waking','idle','locked','waiting','parked')
+ QUIET=('gone','zombie','nonmatching-birth')
+@@ -23,17 +22,6 @@
+    rows.append({'registry':name,'pid':row['pid'],'birthEpoch':row['birth']})
+  need(1<=len(rows)<=64 and len({(r['pid'],r['birthEpoch']) for r in rows})==len(rows),'known identity bounds/duplicates')
+  return sorted(rows,key=lambda r:(r['registry'],r['pid'],r['birthEpoch']))
+-
+-def prior_known(ref):
+- b,h,records=history();groups=[known_from_closed(loads(check_ref(b['historical']['oldMarker'])),loads(check_ref(b['historical']['oldFailure'])))]
+- for prefix in ('second','third'):
+-  marker=records[prefix+'Marker'];result=records[prefix+'Failure'];attempt=records[prefix+'Attempt']
+-  need(marker['oneUse'] is True and marker['scenario']=='baseline' and marker['attemptSHA256']==h['records'][prefix+'Attempt']['sha256']==result['attemptSHA256'] and result['kind']=='guarded-ordinary-qualification' and result['classification']=='failed-or-indeterminate' and type(result['workerExitCode']) is int and result['automaticNextRun'] is False and result['fullProcessTreeExit']=='unknown','historical known attempt unclosed')
+-  for key in ('sequenceId','attemptId','productTIP','toolTIP','runtimeManifestSHA256'):need(marker[key]==result[key]==attempt[key],'historical marker/result/attempt mismatch')
+-  groups.append(recorded_identities(result))
+- rows=[dict(row,registry=str(i+1)+':'+row['registry']) for i,group in enumerate(groups) for row in group];need(len(rows)==21 and len({(r['pid'],r['birthEpoch']) for r in rows})==21,'exact three-failure21 identity coverage');return sorted(rows,key=lambda r:(r['registry'],r['pid'],r['birthEpoch']))
+-
+-def prior_marker_sha():return history()[1]['records']['thirdMarker']['sha256']
+ 
+ def clock_pair(wall,monotonic):
+  pair={'epoch':wall(),'monotonic':monotonic()};need(all(finite(v) for v in pair.values()),'quiescence clock unavailable');return pair
+@@ -80,45 +68,43 @@
+  need(observation['classification']==expected_class,'quiescence classification contradiction')
+  return observation
+ 
+-def unused_attempts(folder):
+- for scenario in SCENARIOS:need(not (folder/('attempt-'+scenario+'.json')).exists(),'known current sequence attempt already reserved')
+-
+-def receipt_value(m,sequence_sha,ref,observation):
+- known=prior_known(ref);validate_observation(observation,known);need(observation['classification']=='known-identities-quiescent','known identity alive or unknown')
+- return {'schemaVersion':1,'kind':'root-known-attempt-quiescence','packageManifestSHA256':m['packageManifestSHA256'],'sequenceSHA256':sequence_sha,'sequenceId':m['sequenceId'],'priorFailureSHA256':PRIOR_FAILURE,'failedHistory':FAILURES,'priorMarkerSHA256':prior_marker_sha(),'knownIdentities':known,'observation':observation,'scope':SCOPE,'fullProcessTreeExit':'unknown'}
+-
+-def validate_receipt(value,m,sequence_sha,ref,*,now=None):
+- exact(value,('schemaVersion','kind','packageManifestSHA256','sequenceSHA256','sequenceId','priorFailureSHA256','failedHistory','priorMarkerSHA256','knownIdentities','observation','scope','fullProcessTreeExit'))
+- need(type(value['schemaVersion']) is int and value['schemaVersion']==1 and value['kind']=='root-known-attempt-quiescence' and value['packageManifestSHA256']==m['packageManifestSHA256'] and value['sequenceSHA256']==sequence_sha and value['sequenceId']==m['sequenceId'] and value['priorFailureSHA256']==PRIOR_FAILURE and value['failedHistory']==FAILURES and value['priorMarkerSHA256']==prior_marker_sha() and value['scope']==SCOPE and value['fullProcessTreeExit']=='unknown','quiescence receipt binding')
+- known=prior_known(ref);need(value['knownIdentities']==known,'receipt exact known identity coverage');validate_observation(value['observation'],known);need(value['observation']['classification']=='known-identities-quiescent','receipt not quiescent')
+- if now is not None:fresh_at(value,now)
+- return known
+-
+ def fresh_at(receipt,now):
+  start=receipt['observation']['started'];end=receipt['observation']['completed'];forward(end,now)
+  need(all(now[k]-start[k]<=60 for k in ('epoch','monotonic')),'quiescence receipt stale')
+ 
+-def receipt_file(folder,m,sequence_sha,ref,path,digest,*,fresh):
+- need(pathlib.Path(path).resolve(strict=True)==folder/'known-attempt-quiescence.json','quiescence receipt location')
+- value=private_json(path,digest,65536);known=validate_receipt(value,m,sequence_sha,ref,now=clock_pair(time.time,time.monotonic) if fresh else None);return value,known
++def all_known():
++ b,h,records=history();groups=[known_from_closed(loads(check_ref(b['historical']['oldMarker'])),loads(check_ref(b['historical']['oldFailure'])))]
++ for prefix in ('second','third'):
++  marker=records[prefix+'Marker'];result=records[prefix+'Failure'];attempt=records[prefix+'Attempt']
++  need(marker['oneUse'] is True and marker['scenario']=='baseline' and marker['attemptSHA256']==h['records'][prefix+'Attempt']['sha256']==result['attemptSHA256'] and result['kind']=='guarded-ordinary-qualification' and result['classification']=='failed-or-indeterminate' and type(result['workerExitCode']) is int and result['automaticNextRun'] is False and result['fullProcessTreeExit']=='unknown','historical known attempt unclosed')
++  for key in ('sequenceId','attemptId','productTIP','toolTIP','runtimeManifestSHA256'):need(marker[key]==result[key]==attempt[key],'historical marker/result/attempt mismatch')
++  groups.append(recorded_identities(result))
++ rows=[dict(row,registry=str(i+1)+':'+row['registry']) for i,group in enumerate(groups) for row in group];need(len(rows)==21 and len({(r['pid'],r['birthEpoch']) for r in rows})==21,'exact three-failure21 identity coverage');return sorted(rows,key=lambda r:(r['registry'],r['pid'],r['birthEpoch']))
+ 
+-def before_publication(folder,m,sequence_sha,ref,path,digest,index,checks):
+- # This callback is invoked after the destination/source checks, just before replace.
+- value,known=receipt_file(folder,m,sequence_sha,ref,path,digest,fresh=True);unused_attempts(folder)
+- observation=live_observe(known);validate_observation(observation,known)
+- record={'receiptSHA256':digest,'sequenceSHA256':sequence_sha,'fileIndex':index,'observation':observation}
+- output=folder/('quiescence-before-copy-'+str(index)+'.json');record_sha=jsonwrite(output,record)
+- checks.append({'path':str(output),'sha256':record_sha,'classification':observation['classification']})
+- fresh_at(value,observation['completed']);need(observation['classification']=='known-identities-quiescent','known identity alive or unknown before publication')
+- # Include private evidence-write time in the same <=60s budget; no retries.
+- fresh_at(value,clock_pair(time.time,time.monotonic))
++def receipt_value(m,frozen_sha,phase,apply_sha,observation):
++ known=all_known();validate_observation(observation,known);need(observation['classification']=='known-identities-quiescent','alive or unknown known attempt')
++ need(phase in ('apply','reload') and (apply_sha is None if phase=='apply' else valid_sha(apply_sha)),'quiescence phase')
++ return {'schemaVersion':1,'kind':'root-three-failure-quiescence','packageManifestSHA256':m['packageManifestSHA256'],'frozenSHA256':frozen_sha,'sourceTIP':m['tip'],'deploymentId':m['deploymentId'],'phase':phase,'applySHA256':apply_sha,'failedHistory':FAILURES,'knownIdentities':known,'observation':observation,'scope':SCOPE,'fullProcessTreeExit':'unknown'}
+ 
+-def validate_promotion_quiescence(folder,m,ref,result):
+- q=result['quiescence'];exact(q,('receiptSHA256','scope','fullProcessTreeExit','checks'))
+- need(q['scope']==SCOPE and q['fullProcessTreeExit']=='unknown' and type(q['checks']) is list and len(q['checks'])==2,'promotion quiescence record')
+- value,known=receipt_file(folder,m,result['sequenceSHA256'],ref,folder/'known-attempt-quiescence.json',q['receiptSHA256'],fresh=False)
+- for index,check in enumerate(q['checks'],1):
+-  exact(check,('path','sha256','classification'));need(check['path']==str(folder/('quiescence-before-copy-'+str(index)+'.json')) and check['classification']=='known-identities-quiescent','promotion per-file quiescence evidence')
+-  record=private_json(check['path'],check['sha256'],65536);exact(record,('receiptSHA256','sequenceSHA256','fileIndex','observation'))
+-  need(record['receiptSHA256']==q['receiptSHA256'] and record['sequenceSHA256']==result['sequenceSHA256'] and type(record['fileIndex']) is int and record['fileIndex']==index,'per-file quiescence binding');validate_observation(record['observation'],known);need(record['observation']['classification']=='known-identities-quiescent','per-file known identity not quiescent');fresh_at(value,record['observation']['completed'])
+- return q
++def receipt_file(f,m,frozen_sha,path,digest,phase,apply_sha,*,fresh):
++ need(pathlib.Path(path).resolve(strict=True)==f/('quiescence-'+phase+'.json'),'quiescence exact path');v=private_json(path,digest,65536)
++ exact(v,('schemaVersion','kind','packageManifestSHA256','frozenSHA256','sourceTIP','deploymentId','phase','applySHA256','failedHistory','knownIdentities','observation','scope','fullProcessTreeExit'))
++ expected=receipt_value(m,frozen_sha,phase,apply_sha,v['observation']);need(v==expected and type(v['schemaVersion']) is int,'quiescence exact bindings/identity list')
++ if fresh:fresh_at(v,clock_pair(time.time,time.monotonic))
++ return v,v['knownIdentities']
++
++def before_action(f,m,frozen_sha,path,digest,phase,apply_sha,label,checks):
++ need((phase=='apply' and re.fullmatch('copy-[0-9]{3}',label)) or (phase=='reload' and label=='reload'),'fixed quiescence action')
++ v,known=receipt_file(f,m,frozen_sha,path,digest,phase,apply_sha,fresh=True);ob=live_observe(known);validate_observation(ob,known)
++ output=f/'quiescence-checks'/(label+'.json');dg=jsonwrite(output,{'receiptSHA256':digest,'frozenSHA256':frozen_sha,'label':label,'observation':ob});checks.append({'path':str(output),'sha256':dg,'classification':ob['classification']})
++ fresh_at(v,ob['completed']);need(ob['classification']=='known-identities-quiescent','known attempt alive/unknown before action');fresh_at(v,clock_pair(time.time,time.monotonic))
++
++def validate_action_evidence(f,m,frozen_sha,value,phase,apply_sha,labels):
++ exact(value,('receiptSHA256','checks','scope','fullProcessTreeExit'));need(value['scope']==SCOPE and value['fullProcessTreeExit']=='unknown' and type(value['checks']) is list and len(value['checks'])==len(labels),'historical quiescence coverage')
++ receipt,known=receipt_file(f,m,frozen_sha,f/('quiescence-'+phase+'.json'),value['receiptSHA256'],phase,apply_sha,fresh=False)
++ for ref,label in zip(value['checks'],labels):
++  exact(ref,('path','sha256','classification'));need(pathlib.Path(ref['path']).resolve(strict=True)==f/'quiescence-checks'/(label+'.json'),'action evidence path')
++  row=private_json(ref['path'],ref['sha256'],65536);exact(row,('receiptSHA256','frozenSHA256','label','observation'))
++  need(row['receiptSHA256']==value['receiptSHA256'] and row['frozenSHA256']==frozen_sha and row['label']==label,'action evidence bindings');validate_observation(row['observation'],known);fresh_at(receipt,row['observation']['completed'])
++  need(row['observation']['classification']==ref['classification']=='known-identities-quiescent','action was not quiescent')
++ return value
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/mixed-native-integration.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/mixed-native-integration.py
+@@ -7,8 +7,6 @@
+ 
+ SOURCE = Path('/Users/macstudio1/.codex/worktrees/reliability-latency/WebRemoteDesktop')
+ R6 = Path('/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-combined-recovery-operations-private-r6-7f39_qy0')
+-TIP = 'a68b0408012fabf8e51ca2e4dd18eecaaeae8a1b'
+-VIEWER = 'c802a68362459b46b84593c7e8921575e0783394'
+ PRODUCT = 'dfb15434e79da90b803b763c533836e16c080c71'
+ TOOL = '2822441791b59a021556c7e4eb24715df9d5b277'
+ R6_SHA = '4b0ea13281c859ef38ac6ddb62a3bf3f642b3fba14abc61ef6993c0fda0d30b8'
+@@ -23,9 +21,16 @@
+ def main():
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument('--tip', required=True)
++    parser.add_argument('--binding-sha256', required=True)
+     parser.add_argument('--viewer-build-id', required=True)
+     parser.add_argument('--r6-manifest-sha256', required=True)
+     args = parser.parse_args()
++    binding_bytes = (Path(__file__).resolve().parent/'FINAL-BINDING.json').read_bytes()
++    require(digest(binding_bytes) == args.binding_sha256)
++    binding = json.loads(binding_bytes)
++    require(set(binding) == {'schemaVersion','sourceTIP','viewerSourceTIP','toolTIP','sourceReview'} and type(binding['schemaVersion']) is int and binding['schemaVersion'] == 1 and binding['toolTIP'] == TOOL)
++    TIP, VIEWER = binding['sourceTIP'], binding['viewerSourceTIP']
++    require(all(type(v) is str and re.fullmatch('[a-f0-9]{40}', v) for v in (TIP, VIEWER)))
+     require(sys.dont_write_bytecode and Path.cwd() == SOURCE)
+     require(re.fullmatch('[a-f0-9]{40}', args.tip) is not None)
+     require(args.tip == TIP and args.r6_manifest_sha256 == R6_SHA)
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/ordinary-continuation-supervisor.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/ordinary-continuation-supervisor.py
+@@ -65,7 +65,7 @@
+  worker_diag=Diagnostics(psutil.Process,(psutil.NoSuchProcess,psutil.AccessDenied,OSError),'worker',monotonic=time.monotonic,wall=time.time);sample_diag=Diagnostics(psutil.Process,(psutil.NoSuchProcess,psutil.AccessDenied,OSError),'sample',monotonic=time.monotonic,wall=time.time)
+  current_gate(args,expected);source_pins(args,m)
+  out=pathlib.Path(tempfile.mkdtemp(prefix='ordinary-'+scenario+'-',dir=f));out.chmod(0o700)
+- jsonwrite(marker,{'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'viewerSourceTIP':VIEWER_TIP,'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'scenario':scenario,'epoch':time.time(),'outputDirectory':str(out),'oneUse':True})
++ jsonwrite(marker,{'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'viewerSourceTIP':viewer_source_tip(),'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'scenario':scenario,'epoch':time.time(),'outputDirectory':str(out),'oneUse':True})
+  reg=instrument_registry(owned.Registry,worker_diag);sreg=instrument_registry(owned.Registry,sample_diag);worker=None;worker_registration=None;sample=None;observation=None;failure=None;timeout=False;triggered=False;result=None;sample_info={'status':'not-triggered'};rows=Rows(out/'session/samples.jsonl');started=time.monotonic();expected_host=expected['host'];row_count=0;gate=ObservationGate(scenario,t['buildId'],pure);sampling_enabled=scenario in ('baseline','continuity')
+  if not sampling_enabled:sample_info={'status':'disabled-for-entire-recovery-scenario','scope':'no Host sample during baseline, fault, recovery or stability; passive/log evidence only'}
+  def valid_host():
+@@ -135,7 +135,7 @@
+    with validation.stage('sticky-observation'):need(gate.failure is None,'sticky observation failure')
+    with validation.stage('terminal-evidence'):result=completed_result(out,scenario,manifest,gate,pure)
+   except BaseException as exc:validation_error=type(exc).__name__
+-  final={'schemaVersion':1,'kind':'guarded-ordinary-qualification','scenario':scenario,'durationSeconds':duration,'workerDeadlineSeconds':duration+128,'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'viewerSourceTIP':VIEWER_TIP,'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'qualificationEvidenceScope':SCOPE[scenario],'nativeAfterGraceQualification':'NOT_RUN','sourceEvidence':'root-attested','workerRegistration':worker_registration,'workerExitCode':worker.poll() if worker else None,'timedOut':timeout,'errorClass':failure,'cleanupErrorClasses':cleanup_errors,'validationErrorClass':validation_error,'validationStages':validation.snapshot(),'processDiagnostics':{'worker':worker_diag.snapshot(),'sample':sample_diag.snapshot()},'observedUnexpectedCoverage':{'worker':sorted(set(ownership.get('coverage',[]))-INHERENT),'sample':sorted(set(sample_ownership.get('coverage',[]))-INHERENT)},'owned':ownership,'sampleOwned':sample_ownership,'sampleTriggered':triggered,'sampling':sample_info,'completedRows':row_count,'observationFailure':gate.failure,'samplingEnabled':sampling_enabled,'qualification':result,'finalRuntimeIntegrity':final_integrity,'postCloseOccupancy':postclose_occupancy,'nextRunAdmission':'NOT_ESTABLISHED','strictFreshPreflightRequired':True,'serverMapDrainEstablished':False,'currentReadiness':readiness_facts(),'fullProcessTreeExit':'unknown','classification':'observed-qualification-completed' if validation_error is None else 'failed-or-indeterminate','automaticNextRun':False}
++  final={'schemaVersion':1,'kind':'guarded-ordinary-qualification','scenario':scenario,'durationSeconds':duration,'workerDeadlineSeconds':duration+128,'attemptSHA256':args.attempt_sha256,'sequenceId':m['sequenceId'],'attemptId':pins['attemptId'],'productTIP':PRODUCT,'toolTIP':m['toolTIP'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'viewerSourceTIP':viewer_source_tip(),'failedHistory':FAILURES,'runtimeManifestSHA256':args.runtime_manifest_sha256,'qualificationEvidenceScope':SCOPE[scenario],'nativeAfterGraceQualification':'NOT_RUN','sourceEvidence':'root-attested','workerRegistration':worker_registration,'workerExitCode':worker.poll() if worker else None,'timedOut':timeout,'errorClass':failure,'cleanupErrorClasses':cleanup_errors,'validationErrorClass':validation_error,'validationStages':validation.snapshot(),'processDiagnostics':{'worker':worker_diag.snapshot(),'sample':sample_diag.snapshot()},'observedUnexpectedCoverage':{'worker':sorted(set(ownership.get('coverage',[]))-INHERENT),'sample':sorted(set(sample_ownership.get('coverage',[]))-INHERENT)},'owned':ownership,'sampleOwned':sample_ownership,'sampleTriggered':triggered,'sampling':sample_info,'completedRows':row_count,'observationFailure':gate.failure,'samplingEnabled':sampling_enabled,'qualification':result,'finalRuntimeIntegrity':final_integrity,'postCloseOccupancy':postclose_occupancy,'nextRunAdmission':'NOT_ESTABLISHED','strictFreshPreflightRequired':True,'serverMapDrainEstablished':False,'currentReadiness':readiness_facts(),'fullProcessTreeExit':'unknown','classification':'observed-qualification-completed' if validation_error is None else 'failed-or-indeterminate','automaticNextRun':False}
+   digest=jsonwrite(resultpath,final);print(json.dumps({'record':str(resultpath),'sha256':digest,'classification':final['classification']}))
+  return 0 if final['classification']=='observed-qualification-completed' else 2
+ if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/owned_reload.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/owned_reload.py
+@@ -0,0 +1,86 @@
++import sys
++from core import *
++HELPER='skills/webremote-service/scripts/wrd_service.py'
++
++def owned_helper():
++ """Registry signals only observed owned helper children; managed services excluded."""
++ import psutil
++ owned=load_owned()
++ class HelperRegistry(owned.Registry):
++  """Excluded identities are never registered, queued or signal eligible.
++  Runtime rechecks also guard an owned shell that execs into a managed service.
++  Unavailable child observations are recorded without aborting sibling scanning.
++  """
++  def eligible(self,p):
++   try:
++    cwd=pathlib.Path(p.cwd()).resolve();argv=p.cmdline()
++    if (cwd==P/'python-host' and any(pathlib.Path(x).name in ('host.py','overlay_window.py') for x in argv)) or (cwd==P/'signal-server' and any(pathlib.Path(x).name=='server.js' for x in argv)):
++     self.note('managed-service-excluded');return False
++    return True
++   except psutil.NoSuchProcess:return False
++   except (psutil.AccessDenied,OSError):self.note('managed-service-observation-unavailable');return False
++  def _add(self,p,parent):
++   if parent is not None and not self.eligible(p):return False
++   super()._add(p,parent)
++   return p.pid in self.entries and self.entries[p.pid]['birth']==p.create_time()
++  def state(self,pid):
++   # The base signal/result methods can only traverse existing registered keys.
++   if pid not in self.entries:return 'excluded'
++   state=super().state(pid)
++   if state!='alive':return state
++   try:
++    if not self.eligible(self.process(pid)):return 'unknown'
++   except psutil.NoSuchProcess:return 'exited'
++   except (psutil.AccessDenied,OSError):self.note('managed-service-observation-unavailable');return 'unknown'
++   return 'alive'
++  def scan(self):
++   queue=list(self.entries);seen=set()
++   while queue:
++    pid=queue.pop(0)
++    if pid in seen or pid not in self.entries:continue
++    seen.add(pid)
++    if self.state(pid)!='alive':continue
++    try:children=self.process(pid).children(recursive=False)
++    except (psutil.NoSuchProcess,psutil.AccessDenied,OSError):self.note('observation-unavailable');continue
++    for child in children:
++     try:
++      birth=child.create_time()
++      if self.state(pid)!='alive' or child.ppid()!=pid:self.note('parent-chain-unavailable');continue
++      parent_birth=self.entries[pid]['birth']
++      if child.create_time()!=birth or self.state(pid)!='alive' or child.ppid()!=pid:self.note('parent-chain-changed');continue
++      registered=self._add(child,{'pid':pid,'birth':parent_birth})
++      if registered and child.pid in self.entries and self.entries[child.pid]['birth']==birth and self.state(child.pid)=='alive':queue.append(child.pid)
++     except (psutil.NoSuchProcess,psutil.AccessDenied,OSError):self.note('observation-unavailable');continue
++ registry=HelperRegistry();child=None;failure=None;cleanup_error=None;timedout=False;started=time.monotonic()
++ try:
++  child=subprocess.Popen([sys.executable,'-B',str(P/HELPER),'restart-signal'],cwd=P,env=ENV,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
++  registry.add_root(psutil.Process(child.pid));deadline=time.monotonic()+180
++  while child.poll() is None and time.monotonic()<deadline:
++   registry.scan();time.sleep(.25)
++  if child.poll() is None:timedout=True;registry.cleanup(grace=0,term_wait=2,kill_wait=1)
++  else:registry.observe_for(.25)
++ except BaseException as exc:
++  failure=type(exc).__name__
++  try:registry.cleanup(grace=0,term_wait=2,kill_wait=1)
++  except BaseException as exc2:cleanup_error=type(exc2).__name__
++ ownership={};ownership_error=None
++ try:ownership=registry.result()
++ except BaseException as exc:ownership_error=type(exc).__name__
++ coverage=ownership.get('coverage');unexpected=sorted(set(coverage)-INHERENT-{'managed-service-excluded'}) if isinstance(coverage,list) else ['invalid-coverage']
++ code=child.poll() if child else None
++ ok=code==0 and not timedout and failure is None and cleanup_error is None and ownership_error is None and not unexpected and ownership.get('allRecordedIdentitiesExited') is True and ownership.get('completeProcessTreeExitEstablished') is False and not ownership.get('signals')
++ return {'exitCode':code,'timedOut':timedout,'errorClass':failure,'cleanupErrorClass':cleanup_error,'ownershipErrorClass':ownership_error,'ownership':ownership,'unexpectedCoverage':unexpected,'elapsedSeconds':round(time.monotonic()-started,3),'fullProcessTreeExit':'unknown','lifecycleAcceptable':ok}
++
++def reconcilable_helper(helper):
++ """Only clean helper exit plus a sole polling observation-unavailable gap.
++ Timeout, signal, registration/cleanup error, live/unknown identities are ineligible.
++ """
++ if not isinstance(helper,dict):return False
++ owner=helper.get('ownership',{});coverage=owner.get('coverage',[])
++ return (helper.get('exitCode')==0 and helper.get('timedOut') is False and
++  all(helper.get(k) is None for k in ('errorClass','cleanupErrorClass','ownershipErrorClass')) and
++  helper.get('lifecycleAcceptable') is False and helper.get('unexpectedCoverage')==['observation-unavailable'] and
++  isinstance(coverage,list) and set(coverage)<=INHERENT|{'observation-unavailable','managed-service-excluded'} and
++  owner.get('allRecordedIdentitiesExited') is True and owner.get('completeProcessTreeExitEstablished') is False and
++  owner.get('signals')==[] and isinstance(owner.get('identities'),list) and 0<len(owner['identities'])<=128 and
++  all(row.get('status')=='exited' for row in owner['identities']))
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/policy.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/policy.py
+@@ -0,0 +1,61 @@
++"""Pure four-existing-file policy. No I/O, operational imports or entrypoint."""
++COPY_PATHS = (
++    'scripts/ordinary_session_recovery.py',
++    'scripts/test_ordinary_session_recovery.py',
++    'web-client/js/webrtc.js',
++    'web-client/js/webrtc.test.js',
++)
++BUILD_INPUTS = frozenset({
++    'signal-server/scripts/build-web-client.js',
++    'signal-server/scripts/web-asset-graph.js',
++    'signal-server/lib/web-assets.js',
++    'signal-server/package.json',
++    'signal-server/package-lock.json',
++})
++
++def require(condition, message):
++    if not condition:
++        raise ValueError(message)
++
++def validate_partition(canonical_rows, promoted_paths, not_promoted_paths):
++    """Rows are exact canonical c802..final metadata, supplied by future source gate."""
++    require(type(canonical_rows) is list and canonical_rows, 'canonical rows required')
++    require(type(promoted_paths) is list and promoted_paths == list(COPY_PATHS), 'exact ordered four replacements')
++    paths = []
++    for row in canonical_rows:
++        require(type(row) is dict and set(row) == {'path', 'status', 'oldMode', 'newMode'}, 'canonical row schema')
++        path = row['path']
++        require(type(path) is str and path and not path.startswith('/') and all(p not in ('', '.', '..') for p in path.split('/')), 'relative canonical path')
++        require(path not in paths and row['newMode'] == '100644', 'unique regular canonical path')
++        if path in COPY_PATHS:
++            require(row['status'] == 'M' and row['oldMode'] == '100644', 'only existing replacements')
++        else:
++            require(path.startswith('docs/superpowers/') and row['status'] in ('A', 'M'), 'non-promoted docs only')
++            require(row['oldMode'] == ('000000' if row['status'] == 'A' else '100644'), 'documentation mode/status')
++        paths.append(path)
++    require(set(COPY_PATHS).issubset(paths), 'all four canonical replacements required')
++    require(type(not_promoted_paths) is list and not_promoted_paths == [p for p in paths if p not in COPY_PATHS], 'explicit complete ordered notPromoted partition')
++    return tuple(paths)
++
++def derive_post_map(before, replacements):
++    """Input maps come from pinned historical records and reviewed frozen bytes."""
++    require(type(before) is dict and len(before) == 1016, 'historical known map must contain 1016 regular files')
++    require(type(replacements) is dict and set(replacements) == set(COPY_PATHS), 'four replacements only')
++    after = dict(before)
++    for path in COPY_PATHS:
++        require(path in before, 'new primary paths forbidden')
++        old, new = before[path], replacements[path]
++        require(type(old) is dict and type(new) is dict and set(old) == set(new) == {'sha256', 'filesystemMode'}, 'regular file metadata schema')
++        require(type(new['filesystemMode']) is int and new['filesystemMode'] == old['filesystemMode'], 'preserve actual existing file mode')
++        require(type(new['sha256']) is str and len(new['sha256']) == 64 and all(c in '0123456789abcdef' for c in new['sha256']), 'reviewed replacement digest')
++        after[path] = dict(new)
++    require(set(after) == set(before) and len(after) == 1016, 'no known-map expansion')
++    return after
++
++def build_input_paths(source_tree_paths):
++    """Freeze all Viewer inputs, independent of the four-file publication allowlist."""
++    require(type(source_tree_paths) is set and all(type(p) is str for p in source_tree_paths), 'source tree path set')
++    require(BUILD_INPUTS.issubset(source_tree_paths), 'complete unchanged builder input closure')
++    inputs = {p for p in source_tree_paths if p.startswith('web-client/')} | BUILD_INPUTS
++    require(not any(p.startswith('web-client/dist/') for p in inputs), 'generated dist cannot be a source input')
++    return tuple(sorted(inputs))
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/prepare-attempt.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/prepare-attempt.py
+@@ -28,19 +28,19 @@
+ 
+ def main():
+  os.umask(0o077);p=argparse.ArgumentParser(description=__doc__)
+- for key in ('sequence-dir','sequence-sha256','promotion-sha256','decision','decision-sha256'):p.add_argument('--'+key,required=True)
+- args=p.parse_args();f,m,ref=sequence(args.sequence_dir,args.sequence_sha256);promotion(f,m,args.promotion_sha256);d=decision_and_predecessor(f,m,args.decision,args.decision_sha256)
++ for key in ('sequence-dir','sequence-sha256','decision','decision-sha256'):p.add_argument('--'+key,required=True)
++ args=p.parse_args();f,m,ref=sequence(args.sequence_dir,args.sequence_sha256);d=decision_and_predecessor(f,m,args.decision,args.decision_sha256)
+  folder=reserve_attempt(f,d,args.decision_sha256);failure=None;digest=None
+  try:
+-  integrity=deployed_gate(ref,m['tools']);origin=attest_origin(ref,d['origin']);originsha=jsonwrite(folder/'origin-evidence.json',origin)
+-  deployment={'kind':'root-verified-local-deployment','sourceEvidence':'root-attested','productTIP':PRODUCT,'toolTIP':m['toolTIP'],'sequenceId':m['sequenceId'],'readinessSHA256':m['readinessSHA256'],'sourceTIP':m['sourceTIP'],'viewerSourceTIP':VIEWER_TIP,'failedHistory':FAILURES,'newIdentity':ref['expectedServices'],'viewerBuildId':ref['assets']['buildId'],'actualViewerBuiltAt':ref['assets']['builtAt'],'componentSourceTreeSha256':ref['componentTrees'],'originEvidenceSHA256':originsha,'freshIntegrity':integrity}
++  integrity=deployed_gate(ref,None);origin=attest_origin(ref,d['origin']);originsha=jsonwrite(folder/'origin-evidence.json',origin)
++  deployment={'kind':'root-verified-local-deployment','sourceEvidence':'root-attested','productTIP':PRODUCT,'toolTIP':m['toolTIP'],'sequenceId':m['sequenceId'],'readinessSHA256':m['readinessSHA256'],'sourceTIP':m['sourceTIP'],'failedHistory':FAILURES,'newIdentity':ref['expectedServices'],'viewerBuildId':ref['assets']['buildId'],'actualViewerBuiltAt':ref['assets']['builtAt'],'componentSourceTreeSha256':ref['componentTrees'],'originEvidenceSHA256':originsha,'freshIntegrity':integrity}
+   deploysha=jsonwrite(folder/'deployment-evidence.json',deployment);log=pathlib.Path(ref['signalLogPath']);st=log.lstat();need(stat.S_ISREG(st.st_mode),'configured Signal log not regular');now=int(time.time()*1000)
+-  manifest={'schemaVersion':1,'runNonce':d['runNonce'],'createdAtEpochMs':now,'validUntilEpochMs':now+21600000,'scenario':d['scenario'],'mode':d['mode'],'originSource':'formal-configured','originEvidenceSha256':originsha,'originSha256':sha(d['origin'].encode()),'deploymentEvidence':{'kind':'root-verified-local-deployment','sha256':deploysha},'signal':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['signal']},'host':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['host']},'viewer':{'sourceCommit':VIEWER_TIP,'buildId':ref['assets']['buildId']},'signalLog':{'path':str(log),'device':st.st_dev,'inode':st.st_ino}}
++  manifest={'schemaVersion':1,'runNonce':d['runNonce'],'createdAtEpochMs':now,'validUntilEpochMs':now+21600000,'scenario':d['scenario'],'mode':d['mode'],'originSource':'formal-configured','originEvidenceSha256':originsha,'originSha256':sha(d['origin'].encode()),'deploymentEvidence':{'kind':'root-verified-local-deployment','sha256':deploysha},'signal':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['signal']},'host':{'sourceCommit':PRODUCT,'sourceTreeSha256':ref['componentTrees']['host']},'viewer':{'sourceCommit':viewer_source_tip(),'buildId':ref['assets']['buildId']},'signalLog':{'path':str(log),'device':st.st_dev,'inode':st.st_ino}}
+   pins={}
+   for rel in RUNTIME:
+    data,_=checked_file(P,rel);need(data==blob(m['sourceTIP'],rel),'runtime tool Git/blob mismatch');pins[rel]=sha(data)
+-  source_assets_guard(ref,m['tools']);deployed_gate(ref,m['tools']);msha=jsonwrite(folder/'runtime-manifest.json',manifest)
+-  a={'schemaVersion':1,'sequenceDirectory':str(f),'sequenceSHA256':args.sequence_sha256,'sequenceId':m['sequenceId'],'attemptId':d['attemptId'],'toolTIP':m['toolTIP'],'productTIP':PRODUCT,'readinessSHA256':m['readinessSHA256'],'promotionSHA256':args.promotion_sha256,'decision':{'path':str(pathlib.Path(args.decision).resolve()),'sha256':args.decision_sha256},'runtimeManifestSHA256':msha,'sourceFiles':pins,'scenario':d['scenario'],'mode':d['mode'],'origin':d['origin'],'runNonce':d['runNonce'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'failedHistory':FAILURES}
++  source_assets_guard(ref,None);deployed_gate(ref,None);msha=jsonwrite(folder/'runtime-manifest.json',manifest)
++  a={'schemaVersion':1,'sequenceDirectory':str(f),'sequenceSHA256':args.sequence_sha256,'sequenceId':m['sequenceId'],'attemptId':d['attemptId'],'toolTIP':m['toolTIP'],'productTIP':PRODUCT,'readinessSHA256':m['readinessSHA256'],'decision':{'path':str(pathlib.Path(args.decision).resolve()),'sha256':args.decision_sha256},'runtimeManifestSHA256':msha,'sourceFiles':pins,'scenario':d['scenario'],'mode':d['mode'],'origin':d['origin'],'runNonce':d['runNonce'],'priorFailureSHA256':PRIOR_FAILURE,'sourceTIP':m['sourceTIP'],'failedHistory':FAILURES}
+   digest=jsonwrite(folder/'attempt.json',a)
+  except BaseException as exc:failure=type(exc).__name__
+  jsonwrite(folder/'preparation-result.json',{'classification':'attempt-prepared-not-run' if failure is None else 'failed-or-indeterminate','errorClass':failure,'attemptSHA256':digest,'automaticLaunch':False,'scenarioReservationConsumed':True})
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/prepare-deployment-quiescence.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/prepare-deployment-quiescence.py
+@@ -0,0 +1,8 @@
++from deployment import *
++from known_attempt_quiescence import *
++def main():
++ os.umask(0o077);p=args_parser(__doc__,assets=False);p.add_argument('--phase',choices=('apply','reload'),required=True);p.add_argument('--apply-sha256');a=p.parse_args();f,m,b,changes=frozen(a.frozen_dir,a.frozen_sha256,applied=a.phase=='reload')
++ if a.phase=='reload':applied_record(f,m,a.frozen_sha256,a.apply_sha256)
++ else:need(a.apply_sha256 is None,'apply phase no prior apply')
++ need(not (f/(a.phase+'-started.json')).exists(),'operation already consumed');known=all_known();ob=live_observe(known);v=receipt_value(m,a.frozen_sha256,a.phase,a.apply_sha256,ob);fresh_at(v,clock_pair(time.time,time.monotonic));out=f/('quiescence-'+a.phase+'.json');dg=jsonwrite(out,v);print(json.dumps({'record':str(out),'sha256':dg,'scope':SCOPE,'fullProcessTreeExit':'unknown'}));return 0
++if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/prepare-frontend-sequence.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/prepare-frontend-sequence.py
+@@ -0,0 +1,10 @@
++"""Future fresh sequence only; no automatic browser or subsequent attempt."""
++from continuation_common import *
++def main():
++ os.umask(0o077);p=args_parser(__doc__)
++ for key in ('readiness-sha256','decision','decision-sha256','integration-evidence','integration-evidence-sha256'):p.add_argument('--'+key,required=True)
++ a=p.parse_args();pkg=package_guard();dep={k:getattr(a,k) for k in ('frozen_dir','frozen_sha256','asset_review','asset_review_sha256')};offline={'path':str(pathlib.Path(a.integration_evidence).resolve()),'sha256':a.integration_evidence_sha256};d=private_json(a.decision,a.decision_sha256);validate_sequence_decision(d,pkg,dep,a.readiness_sha256,offline)
++ m={'schemaVersion':1,'sequenceId':d['sequenceId'],'packageManifestSHA256':pkg,'productTIP':PRODUCT,'toolTIP':TOOL_TIP,'sourceTIP':final_source_tip(),'deployment':dep,'readinessSHA256':a.readiness_sha256,'rootDecision':{'path':str(pathlib.Path(a.decision).resolve()),'sha256':a.decision_sha256},'offlineIntegrationEvidence':offline,'failedHistory':FAILURES}
++ ref=ready_context(m);integration(offline,ref);deployed_gate(ref)
++ folder=R/('sequence-'+m['sequenceId']);folder.mkdir(mode=0o700);digest=jsonwrite(folder/'sequence.json',m);sequence(folder,digest);print(json.dumps({'sequenceDirectory':str(folder),'sequenceSHA256':digest,'automaticLaunch':False}));return 0
++if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/private-builder-entry.js
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/private-builder-entry.js
+@@ -0,0 +1,15 @@
++'use strict';
++// Root future private-build child only. Parent freezes/validates inputs and owns lifecycle.
++const fs = require('node:fs');
++const path = require('node:path');
++if (process.argv.length !== 4) throw new Error('exact fixture root and timestamp required');
++const fixture = process.argv[2];
++const builtAt = Number(process.argv[3]);
++if (!path.isAbsolute(fixture) || !Number.isSafeInteger(builtAt) || builtAt < 0) throw new Error('invalid private build arguments');
++if (!fs.lstatSync(fixture).isDirectory()) throw new Error('plain fixture directory required');
++// Prediction pinned by root from old actual0644 assets; never modifies production umask.
++process.umask(0o022);
++const builder = require(path.join(fixture, 'signal-server/scripts/build-web-client.js'));
++builder.buildWebClient({sourceDir: path.join(fixture, 'web-client'), outDir: path.join(fixture, 'web-client/dist'), now: () => builtAt})
++  .then(() => { process.exitCode = 0; })
++  .catch(() => { process.exitCode = 1; });
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/readiness-frontend.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/readiness-frontend.py
+@@ -0,0 +1,13 @@
++"""One-use read-only reconciliation eligibility; original failure remains immutable."""
++from deployment import *
++from readiness_records import reload_record
++
++def main():
++ os.umask(0o077);p=args_parser(__doc__);p.add_argument('--reload-sha256',required=True);a=p.parse_args();f,m,b,changes,d,t,ts=asset_context(a,applied=True,dist=False);r=reload_record(f,m,a.frozen_sha256,a.reload_sha256)
++ need(r['assetReviewSHA256']==a.asset_review_sha256,'asset review drift');need(not (f/'readiness-started.json').exists() and not (f/'readiness-result.json').exists(),'readiness one-use')
++ ms=jsonwrite(f/'readiness-started.json',{'frozenSHA256':a.frozen_sha256,'reloadSHA256':a.reload_sha256,'epoch':time.time(),'readOnly':True});failure=None;runtime=None
++ try:runtime=runtime_gate(a,r['newIdentity'])
++ except BaseException as exc:failure=type(exc).__name__
++ result={'schemaVersion':1,'classification':'runtime-ready-observed' if failure is None else 'failed-or-indeterminate','frozenSHA256':a.frozen_sha256,'reloadSHA256':a.reload_sha256,'startedSHA256':ms,'assetReviewSHA256':a.asset_review_sha256,'newIdentity':r['newIdentity'],'runtimeValidation':runtime,'reloadClassificationPreserved':r['classification'],'helperLifecycleAcceptable':r['helper']['lifecycleAcceptable'],'errorClass':failure,'currentReadiness':readiness_facts(),'fullProcessTreeExit':'unknown','readOnly':True,'automaticRollbackOrRetry':False}
++ dg=jsonwrite(f/'readiness-result.json',result);print(json.dumps({'resultSHA256':dg,'classification':result['classification']}));return 0 if failure is None else 2
++if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/readiness_records.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/readiness_records.py
+@@ -0,0 +1,16 @@
++"""Definition-only reload lineage; preserves original failure classification."""
++from deployment import *
++from owned_reload import reconcilable_helper
++
++def reload_record(f,m,fs,digest):
++ r=private_json(f/'reload-result.json',digest,1048576)
++ exact(r,('schemaVersion','classification','frozenSHA256','applySHA256','assetReviewSHA256','startedSHA256','operation','oldIdentity','newIdentity','helper','runtimeValidation','quiescence','errorClass','currentReadiness','automaticRollbackOrRetry','passwordsPersisted'));need(type(r['schemaVersion']) is int and r['schemaVersion']==1 and r['automaticRollbackOrRetry'] is False and r['passwordsPersisted'] is False,'reload result schema')
++ marker=private_json(f/'reload-started.json',r['startedSHA256'])
++ need(r['frozenSHA256']==fs==marker['frozenSHA256'] and r['operation']==marker['operation']=='restart-signal' and r['applySHA256']==marker['applySHA256'] and r['assetReviewSHA256']==marker['assetReviewSHA256'],'reload lineage')
++ ap=applied_record(f,m,fs,r['applySHA256']);need(ap['assetReviewSHA256']==r['assetReviewSHA256'],'same asset review')
++ from known_attempt_quiescence import validate_action_evidence
++ validate_action_evidence(f,m,fs,r['quiescence'],'reload',r['applySHA256'],['reload'])
++ need(marker['quiescenceReceiptSHA256']==r['quiescence']['receiptSHA256'] and marker['oneUse'] is True,'reload quiescence marker')
++ b,_,_=history();need(r['oldIdentity']==marker['oldIdentity']==b['expectedServices'],'reload old identity');need(r['newIdentity'] is not None and r['newIdentity']['host']==b['expectedServices']['host'] and r['newIdentity']['signal']!=b['expectedServices']['signal'],'known new Signal/same Host')
++ need(r['classification']=='completed' and r['errorClass'] is None and r['helper']['lifecycleAcceptable'] is True or r['classification']=='failed-or-indeterminate' and r['runtimeValidation'] is not None and reconcilable_helper(r['helper']),'specific reload ineligible')
++ return r
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/restart-signal-frontend.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/restart-signal-frontend.py
+@@ -0,0 +1,36 @@
++"""Future one-use pinned restart-signal. Host identity must remain unchanged."""
++from deployment import *
++from known_attempt_quiescence import receipt_file,before_action,SCOPE
++from owned_reload import owned_helper
++
++def new_services(old,observed,started):
++ exact(observed,('signal','host'));need(observed['host']==old['host'],'Host identity changed')
++ need(observed['signal']!=old['signal'] and observed['signal']['birthEpoch']>=started-2,'new Signal identity required')
++ return observed
++
++def main():
++ os.umask(0o077);p=args_parser(__doc__)
++ for key in ('apply-sha256','quiescence-receipt','quiescence-sha256'):p.add_argument('--'+key,required=True)
++ a=p.parse_args();f,m,b,changes,d,t,ts=asset_context(a,applied=True);ap=applied_record(f,m,a.frozen_sha256,a.apply_sha256);need(ap['assetReviewSHA256']==a.asset_review_sha256,'apply asset review pin');old_service_gate(b)
++ receipt_file(f,m,a.frozen_sha256,a.quiescence_receipt,a.quiescence_sha256,'reload',a.apply_sha256,fresh=True)
++ need(m['windowLowerMs']<=int(time.time()*1000)<=m['windowUpperMs']-10000,'startup window insufficient')
++ need(not (f/'reload-started.json').exists() and not (f/'reload-result.json').exists(),'reload already consumed')
++ start=time.time();marker={'frozenSHA256':a.frozen_sha256,'applySHA256':a.apply_sha256,'assetReviewSHA256':a.asset_review_sha256,'epoch':start,'oldIdentity':b['expectedServices'],'operation':'restart-signal','quiescenceReceiptSHA256':a.quiescence_sha256,'oneUse':True};ms=jsonwrite(f/'reload-started.json',marker)
++ checks=[];helper=None;new=None;runtime=None;failure=None
++ try:
++  old_service_gate(b);before_action(f,m,a.frozen_sha256,a.quiescence_receipt,a.quiescence_sha256,'reload',a.apply_sha256,'reload',checks)
++  helper=owned_helper()
++  # Read-only readiness polling does not retry helper or alter Host/service state.
++  deadline=time.monotonic()+90;last=None
++  while True:
++   try:
++    new=new_services(b['expectedServices'],service_set(),start);runtime=runtime_gate(a,new);break
++   except Exception as exc:
++    last=type(exc).__name__
++    if time.monotonic()>=deadline:raise ValueError('Signal/unchanged Host readiness unavailable: '+last)
++    time.sleep(.5)
++  need(helper['lifecycleAcceptable'] is True,'helper lifecycle incomplete')
++ except BaseException as exc:failure=type(exc).__name__
++ result={'schemaVersion':1,'classification':'completed' if failure is None else 'failed-or-indeterminate','frozenSHA256':a.frozen_sha256,'applySHA256':a.apply_sha256,'assetReviewSHA256':a.asset_review_sha256,'startedSHA256':ms,'operation':'restart-signal','oldIdentity':b['expectedServices'],'newIdentity':new,'helper':helper,'runtimeValidation':runtime,'quiescence':{'receiptSHA256':a.quiescence_sha256,'checks':checks,'scope':SCOPE,'fullProcessTreeExit':'unknown'},'errorClass':failure,'currentReadiness':readiness_facts(),'automaticRollbackOrRetry':False,'passwordsPersisted':False}
++ digest=jsonwrite(f/'reload-result.json',result);print(json.dumps({'resultSHA256':digest,'classification':result['classification'],'rootMustReportCurrentPasswordsChatOnly':True}));return 0 if failure is None else 2
++if __name__=='__main__':raise SystemExit(main())
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/source_review_gate.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/source_review_gate.py
+@@ -0,0 +1,46 @@
++"""Definition-only final receipt consumer. Absent FINAL-BINDING refuses operation."""
++from bindings import *
++from policy import validate_partition
++
++def validate_source_review(path,digest):
++ binding=final_binding();need({'path':str(path),'sha256':digest}==binding['sourceReview'],'exact final receipt reference')
++ v=private_json(path,digest,131072);need(v.get('status')=='APPROVED_SOURCE_ONLY','draft receipt is never executable')
++ need(type(v['schemaVersion']) is int and v['schemaVersion']==1 and v['kind']=='root-final-viewer-tools-source-review' and v['scope']=='configured-startup-control-join-plus-ordinary-admission-teardown','final combined receipt kind')
++ tip=binding['sourceTIP'];viewer=binding['viewerSourceTIP']
++ need(v['sourceTIP']==v['archiveCommit']==tip and v['viewerSourceTIP']==v['reviewedCodeTIP']==viewer and v['toolTIP']==TOOL_TIP and v['deployedToolTIP']==OLD_TOOL_TIP and v['deployedViewerSourceTIP']==v['codeReviewBase']==VIEWER_TIP and v['backendTIP']==PRODUCT and v['archiveChangesDocsOnly'] is True,'separate deployed/new component pins')
++ need(commit(tip)==tip and commit(viewer)==viewer and git(S,'rev-parse','HEAD').decode().strip()==tip and v['sourceCheckout']==str(S),'held final checkout')
++ for ancestor,descendant in ((VIEWER_TIP,viewer),(TOOL_TIP,viewer),(viewer,tip)):git(S,'merge-base','--is-ancestor',ancestor,descendant)
++ rows=raw_diff(VIEWER_TIP,tip);validate_partition([{k:r[k] for k in ('path','status','oldMode','newMode')} for r in rows],v['promotionPaths'],v['notPromoted']);need([r['path'] for r in rows]==v['canonicalPaths'],'exact full canonical paths')
++ patch=git(S,'diff','--binary','--full-index','--no-renames',VIEWER_TIP,tip);need(sha(patch)==v['canonicalPatch']['sha256'] and patch==check_ref(v['canonicalPatch']),'canonical binary full-index patch')
++ for row in raw_diff(viewer,tip):need(row['path'].startswith('docs/superpowers/') and row['status'] in ('A','M') and row['newMode']=='100644','archive docs-only')
++ b,h,records=history();need(set(v['fileSources'])==set(COPY_PATHS),'exact four file sources')
++ for name,pin in v['fileSources'].items():
++  exact(pin,('sha256','bytes','gitMode','oldSha256','oldBytes','oldGitMode','oldFilesystemMode','oldSourceTIP','componentTIP'))
++  component=TOOL_TIP if name in TOOLS else viewer;oldtip=OLD_TOOL_TIP if name in TOOLS else VIEWER_TIP;raw=blob(tip,name);old=blob(oldtip,name)
++  need(pin['componentTIP']==component and pin['oldSourceTIP']==oldtip and raw==blob(component,name) and sha(raw)==pin['sha256'] and type(pin['bytes']) is int and len(raw)==pin['bytes'],'reviewed component bytes')
++  need(pin['gitMode']==pin['oldGitMode']=='100644' and pin['oldSha256']==sha(old)==b['regularFiles'][name]['sha256'] and type(pin['oldBytes']) is int and len(old)==pin['oldBytes'] and type(pin['oldFilesystemMode']) is int and pin['oldFilesystemMode']==b['regularFiles'][name]['filesystemMode'],'historical exact preimage/mode')
++ need(type(v['expectedPreRegularCount']) is int and type(v['expectedPostRegularCount']) is int and v['expectedPreRegularCount']==v['expectedPostRegularCount']==len(b['regularFiles'])==1016,'known map no expansion')
++ need(set(v['unchangedComponentTrees'])=={'signal-server','python-host'},'unchanged backend tree coverage')
++ for name,pin in v['unchangedComponentTrees'].items():need(pin['unchangedFromViewerSource'] is True and git(S,'rev-parse',tip+':'+name).decode().strip()==pin['treeOID']==git(S,'rev-parse',VIEWER_TIP+':'+name).decode().strip(),'backend unchanged')
++ need(git(S,'rev-parse',tip+':web-client').decode().strip()==v['viewerTreeOID']==git(S,'rev-parse',viewer+':web-client').decode().strip(),'Viewer exact component tree')
++ for name in (*RUNTIME[1:4],*BUILD_INPUTS):need(blob(tip,name)==blob(PRODUCT,name),'immutable helper/fault/sampler/builder drift')
++ need(blob(tip,RUNTIME[4])==blob(MODULE_TIP,RUNTIME[4])==regular(R/'process_observation_diagnostics.py')[0],'approved diagnostics bytes')
++ tr,_=tree(tip)
++ for name in {n for n in tr if n.startswith('web-client/')}|BUILD_INPUTS:
++  if name not in COPY_PATHS:need(name in b['regularFiles'] and sha(blob(tip,name))==b['regularFiles'][name]['sha256'],'non-published build input differs from deployed source')
++ check_ref({k:v['historicalToolSourceReceipt'][k] for k in ('path','sha256')});need(v['historicalToolSourceReceipt']['executable'] is False,'historical receipt not authority')
++ exact(v['toolReviews'],('taskReview','initialFinalReview','finalFixReview'))
++ for item in v['toolReviews'].values():check_ref({k:item[k] for k in ('path','sha256')})
++ need(v['toolReviews']['initialFinalReview']['classification']=='ChangesRequested-one-P2-closed-by-scoped-fix' and v['toolReviews']['finalFixReview']['classification']=='Approved-scoped-fix-no-new-findings','tool review closure')
++ exact(v['viewerReviews'],('taskReview','finalReview'))
++ for item in v['viewerReviews'].values():check_ref({k:item[k] for k in ('path','sha256')});need(item['classification']=='Approved','Viewer review approval')
++ check_ref(v['actualPreimageObservation']);check_ref(v['finalReviewPackage'])
++ for ref in v['archivedEvidenceIndices']:check_ref(ref)
++ check_ref({k:v['supersedesReceipt'][k] for k in ('path','sha256')})
++ actual=v['actualR5Context'];need(actual['expectedServices']==b['expectedServices'] and actual['runtimeAssets']==b['assets'],'actual retained R5 deployment')
++ for field,name in (('packageManifestSHA256','r5PackageManifest'),('frozenSHA256','r5Frozen'),('assetReviewSHA256','r5AssetReview'),('applySHA256','r5Apply'),('reloadSHA256','r5Reload'),('readinessSHA256','r5Readiness')):need(actual[field]==h['records'][name]['sha256'],'historical deployment lineage')
++ need(v['failedHistory']==FAILURES and v['thirdFailure']['sha256']==THIRD_FAILURE and v['primaryPreserve']['head']==b['head'] and v['primaryPreserve']['indexSHA256']==b['indexSha256'],'history/primary preserved')
++ dirty=b['exceptions'][:4];need(git(S,'diff','--name-only','-z').split(b'\0')[:-1]==[n.encode() for n in dirty] and not git(S,'diff','--cached','--name-only','-z'),'source four dirty/staged guard')
++ for name in dirty:need(sha(checked_file(S,name)[0])==b['regularFiles'][name]['sha256'],'dirty source docs preserved')
++ need(git(S,'ls-files','--others','--exclude-standard','-z').split(b'\0')[:-1]==[b'signal-server/node_modules'] and nodeinfo(S/'signal-server/node_modules')==b['sourceNodeModules'],'source node link metadata only')
++ return dict(v,copyPaths=list(COPY_PATHS))
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/test_continuation_guards.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/test_continuation_guards.py
+@@ -10,7 +10,7 @@
+ def hex32(v):need(type(v) is str and re.fullmatch('[a-f0-9]{32}',v),'id')
+ def load(file,names,**injected):
+  source=(ROOT/file).read_bytes();tree=ast.parse(source);nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names];assert len(nodes)==len(names)
+- scope=dict(need=need,exact=exact,valid_sha=valid_sha,hex32=hex32,math=math,time=types.SimpleNamespace(time=lambda:1000.,monotonic=lambda:500.),PRODUCT=PRODUCT,VIEWER_TIP=VIEWER,FINAL_TIP=FINAL,TOOL_TIP=TOOL,PRIOR_FAILURE=FAILURES[-1],FAILURES=FAILURES,SCENARIOS=('baseline','within-grace','after-grace','continuity'),BUDGET={'baseline':300,'within-grace':390,'after-grace':390,'continuity':10800},sha=lambda b:hashlib.sha256(b).hexdigest(),**injected)
++ scope=dict(need=need,exact=exact,valid_sha=valid_sha,hex32=hex32,math=math,time=types.SimpleNamespace(time=lambda:1000.,monotonic=lambda:500.),PRODUCT=PRODUCT,VIEWER_TIP=VIEWER,FINAL_TIP=FINAL,viewer_source_tip=lambda:VIEWER,final_source_tip=lambda:FINAL,TOOL_TIP=TOOL,PRIOR_FAILURE=FAILURES[-1],FAILURES=FAILURES,SCENARIOS=('baseline','within-grace','after-grace','continuity'),BUDGET={'baseline':300,'within-grace':390,'after-grace':390,'continuity':10800},sha=lambda b:hashlib.sha256(b).hexdigest(),**injected)
+  exec(compile(ast.Module(body=nodes,type_ignores=[]),'pure-guard-definitions','exec'),scope);return scope
+ class Guards(unittest.TestCase):
+  def runtime(self):
+@@ -48,16 +48,16 @@
+    r=result(group);a=dict(sequenceId=str(group)*32,attemptId=str(group+1)*32,productTIP=PRODUCT,toolTIP=TOOL,runtimeManifestSHA256=str(group)*64);r.update(a,attemptSHA256=refs[prefix+'Attempt']['sha256']);records[prefix+'Attempt']=a;records[prefix+'Failure']=r;records[prefix+'Marker']=dict(a,attemptSHA256=refs[prefix+'Attempt']['sha256'],oneUse=True,scenario='baseline')
+   return b,{'records':refs},records
+  def known_scope(self,history):
+-  return load('known_attempt_quiescence.py',('finite','known_from_closed','recorded_identities','prior_known','prior_marker_sha'),history=lambda:history,loads=lambda b:b,check_ref=lambda ref:ref['value'])
++  return load('known_attempt_quiescence.py',('finite','known_from_closed','recorded_identities','all_known'),history=lambda:history,loads=lambda b:b,check_ref=lambda ref:ref['value'])
+  def test_exact_21_known_closed_identities_from_three_attempts(self):
+-  h=self.history_fixture();s=self.known_scope(h);known=s['prior_known'](h[0]);self.assertEqual(len(known),21);self.assertEqual({r['registry'] for r in known},{'1:owned','2:owned','3:owned'});self.assertEqual(s['prior_marker_sha'](),'4'*64)
++  h=self.history_fixture();s=self.known_scope(h);known=s['all_known']();self.assertEqual(len(known),21);self.assertEqual({r['registry'] for r in known},{'1:owned','2:owned','3:owned'})
+  def test_missing_third_or_unclosed_or_duplicate_identity_refuses(self):
+   for kind in ('missing','unclosed','duplicate'):
+    h=self.history_fixture()
+    if kind=='missing':h[2]['thirdFailure']['owned']['identities'].pop()
+    if kind=='unclosed':h[2]['thirdFailure']['owned']['allRecordedIdentitiesExited']=False
+    if kind=='duplicate':h[2]['thirdFailure']['owned']['identities'][0]=copy.deepcopy(h[2]['secondFailure']['owned']['identities'][0])
+-   with self.assertRaises(RuntimeError):self.known_scope(h)['prior_known'](h[0])
++   with self.assertRaises(RuntimeError):self.known_scope(h)['all_known']()
+  def observation(self,status):
+   names=('finite','clock_pair','forward','observe_known','validate_observation','fresh_at');s=load('known_attempt_quiescence.py',names,SCOPE='task-known-recorded-identities-only',STATUSES=('running','zombie','dead'),QUIET=('gone','zombie','nonmatching-birth'));known=[{'registry':'3:owned','pid':7,'birthEpoch':7.}];calls=[]
+   class Gone(Exception):pass
+@@ -74,6 +74,7 @@
+   s,ob=self.observation('gone');receipt={'observation':ob};s['fresh_at'](receipt,{'epoch':160.,'monotonic':110.})
+   for now in ({'epoch':160.01,'monotonic':110.},{'epoch':99.,'monotonic':50.},{'epoch':100.,'monotonic':49.}):
+    with self.assertRaises(RuntimeError):s['fresh_at'](receipt,now)
+- def test_static_no_build_restart_entrypoints_and_precopy_quiescence(self):
+-  names={p.name for p in ROOT.glob('*.py')};self.assertFalse(any(n.startswith(('restart-','build-','freeze-frontend','apply-frontend')) for n in names));promotion=(ROOT/'promote-reviewed-tools-only.py').read_text();self.assertIn('before_replace();os.replace(tmp,dest)',promotion);self.assertIn('receipt_file(',promotion);self.assertIn("'servicesReloaded':False",promotion);self.assertIn("'productBuildChanged':False",promotion)
++ def test_static_signal_only_and_precopy_quiescence(self):
++  deployment=(ROOT/'deployment.py').read_text();apply=(ROOT/'apply-frontend-context.py').read_text();restart=(ROOT/'restart-signal-frontend.py').read_text();self.assertIn('check();before_replace()',deployment);self.assertIn('before_action(',apply);self.assertIn("'restart-signal'",restart);self.assertNotIn("'restart-local'",restart);self.assertNotIn("'restart-host'",restart);self.assertIn('same Host', (ROOT/'readiness_records.py').read_text())
++
+ if __name__=='__main__':unittest.main()
+--- /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-admission-tool-continuation-private-r1-0660wfoc/test_successor_policy.py
++++ /var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-viewer-tools-successor-draft-wg2w1gki/test_successor_policy.py
+@@ -0,0 +1,68 @@
++"""Pure actual AST functions with injected historical JSON/clock/process fixtures."""
++import ast,copy,hashlib,json,math,pathlib,re,types,unittest
++ROOT=pathlib.Path(__file__).resolve().parent
++
++def definitions(name,names,scope):
++ tree=ast.parse((ROOT/name).read_bytes());nodes=[n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.ClassDef)) and n.name in names]
++ if len(nodes)!=len(names):raise AssertionError('exact AST definitions')
++ exec(compile(ast.Module(body=nodes,type_ignores=[]),name,'exec'),scope)
++ return scope
++
++def need(ok,why):
++ if not ok:raise ValueError(why)
++
++def exact(v,keys):need(type(v) is dict and set(v)==set(keys),'keys')
++
++class Policy(unittest.TestCase):
++ def setUp(self):
++  tree=ast.parse((ROOT/'policy.py').read_bytes());self.s={};exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n,(ast.Assign,ast.FunctionDef))],type_ignores=[]),'policy-pure','exec'),self.s);self.paths=self.s['COPY_PATHS']
++ def rows(self):return [{'path':'docs/superpowers/reports/new.md','status':'A','oldMode':'000000','newMode':'100644'}]+[{'path':n,'status':'M','oldMode':'100644','newMode':'100644'} for n in self.paths]
++ def test_four_existing_and_docs_complement(self):self.assertEqual(len(self.s['validate_partition'](self.rows(),list(self.paths),['docs/superpowers/reports/new.md'])),5)
++ def test_no_extra_executable_or_missing_docs(self):
++  rows=self.rows();rows[0]['path']='scripts/extra.py'
++  with self.assertRaises(ValueError):self.s['validate_partition'](rows,list(self.paths),['scripts/extra.py'])
++  with self.assertRaises(ValueError):self.s['validate_partition'](self.rows(),list(self.paths),[])
++ def test_no_new_copy_paths_or_duplicate(self):
++  rows=self.rows();rows[1]['status']='A';rows[1]['oldMode']='000000'
++  with self.assertRaises(ValueError):self.s['validate_partition'](rows,list(self.paths),['docs/superpowers/reports/new.md'])
++  rows=self.rows();rows.append(rows[-1])
++  with self.assertRaises(ValueError):self.s['validate_partition'](rows,list(self.paths),['docs/superpowers/reports/new.md'])
++ def test_known_map_1016_same_keys_actual_modes(self):
++  before={n:{'sha256':'a'*64,'filesystemMode':420} for n in self.paths};before.update({str(n):{'sha256':'b'*64,'filesystemMode':384} for n in range(1012)})
++  replacements={n:{'sha256':'c'*64,'filesystemMode':420} for n in self.paths};after=self.s['derive_post_map'](before,replacements);self.assertEqual(set(after),set(before));self.assertEqual(before[self.paths[0]]['sha256'],'a'*64)
++  replacements[self.paths[0]]['filesystemMode']=384
++  with self.assertRaises(ValueError):self.s['derive_post_map'](before,replacements)
++ def test_build_closure_broader_than_publication_rejects_dist(self):
++  paths=set(self.s['BUILD_INPUTS'])|{'web-client/js/webrtc.js','web-client/js/unchanged.js'};self.assertIn('web-client/js/unchanged.js',self.s['build_input_paths'](paths))
++  with self.assertRaises(ValueError):self.s['build_input_paths'](paths|{'web-client/dist/index.html'})
++ def test_unbound_final_refuses_without_git(self):
++  def private_json(*a,**k):raise FileNotFoundError('required final binding absent')
++  s=definitions('bindings.py',{'final_binding','final_source_tip','viewer_source_tip'},dict(private_json=private_json,R=pathlib.Path('/fake'),exact=exact,need=need))
++  with self.assertRaises(FileNotFoundError):s['final_source_tip']()
++
++class HistoricalFixtures(unittest.TestCase):
++ def test_actual_historical_json_map_and_21_known_identities(self):
++  # Load only bounded named immutable JSON evidence. All extracted functions below
++  # consume this in-memory fixture; no operational imports, Git, process or status.
++  files={str(ROOT/n):(ROOT/n).read_bytes() for n in ('legacy-deployed-reference.json','legacy-tool-history.json','deployment-history.json')}
++  base=json.loads(files[str(ROOT/'legacy-deployed-reference.json')]);old=json.loads(files[str(ROOT/'legacy-tool-history.json')]);new=json.loads(files[str(ROOT/'deployment-history.json')])
++  refs=list(base['historical'].values())+list(old['records'].values())+list(new['records'].values())
++  for ref in refs:
++   raw=pathlib.Path(ref['path']).read_bytes();self.assertEqual(hashlib.sha256(raw).hexdigest(),ref['sha256']);files[ref['path']]=raw
++  rec={k:json.loads(files[v['path']]) for k,v in dict(old['records'],**new['records']).items()}
++  review=rec['r5AssetReview']['independentReview'];files[review['path']]=pathlib.Path(review['path']).read_bytes();self.assertEqual(hashlib.sha256(files[review['path']]).hexdigest(),review['sha256'])
++  class Blob:
++   def __init__(self,sha):self.sha=sha
++  hashes={}
++  for n,row in rec['toolSequence']['tools'].items():hashes[(rec['toolSequence']['toolTIP'],n)]=row['sha256']
++  for n,row in rec['r5Frozen']['candidateFiles'].items():hashes[(rec['r5Frozen']['tip'],n)]=row['sha256']
++  def check_ref(v):raw=files[v['path']];need(hashlib.sha256(raw).hexdigest()==v['sha256'],'fixture digest');return raw
++  s=dict(R=ROOT,readjson=lambda p:json.loads(files[str(p)]),check_ref=check_ref,loads=json.loads,sha=lambda b:b.sha if isinstance(b,Blob) else hashlib.sha256(b).hexdigest(),blob=lambda tip,n:Blob(hashes[tip,n]),json=json,need=need,exact=exact)
++  tree=ast.parse((ROOT/'bindings.py').read_bytes());constants=[n for n in tree.body if isinstance(n,ast.Assign) and isinstance(n.value,(ast.Constant,ast.Tuple,ast.List))]
++  exec(compile(ast.Module(body=constants,type_ignores=[]),'constants-only','exec'),s)
++  s.update(PRODUCT=base['productTIP'],DOCBASE=base['docBaseTIP'])
++  definitions('bindings.py',{'base_reference','history'},s);b,h,records=s['history']();self.assertEqual(len(b['regularFiles']),1016);self.assertEqual(len(b['assets']['exactFinalFileMap']),14);self.assertEqual(b['regularFiles']['scripts/ordinary_session_recovery.py']['filesystemMode'],384)
++  s.update(math=math,valid_sha=lambda v:type(v) is str and re.fullmatch('[a-f0-9]{64}',v) is not None)
++  definitions('known_attempt_quiescence.py',{'finite','known_from_closed','recorded_identities','all_known'},s);known=s['all_known']();self.assertEqual(len(known),21);self.assertEqual(len({(r['pid'],r['birthEpoch']) for r in known}),21)
++
++if __name__=='__main__':unittest.main()

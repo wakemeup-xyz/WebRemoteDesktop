@@ -1,0 +1,25 @@
+{
+  "scope": "historical evidence only; no replay authority",
+  "records": {
+    "STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-APPLY-READONLY-PREFLIGHT-FAILURE.json",
+      "sha256": "532fb0d8fcd27fe4d650f0533894829f6f179e85eeebc7a42899b6abadcf631a"
+    },
+    "STARTUP-JOIN-R3C-DEPLOYMENT-DECISION.json": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-DEPLOYMENT-DECISION.json",
+      "sha256": "a1c6347cc22ed2562d787658278a2ce5dd8b81be0dd3f0654dc5d0694153ec39"
+    },
+    "STARTUP-JOIN-R3C-ASSET-REVIEW.json": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-ASSET-REVIEW.json",
+      "sha256": "c5cef8a9288b7b7cc8064b5330a33ac8c8bd6f002578aeac4eeb40da34f94505"
+    },
+    "STARTUP-JOIN-R3C-REUSED-ACTUAL-OFFLINE-INTEGRATION.json": {
+      "path": "/private/var/folders/xm/pfsckdms3fl0y_5q05v2rvf80000gn/T/wrd-guarded-recovery-root-private-20261018-_43p8cug/STARTUP-JOIN-R3C-REUSED-ACTUAL-OFFLINE-INTEGRATION.json",
+      "sha256": "845b8a901455702cf46b9c092d6dedeb366fb5d3742dd749757c3b4a3525b17e"
+    }
+  },
+  "frozenSHA256": "00cbecd5afa6417f57272af76b6eba60844abef9d4310f1403cf3f25d71d5a5c",
+  "quiescenceSHA256": "d390755124e238fb0cda2443e5f39b3f7028d1b291a496f0636a911a9a109bef",
+  "applyStarted": false,
+  "sourceCopyOrReloadPerformed": false
+}

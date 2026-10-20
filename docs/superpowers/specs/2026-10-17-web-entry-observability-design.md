@@ -1,6 +1,8 @@
 # 网页、入口与运行观测整改设计
 
-日期：2026-10-17。状态：已授权编制设计与计划，未实施、未部署。采用 superpowers 6.3.0 brainstorming 的 Architectural 路径：该子项目改变认证结果、资源生命周期、巡检结果和诊断快照契约。用户已授权直接完成文档与复审，不再逐段确认；这不授权执行后续代码、部署或 tunnel 操作。
+> 执行状态更新（2026-10-17）：用户已授权开发、验收、启动并保持本地 Signal/Host 可用。实现与独立复审已完成，公网实测正在反馈修复；实际部署、通过项和剩余验收以[实施记录](../reports/2026-10-17-remediation-execution.md)为准。watcher/tunnel 保持原运行边界，未重启或重建。
+
+日期：2026-10-17。状态：设计已审查并实施，真实验收进行中。默认采用 superpowers brainstorming + writing-plans；用户已授权本轮实现及本地部署，不重复询问规划流程。
 
 ## 1. 目标、证据与所有权
 
@@ -29,7 +31,7 @@ W1–W4 分别交付认证/资源、巡检、诊断、前端开销，内部按�
 
 以下内容须逐字复制到各执行计划的 Global Constraints：
 
-1. 本轮仅诊断和文档；业务代码、运行配置、服务、tunnel 均不修改或重启。
+1. 用户后续已明确授权本轮开发、验收、启动本地 Signal/Host 并保持可用；不得停止、重启或重建 tunnel。生产 Viewer 仍须避开正在使用的会话。
 2. 后续实施沿用严格单桌面 Viewer、控制租约和 fail-closed reset 屏障；不重放投递结果不确定的点击、文本或命令。
 3. 不自动切换网络模式、TURN 节点或公网地址；保留 Quality Lock，不自动降低用户选择的分辨率。
 4. 生产 Viewer 验收必须有明确维护窗口；普通检查不得创建会抢占用户控制的 Viewer。
@@ -40,7 +42,7 @@ W1–W4 分别交付认证/资源、巡检、诊断、前端开销，内部按�
 9. 未做的真实公网、设备、光学或长时间验收必须标为 NOT RUN，不以单元测试通过替代。
 10. 每个任务只提交该任务的文件或明确选择的改动，不夹带任务开始前的无关修改。
 
-“仅诊断和文档”约束描述当前授权。计划中的代码步骤是后续获实施授权后执行的内容，不是本轮完成声明；本地部署和tunnel操作继续遵守runbook及用户直接授权。
+用户后续已授权实施和本地部署，原仅诊断约束已解除；tunnel 操作仍须直接授权。
 
 ## 4. W1：认证和资源加载
 
@@ -112,7 +114,7 @@ health 每 60 秒一轮；login/viewer HTML 和当前 core 资产最多每 5 分
 
 恢复启动与完成分别记录。失败/超时同样消耗一次预算；只有确认本次恢复 worker 及它可能改变服务状态的子命令已结束，才记 terminal 并从该完成时刻开始 300 秒冷却。超时终止并回收本次拥有的 helper/probe 子进程，不终止 connector；无法确认结束或操作结果时保持 in-flight/unknown，继续阻断后续恢复。一次恢复在途时不启动第二次；独立采样继续运行，只记录恢复中的实际探针结果，缺测为 unknown。使用固定单调 tick deadline，慢轮次只跳过错过的 tick，绝不并发补跑积压轮次。记录 scheduledAt/start/finish/skippedTicks。
 
-执行状态由单一 watcher writer 持久化，包含 operationId、worker PID/start identity、在途状态与已消耗恢复预算。恢复互斥锁覆盖 worker 及变更子命令生命周期；丢弃迟到 result 不能代替副作用隔离。watcher 重启先核对并认领已有 worker，无法确认身份或完成状态时保持 unknown 锁定，不能仅凭 PID 或冷却到期解除。持久化 monotonic 值带 boot/clock epoch；epoch/history 不可信时不跨重启相减，保留已消耗预算并从首次确认未知时钟起完整等待 3600 秒保守窗口，不能 300 秒后重置恢复次数；仍有 unknown/in-flight 时窗口到期也不放行。现有 token connector、multiple-owner、origin-down 保护继续有效。probe unknown、仅资产失败或恢复过程中单点失败不扩大 tunnel 自动恢复条件。本轮只写其设计和测试，不运行 watcher 或恢复脚本。
+执行状态由单一 watcher writer 持久化，包含 operationId、worker PID/start identity、在途状态与已消耗恢复预算。恢复互斥锁覆盖 worker 及变更子命令生命周期；丢弃迟到 result 不能代替副作用隔离。watcher 重启先核对并认领已有 worker，无法确认身份或完成状态时保持 unknown 锁定，不能仅凭 PID 或冷却到期解除。持久化 monotonic 值带 boot/clock epoch；epoch/history 不可信时不跨重启相减，保留已消耗预算并从首次确认未知时钟起完整等待 3600 秒保守窗口，不能 300 秒后重置恢复次数；仍有 unknown/in-flight 时窗口到期也不放行。现有 token connector、multiple-owner、origin-down 保护继续有效。probe unknown、仅资产失败或恢复过程中单点失败不扩大 tunnel 自动恢复条件。本轮已实现并离线验证，但未激活 watcher 或运行恢复脚本。
 
 ## 6. W3：统一、可保留的运行诊断
 
@@ -213,4 +215,4 @@ rVFC 每帧仍更新 frame sequence、呈现时刻、M 的关联及 C 的 fresh-
 | N1/D2/D4/D5 | 当前RSS/峰值分离、swap差分、完整低频lag样本、Signal reason | W3c |
 | N11/N12 | unordered观测采样不丢业务ACK；增量预算；相同UI无写，门禁变化仍生效 | W4a/W4b |
 
-当前只检查文档、一致性和已有离线证据，没有执行这些后续回归、构建、部署、外网或设备验收。实现每个任务后做独立 review 与小提交；保持报告的问题编号和“不冒充端到端”口径。最终运行至少 3 小时的真实 Viewer 验收必须另有维护窗口，且不能抢占当前用户。
+W1–W4 代码与定向回归、独立 review 已完成；部署和实际浏览器证据见实施报告，W2 watcher 四文件尚未激活。保持问题编号和“不冒充端到端”口径；至少 3 小时真实 Viewer 验收须使用空闲窗口，不能抢占当前用户。

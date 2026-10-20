@@ -1,0 +1,42 @@
+{
+  "source": "back-debug.log",
+  "inode": 43654875,
+  "bytes": [
+    1738150,
+    2262438
+  ],
+  "sha256": "ab894f85621d098da07874447b448b938331acdadfdce69f672f74a9e35c0834",
+  "completeRowsAfterUTC": "2026-10-17T18:00:00",
+  "count": 133,
+  "first": {
+    "ts": "2026-10-17T18:00:02.621434+00:00",
+    "lagMs": 269.219,
+    "pc": "none",
+    "captureSeq": 0,
+    "inputs": 0,
+    "relay": false,
+    "cpu": 573.122,
+    "load1": 17.983
+  },
+  "last": {
+    "ts": "2026-10-17T18:12:23.216233+00:00",
+    "lagMs": 12.683,
+    "pc": "none",
+    "captureSeq": 0,
+    "inputs": 0,
+    "relay": false,
+    "cpu": 584.52,
+    "load1": 23.145
+  },
+  "directMaxLagMs": 269.219,
+  "directGe500ms": 0,
+  "directGe1s": 0,
+  "allNoPeerCaptureInputRelay": true,
+  "note": "Old runtime during offline Task3 development. Bounded complete aggregate records only, not all ticks/unique stalls or causal comparison.",
+  "runtime": {
+    "productCommit": "f4202b751b8c22f5b84f1e415e35a7107f5f696d",
+    "buildId": "07ad960b331ccc4b",
+    "signalPid": 42509,
+    "hostPid": 89291
+  }
+}
