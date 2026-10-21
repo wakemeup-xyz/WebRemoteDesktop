@@ -247,6 +247,11 @@ class CaptureEncodeStageTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.to_thread(encode_one_started.wait, 1)
             two = worker.submit_latest({'id': 2, 'generation': 1})
             self.assertTrue(await asyncio.to_thread(capture_two_seen.wait, 1))
+            snapshot = worker.snapshot()
+            self.assertTrue(snapshot['encodeActive'])
+            self.assertEqual(snapshot['capturePendingCount'], 0)
+            self.assertIn('lastCaptureMs', snapshot)
+            self.assertIn('lastEncodeQueueWaitMs', snapshot)
             release_encode.set()
             self.assertEqual(await one, {'data': b'\x01', 'width': 1, 'height': 1,
                                          'encodeMs': 1})
