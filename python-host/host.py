@@ -70,7 +70,24 @@ from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
 from capture_resource_owner import CaptureResourceOwner
 from peer_cleanup_observation import PeerCleanupObservation, SEQUENCE_CAP, peer_cleanup_json
 from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
-from relay_frame_worker import RelayFrameWorker
+# Keep RelayFrameWorker available as a test seam for the single-stage fixtures;
+# production relay uses the bounded capture/encode pipeline below.
+from relay_frame_worker import RelayCaptureEncodeWorker, RelayFrameWorker
+
+_DEFAULT_RELAY_FRAME_WORKER = RelayFrameWorker
+
+
+def _new_relay_frame_worker(processor):
+    """Use the two-stage worker in production while retaining fixture seams."""
+    if RelayFrameWorker is not _DEFAULT_RELAY_FRAME_WORKER:
+        # Existing offline transport tests replace this symbol with a tiny
+        # one-stage fake.  Preserve that seam without weakening production.
+        return RelayFrameWorker(processor)
+    if not (callable(getattr(processor, 'capture', None))
+            and callable(getattr(processor, 'encode', None))):
+        # A legacy processor remains valid for compatibility and offline tests.
+        return RelayFrameWorker(processor)
+    return RelayCaptureEncodeWorker(processor)
 from runtime_observability import (
     RuntimeObservability, ResourceSampler, snapshot_relay_queue,
     CaptureObservation, unavailable_capture_observation,
@@ -604,15 +621,24 @@ class RelayOutputBuffer(io.BytesIO):
 
 
 class RelayJpegProcessor:
-    """All capture objects and image buffers belong exclusively to the worker."""
+    """Split MSS capture from JPEG encoding for the bounded relay pipeline.
+
+    ``capture`` creates a detached PIL image while the MSS screenshot is still
+    owned by the capture worker.  ``encode`` owns that image until the JPEG is
+    complete; the hand-off therefore never exposes an MSS object to the encoder
+    thread.  ``__call__`` remains as a compatibility path for one-stage callers.
+    """
     def __init__(self):
         self.sct = None
         self.monitor = None
 
-    def __call__(self, request):
+    def _ensure_source(self):
         if self.sct is None:
             self.sct = MSS()
             self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
+
+    def capture(self, request):
+        self._ensure_source()
         width, height = self.monitor['width'], self.monitor['height']
         if width > 8192 or height > 8192 or width * height * 4 > 256 * 1024 * 1024:
             raise ValueError('relay source exceeds buffer budget')
@@ -633,15 +659,34 @@ class RelayJpegProcessor:
         if img.shape[0] * img.shape[1] * 3 > 64 * 1024 * 1024:
             raise ValueError('relay image exceeds target buffer budget')
         image = Image.fromarray(img[:, :, 2::-1])
+        return {'image': image, 'width': image.width, 'height': image.height,
+                'captureMs': (time.monotonic() - started) * 1000}
+
+    def encode(self, captured, request):
+        image = captured.get('image') if isinstance(captured, dict) else None
+        if image is None:
+            raise ValueError('relay capture package is missing image')
+        started = time.monotonic()
+        buffer = RelayOutputBuffer()
+        image.save(buffer, format='JPEG', quality=request['quality'], optimize=False, subsampling=2)
+        if buffer.tell() > 16 * 1024 * 1024:
+            raise ValueError('relay output exceeds buffer budget')
+        return {'data': buffer.getvalue(), 'width': image.width, 'height': image.height,
+                'encodeMs': (time.monotonic() - started) * 1000,
+                'captureMs': captured.get('captureMs')}
+
+    def release(self, captured):
+        image = captured.get('image') if isinstance(captured, dict) else None
+        close = getattr(image, 'close', None)
+        if callable(close):
+            close()
+
+    def __call__(self, request):
+        captured = self.capture(request)
         try:
-            buffer = RelayOutputBuffer()
-            image.save(buffer, format='JPEG', quality=request['quality'], optimize=False, subsampling=2)
-            if buffer.tell() > 16 * 1024 * 1024:
-                raise ValueError('relay output exceeds buffer budget')
-            return {'data': buffer.getvalue(), 'width': image.width, 'height': image.height,
-                    'encodeMs': (time.monotonic() - started) * 1000}
+            return self.encode(captured, request)
         finally:
-            image.close()
+            self.release(captured)
 
     def close(self):
         if self.sct is not None:
@@ -1106,7 +1151,7 @@ class TunnelRelayStreamer:
         return (self.frame_id - self.last_acked_frame_id) > self.max_in_flight_frames
 
     async def _run(self):
-        self._jpeg_worker = RelayFrameWorker(RelayJpegProcessor())
+        self._jpeg_worker = _new_relay_frame_worker(RelayJpegProcessor())
         self._jpeg_worker.invalidate(self.production_generation)
         while self.enabled and self.viewer_id and self.task is asyncio.current_task():
             frame_interval = 1 / max(1, self.fps)

@@ -15,7 +15,10 @@ from capture_cadence import unavailable_capture_cadence
 QUEUE_NAMES = frozenset(('inputReliable', 'inputUnordered', 'relayFrames'))
 QUEUE_FIELDS = ('pendingCount', 'pendingBytes', 'inFlightCount', 'droppedCount', 'frozen')
 RELAY_STAGE_FIELDS = ('processorActive', 'deliveryPending', 'pendingAgeMs', 'processorAgeMs',
-                      'deliveryAgeMs', 'lastQueueWaitMs', 'lastProcessorMs', 'lastDeliveryWaitMs')
+                      'deliveryAgeMs', 'lastQueueWaitMs', 'lastProcessorMs', 'lastDeliveryWaitMs',
+                      'captureActive', 'encodeActive', 'capturePendingCount', 'encodePendingCount',
+                      'lastCaptureMs', 'lastEncodeMs', 'lastCaptureQueueWaitMs',
+                      'lastEncodeQueueWaitMs', 'coalescedCount')
 WINDOW_NS = 60_000_000_000
 INTERVAL_NS = 1_000_000_000
 _RLOCK_TYPE = type(threading.RLock())
@@ -203,7 +206,8 @@ class RuntimeObservability:
                 if not isinstance(raw, dict):
                     continue
                 queues[name] = {key: (raw.get(key) if (
-                    isinstance(raw.get(key), bool) if key in ('frozen', 'processorActive', 'deliveryPending')
+                    isinstance(raw.get(key), bool) if key in (
+                        'frozen', 'processorActive', 'deliveryPending', 'captureActive', 'encodeActive')
                     else finite_number(raw.get(key)) and raw[key] >= 0) else None)
                     for key in (QUEUE_FIELDS + RELAY_STAGE_FIELDS if name == 'relayFrames' else QUEUE_FIELDS)}
             except Exception:

@@ -1,7 +1,7 @@
 import asyncio
 import threading
 import unittest
-from relay_frame_worker import RelayFrameWorker
+from relay_frame_worker import RelayCaptureEncodeWorker, RelayFrameWorker
 
 
 class RelayTests(unittest.IsolatedAsyncioTestCase):
@@ -211,4 +211,161 @@ class StageTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(snapshot['deliveryPending'])
             self.assertIsNone(snapshot['pendingAgeMs'])
         finally:
+            await worker.stop()
+
+
+class CaptureEncodeStageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_capture_and_encode_progress_on_distinct_threads(self):
+        capture_seen = threading.Event()
+        encode_one_started = threading.Event()
+        capture_two_seen = threading.Event()
+        release_encode = threading.Event()
+        captures, encodes, threads = [], [], []
+
+        class Processor:
+            def capture(self, request):
+                captures.append(request['id'])
+                threads.append(('capture', threading.get_ident()))
+                if request['id'] == 2:
+                    capture_two_seen.set()
+                capture_seen.set()
+                return {'token': request['id']}
+
+            def encode(self, captured, request):
+                encodes.append(captured['token'])
+                threads.append(('encode', threading.get_ident()))
+                if request['id'] == 1:
+                    encode_one_started.set()
+                    assert release_encode.wait(2)
+                return {'data': bytes([request['id']]), 'width': 1, 'height': 1,
+                        'encodeMs': 1}
+
+        worker = RelayCaptureEncodeWorker(Processor())
+        try:
+            one = worker.submit_latest({'id': 1, 'generation': 1})
+            await asyncio.to_thread(capture_seen.wait, 1)
+            await asyncio.to_thread(encode_one_started.wait, 1)
+            two = worker.submit_latest({'id': 2, 'generation': 1})
+            self.assertTrue(await asyncio.to_thread(capture_two_seen.wait, 1))
+            release_encode.set()
+            self.assertEqual(await one, {'data': b'\x01', 'width': 1, 'height': 1,
+                                         'encodeMs': 1})
+            await worker.drain()
+            self.assertEqual(await two, {'data': b'\x02', 'width': 1, 'height': 1,
+                                         'encodeMs': 1})
+            by_stage = {stage: ident for stage, ident in threads}
+            self.assertNotEqual(by_stage['capture'], by_stage['encode'])
+            self.assertEqual(captures, [1, 2])
+            self.assertEqual(encodes, [1, 2])
+        finally:
+            release_encode.set()
+            await worker.stop()
+
+    async def test_encode_pending_is_latest_only_and_releases_dropped_capture(self):
+        encode_started = threading.Event()
+        capture_two_seen = threading.Event()
+        release_encode = threading.Event()
+        released = []
+
+        class Processor:
+            def capture(self, request):
+                if request['id'] == 2:
+                    capture_two_seen.set()
+                return {'token': request['id']}
+
+            def encode(self, captured, request):
+                if request['id'] == 1:
+                    encode_started.set()
+                    assert release_encode.wait(2)
+                return {'data': bytes([request['id']]), 'width': 1, 'height': 1,
+                        'encodeMs': 1}
+
+            def release(self, captured):
+                released.append(captured['token'])
+
+        worker = RelayCaptureEncodeWorker(Processor())
+        try:
+            one = worker.submit_latest({'id': 1, 'generation': 1})
+            self.assertTrue(await asyncio.to_thread(encode_started.wait, 1))
+            two = worker.submit_latest({'id': 2, 'generation': 1})
+            self.assertTrue(await asyncio.to_thread(capture_two_seen.wait, 1))
+            async with asyncio.timeout(1):
+                while worker.snapshot()['encodePendingCount'] != 1:
+                    await asyncio.sleep(0)
+            three = worker.submit_latest({'id': 3, 'generation': 1})
+            self.assertIsNone(await two)
+            self.assertEqual(worker.snapshot()['coalescedCount'], 1)
+            release_encode.set()
+            self.assertEqual((await one)['data'], b'\x01')
+            await worker.drain()
+            self.assertEqual((await three)['data'], b'\x03')
+            self.assertIn(2, released)
+        finally:
+            release_encode.set()
+            await worker.stop()
+
+    async def test_stop_closes_capture_resource_on_capture_thread(self):
+        entered = threading.Event()
+        release = threading.Event()
+        close_threads = []
+
+        class Processor:
+            def capture(self, request):
+                entered.set()
+                assert release.wait(2)
+                return {'token': 1}
+
+            def encode(self, captured, request):
+                return {'data': b'x', 'width': 1, 'height': 1, 'encodeMs': 1}
+
+            def close(self):
+                close_threads.append(threading.get_ident())
+
+        worker = RelayCaptureEncodeWorker(Processor())
+        try:
+            worker.submit_latest({'id': 1, 'generation': 1})
+            self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+            self.assertFalse(await worker.stop())
+            release.set()
+            self.assertTrue(await worker.stop())
+            self.assertEqual(len(close_threads), 1)
+            self.assertNotEqual(close_threads[0], threading.get_ident())
+        finally:
+            release.set()
+            await worker.stop()
+
+    async def test_generation_invalidation_releases_pending_capture_and_stales_result(self):
+        encode_started = threading.Event()
+        release_encode = threading.Event()
+        released = []
+
+        class Processor:
+            def capture(self, request):
+                return {'token': request['id']}
+
+            def encode(self, captured, request):
+                encode_started.set()
+                assert release_encode.wait(2)
+                return {'data': bytes([request['id']]), 'width': 1, 'height': 1,
+                        'encodeMs': 1}
+
+            def release(self, captured):
+                released.append(captured['token'])
+
+        worker = RelayCaptureEncodeWorker(Processor())
+        try:
+            one = worker.submit_latest({'id': 1, 'generation': 1})
+            self.assertTrue(await asyncio.to_thread(encode_started.wait, 1))
+            two = worker.submit_latest({'id': 2, 'generation': 1})
+            async with asyncio.timeout(1):
+                while worker.snapshot()['encodePendingCount'] != 1:
+                    await asyncio.sleep(0)
+            worker.invalidate(2)
+            self.assertIsNone(await two)
+            self.assertIn(2, released)
+            release_encode.set()
+            self.assertIsNone(await one)
+            await worker.drain()
+        finally:
+            release_encode.set()
             await worker.stop()
