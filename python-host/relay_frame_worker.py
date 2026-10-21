@@ -170,6 +170,16 @@ class RelayCaptureEncodeWorker:
     ``RelayJpegProcessor``.
     """
 
+    def __new__(cls, processor, *args, **kwargs):
+        # Keep old one-stage processors (and their test doubles) operational
+        # while the production processor opts into the split pipeline. Because
+        # the returned object is not an instance of this class, Python skips our
+        # initializer and the legacy worker owns its usual shutdown contract.
+        if not (callable(getattr(processor, 'capture', None))
+                and callable(getattr(processor, 'encode', None))):
+            return RelayFrameWorker(processor, *args, **kwargs)
+        return super().__new__(cls)
+
     def __init__(self, processor, *, max_pending=1, now_ns=time.monotonic_ns):
         if max_pending != 1:
             raise ValueError('relay retains exactly one latest pending request per stage')

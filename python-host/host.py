@@ -70,24 +70,11 @@ from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
 from capture_resource_owner import CaptureResourceOwner
 from peer_cleanup_observation import PeerCleanupObservation, SEQUENCE_CAP, peer_cleanup_json
 from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
-# Keep RelayFrameWorker available as a test seam for the single-stage fixtures;
-# production relay uses the bounded capture/encode pipeline below.
-from relay_frame_worker import RelayCaptureEncodeWorker, RelayFrameWorker
-
-_DEFAULT_RELAY_FRAME_WORKER = RelayFrameWorker
-
-
-def _new_relay_frame_worker(processor):
-    """Use the two-stage worker in production while retaining fixture seams."""
-    if RelayFrameWorker is not _DEFAULT_RELAY_FRAME_WORKER:
-        # Existing offline transport tests replace this symbol with a tiny
-        # one-stage fake.  Preserve that seam without weakening production.
-        return RelayFrameWorker(processor)
-    if not (callable(getattr(processor, 'capture', None))
-            and callable(getattr(processor, 'encode', None))):
-        # A legacy processor remains valid for compatibility and offline tests.
-        return RelayFrameWorker(processor)
-    return RelayCaptureEncodeWorker(processor)
+# Production relay uses the bounded capture/encode pipeline.  The public symbol
+# remains a fixture seam: tests can replace ``host.RelayFrameWorker`` with the
+# old one-stage fake without changing the production default.
+from relay_frame_worker import RelayCaptureEncodeWorker
+RelayFrameWorker = RelayCaptureEncodeWorker
 from runtime_observability import (
     RuntimeObservability, ResourceSampler, snapshot_relay_queue,
     CaptureObservation, unavailable_capture_observation,
@@ -1151,7 +1138,7 @@ class TunnelRelayStreamer:
         return (self.frame_id - self.last_acked_frame_id) > self.max_in_flight_frames
 
     async def _run(self):
-        self._jpeg_worker = _new_relay_frame_worker(RelayJpegProcessor())
+        self._jpeg_worker = RelayFrameWorker(RelayJpegProcessor())
         self._jpeg_worker.invalidate(self.production_generation)
         while self.enabled and self.viewer_id and self.task is asyncio.current_task():
             frame_interval = 1 / max(1, self.fps)
