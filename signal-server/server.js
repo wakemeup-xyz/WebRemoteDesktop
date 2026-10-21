@@ -39,6 +39,7 @@ const {
   getDiagDir,
   ingestDiagnosticPayload,
 } = require('./lib/diagnostic');
+const { createDiagnosticStore } = require('./lib/diagnostic-store');
 const { setupTerminal } = require('./websocket/terminal');
 const { ensureNodePtySpawnHelperExecutable } = require('./lib/terminal/node-pty-setup');
 const { createRotatingFileSink, createStructuredLogger } = require('./lib/observability/logger');
@@ -46,6 +47,7 @@ const { createRecentEventStore } = require('./lib/observability/store');
 const { createRuntimeObserver, bindRuntimeObserver } = require('./lib/observability/runtime');
 const { createEntryObserver, bindEntryObserver } = require('./lib/observability/entry');
 const { createViewerHeartbeatRegistry } = require('./lib/observability/viewer-heartbeat');
+const { createRuntimeEvidenceRecorder } = require('./lib/observability/runtime-evidence');
 const { createTerminalAudit } = require('./lib/terminal/audit');
 const { TerminalMetrics } = require('./lib/terminal/metrics');
 const rateLimit = require('express-rate-limit');
@@ -130,7 +132,9 @@ function createServerApp(options = {}) {
     // Node normalizes maxRSS to KiB on every supported platform.
     samplePeakRss: () => process.resourceUsage().maxRSS / 1024,
   });
-  const viewerHeartbeat = createViewerHeartbeatRegistry({ logger, runtimeSnapshot: () => runtimeObserver.snapshot() });
+  const runtimeEvidence = options.runtimeEvidence || createRuntimeEvidenceRecorder();
+  const viewerHeartbeat = createViewerHeartbeatRegistry({ logger, runtimeSnapshot: () => runtimeObserver.snapshot(),
+    onSnapshot: data => runtimeEvidence.observeHeartbeat(data) });
   server.on('close', () => viewerHeartbeat.stop());
   server.on('error', () => viewerHeartbeat.stop());
   bindRuntimeObserver(server, runtimeObserver);
@@ -216,7 +220,11 @@ function createServerApp(options = {}) {
   });
 
   bindEntryObserver(server, io.engine, entryObserver);
-  setupSignaling(io, { config, logger, recentEventStore, structuredLogger, observeNamespaceOutcome: outcome => entryObserver.observeNamespaceOutcome(outcome), observeViewerHeartbeat: viewerHeartbeat.attach, runtimeContext: signalingRuntime, verifyAccessToken: (token) => verifyAccessToken(token, config) });
+  setupSignaling(io, { config, logger, recentEventStore, structuredLogger,
+    observeDiagnostic: report => runtimeEvidence.observeDiagnostic(report),
+    observeNamespaceOutcome: outcome => entryObserver.observeNamespaceOutcome(outcome),
+    observeViewerHeartbeat: viewerHeartbeat.attach, runtimeContext: signalingRuntime,
+    verifyAccessToken: (token) => verifyAccessToken(token, config) });
   const terminal = setupTerminal(io, {
     config,
     logger,
@@ -407,6 +415,7 @@ function createServerApp(options = {}) {
         error: result.error,
       });
     }
+    runtimeEvidence.observeDiagnostic(result.report);
     if (result.summaryEvent) {
       recentEventStore.append(result.summaryEvent);
       structuredLogger.info(result.summaryEvent);
@@ -454,7 +463,12 @@ function createServerApp(options = {}) {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin role required' });
     }
-    return res.json({ ...recentEventStore.summary(), runtime: runtimeObserver.snapshot() });
+    runtimeEvidence.observeRuntime(runtimeObserver.snapshot());
+    try {
+      const persisted = createDiagnosticStore({ dir: getDiagDir() }).listSummary({ from: 0, to: Date.now() });
+      runtimeEvidence.observeSummaryCoverage(persisted.coverage);
+    } catch { /* Missing/disabled persistence remains explicitly partial. */ }
+    return res.json({ ...recentEventStore.summary(), runtime: runtimeObserver.snapshot(), evidence: runtimeEvidence.receipt() });
   });
 
   app.get('/api/admin/observability/recent', requireConfiguredAccessToken, (req, res) => {
@@ -504,10 +518,12 @@ function createServerApp(options = {}) {
     recentEventStore,
     structuredLogger,
     runtimeObserver,
+    runtimeEvidence,
     signalingRuntime,
     entryObserver,
     async close(reason = 'system:shutdown') {
       viewerHeartbeat.stop();
+      runtimeEvidence.stop();
       runtimeObserver.stop();
       try { entryObserver.stop(); } catch { /* Best-effort entry evidence. */ }
       if (typeof terminal?.close === 'function') {

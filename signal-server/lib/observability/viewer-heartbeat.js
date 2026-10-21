@@ -19,7 +19,7 @@ function incrementBoundedCount(value, coverage) {
 
 // Only fixed enums and numbers leave this module. No emitter arguments are retained.
 function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow = Date.now,
-  logger = console, runtimeSnapshot } = {}) {
+  logger = console, runtimeSnapshot, onSnapshot } = {}) {
   const records = new Set();
   const sockets = new WeakSet();
   const engines = new WeakSet();
@@ -186,6 +186,7 @@ function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow 
         if (Buffer.byteLength(projected) <= 4096 && !/[^\x20-\x7e]/.test(projected)) json = projected;
       } catch { /* Emit only fixed metadata when serialization fails. */ }
       try { logger?.log?.(PREFIX + json); } catch { /* No raw error, retry, or additional log. */ }
+      try { onSnapshot?.(data); } catch { /* Evidence aggregation cannot affect teardown. */ }
     }
     const record = { finish };
     records.add(record);

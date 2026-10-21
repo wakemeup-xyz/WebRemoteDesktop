@@ -1573,7 +1573,8 @@ test('ice candidate from disconnected viewer is not relayed to host', () => {
 test('diagnostic relay redacts keyboard metadata by default', () => {
   resetConnections();
   const io = makeIo();
-  setupSignaling(io);
+  let observed = null;
+  setupSignaling(io, { observeDiagnostic: report => { observed = report; } });
 
   const host = new FakeSocket('host-1', 'host');
   const viewer = new FakeSocket('viewer-1', 'viewer');
@@ -1629,6 +1630,7 @@ test('diagnostic relay redacts keyboard metadata by default', () => {
   assert.equal(diagnostic.data.userAgent, 'unknown');
   assert.equal(diagnostic.data.screen, 'unknown');
   assert.equal(diagnostic.data.logCount, 1);
+  assert.equal(observed.logCount, 1);
   assert.deepEqual(diagnostic.data.logs, ['line-1']);
   assert.deepEqual(diagnostic.data.keyboardDebug, []);
   assert.equal(diagnostic.data.trigger, 'auto-failure');

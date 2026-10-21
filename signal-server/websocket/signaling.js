@@ -1596,6 +1596,9 @@ function setupSignaling(io, options = {}) {
         config,
         logger,
       });
+      if (result.accepted) {
+        try { options.observeDiagnostic?.(result.report); } catch { /* Evidence is best effort. */ }
+      }
       if (result.accepted && result.summaryEvent) {
         recentEventStore?.append(result.summaryEvent);
         structuredLogger?.info(result.summaryEvent);

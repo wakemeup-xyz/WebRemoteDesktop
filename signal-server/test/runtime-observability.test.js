@@ -44,6 +44,22 @@ test('missed deadlines have no synthetic zeros; snapshot does not sample and cac
   observer.stop();
 });
 
+test('runtime observer derives bounded process CPU percentage only between fresh samples', () => {
+  let time = 0;
+  let callback;
+  let cpu = 1;
+  const observer = createRuntimeObserver({ now: () => time, sampleRss: () => 15,
+    sampleCpuSeconds: () => cpu,
+    setTimer: cb => { callback = cb; return { unref() {} }; }, clearTimer() {} });
+  observer.start();
+  time = 1000; callback();
+  assert.equal(observer.snapshot().processCpuPercent, null);
+  cpu = 1.25; time = 6000; callback();
+  assert.equal(observer.snapshot().processCpuSeconds, 1.25);
+  assert.equal(observer.snapshot().processCpuPercent, 5);
+  observer.stop();
+});
+
 test('disconnect reasons accept only known protocol enums and never stringify objects', () => {
   for (const reason of ['ping timeout', 'transport close', 'transport error', 'server namespace disconnect',
     'client namespace disconnect', 'server shutting down', 'parse error', 'forced close', 'forced server close']) {

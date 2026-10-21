@@ -827,6 +827,10 @@ test('admin observability summary and recent endpoints return structured diagnos
     assert.equal(summary.total, 1);
     assert.equal(summary.byDomain.viewer, 1);
     assert.equal(summary.byEvent['viewer.diagnostic_uploaded'], 1);
+    assert.equal(summary.evidence.diagnostics.logCount.total, 1);
+    assert.equal(summary.evidence.diagnostics.logCount.zeroLogReports, 0);
+    assert.equal(summary.evidence.coverage.complete, false);
+    assert.ok(summary.evidence.coverage.missing.includes('inputToVisibleEffectMs'));
 
     const recentResponse = await fetch(baseUrl + '/api/admin/observability/recent?domain=viewer&limit=5', {
       headers: {

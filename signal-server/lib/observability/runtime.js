@@ -16,6 +16,10 @@ function createRuntimeObserver(options = {}) {
   const now = options.now || (() => performance.now());
   const sampleRss = options.sampleRss || (() => process.memoryUsage.rss() / (1024 * 1024));
   const samplePeakRss = options.samplePeakRss || (() => null);
+  const sampleCpuSeconds = options.sampleCpuSeconds || (() => {
+    const usage = process.resourceUsage();
+    return (usage.userCPUTime + usage.systemCPUTime) / 1e6;
+  });
   const setTimer = options.setTimer || setTimeout;
   const clearTimer = options.clearTimer || clearTimeout;
   const samples = [];
@@ -25,6 +29,10 @@ function createRuntimeObserver(options = {}) {
   let sampledAt = null;
   let currentRssMiB = null;
   let peakRssMiB = null;
+  let processCpuSeconds = null;
+  let processCpuPercent = null;
+  let previousCpuSeconds = null;
+  let previousCpuAt = null;
   let status = 'unavailable';
 
   function expire(at) {
@@ -51,10 +59,24 @@ function createRuntimeObserver(options = {}) {
       try {
         currentRssMiB = validRss(sampleRss());
         peakRssMiB = validRss(samplePeakRss());
+        const cpu = validRss(sampleCpuSeconds());
+        if (cpu !== null && previousCpuSeconds !== null && previousCpuAt !== null && observed > previousCpuAt) {
+          processCpuPercent = Math.max(0, Math.min(10000,
+            ((cpu - previousCpuSeconds) / ((observed - previousCpuAt) / 1000)) * 100));
+        } else {
+          processCpuPercent = null;
+        }
+        if (cpu !== null) {
+          processCpuSeconds = cpu;
+          previousCpuSeconds = cpu;
+          previousCpuAt = observed;
+        }
         status = currentRssMiB === null ? 'unavailable' : 'ok';
       } catch {
         currentRssMiB = null;
         peakRssMiB = null;
+        processCpuSeconds = null;
+        processCpuPercent = null;
         status = 'unavailable';
       }
       sampledAt = observed;
@@ -88,6 +110,8 @@ function createRuntimeObserver(options = {}) {
         ageMs,
         currentRssMiB: fresh ? currentRssMiB : null,
         peakRssMiB: fresh ? peakRssMiB : null,
+        processCpuSeconds: fresh ? processCpuSeconds : null,
+        processCpuPercent: fresh ? processCpuPercent : null,
         memoryPressure: 'unknown',
         eventLoop: {
           count: samples.length,

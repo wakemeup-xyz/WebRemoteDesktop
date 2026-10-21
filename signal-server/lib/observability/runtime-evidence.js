@@ -1,0 +1,200 @@
+'use strict';
+
+// A bounded, read-only aggregation of runtime evidence.  This module never
+// reads process state or starts timers; callers feed it already-sanitized
+// diagnostic snapshots.  Missing stages remain null so ACK/decoder counters
+// are never presented as visible-effect evidence.
+
+const MAX_COUNT = 999999999;
+const MAX_SAMPLES = 256;
+const MAX_MISSING = 32;
+
+function boundedCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? Math.min(MAX_COUNT, value) : null;
+}
+
+function boundedNumber(value, maximum = MAX_COUNT) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.min(maximum, value) : null;
+}
+
+function sampleStats(samples) {
+  const values = samples.filter(value => boundedNumber(value) !== null)
+    .map(Number).sort((a, b) => a - b);
+  if (!values.length) return { available: false, count: 0, last: null, p50: null, p95: null, max: null };
+  const pick = fraction => values[Math.min(values.length - 1, Math.floor(values.length * fraction))];
+  return { available: true, count: values.length, last: values.at(-1), p50: pick(.5), p95: pick(.95), max: values.at(-1) };
+}
+
+function metricCount(metrics, name) {
+  return boundedCount(metrics?.[name]?.count);
+}
+
+function collectMetricValues(metrics, name) {
+  const value = metrics?.[name];
+  if (!value || typeof value !== 'object') return [];
+  return [value.last, value.p50, value.p95].filter(item => boundedNumber(item) !== null);
+}
+
+function firstCount(...values) {
+  for (const value of values) {
+    const result = boundedCount(value);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
+function ratio(numerator, denominator) {
+  if (numerator === null || denominator === null || denominator <= 0) return null;
+  return Math.max(0, Math.min(1, numerator / denominator));
+}
+
+function recordMissing(missing, name) {
+  if (!missing.includes(name) && missing.length < MAX_MISSING) missing.push(name);
+}
+
+function projectDiagnostic(report = {}) {
+  const latency = report.latency && typeof report.latency === 'object' ? report.latency : {};
+  const metrics = latency.metrics && typeof latency.metrics === 'object' ? latency.metrics : {};
+  const outcomes = latency.outcomes && typeof latency.outcomes === 'object' ? latency.outcomes : {};
+  const logs = Array.isArray(report.logs) ? report.logs.length : null;
+  const logCount = firstCount(report.logCount, logs);
+  const summaryGapCount = firstCount(
+    report.summaryGapCount,
+    report.summaryGaps?.count,
+    report.coverage?.summaryGapCount,
+  );
+  const ringDropCount = firstCount(
+    report.ringDropped,
+    report.heartbeat?.ringDropped,
+    report.runtime?.heartbeat?.ringDropped,
+  );
+  const sent = firstCount(outcomes.sent, report.inputTrace?.counters?.sent);
+  const visible = metricCount(metrics, 'inputToVisibleEffectMs');
+  const visibleCoverage = ratio(visible, sent);
+  const fps = [];
+  const dropped = [];
+  for (const item of Array.isArray(report.events) ? report.events.slice(-MAX_SAMPLES) : []) {
+    if (!item || typeof item !== 'object') continue;
+    for (const key of ['fps', 'derivedFps', 'decodeFps']) {
+      const value = boundedNumber(item[key], 240);
+      if (value !== null) { fps.push(value); break; }
+    }
+    for (const key of ['dropped', 'droppedFrames', 'framesDropped']) {
+      const value = boundedCount(item[key]);
+      if (value !== null) { dropped.push(value); break; }
+    }
+  }
+  const resources = report.resources && typeof report.resources === 'object' ? report.resources : {};
+  const rss = boundedNumber(resources.currentRssMiB ?? resources.rssMiB, 1048576);
+  const cpu = boundedNumber(resources.processCpuPercent ?? resources.cpuPercent, 1000);
+  return {
+    logCount,
+    summaryGapCount,
+    ringDropCount,
+    fps,
+    dropped,
+    rssMiB: rss,
+    cpuPercent: cpu,
+    visibleEffect: {
+      samples: visible,
+      sent,
+      coverage: visibleCoverage,
+      // This is intentionally independent of ACK coverage.
+      metricAvailable: visible !== null,
+    },
+    latency: {
+      captureMs: sampleStats(collectMetricValues(metrics, 'capturePrepareMs')),
+      encodeMs: sampleStats(collectMetricValues(metrics, 'encoderMs')),
+      inputToVisibleEffectMs: sampleStats(collectMetricValues(metrics, 'inputToVisibleEffectMs')),
+    },
+  };
+}
+
+function createRuntimeEvidenceRecorder(options = {}) {
+  const now = typeof options.now === 'function' ? options.now : Date.now;
+  const maxReports = Math.max(1, Math.min(MAX_SAMPLES, Number(options.maxReports) || MAX_SAMPLES));
+  let startedAt = null;
+  let endedAt = null;
+  let reports = [];
+  let runtimeSamples = [];
+  let heartbeat = { samples: 0, ringDropped: 0 };
+  let summaryCoverage = { droppedSummaryCount: 0, gaps: [] };
+
+  function start() { if (startedAt === null) startedAt = now(); endedAt = null; }
+  function observeDiagnostic(report) {
+    if (startedAt === null) start();
+    const projected = projectDiagnostic(report);
+    reports.push(projected);
+    if (reports.length > maxReports) reports.shift();
+    return projected;
+  }
+  function observeHeartbeat(data = {}) {
+    if (startedAt === null) start();
+    const value = boundedCount(data.ringDropped);
+    heartbeat.samples = Math.min(MAX_COUNT, heartbeat.samples + 1);
+    if (value !== null) heartbeat.ringDropped = Math.min(MAX_COUNT, heartbeat.ringDropped + value);
+  }
+  function observeSummaryCoverage(coverage = {}) {
+    const dropped = boundedCount(coverage.droppedSummaryCount);
+    if (dropped !== null) summaryCoverage.droppedSummaryCount = dropped;
+    if (Array.isArray(coverage.gaps)) {
+      summaryCoverage.gaps = coverage.gaps.slice(-MAX_MISSING).map(gap => ({
+        reason: typeof gap?.reason === 'string' ? gap.reason.slice(0, 48) : 'unknown',
+        count: boundedCount(gap?.count) ?? 0,
+      }));
+    }
+  }
+  function observeRuntime(runtime = {}) {
+    if (startedAt === null) start();
+    runtimeSamples.push({
+      rssMiB: boundedNumber(runtime.currentRssMiB, 1048576),
+      cpuPercent: boundedNumber(runtime.processCpuPercent, 10000),
+    });
+    if (runtimeSamples.length > maxReports) runtimeSamples.shift();
+  }
+  function stop() { if (startedAt !== null && endedAt === null) endedAt = now(); }
+  function snapshot() {
+    const missing = [];
+    const projected = reports.slice();
+    const sum = key => projected.reduce((total, row) => total + (row[key] ?? 0), 0);
+    const fps = projected.flatMap(row => row.fps);
+    const dropped = projected.flatMap(row => row.dropped);
+    const visibleRows = projected.map(row => row.visibleEffect).filter(row => row.metricAvailable);
+    const visibleSamples = visibleRows.reduce((total, row) => total + (row.samples ?? 0), 0);
+    const sent = visibleRows.reduce((total, row) => total + (row.sent ?? 0), 0);
+    const visibleCoverage = ratio(visibleSamples, sent);
+    const rss = sampleStats([...projected.map(row => row.rssMiB), ...runtimeSamples.map(row => row.rssMiB)]);
+    const cpu = sampleStats([...projected.map(row => row.cpuPercent), ...runtimeSamples.map(row => row.cpuPercent)]);
+    if (!projected.length) recordMissing(missing, 'diagnostics');
+    if (projected.every(row => row.logCount === null)) recordMissing(missing, 'logCount');
+    if (projected.every(row => row.summaryGapCount === null)) recordMissing(missing, 'summaryGapCount');
+    if (!heartbeat.samples) recordMissing(missing, 'ringDropped');
+    if (!fps.length) recordMissing(missing, 'fps');
+    if (!dropped.length) recordMissing(missing, 'droppedFrames');
+    if (!rss.available) recordMissing(missing, 'rssMiB');
+    if (!cpu.available) recordMissing(missing, 'cpuPercent');
+    if (!visibleRows.length || visibleCoverage === null) recordMissing(missing, 'inputToVisibleEffectMs');
+    return {
+      schemaVersion: 1,
+      window: { startedAt, endedAt, reportCount: projected.length },
+      diagnostics: {
+        logCount: { total: sum('logCount'), reportsWithLogs: projected.filter(row => (row.logCount ?? 0) > 0).length,
+          zeroLogReports: projected.filter(row => row.logCount === 0).length },
+        summaryGapCount: summaryCoverage.droppedSummaryCount + sum('summaryGapCount'),
+        summaryGaps: summaryCoverage.gaps.slice(),
+        ringDropCount: heartbeat.ringDropped + sum('ringDropCount'),
+      },
+      resources: { rssMiB: rss, cpuPercent: cpu },
+      media: { fps: sampleStats(fps), droppedFrames: sampleStats(dropped) },
+      visibleEffect: { sent: sent || null, samples: visibleSamples || null, coverage: visibleCoverage },
+      coverage: { complete: missing.length === 0, missing },
+    };
+  }
+  function receipt() {
+    return snapshot();
+  }
+  return { start, stop, observeDiagnostic, observeHeartbeat, observeRuntime, observeSummaryCoverage, snapshot, receipt };
+}
+
+module.exports = { createRuntimeEvidenceRecorder, projectDiagnostic, sampleStats };
