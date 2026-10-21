@@ -124,7 +124,7 @@ W提供 `buildRuntimeDiagnostic({reason})`，统一用于手动与自动路径�
 - 仅成功应用的输入可进入帧关联候选；候选需保存Host appliedAt，捕获开始时间必须在其后。复用旧图像不能消耗候选，也不能伪造新的captureSeq。
 - captureSeq→encoder timestamp→实际wire RTP timestamp→rVFC身份关联必须同attempt/generation/stream。元数据晚到保留已观察的Viewer帧时间，不能用join完成时间替换。
 - 任意原生应用是否已经产生视觉效果不能由adapter返回推断。真实inputToVisibleEffect采用既有受控producer/marker和真实输入guard，禁止用独立本地overlay模拟输入成功；光学时延另行记录。
-- JPEG捕获、数组转换和编码移出Host控制event loop。采用单个专属worker、最多一个处理中任务和一个待处理最新请求；帧完成返回前检查generation/suspend，过期结果丢弃。不无限提交to_thread；关闭时先停止提交并等待受控退出，无法取消的原生工作不能在新会话继续输出。
+- JPEG捕获、数组转换和编码移出Host控制event loop。Tunnel relay 使用双阶段 bounded worker：MSS抓帧和JPEG编码分别由专属线程执行，每个阶段最多一个运行项和一个可替换的最新待处理项；编码当前帧时最多预取一个下一帧。帧完成返回前检查generation/suspend，过期结果释放并丢弃；capture/encode queue wait、耗时、p95/max、drop 和 coalesced 计数都进入有界快照。不无限提交to_thread；关闭时先停止提交并等待受控退出，MSS只由capture线程关闭，无法取消的原生工作不能在新会话继续输出。
 - 可靠输入不能事后丢弃已编号down/up/text/reset。高频move/wheel的合并发生在编号/传输提交之前；队列满或无法维持顺序时冻结新输入并走既有reset/reacquire路径，不改写已应用序号。
 - 不直接扩大硬编码资格范围。针对20/15/12 FPS及720p/1080p同条件验证codec、码率、质量和CPU/调度成本；不合格组合保留显式失败/建议，不因错误跨钟反馈降档。
 
@@ -155,3 +155,7 @@ W提供 `buildRuntimeDiagnostic({reason})`，统一用于手动与自动路径�
 ### 9.3 当前交付与后续实施区分
 
 AGENTS 默认流程、72 小时审计、总/子 spec 与 plan 已落库；代码、构建和本地部署已推进至实施报告所列版本，公网验收继续逐项登记。只有完成对应行为回归、资源约束检查和真实验收的子项，才能把需求文档中的整改状态改为已完成。
+
+### 9.4 运行证据收口
+
+Signal 的 `/api/admin/observability/summary` 返回一个有界 evidence receipt。它只消费已清洗的诊断、heartbeat close 和持久化 summary coverage：`logCount` 统计诊断日志条数，`summaryGapCount/gaps` 反映摘要留存缺口，`ringDropCount` 反映 heartbeat 环覆盖，RSS/CPU/FPS/丢帧以及 `inputToVisibleEffectMs` coverage 缺测时保持 `null` 并列入 `coverage.missing`。ACK 或 decoder 计数不能替代可见效果样本；Signal 进程重启后内存窗口重新开始，持久化的摘要只作为留存覆盖证据。

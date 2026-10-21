@@ -39,3 +39,19 @@
 
 维护窗口需要再次读取 `/tmp/wrd-safe-current-url.txt`、Signal/Host 当前日志和构建身份，先做本地健康与首帧，再做短断线恢复、控制输入和投屏长会话；失败时保留服务运行态并记录缺测原因。
 
+## 2026-10-21 双阶段采集与运行证据增量
+
+本次继续优化已合入 `main`：
+
+- `RelayCaptureEncodeWorker` 将 tunnel relay 的 MSS 抓帧和 JPEG 编码拆到 `relay-capture`、`relay-jpeg` 两个专属线程；每个阶段最多一个运行项和一个 latest pending。Tunnel relay 只保留一个 prefetch future，最多提前准备一帧；generation、暂停、停止和超预算都会 fail-closed，并释放 detached image。
+- relay snapshot 现在提供 `captureActive`、`encodeActive`、两阶段 queue wait/耗时、capture/encode p95/max、`droppedCount` 和 `coalescedCount`。MSS 资源只由 capture worker 关闭，跨线程 Future 通过事件循环回调完成。
+- Signal runtime evidence 接入 HTTP/WebSocket diagnostics、viewer-heartbeat close 和 `/api/admin/observability/summary`。receipt 明确输出 `logCount`、summary gap、ring drop、RSS/CPU、FPS/丢帧和 `inputToVisibleEffectMs` coverage；缺测进入 `coverage.missing`，不以 ACK 或 decoder 计数冒充可见效果。进程重启后内存窗口重新开始。
+
+离线验证：
+
+- `PYTHONPATH=python-host python3 -m pytest -q python-host`：758 passed，184 subtests，1 个 MSS 弃用警告。
+- `NODE_PATH=signal-server/node_modules node --test signal-server/test/*.test.js web-client/js/*.test.js`：1769 passed；其中 web asset build/retention 在并行全量运行时会争用共享 `dist.tmp`，按文件顺序运行通过。该测试隔离问题不影响生产构建。
+- 双阶段 worker、tunnel relay、runtime observability、diagnostic store focused tests 均顺序通过；`git diff --check` 通过。
+
+本节代码尚未由当前运行中的 Host/Signal 加载；维护窗口重启后才开始真实运行证据窗口。真实 Viewer 首帧、FPS、RSS/CPU、capture p95/max、丢帧、visible-effect 覆盖率，以及短断线和长会话的实际时长仍须以维护窗口 receipt 和日志为准，未采到的字段保持 `NOT RUN`。
+

@@ -27,14 +27,15 @@
 - [x] 先在离线 fixture 中增加 grab/convert/encode/queue wait 的长尾模型。
 - [x] 增加 active capture 预算告警、profile 降级和 latest-frame 丢弃计数。
 - [x] 验证 page-hidden → pageshow 的 sender、capture、keyframe、input gate 顺序。
-- [ ] 只有离线数据证明收益后，才实现抓帧与编码的双阶段 bounded worker。
-- [ ] 对 RSS、CPU、实际 FPS、capture p95 和 max 做独立验收。
+- [x] 只有离线数据证明收益后，实现抓帧与编码的双阶段 bounded worker；每阶段最多一个运行项和一个 latest pending，并限制一个 prefetch。
+- [x] 为 relay snapshot 增加 capture/encode queue wait、耗时、p95/max、drop/coalesced 运行字段。
+- [~] 对 RSS、CPU、实际 FPS、capture p95 和 max 做独立验收；离线结构和快照已通过，真实 Viewer 样本仍由维护窗口记录。
 
 ## 阶段 4：端到端诊断补齐
 
 - [x] 为输入和帧建立有界、脱敏的阶段关联。
 - [x] 失败时保留最小事件环，不写原始输入或坐标。
-- [~] 让 `logCount`、summary gap、ring drop 和各阶段缺测成为明确指标；生产日志补采仍需维护窗口。
+- [x] 让 `logCount`、summary gap、ring drop 和各阶段缺测成为明确指标；管理员 summary 返回有界 evidence receipt，真实运行值仍需维护窗口采样。
 - [x] 增加输入到 frame/paint/visible effect 的独立统计，不用 ACK RTT 替代。
 
 ## 阶段 5：离线回归和独立复核
@@ -48,8 +49,8 @@
 
 - [x] 仅在用户明确释放当前会话后构建、加载和重启本地 Signal/Host。
 - [x] tunnel 不重建；公网地址保持现有事实来源。
-- [~] 本地健康、Host 在线和正式入口 health 已验证；首帧与控制 ACK 仍待真实 Viewer 会话。
-- [ ] 做短断线恢复、30 分钟控制投屏和输入到可见效果验收。
+- [~] 本地健康、Host 在线和正式入口 health 已验证；本轮代码上线后需再次核对新 PID、首帧与控制 ACK。
+- [~] 做维护窗口短断线恢复和长会话采样；实际运行时长、FPS/RSS/CPU/丢帧/visible coverage 逐项记录，未达到目标的字段保持 NOT RUN。
 - [ ] 任何失败保留服务可用态并记录，不通过强制宣称完成。
 
 ## 完成标准
@@ -59,4 +60,12 @@
 - 活动捕获 p95 接近一个帧周期，长尾有降级和告警；
 - 输入到可见效果有有效数据；
 - 本地、公网、控制、投屏和长会话结果分开记录。
+
+## 阶段 7：双阶段 relay 与运行证据（2026-10-21）
+
+- [x] `RelayCaptureEncodeWorker` 将 MSS capture 与 JPEG encode 分到 `relay-capture` / `relay-jpeg` 两个线程；capture hand-off、encode pending、generation invalidation 和 stop 都有界。
+- [x] Tunnel relay 增加一个 prefetch future，最多提前准备一帧；旧 transport/generation 失效时清理，不把预取任务扩展为无限 asyncio task。
+- [x] Signal runtime evidence 接入 HTTP/WebSocket diagnostics、heartbeat close 和 admin summary；summary coverage 已读取后不再误报缺测。
+- [x] 离线回归：Python 758 passed，184 subtests；Signal/Viewer 1,769 passed。web asset build/retention 顺序运行通过；并行运行的共享 `dist.tmp` 竞争已识别为测试隔离限制。
+- [~] 维护窗口短断线与长会话：重启新代码后执行，报告准确记录实际时长和缺测。
 
