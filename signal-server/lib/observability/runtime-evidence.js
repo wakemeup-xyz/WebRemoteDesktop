@@ -119,7 +119,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
   let reports = [];
   let runtimeSamples = [];
   let heartbeat = { samples: 0, ringDropped: 0 };
-  let summaryCoverage = { droppedSummaryCount: 0, gaps: [] };
+  let summaryCoverage = { observed: false, droppedSummaryCount: 0, gaps: [] };
 
   function start() { if (startedAt === null) startedAt = now(); endedAt = null; }
   function observeDiagnostic(report) {
@@ -136,6 +136,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
     if (value !== null) heartbeat.ringDropped = Math.min(MAX_COUNT, heartbeat.ringDropped + value);
   }
   function observeSummaryCoverage(coverage = {}) {
+    summaryCoverage.observed = true;
     const dropped = boundedCount(coverage.droppedSummaryCount);
     if (dropped !== null) summaryCoverage.droppedSummaryCount = dropped;
     if (Array.isArray(coverage.gaps)) {
@@ -168,7 +169,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const cpu = sampleStats([...projected.map(row => row.cpuPercent), ...runtimeSamples.map(row => row.cpuPercent)]);
     if (!projected.length) recordMissing(missing, 'diagnostics');
     if (projected.every(row => row.logCount === null)) recordMissing(missing, 'logCount');
-    if (projected.every(row => row.summaryGapCount === null)) recordMissing(missing, 'summaryGapCount');
+    if (!summaryCoverage.observed && projected.every(row => row.summaryGapCount === null)) recordMissing(missing, 'summaryGapCount');
     if (!heartbeat.samples) recordMissing(missing, 'ringDropped');
     if (!fps.length) recordMissing(missing, 'fps');
     if (!dropped.length) recordMissing(missing, 'droppedFrames');
