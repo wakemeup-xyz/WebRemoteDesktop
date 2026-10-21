@@ -706,6 +706,11 @@ def valid_relay_scope(scope):
 class TunnelRelayStreamer:
     """Low-FPS JPEG stream over Socket.IO/Cloudflare for networks where WebRTC ICE fails."""
     _retiring_worker = None
+    # Keep the expiry contract available when the class is exercised in
+    # isolation by the timing tests; the module constant remains the shared
+    # production default for non-class helpers.
+    _frame_slot_ttl_ms = 2000
+    _safe_integer_max = 9007199254740991
 
     def __init__(self, sio):
         self.sio = sio
@@ -815,7 +820,7 @@ class TunnelRelayStreamer:
 
     @property
     def relay_scope(self):
-        if not self.producer_id or not self._relay_binding:
+        if not getattr(self, "producer_id", None) or not getattr(self, "_relay_binding", None):
             return None
         scope = {**self._relay_binding, 'producerId': self.producer_id,
                  'productionGeneration': self.production_generation}
@@ -843,11 +848,11 @@ class TunnelRelayStreamer:
             self._reset_relay_observation()
 
     def _increment(self, name, amount=1):
-        setattr(self, name, min(RELAY_SAFE_INTEGER, getattr(self, name) + amount))
+        setattr(self, name, min(self._safe_integer_max, getattr(self, name, 0) + amount))
 
     def expire_inflight(self, now_ms):
         expired = [fid for fid, meta in self.inflight_frames.items()
-                   if now_ms - meta['sent_at_ms'] >= RELAY_FRAME_SLOT_TTL_MS]
+                   if now_ms - meta['sent_at_ms'] >= self._frame_slot_ttl_ms]
         for fid in expired:
             self.inflight_frames.pop(fid, None)
         if expired:

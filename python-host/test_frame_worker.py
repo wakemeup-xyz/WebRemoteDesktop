@@ -219,7 +219,9 @@ async def test_capture_loop_pauses_grabs_then_resumes_fresh_dimensions_pts_and_i
     track = ScreenCaptureTrack(target_fps=20, max_width=2, max_height=1,
                                capture_strategy=CaptureExperiment(1.0, None))
     sent = []
-    track._host_ref = type("Host", (), {"get_input_datachannel": lambda _self: type("DC", (), {"send": sent.append})()})()
+    dc = type("DC", (), {"readyState": "open", "bufferedAmount": 0,
+                          "send": sent.append})()
+    track._host_ref = type("Host", (), {"get_input_datachannel": lambda _self: dc})()
     try:
         assert await asyncio.to_thread(track.wait_for_fresh_capture, 0, 1.0)
         baseline = track.set_suspended(True)
