@@ -1140,11 +1140,38 @@ class TunnelRelayStreamer:
     async def _run(self):
         self._jpeg_worker = RelayFrameWorker(RelayJpegProcessor())
         self._jpeg_worker.invalidate(self.production_generation)
+        # The split worker can accept one speculative latest frame while the
+        # current frame is being encoded/emitted.  Keep that future local so
+        # there is never more than one prefetched request or unbounded task
+        # growth.  Legacy test/fallback workers keep the original serial path.
+        prefetch_future = None
+        prefetch_token = None
+
+        def relay_request(token):
+            production_generation, relay_scope = token[1:3]
+            return {
+                'generation': production_generation,
+                'relayScope': relay_scope,
+                'width': self.width,
+                'height': self.height,
+                'quality': self.jpeg_quality,
+            }
+
+        def submit_request(request):
+            # Actual workers return an asyncio Future; fixture workers often
+            # expose an async method. ensure_future handles both without
+            # moving native work onto the event loop.
+            return asyncio.ensure_future(self._jpeg_worker.submit_latest(request))
+
         while self.enabled and self.viewer_id and self.task is asyncio.current_task():
             frame_interval = 1 / max(1, self.fps)
             ack_timeout = max(0.35, min(1.5, frame_interval * 4))
             if self.suspended:
                 # No new capture/encode/emit while media is intentionally suspended.
+                if prefetch_future is not None:
+                    self._jpeg_worker.invalidate(self.production_generation)
+                    prefetch_future = None
+                    prefetch_token = None
                 await asyncio.sleep(max(0.05, frame_interval))
                 continue
             self.expire_inflight(time.monotonic() * 1000.0)
@@ -1155,13 +1182,22 @@ class TunnelRelayStreamer:
             if not authority_current:
                 self.inflight_frames.clear()
                 self.ack_event.set()
+                if prefetch_future is not None:
+                    self._jpeg_worker.invalidate(self.production_generation)
+                    prefetch_future = None
+                    prefetch_token = None
                 await asyncio.sleep(max(0.05, frame_interval))
                 continue
-            token = self._capture_transport_token()
-            if not await self._wait_for_transport_admission(token):
+            using_prefetch = prefetch_future is not None
+            token = prefetch_token if using_prefetch else self._capture_transport_token()
+            if not using_prefetch and not await self._wait_for_transport_admission(token):
                 continue
             await self.emit_feedback_if_due(time.monotonic() * 1000.0)
             if not self._transport_token_is_current(token):
+                if using_prefetch:
+                    self._jpeg_worker.invalidate(self.production_generation)
+                    prefetch_future = None
+                    prefetch_token = None
                 await asyncio.sleep(0.25)
                 continue
             if self.should_wait_before_capture():
@@ -1188,10 +1224,21 @@ class TunnelRelayStreamer:
                 if not self._transport_token_is_current(token):
                     await asyncio.sleep(0.25)
                     continue
-                frame = await self._jpeg_worker.submit_latest({
-                    'generation': production_generation, 'relayScope': relay_scope, 'width': self.width,
-                    'height': self.height, 'quality': self.jpeg_quality,
-                })
+                if using_prefetch:
+                    frame_future = prefetch_future
+                    prefetch_future = None
+                    prefetch_token = None
+                else:
+                    frame_future = submit_request(relay_request(token))
+                # Submit one bounded speculative request immediately after the
+                # current capture is admitted. The worker's hand-off guard
+                # preserves the current frame while its encode is claimed.
+                if (prefetch_future is None
+                        and getattr(self._jpeg_worker, 'pipeline_enabled', False)
+                        and self._transport_token_is_current(token)):
+                    prefetch_token = token
+                    prefetch_future = submit_request(relay_request(token))
+                frame = await frame_future
                 if frame is None or not self._transport_token_is_current(token):
                     await asyncio.sleep(0.25)
                     continue

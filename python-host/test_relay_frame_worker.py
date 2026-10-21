@@ -258,6 +258,11 @@ class CaptureEncodeStageTests(unittest.IsolatedAsyncioTestCase):
             await worker.drain()
             self.assertEqual(await two, {'data': b'\x02', 'width': 1, 'height': 1,
                                          'encodeMs': 1})
+            final_snapshot = worker.snapshot()
+            self.assertIsNotNone(final_snapshot['captureP95Ms'])
+            self.assertIsNotNone(final_snapshot['captureMaxMs'])
+            self.assertIsNotNone(final_snapshot['encodeP95Ms'])
+            self.assertIsNotNone(final_snapshot['encodeMaxMs'])
             by_stage = {stage: ident for stage, ident in threads}
             self.assertNotEqual(by_stage['capture'], by_stage['encode'])
             self.assertEqual(captures, [1, 2])

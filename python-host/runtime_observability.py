@@ -18,7 +18,8 @@ RELAY_STAGE_FIELDS = ('processorActive', 'deliveryPending', 'pendingAgeMs', 'pro
                       'deliveryAgeMs', 'lastQueueWaitMs', 'lastProcessorMs', 'lastDeliveryWaitMs',
                       'captureActive', 'encodeActive', 'capturePendingCount', 'encodePendingCount',
                       'lastCaptureMs', 'lastEncodeMs', 'lastCaptureQueueWaitMs',
-                      'lastEncodeQueueWaitMs', 'coalescedCount')
+                      'lastEncodeQueueWaitMs', 'captureP95Ms', 'captureMaxMs',
+                      'encodeP95Ms', 'encodeMaxMs', 'coalescedCount')
 WINDOW_NS = 60_000_000_000
 INTERVAL_NS = 1_000_000_000
 _RLOCK_TYPE = type(threading.RLock())

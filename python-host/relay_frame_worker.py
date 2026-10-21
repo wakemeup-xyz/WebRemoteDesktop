@@ -1,8 +1,10 @@
 """One dedicated thread, one running request and one replaceable pending request."""
 import asyncio
 import json
+import math
 import threading
 import time
+from collections import deque
 from input_admission_queue import completed_future
 
 
@@ -170,6 +172,8 @@ class RelayCaptureEncodeWorker:
     ``RelayJpegProcessor``.
     """
 
+    pipeline_enabled = True
+
     def __new__(cls, processor, *args, **kwargs):
         # Keep old one-stage processors (and their test doubles) operational
         # while the production processor opts into the split pipeline. Because
@@ -200,6 +204,9 @@ class RelayCaptureEncodeWorker:
         self._delivery_started_ns = None
         self._last_capture_ms = None
         self._last_encode_ms = None
+        # Timing evidence is bounded and contains no frame data.
+        self._capture_durations_ms = deque(maxlen=120)
+        self._encode_durations_ms = deque(maxlen=120)
         self._last_capture_queue_wait_ms = None
         self._last_encode_queue_wait_ms = None
         self._last_delivery_wait_ms = None
@@ -296,6 +303,21 @@ class RelayCaptureEncodeWorker:
                     self._release_capture(captured)
                 self._dropped += 1
             else:
+                # Preserve the current item until the encoder claims the
+                # hand-off. Once encoding is active, the pending slot is
+                # intentionally latest-only and may coalesce.
+                while (self._encode_pending is not None
+                       and self._encode_inflight is None
+                       and not self._stopping):
+                    self._condition.wait(timeout=0.05)
+                if self._stopping:
+                    self._resolve(item[2], None)
+                    self._release_capture(captured)
+                    self._dropped += 1
+                    self._capture_inflight = None
+                    self._capture_started_ns = None
+                    self._condition.notify_all()
+                    return
                 if self._encode_pending:
                     old = self._encode_pending
                     self._encode_pending = None
@@ -350,6 +372,8 @@ class RelayCaptureEncodeWorker:
                     error = exc
                 with self._condition:
                     self._last_capture_ms = elapsed_ms(self._capture_started_ns, self._now_ns())
+                    if self._last_capture_ms is not None:
+                        self._capture_durations_ms.append(self._last_capture_ms)
                 self._publish_capture(item, captured, error)
         finally:
             # MSS/native capture belongs to the capture stage.  It is closed on
@@ -380,6 +404,7 @@ class RelayCaptureEncodeWorker:
                     now = self._now_ns()
                     self._last_encode_queue_wait_ms = elapsed_ms(item[4], now)
                     self._encode_started_ns = now
+                    self._condition.notify_all()
                 result, error = None, None
                 try:
                     result = self._processor.encode(item[1], item[0])
@@ -392,6 +417,8 @@ class RelayCaptureEncodeWorker:
                     self._release_capture(item[1])
                 with self._condition:
                     self._last_encode_ms = elapsed_ms(self._encode_started_ns, self._now_ns())
+                    if self._last_encode_ms is not None:
+                        self._encode_durations_ms.append(self._last_encode_ms)
                     self._encode_started_ns = None
                     self._encode_inflight = None
                     self._delivery_pending = True
@@ -441,6 +468,14 @@ class RelayCaptureEncodeWorker:
     def snapshot(self):
         with self._condition:
             now = self._now_ns()
+            def timing(values):
+                samples = sorted(values)
+                if not samples:
+                    return None, None
+                index = min(len(samples) - 1, max(0, math.ceil(len(samples) * 0.95) - 1))
+                return samples[index], samples[-1]
+            capture_p95, capture_max = timing(self._capture_durations_ms)
+            encode_p95, encode_max = timing(self._encode_durations_ms)
             active_started_ns = (self._encode_started_ns
                                  if self._encode_started_ns is not None
                                  else self._capture_started_ns)
@@ -461,6 +496,10 @@ class RelayCaptureEncodeWorker:
                 encodePendingCount=int(self._encode_pending is not None),
                 lastCaptureMs=self._last_capture_ms,
                 lastEncodeMs=self._last_encode_ms,
+                captureP95Ms=capture_p95,
+                captureMaxMs=capture_max,
+                encodeP95Ms=encode_p95,
+                encodeMaxMs=encode_max,
                 lastCaptureQueueWaitMs=self._last_capture_queue_wait_ms,
                 lastEncodeQueueWaitMs=self._last_encode_queue_wait_ms,
                 pendingCount=int(self._capture_pending is not None or self._encode_pending is not None),
