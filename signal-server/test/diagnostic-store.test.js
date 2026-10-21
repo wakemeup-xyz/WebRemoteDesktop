@@ -77,7 +77,12 @@ test('legacy files use receivedAt then explicit mtime fallback; malformed files 
   const outside=path.join(f.dir,'outside'); fs.writeFileSync(outside,'DO NOT TOUCH');
   fs.symlinkSync(outside,path.join(f.dir,'linked.json'));
   fs.writeFileSync(path.join(f.dir,'malformed.json'),'{bad');
-  fs.writeFileSync(path.join(f.dir,'old.json'),JSON.stringify({viewerHash:'fixture-viewer',reason:'manual'}));
+  const legacy = path.join(f.dir,'old.json');
+  fs.writeFileSync(legacy,JSON.stringify({viewerHash:'fixture-viewer',reason:'manual'}));
+  // Keep the fallback mtime inside the fixture clock window rather than the
+  // machine's wall clock, otherwise the bounded retention policy correctly
+  // classifies this synthetic legacy file as outside the query window.
+  fs.utimesSync(legacy, new Date(Date.UTC(2026, 9, 17)), new Date(Date.UTC(2026, 9, 17)));
   for(let i=1;i<=4;i++) {f.tick();f.write(`new-${i}`);}
   assert.equal(fs.readFileSync(outside,'utf8'),'DO NOT TOUCH'); assert.ok(fs.lstatSync(path.join(f.dir,'linked.json')).isSymbolicLink());
   const result=f.store.listSummary({from:0,to:Infinity});
