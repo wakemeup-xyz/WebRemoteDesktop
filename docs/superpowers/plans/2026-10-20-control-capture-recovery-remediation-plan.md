@@ -50,7 +50,8 @@
 - [x] 仅在用户明确释放当前会话后构建、加载和重启本地 Signal/Host。
 - [x] tunnel 不重建；公网地址保持现有事实来源。
 - [~] 本地健康、Host 在线和正式入口 health 已验证；本轮代码上线后需再次核对新 PID、首帧与控制 ACK。
-- [~] 做维护窗口短断线恢复和长会话采样；实际运行时长、FPS/RSS/CPU/丢帧/visible coverage 逐项记录，未达到目标的字段保持 NOT RUN。
+- [x] 做维护窗口短断线恢复和 30 分钟长会话采样：长会话 1800.1043 秒、1801/1801 采样通过；within-grace 恢复 8.0074 秒并稳定 30.0348 秒。
+- [~] visible effect、active control、physical display 仍为 NOT RUN；Host RSS 长会话后升高，需后续资源归因和回收实验。
 - [ ] 任何失败保留服务可用态并记录，不通过强制宣称完成。
 
 ## 完成标准

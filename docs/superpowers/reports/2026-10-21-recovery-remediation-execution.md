@@ -55,3 +55,14 @@
 
 本节代码尚未由当前运行中的 Host/Signal 加载；维护窗口重启后才开始真实运行证据窗口。真实 Viewer 首帧、FPS、RSS/CPU、capture p95/max、丢帧、visible-effect 覆盖率，以及短断线和长会话的实际时长仍须以维护窗口 receipt 和日志为准，未采到的字段保持 `NOT RUN`。
 
+## 2026-10-22 维护窗口实测结果
+
+本次维护窗口使用正式域名 `https://link.stockhub.wiki`，本地服务重启前后 `/tmp/wrd-safe-current-url.txt` 都为空，未操作 tunnel。新代码加载后的服务状态保持 `health=ok`、`hostOnline=true`；实测结束时 `viewerCount=0`。
+
+- 30 分钟 passive STUN 长会话通过：请求 1800 秒，实际 1800.1043 秒，1801/1801 个采样，无缺失、迟到或失败观察。浏览器真实解码 FPS 的每秒增量 p50=19、p95=20、max=20；`framesDropped=0`；`frameAgeMs` p95=50.1ms、max=67.1ms；最大帧间隔 p95/max=166.6ms。没有发送业务输入，因此 visible effect、active control 和 physical display 均为 `NOT_RUN`。启动期 selected ICE pair 从 path-1 收敛到 path-2 一次，已被记录为 `pathConvergenceObservations=1`，没有算作断线或 session identity change。
+- within-grace 短断线通过：服务端记录 disconnect grace 30 秒，Viewer 在 5.30 秒后完成 rebind，脚本确认恢复稳定 30.03 秒；总恢复耗时 8.0074 秒，server coverage complete，Host disconnect 未发生。此场景没有发送业务输入，不能证明输入到可见效果。
+- Host 日志窗口显示 event-loop p95=4.3278ms、max=21.5438ms；Host current RSS 从约 301.9MiB 升到 392.3MiB，窗口 p95/max 约 452.0MiB，peak RSS 459.7MiB。连接和帧没有失败，但 Viewer 关闭后 RSS 仍高，说明存在后续应处理的内存保留/释放问题；需要单独做 Host 资源归因和重复长会话回收实验。
+- Signal admin evidence receipt 的 `summaryGapCount=0`；`ringDropCount=182` 是 heartbeat 环覆盖计数，不是媒体丢帧。该 passive 流程没有上传 diagnostic report，所以 receipt 中 `logCount`、FPS、媒体 droppedFrames 和 `inputToVisibleEffectMs` 保持缺测；浏览器样本文件已单独保存并完成 FPS/丢帧统计。完整脱敏摘要见 [maintenance-window-summary.json](evidence/2026-10-22-maintenance/maintenance-window-summary.json)。
+
+本轮实测因此确认了“长会话投屏连续性”和“短断线重绑定”两个目标，但没有把业务输入或可见效果伪装成已验收；下一项优先优化是 Host RSS 在长会话后的增长，以及将浏览器 FPS/丢帧摘要以有界、脱敏方式接入 admin evidence receipt。
+

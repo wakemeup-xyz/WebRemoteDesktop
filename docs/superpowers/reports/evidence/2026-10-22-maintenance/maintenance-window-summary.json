@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "windowDate": "2026-10-22",
+  "build": {
+    "sourceCommit": "b52fe49b212f98078fd292051608f185d35da5d5",
+    "viewerBuildId": "9e67a1e2fce8e8ae"
+  },
+  "longSession": {
+    "kind": "passive-session-continuity-only",
+    "mode": "stun",
+    "originClass": "formal",
+    "requestedSeconds": 1800,
+    "elapsedSeconds": 1800.1043,
+    "samples": 1801,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathConvergenceObservations": 1,
+    "maxObservedNoProgressMs": 166.6,
+    "derivedFps": {"count": 1800, "p50": 19, "p95": 20, "max": 20, "min": 17},
+    "framesDropped": {"count": 1801, "p50": 0, "p95": 0, "max": 0},
+    "frameAgeMs": {"p95": 50.1, "max": 67.1},
+    "maxFrameGapMs": {"p95": 166.6, "max": 166.6},
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN"
+  },
+  "shortDisconnect": {
+    "scenario": "within-grace",
+    "status": "PASS",
+    "recoverySeconds": 8.0074,
+    "recoveredStableSeconds": 30.0348,
+    "serverCoverage": "complete",
+    "hostDisconnectObserved": false,
+    "faultTriggerCount": 1,
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN"
+  },
+  "hostRuntime": {
+    "logWindow": "2026-10-21T15:30:00Z/2026-10-21T16:03:00Z",
+    "eventLoopP95Ms": 4.3278,
+    "eventLoopMaxMs": 21.5438,
+    "currentRssMiBFirst": 301.9,
+    "currentRssMiBLast": 392.3,
+    "currentRssMiBP95": 452.0,
+    "currentRssMiBMax": 452.0,
+    "peakRssMiBMax": 459.7,
+    "note": "Host RSS remained elevated after the Viewer closed; this is a follow-up memory-retention issue, not a connection failure."
+  },
+  "signalEvidenceReceipt": {
+    "logCountTotal": 0,
+    "summaryGapCount": 0,
+    "ringDropCount": 182,
+    "signalRssMiBLast": 73.2,
+    "signalCpuPercentLast": 0.0577,
+    "fps": "NOT_AVAILABLE_IN_ADMIN_RECEIPT",
+    "droppedFrames": "NOT_AVAILABLE_IN_ADMIN_RECEIPT",
+    "visibleEffectCoverage": null,
+    "coverageMissing": ["diagnostics", "logCount", "fps", "droppedFrames", "inputToVisibleEffectMs"],
+    "ringDropInterpretation": "heartbeat ring overwrites; not media frame drops"
+  },
+  "serviceStateAfterAcceptance": {
+    "health": "ok",
+    "hostOnline": true,
+    "viewerCount": 0,
+    "tunnelChanged": false
+  }
+}

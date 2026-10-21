@@ -156,6 +156,8 @@ W提供 `buildRuntimeDiagnostic({reason})`，统一用于手动与自动路径�
 
 AGENTS 默认流程、72 小时审计、总/子 spec 与 plan 已落库；代码、构建和本地部署已推进至实施报告所列版本，公网验收继续逐项登记。只有完成对应行为回归、资源约束检查和真实验收的子项，才能把需求文档中的整改状态改为已完成。
 
+本轮维护窗口已完成 30 分钟 passive 投屏连续性和 within-grace 短断线重绑定实测；业务输入到可见效果、物理显示和 Host 长会话 RSS 回收仍保持未完成状态。
+
 ### 9.4 运行证据收口
 
 Signal 的 `/api/admin/observability/summary` 返回一个有界 evidence receipt。它只消费已清洗的诊断、heartbeat close 和持久化 summary coverage：`logCount` 统计诊断日志条数，`summaryGapCount/gaps` 反映摘要留存缺口，`ringDropCount` 反映 heartbeat 环覆盖，RSS/CPU/FPS/丢帧以及 `inputToVisibleEffectMs` coverage 缺测时保持 `null` 并列入 `coverage.missing`。ACK 或 decoder 计数不能替代可见效果样本；Signal 进程重启后内存窗口重新开始，持久化的摘要只作为留存覆盖证据。
