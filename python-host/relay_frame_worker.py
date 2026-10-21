@@ -441,13 +441,16 @@ class RelayCaptureEncodeWorker:
     def snapshot(self):
         with self._condition:
             now = self._now_ns()
+            active_started_ns = (self._encode_started_ns
+                                 if self._encode_started_ns is not None
+                                 else self._capture_started_ns)
             return dict(
                 processorActive=self._capture_inflight is not None or self._encode_inflight is not None,
                 deliveryPending=self._delivery_pending,
                 pendingAgeMs=elapsed_ms(
                     self._capture_pending[3] if self._capture_pending else
                     (self._encode_pending[4] if self._encode_pending else None), now),
-                processorAgeMs=elapsed_ms(self._encode_started_ns or self._capture_started_ns, now),
+                processorAgeMs=elapsed_ms(active_started_ns, now),
                 deliveryAgeMs=elapsed_ms(self._delivery_started_ns, now),
                 lastQueueWaitMs=self._last_capture_queue_wait_ms,
                 lastProcessorMs=self._last_encode_ms,
