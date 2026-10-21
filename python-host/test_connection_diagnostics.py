@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import host as host_module
 import observability
-from runtime_observability import RuntimeObservability
+from runtime_observability import RuntimeObservability, unavailable_capture_observation
 
 from adapters import InputAdapter
 from host import WebRemoteHost, build_ice_servers
@@ -690,10 +690,7 @@ def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
         "pcState": "connected",
         "iceState": "connected",
         "captureSeq": 321,
-        "capture": {"scope": "track-lifetime", "state": "unavailable",
-                    "attempted": None, "completed": None, "failed": None,
-                    "currentGrabAgeMs": None, "lastCompletionAgeMs": None,
-                    "lastDurationMs": None, "maxDurationMs": None, "clipped": False},
+        "capture": unavailable_capture_observation(),
         "inputEventCount": 44,
         "lastInputAgeMs": 10000.0,
         "inputWaiters": 2,
