@@ -35,6 +35,20 @@ class ContinuityTest(unittest.TestCase):
         self.assertEqual(result['visibleEffect'], 'NOT_RUN')
         self.assertEqual(result['activeControl'], 'NOT_RUN')
 
+    def test_initial_selected_pair_convergence_does_not_fail_session(self):
+        summary = ContinuitySummary(duration_s=3, mode='relay')
+        for tick in range(4):
+            item = row(tick)
+            if tick == 1:
+                item['sample']['transport']['pathIdentity'] = 'path-2'
+            if tick >= 2:
+                item['sample']['transport']['pathIdentity'] = 'path-2'
+            summary.observe(item)
+        result = summary.result(elapsed_s=3)
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(result['identityChangeObservations'], 0)
+        self.assertEqual(result['pathConvergenceObservations'], 1)
+
     def test_short_missing_churn_and_wrong_path_cannot_pass(self):
         for change in ('short', 'missing', 'churn', 'path', 'build'):
             summary = ContinuitySummary(duration_s=10, mode='relay')

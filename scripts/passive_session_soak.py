@@ -261,7 +261,9 @@ class ContinuitySummary:
     def __init__(self, *, duration_s, mode):
         self.duration_s, self.mode = duration_s, mode
         self.samples = self.missing = self.late = self.failures = self.identity_changes = 0
+        self.path_changes = self.path_convergence_changes = 0
         self.first_identity = None
+        self.first_path = None
         self.baseline = self.previous = self.relay_baseline = self.previous_relay = None
         self.progress_observed = False
         self.last_elapsed = 0.0
@@ -280,11 +282,22 @@ class ContinuitySummary:
         path = ('tunnel-jpeg',) if tunnel else tuple(transport.get(key) for key in
             ('pathIdentity', 'localType', 'remoteType', 'protocol', 'remoteProtocol', 'relayProtocol'))
         identity = tuple(sample.get(key) for key in
-            ('pcIdentity', 'attemptHash', 'generation', 'leaseEpoch', 'buildId')) + path
+            ('pcIdentity', 'attemptHash', 'generation', 'leaseEpoch', 'buildId'))
         if self.first_identity is None:
             self.first_identity = identity
+            self.first_path = path
         elif identity != self.first_identity:
             self.identity_changes += 1
+        elif path != self.first_path:
+            # The first selected ICE pair can converge after the PC is already
+            # connected. Treat at most one early pair change as path
+            # convergence; later churn remains a continuity failure.
+            if self.samples <= 2:
+                self.path_convergence_changes += 1
+                self.first_path = path
+            else:
+                self.path_changes += 1
+                self.identity_changes += 1
         relay = 'relay' in (transport.get('localType'), transport.get('remoteType'))
         known_pair = (transport.get('status') == 'observed' and bool(transport.get('pathIdentity'))
             and transport.get('protocol') in ('udp', 'tcp')
@@ -333,7 +346,10 @@ class ContinuitySummary:
             'kind': 'passive-session-continuity-only', 'requestedSeconds': self.duration_s,
             'elapsedSeconds': elapsed_s, 'samples': self.samples, 'missingSamples': self.missing,
             'lateSamples': self.late, 'failedObservations': self.failures,
-            'identityChangeObservations': self.identity_changes, 'maxObservedNoProgressMs': self.max_gap_ms,
+            'identityChangeObservations': self.identity_changes,
+            'pathChangeObservations': self.path_changes,
+            'pathConvergenceObservations': self.path_convergence_changes,
+            'maxObservedNoProgressMs': self.max_gap_ms,
             'progressAfterBaseline': bool(progress), 'frameStallThresholdMs': FRAME_STALL_MS,
             'frameEvidence': 'image-load-event-not-optical-presentation' if self.mode == 'tunnel' else 'requestVideoFrameCallback',
             'threeHourContinuityMet': passed and self.duration_s >= 10800,
