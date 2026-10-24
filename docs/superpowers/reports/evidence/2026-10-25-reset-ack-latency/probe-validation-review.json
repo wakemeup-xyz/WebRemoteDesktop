@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "status": "NO_MUST_FIX_FOUND",
+  "reviewMode": "Read-only source and completed private result review; no tests, browser, build or service activity during the subsequent live session",
+  "runDirectory": "/tmp/wrd-reset-ack-after-7fa7d9e8/run",
+  "summaryStatus": "PASS",
+  "summarySha256": "53529db4f745cbb84afed3d54e990a30adeee004e7711602053d29245c842b50",
+  "samplesSha256": "b52645aa955e94a11950e4521b8f1b4c87facd774c3c77d8710645ed6a483d6e",
+  "probePath": "/tmp/wrd-reset-ack-post-review-1igyy65y/reset_only_post.py",
+  "probeSha256": "30e8586a6c130b44434c55bae4a2a9c99c6481521f1bb5d05cd2b9bbef21faac",
+  "observerSha256": "075b9f65717c5cb8c3ccbff8b93860c373d3777cbfc21250e8cee0456f736292",
+  "fixtureResultRecordPath": "/tmp/wrd-reset-ack-post-pure-fixtures-cb0icpad/fixture-result-record.json",
+  "fixtureResultRecordSha256": "58496933776efc28650b3270e950a0bb6df3e686b456a24a240824ea2e166d72",
+  "fixtureScriptSha256": "95b752caba9286adcd20711c44431190f46ee82e4e98ea979866651153d89f8a",
+  "checks": {
+    "completedPairs": 20,
+    "firstConsumedAcknowledgements": 40,
+    "uniqueAcknowledgementHashes": 40,
+    "firstProductConsumedAckSourceCounts": {
+      "datachannel": 40
+    },
+    "allRequestsSocketExactOutgoingObserved": true,
+    "allFirstDCMarker1": true,
+    "allOwnedPendingAtSubmissionAndConsumed": true,
+    "allCounterExactlyOneAdvance": true,
+    "firstAckCountersContiguous": true,
+    "lateSocketCopies": 40,
+    "oneSocketCopyPerAcknowledgement": true,
+    "allCopiesSocketAndPendingAbsent": true,
+    "allCopiesLeaveM1CounterUnchanged": true,
+    "allMetricsPresent": {
+      "m1InputAckRttMs": true,
+      "inputAckArrivalRttMs": true,
+      "inputAckValidationMs": true
+    },
+    "newMetricsOwnCountsAdvance": true,
+    "maxMetricSampleAgeMs": 1.5,
+    "rawDCArrivalAndRawHandlerIntervalAllNull": true,
+    "oneSignalStagePerAcknowledgement": true,
+    "signalStageScopeAndShapeAllValid": true
+  },
+  "socketCopySettlement": {
+    "status": "complete",
+    "socketObserved": 40,
+    "required": 40,
+    "extraObservationBudgetSeconds": 3,
+    "elapsedSeconds": 0.18400333705358207,
+    "duplicatesBySource": {
+      "socket": 40,
+      "datachannel": 0
+    }
+  },
+  "limits": [
+    "First ACK means the first exact acknowledgement observed after actual product consumption, not independently measured first wire arrival.",
+    "DC raw listener arrival remains unknown; API-to-post-handler is comparable to baseline, and product-entry metrics have separate timing definitions.",
+    "Fake C ledgers in the offline fixture do not replace current product C validation. Actual completed-run evidence separately shows pending consumption and unique M1 advancement.",
+    "No inference that dual ACK receipt means two native executions. The review verifies no second barrier completion or M1 count.",
+    "Business input, visible effect and physical display remain NOT_RUN. Cleanup API finished but OS process exit remains unknown."
+  ]
+}

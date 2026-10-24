@@ -59,7 +59,9 @@
 
 **Files:** 运行报告、脱敏evidence；spec/plan当前状态同步。
 
-- [ ] 定向回归及隔离构建；git diff --check；按逻辑提交main。仅无Viewer维护窗口重启本地Signal/Host，不动tunnel。
-- [ ] 同一探针改后20对reset，核对DC实际完成比例、RTT/处理时间、Socket迟到副本与Host无重复执行；保留未达200ms目标的真实结论。
-- [ ] 测Socket-only fallback或离线真实路径等效反例；短断线正式rebind与至少5分钟被动连续性复验。
-- [ ] 独立最终review；更新报告与剩余问题，核对本地/公网health、Host online、用户会话与密码，服务保持可用。
+- [x] 定向回归及隔离构建；git diff --check；按逻辑提交main。仅无Viewer维护窗口重启本地Signal/Host，不动tunnel。
+- [x] 同一探针改后20对reset，核对DC实际完成比例、RTT/处理时间、Socket迟到副本与Host无重复执行；保留未达200ms目标的真实结论。
+- [x] 测Socket-only fallback或离线真实路径等效反例；短断线正式rebind与至少5分钟被动连续性复验。
+- [x] 独立最终review；更新报告与剩余问题，核对本地/公网health、Host online、用户会话与密码，服务保持可用。
+
+执行结论：本轮任务已按限定scope实施、加载、比较及review；200ms目标仍未达到，462.1ms尾样本原因尚未完整分离，详见[实测与系统性复核](../reports/2026-10-25-reset-ack-latency-review.md)。checkbox完成不代表未执行的业务输入、可见效果或三小时验收通过。

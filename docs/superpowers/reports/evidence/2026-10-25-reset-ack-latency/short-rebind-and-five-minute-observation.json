@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "scope": "ordinary-functional-native-direct-close-plus-prefault-five-minute-observation",
+  "summary": {
+    "schemaVersion": 1,
+    "scenario": "within-grace",
+    "mode": "relay",
+    "phase": "terminal",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "nativeAfterGraceQualification": "NOT_RUN",
+    "hostObservation": {
+      "status": "stable",
+      "hostHash": "f2a44530edcc2b02",
+      "coverage": "complete",
+      "samples": 344,
+      "hostDisconnectObserved": false
+    },
+    "continuity": {
+      "status": "INCOMPLETE",
+      "kind": "passive-session-continuity-only",
+      "requestedSeconds": 300,
+      "elapsedSeconds": 300.27618840313517,
+      "samples": 301,
+      "missingSamples": 0,
+      "lateSamples": 0,
+      "failedObservations": 0,
+      "identityChangeObservations": 0,
+      "pathChangeObservations": 0,
+      "pathConvergenceObservations": 0,
+      "maxObservedNoProgressMs": 300,
+      "progressAfterBaseline": true,
+      "frameStallThresholdMs": 5000,
+      "frameEvidence": "requestVideoFrameCallback",
+      "threeHourContinuityMet": false,
+      "visibleEffect": "NOT_RUN",
+      "activeControl": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN",
+      "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+      "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+    },
+    "ordinaryRecovery": {
+      "status": "PASS",
+      "classification": "within-grace-rebind",
+      "requestedScenario": "within-grace",
+      "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+      "recoverySeconds": 3.998597185127437,
+      "recoveredStableSeconds": 30.031241464894265,
+      "serverCoverage": "complete",
+      "reason": "none"
+    },
+    "failure": null,
+    "startup": {
+      "status": "verified",
+      "freshPage": true,
+      "authVerified": true,
+      "selector": "vacant-only-v1",
+      "startClickMarksBefore": 0,
+      "startClickMarksAfter": 1,
+      "guardedApiRequests": 1
+    },
+    "manifest": {
+      "sha256": "df18015f6057bea68da0d05c7455e58b9ef85143f0fb15bf11aec1942a254a76",
+      "originSource": "formal-configured",
+      "originEvidenceSha256": "340afe6b17e7bdcf5c68e62befab36dc917c92959b0a3f34aff0c966501a04fa",
+      "signalSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "hostSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "viewerSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "viewerBuildId": "c6915df5ba8c0c6f",
+      "sourceEvidence": "root-attested",
+      "runNonceSha256": "3ec1c167b852c7cfb2c31430972b6728aa9749682c372e02ba7a17ad2538c541"
+    },
+    "lifecycle": {
+      "captureStatus": "ok",
+      "cleanupStatus": "api-finished-exit-unknown",
+      "writeStatus": "ok",
+      "ownedProcessExitEvidence": "not-observed"
+    },
+    "fault": {
+      "capability": "available",
+      "status": "disarmed",
+      "instrumentation": "native-direct",
+      "triggerCount": 1,
+      "blockedHttp": 0,
+      "blockedWebSocket": 0,
+      "blockSeconds": 0
+    },
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physical": "NOT_RUN"
+  },
+  "phaseRowCounts": {
+    "startup": 9,
+    "baseline": 300,
+    "recovering": 4,
+    "recovered-stability": 31
+  },
+  "sourceFileDigests": [
+    {
+      "path": "/tmp/wrd-reset-ack-rebind-6015ea15/run/summary.json",
+      "sha256": "ed587d37f5b72d873c727c529ddee30e59619fe2dc1c303ea81aa4edfa4d2006",
+      "bytes": 2465
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-rebind-6015ea15/run/samples.jsonl",
+      "sha256": "31032aca5943e0297cd427d7f77f3b5e113e5314fa0496d675de4de3f452d3b2",
+      "bytes": 1302143
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-rebind-6015ea15/run/lifecycle.json",
+      "sha256": "45ac4c668d2bbcf6d61da59589259a2ca2ca49500bbe7b20654b955f5317eaf4",
+      "bytes": 8815
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-rebind-6015ea15/manifest.json",
+      "sha256": "df18015f6057bea68da0d05c7455e58b9ef85143f0fb15bf11aec1942a254a76",
+      "bytes": 1162
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-rebind-6015ea15/deployment.json",
+      "sha256": "32ff345186d15bcd10674f62312ec6e6c7d2d305a9bd59e34037e610acddce96",
+      "bytes": 542
+    },
+    {
+      "path": "scripts/ordinary_session_recovery.py",
+      "sha256": "4e5d8890afdc34574f67212e1cefbd949cb1f6be8c48419cf43ca955e0b93e4f",
+      "bytes": 93583
+    }
+  ],
+  "interpretation": {
+    "recovery": "PASS",
+    "prefaultObservationSeconds": 300.27618840313517,
+    "prefaultSamples": 301,
+    "finalContinuityStatusUnchanged": "INCOMPLETE",
+    "reason": "Canonical summary deliberately marks continuity interrupted when a requested fault was attempted; baseline-ready required PASS before fault. This is not an independent no-fault or three-hour continuity PASS.",
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "ownedProcessOSExit": "not-observed"
+  }
+}

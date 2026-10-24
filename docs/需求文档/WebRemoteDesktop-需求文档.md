@@ -540,7 +540,7 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 - Viewer 的键盘和可靠桌面写入共用 32 项／128 KiB 预算，单项不超过 64 KiB；预算覆盖已经提交但尚未确认的消息。先准入再分配可靠序号；容量不足沿既有控制恢复处理，不重放未知结果的业务输入。旧键盘消息在 reset 期间仍占预算，只有所属 reset 的成功 ACK 或控制租约终结才释放。up/reset 不绕过满队列。
 - 鼠标 move 只保留最新一项；wheel 在编号前合并为一项，两次提交至少相隔 16 ms，非有限或超过安全整数范围的合并量显式拒绝并恢复。切换控制作用域取消旧待发 wheel。
 - Host 同步准入可靠输入，等待队列最多 64 项／256 KiB，另一个执行项最多 64 KiB；unordered move 独立保留最新一项、最多 1 KiB。一个 drain 负责执行，过载冻结并只通知一次当前作用域，不能为拒绝洪峰创建逐消息 ACK/执行任务。旧 authority 在出队及原生完成后校验；原生完成后的序号、ACK 和输入帧候选均不可跨作用域提交。
-- 权威 reset 清理旧 waiting 并等待已开始的原生输入真正完成，随后执行键盘和桌面释放。2 秒等待超时或失败保持冻结；不能以 asyncio 取消代替原生结束。Host 输入排队耗时包含上述准入队列等待。
+- 权威 reset 清理旧 waiting 并等待已开始的原生输入真正完成，随后执行键盘和桌面释放。2 秒等待超时或失败保持冻结；不能以 asyncio 取消代替原生结束。计时现状（2026-10-25）：`hostQueueMs` 从 adapter 入口开始，未覆盖外层准入队列等待；完整准入等待仍需独立观测，不可据当前值称已计入。
 - relay 抓屏、RGB 转换和 JPEG 编码使用单专属线程，MSS 仅在该线程创建、使用和关闭；只保留一个执行请求和一个最新待处理请求（请求 ≤4 KiB），没有逐帧 executor 积压。旧 generation 结果回到 Host loop 后丢弃。stop 超过 2 秒保留 stopping worker，禁止另起原生线程。
 - 可计数缓冲上限：BGRA 源 256 MiB（边长 ≤8192）、RGB 中间图 192 MiB、目标图每张 64 MiB 且最多两张、JPEG 16 MiB；超限停止该媒体任务，不自动降低用户选择的分辨率。这是 payload/应用缓冲预算，不是 Python、JS 或原生库 RSS 的硬上限；实际资源开销由运行采样报告。
 - 以上通过纯单元／VM／fake native 阻塞测试验证。真实抓屏、Viewer、公网路径、可见效果及长会话性能验收仍为 **NOT RUN**，不能据此宣称实际输入延迟已达标。
@@ -574,3 +574,10 @@ Viewer 连接状态以只读 `DesktopSessionState` snapshot 为统一呈现契�
 - JPEG 当前合格 image load 年龄达到5000ms时关闭实际输入门禁，沿既有键盘/鼠标 reset 屏障释放按住状态；新图不得清掉未确认 reset。图像 load 不是物理呈现或原生输入可见效果。
 - RTT 与 jitter buffer 缺测端到端使用 number|null；合法0保留，非法/缺失不造0，不累计“持续良好”。已测得 stall/loss 的既有恢复和身份准入规则不变。JPEG反馈RTT使用 Host 同钟 matched ACK，报告2000ms TTL右截断及每间隔最新样本合并，不能充作单向或输入可见延迟。
 - 代码及独立/整轮复审完成，运行已加载 `9e57bf4`、build `c30530f331a4def5`。此前 M6 build 的 JPEG/TURN暂停恢复加60秒短测通过，后续更长TURN在93秒因信令心跳超时中断；普通自动恢复、3小时、真实业务输入及可见效果未获生产认证。当前状态以[实施记录](../superpowers/reports/2026-10-17-remediation-execution.md)和[真实验收](../superpowers/reports/2026-10-17-live-acceptance.md)为准，不把连接/ACK/存活检查当最终全部验收。
+
+### 2026-10-25 Reset ACK 回程优化
+
+- 安全 reset 仍只发送一次 Socket 请求。Host 对当前授权下已执行成功的 schema2、单 ID 鼠标/键盘 reset，通过当前健康且归属明确的 input DataChannel 补充返回成功 ACK，同时保留原 Socket ACK；通道失效、拥塞或发送异常继续使用 Socket 兜底。
+- Viewer 只允许该 reset 发送时捕获的当前通道作为第二 ACK 来源，仍核对 marker、ID/type、seq、lease/epoch、attempt 及 Socket 对象/id；首个有效 ACK 消费 pending，迟到副本不能重复完成 barrier 或推进指标。普通输入和失败 ACK 不使用此例外。
+- 新增有界指标 `inputAckArrivalRttMs` 与 `inputAckValidationMs`，分别记录原发送时点到产品 ACK 入口，以及入口到 C/UI/scope 同步及 M1 提交的耗时；原 `inputAckRttMs` 不变。缺测保留缺测，处理耗时不等同纯 CPU 时间或真实可见效果。
+- 前后各 20 对、40 次公网安全 reset 的原 M1 RTT p95 从鼠标 500.7 / 键盘 502.6 ms 降到 275.8 / 276.5 ms；改后 40 次均由 DC 首先完成，40 个 Socket 副本均无重复完成。200 ms 目标仍未达到，业务输入、真实可见效果与三小时连续性未由本次 reset-only 验收覆盖。完整计时边界和后续运行状态见[本轮审查报告](../superpowers/reports/2026-10-25-reset-ack-latency-review.md)。

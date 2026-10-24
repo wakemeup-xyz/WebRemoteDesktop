@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "scope": "one-pair-normal-UI-production-metric-persistence-integration",
+  "comparisonEligible": false,
+  "summary": {
+    "schemaVersion": 1,
+    "status": "PASS",
+    "scope": "owned-reset-metric-ui-persistence-integration",
+    "comparisonEligible": false,
+    "serverConfirmedSaved": true,
+    "diagnosticUiStatus": "server-confirmed-saved",
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "nativeSafetyResetOnly": true,
+    "routeOverride": false,
+    "productFunctionsOverridden": false,
+    "expectedDeployment": {
+      "signal": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "host": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "viewer": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "build": "c6915df5ba8c0c6f"
+    },
+    "requestedPairs": 1,
+    "probeSha256": "41eadb059724cd8ab07ec1d386823b28896e93554888a9b9142f27c08f4b50c7",
+    "baselineTemplateSha256": "b73b5008a0c6347057e5c22339de36dea4779c278cf2c5bfce57d4fcb5c2c77f",
+    "dcRawBeforeArrival": "UNPROVEN-null-does-not-block-functional-result",
+    "dcOrderEvidence": {
+      "path": "/tmp/wrd-20261025-reset-ack-dc-listener-order.json",
+      "sha256": "0d420bdac3c64bf97ecd2014d5c68e04e6e00f7029f8d6f419d3ac2b3172a7bd",
+      "order": [
+        "original-onmessage",
+        "capture-arrival",
+        "post-listener"
+      ]
+    },
+    "timingContract": {
+      "apiEntryToAckArrivalMs": "Socket only: Viewer API entry to prependAny before original ACK handlers; DC raw arrival remains null/unknown; not enqueue RTT",
+      "ackSynchronousHandlerMs": "prependAny arrival through added socket.on listener after original product handlers; includes all preceding synchronous listeners",
+      "m1InputAckRttMs": "Unchanged M1 metric sampled after original handler; M1 takes its clock after Input/UI processing",
+      "inputAckArrivalRttMs": "Product ACK-handler entry clock minus pending send, recorded only after C validation and pending correlation; not native wire arrival",
+      "inputAckValidationMs": "Product processing clock minus its captured ACK entry clock; original M1 clock is unchanged",
+      "metricOwnership": "M1: unique acked+1 and real pending consumption prove its push. New arrival/validation metrics additionally require their own rolling count +1. All require age<=20ms; missing/expired/unproven values remain null",
+      "signalRequestToAckMs": "Signal local monotonic post-Host-emit registration through matching Host ACK handler; includes Host processing and local transport",
+      "forbidden": "No cross-clock subtraction, p95 addition/subtraction, replay, business input or forced reset route; missing stages null"
+    },
+    "manifest": {
+      "sha256": "f9b5aeb6fd408860a88874dff511423ede7e6eab9df63cad062c81c542ba3101",
+      "originSource": "formal-configured",
+      "originEvidenceSha256": "340afe6b17e7bdcf5c68e62befab36dc917c92959b0a3f34aff0c966501a04fa",
+      "signalSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "hostSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "viewerSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+      "viewerBuildId": "c6915df5ba8c0c6f",
+      "sourceEvidence": "root-attested",
+      "runNonceSha256": "cbc2ab762310390c5427058a5ac0b2208daa01c3a33f2ee14e587ab830cd8f75"
+    },
+    "attemptedPairs": 1,
+    "diagnosticMetricsBeforeUi": {
+      "inputAckArrivalRttMs": {
+        "available": true,
+        "count": 2,
+        "last": 209.59999990463257,
+        "lastSampleAgeMs": 268.5
+      },
+      "inputAckValidationMs": {
+        "available": true,
+        "count": 2,
+        "last": 0.9000000953674316,
+        "lastSampleAgeMs": 268.5
+      }
+    },
+    "diagnosticMetricsBeforeSend": {
+      "inputAckArrivalRttMs": {
+        "available": true,
+        "count": 2,
+        "last": 209.59999990463257,
+        "lastSampleAgeMs": 413
+      },
+      "inputAckValidationMs": {
+        "available": true,
+        "count": 2,
+        "last": 0.9000000953674316,
+        "lastSampleAgeMs": 413
+      }
+    },
+    "failure": null,
+    "observedAckResets": 2,
+    "completedResets": 2,
+    "completedPairs": 1,
+    "distributions": {
+      "mouse": {
+        "apiEntryToAckArrivalMs": {
+          "count": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "max": null
+        },
+        "apiEntryToPostHandlerMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 212.40000009536743,
+          "p95": 212.40000009536743,
+          "max": 212.40000009536743
+        },
+        "ackSynchronousHandlerMs": {
+          "count": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "max": null
+        },
+        "m1InputAckRttMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 209.09999990463257,
+          "p95": 209.09999990463257,
+          "max": 209.09999990463257
+        },
+        "inputAckArrivalRttMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 208,
+          "p95": 208,
+          "max": 208
+        },
+        "inputAckValidationMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 1.0999999046325684,
+          "p95": 1.0999999046325684,
+          "max": 1.0999999046325684
+        },
+        "hostQueueMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 0.147161,
+          "p95": 0.147161,
+          "max": 0.147161
+        },
+        "hostApplyMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 0.01324,
+          "p95": 0.01324,
+          "max": 0.01324
+        },
+        "hostAdapterAwaitMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 0.6064600311219692,
+          "p95": 0.6064600311219692,
+          "max": 0.6064600311219692
+        },
+        "signalRequestToAckMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 16.64990200009197,
+          "p95": 16.64990200009197,
+          "max": 16.64990200009197
+        }
+      },
+      "keyboard": {
+        "apiEntryToAckArrivalMs": {
+          "count": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "max": null
+        },
+        "apiEntryToPostHandlerMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 211.79999995231628,
+          "p95": 211.79999995231628,
+          "max": 211.79999995231628
+        },
+        "ackSynchronousHandlerMs": {
+          "count": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "max": null
+        },
+        "m1InputAckRttMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 210.5,
+          "p95": 210.5,
+          "max": 210.5
+        },
+        "inputAckArrivalRttMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 209.59999990463257,
+          "p95": 209.59999990463257,
+          "max": 209.59999990463257
+        },
+        "inputAckValidationMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 0.9000000953674316,
+          "p95": 0.9000000953674316,
+          "max": 0.9000000953674316
+        },
+        "hostQueueMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 0.149733,
+          "p95": 0.149733,
+          "max": 0.149733
+        },
+        "hostApplyMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 0.067057,
+          "p95": 0.067057,
+          "max": 0.067057
+        },
+        "hostAdapterAwaitMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 1.705678179860115,
+          "p95": 1.705678179860115,
+          "max": 1.705678179860115
+        },
+        "signalRequestToAckMs": {
+          "count": 1,
+          "missing": 0,
+          "p50": 14.328737000003457,
+          "p95": 14.328737000003457,
+          "max": 14.328737000003457
+        }
+      }
+    },
+    "elapsedSeconds": 41.12,
+    "lifecycle": {
+      "captureStatus": "ok",
+      "cleanupStatus": "api-finished-exit-unknown",
+      "writeStatus": "ok",
+      "ownedProcessExitEvidence": "not-observed"
+    },
+    "ackSources": [
+      "datachannel"
+    ],
+    "firstAckBySource": {
+      "socket": 0,
+      "datachannel": 2
+    },
+    "lateDuplicateCount": 2,
+    "socketCopySettlement": {
+      "status": "complete",
+      "socketObserved": 2,
+      "required": 2,
+      "extraObservationBudgetSeconds": 3,
+      "elapsedSeconds": 0.1804270949214697,
+      "duplicatesBySource": {
+        "socket": 2,
+        "datachannel": 0
+      }
+    },
+    "dcMirrorConsumed": 2,
+    "cleanupDoesNotProveOSExit": true,
+    "signalStageComplete": true,
+    "comparison": "NOT_COMPARABLE: one-pair normal-UI persistence integration only, separate from frozen 20-pair latency baseline/POST. Reset APIs, clocks and guards are inherited unchanged; late ACK copies remain duplicates."
+  },
+  "persistedDiagnosticProjection": {
+    "schemaVersion": 3,
+    "receivedAt": "2026-10-24T23:17:50.612Z",
+    "build": {
+      "id": "c6915df5ba8c0c6f",
+      "builtAt": 1792882488617
+    },
+    "mode": "relay",
+    "trigger": "manual",
+    "latencyStatus": "available",
+    "newMetrics": {
+      "inputAckArrivalRttMs": {
+        "last": 209.59999990463257,
+        "p50": 209.59999990463257,
+        "p95": 209.59999990463257,
+        "count": 2,
+        "available": true,
+        "lastSampleAgeMs": 528.0999999046326
+      },
+      "inputAckValidationMs": {
+        "last": 0.9000000953674316,
+        "p50": 1.0999999046325684,
+        "p95": 1.0999999046325684,
+        "count": 2,
+        "available": true,
+        "lastSampleAgeMs": 528.0999999046326
+      }
+    },
+    "logCounts": {
+      "logCount": 0,
+      "reportedLogCount": 103,
+      "retainedLogCount": 0,
+      "redactedLogCount": 103,
+      "inputTraceEventCount": 18
+    },
+    "logContentPolicy": "metadata-only",
+    "truncation": {
+      "dropped": 0
+    },
+    "inputTraceCounters": {
+      "droppedEvents": 0,
+      "sampledEvents": 0,
+      "hashUnavailable": 0,
+      "droppedHashCount": 0,
+      "pendingHashCount": 0,
+      "pendingAckCount": 0,
+      "evictedPendingAcks": 0,
+      "expiredPendingAcks": 0,
+      "ackTimeoutCount": 0,
+      "incidentCallbackErrors": 0,
+      "mouseMoveCount": 0,
+      "wheelCount": 0
+    }
+  },
+  "persistedFile": {
+    "directory": "/tmp/wrd-diag/raw",
+    "fileNameSha256": "94084096b0a896f7afdb51c8f5c573f61a7940f0b21e6ef1846b1cd740424078",
+    "sha256": "a08270d8bbf81888609366a79fc28a7a9516c6c7cd8f51bc509582779c74ed93",
+    "bytes": 15470
+  },
+  "sourceFileDigests": [
+    {
+      "path": "/tmp/wrd-reset-ack-after-045ee263/run/summary.json",
+      "sha256": "cf5d36050e9af8eb3732577060a99efb475402bf1106538be6c2329ab919fe00",
+      "bytes": 8147
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-after-045ee263/run/samples.jsonl",
+      "sha256": "32f79712ffbae91668d7dae357fe3429040815b29a88fea91e1d7b753a9053cb",
+      "bytes": 15332
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-after-045ee263/deployment.json",
+      "sha256": "b8b302a6b1cfa0ca9138cc196ca07981900fccec6b700178f2b74b9f65bc04a6",
+      "bytes": 542
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-persist-review-pb0bjlzf/reset_only_post_persist.py",
+      "sha256": "41eadb059724cd8ab07ec1d386823b28896e93554888a9b9142f27c08f4b50c7",
+      "bytes": 45525
+    },
+    {
+      "path": "/tmp/wrd-reset-ack-persist-review-pb0bjlzf/persistence-vs-frozen-post.diff",
+      "sha256": "7e9128dc016d0542a36471a2f111a808d82c60081eeb06aa8195866185da6e36",
+      "bytes": 10003
+    }
+  ],
+  "limits": [
+    "Separate one-pair scope, excluded from before/after latency distributions.",
+    "Normal UI returned save confirmation; root reread the actual stored schema3 file and matched build/time/metric samples. This does not prove survival through a later restart or physical display.",
+    "During ancillary final review a reader caused about 10 seconds CPU activity and was stopped; this separate integration has no performance qualification.",
+    "Business input, visible effect, physical display and three-hour continuity NOT_RUN."
+  ]
+}

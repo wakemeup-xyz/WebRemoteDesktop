@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "loadedCodeCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+  "combinedFrontend": {
+    "passed": 1080,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 40507.655122,
+    "runner": "node --test --test-concurrency=1",
+    "files": [
+      "input.test.js",
+      "input-backpressure.test.js",
+      "input-datachannel-fallback.test.js",
+      "input-signaling-continuity.test.js",
+      "input-recovery.test.js",
+      "keyboard-transport.test.js",
+      "remote-keyboard-controller.test.js",
+      "latency-monitor.test.js",
+      "webrtc.test.js",
+      "webrtc.frame-trace.test.js",
+      "webrtc.signaling-fallback.test.js",
+      "latency-arrival-persistence.test.js"
+    ]
+  },
+  "hostFocused": {
+    "passed": 57,
+    "runner": "Python unittest",
+    "files": [
+      "test_host_reset_ack_mirror.py",
+      "test_peer_cleanup_observation.py",
+      "test_control_transition_status_ordering.py",
+      "test_input_timing_contract.py"
+    ],
+    "evidenceSource": "implementation agent observed command result, no separately retained raw test log",
+    "limit": "AST/memory transport, no full aiortc/native import"
+  },
+  "task3b": {
+    "focusedPass": 23,
+    "fullPass": 624
+  },
+  "privateBuild": {
+    "buildId": "c6915df5ba8c0c6f",
+    "privateOutDir": "/tmp/wrd-reset-ack-private-build-wsa2EV",
+    "productionManifestUnchanged": true,
+    "productionBuildId": "79d27719867d5814",
+    "sourceDigests": {
+      "python-host/host.py": "b0a72ee6ecbfe854a66336df646ae0fe64d0e32b72393b16d825a7dd830107b4",
+      "web-client/js/input.js": "f5be2d350ce9457b8cbb08cf103edce6b397fb778defb1cc4c69f5091c3c33ca",
+      "web-client/js/keyboard-transport.js": "226011de87a076157815f50218abc46665a6caffffc799e59370aa5fce19663c",
+      "web-client/js/webrtc.js": "233a075d7986f6e1b1850fbda393fbfa0471e31b6e54da96ee5c50e7ea14fea8",
+      "web-client/js/latency-monitor.js": "82c1424467ef9736447ea74c0bcb199aaeb1da409920124266499bf41c2eff33"
+    }
+  },
+  "logDigests": [
+    {
+      "path": "/tmp/wrd-20261025-reset-ack-combined-node.log",
+      "sha256": "257728c5d7baf4f54fad474847c54bf7cbe95d9285e9be175138ae40bcbc29ca",
+      "bytes": 253519
+    },
+    {
+      "path": "/tmp/wrd-ack-arrival-full-tests-final.log",
+      "sha256": "4774983d318327e27e5dbc0ac9a535f58394f55aa28cb4bf9601b116166a2b0d",
+      "bytes": 178259
+    },
+    {
+      "path": "/tmp/wrd-task3-viewer-reset-mirror-focused-final.log",
+      "sha256": "35c1fb1f53081ed2122c6bb4742045204ba58d37979db70ad8af9d7a67c213aa",
+      "bytes": 16428
+    },
+    {
+      "path": "/tmp/wrd-task3-viewer-keyboard-dc-mouse-socket-focused.log",
+      "sha256": "561025e848249d80d74ee07a79e9d4d8970fa2b471f0b648d3573626441bb255",
+      "bytes": 217
+    }
+  ],
+  "independentReviews": {
+    "host": "clean",
+    "viewer": "clean",
+    "arrival": "clean",
+    "crossFile": "clean",
+    "postProbe": "clean",
+    "sourceLogDigests": "200/200 matched; raw selected sources, no clock subtraction",
+    "evidenceCorrection": "Host durations moved to hostReportedStageMs; reference SHA recomputed; independent corrected review clean",
+    "productionPersistence": "UI confirmation plus actual saved schema3 projection verified by root and independent reviewer",
+    "finalReportSpecPlan": "clean after correcting ackAccepted field spelling; statistics and qualification boundaries reviewed"
+  },
+  "limits": [
+    "No npm pretest/default dist build was used for private validation.",
+    "Private diagnostic store test uses explicit mkdtemp and no global/default directory.",
+    "Business input, real visible effect, physical display and three-hour qualification NOT_RUN.",
+    "200ms target not met; 462.1ms keyboard tail remains."
+  ]
+}

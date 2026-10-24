@@ -1,7 +1,7 @@
 # Reset ACK 回程延迟优化设计
 
 日期：2026-10-25（Asia/Shanghai）
-状态：已完成上下文及方案比较，按用户授权实施并实测；不提前声明延迟目标通过。
+状态：实现已提交 main `6312429` 并加载，改后 20 对公网安全 reset 完成；200 ms 目标未通过，详细运行与剩余项见本轮报告。
 
 ## 问题与目标
 
@@ -44,3 +44,9 @@
 - 离线覆盖成功、DC unavailable/throw/backpressure、old owner、wrong ID/type/epoch/seq、scope切换、late duplicate与普通输入不得跨源；Host原Socket兜底必须逐例验证。
 - 无Viewer维护窗口提交main后按服务技能只加载本地Signal/Host；生产代码/build/PID分组件记录。任何用户会话优先，不操作tunnel。
 - 保存spec、plan、review及脱敏源SHA；本地/公网health、Host在线与当前密码按既有约定核对。reset ACK改善不等于业务可见效果或三小时验收通过。
+
+## 实施与真实收益
+
+改前/改后各20对、每种输入n=20：原M1 ACK RTT p95，mouse 500.7→275.8ms、keyboard 502.6→276.5ms。改后40个首个有效ACK均来自当前DC，40个原Socket副本后续均被拒绝为已消费，不重复推进M1或barrier。同一输入的DC后置处理完成先于Socket副本的实测差为mouse中位196.6ms、keyboard中位195.4ms；这不是单向网络延迟。
+
+新arrival/validation两指标40/40独立归属，产品入口至M1提交的阶段max为mouse1.0ms、keyboard1.1ms。仍有keyboard462.1ms的RTT长尾，不能据此宣布200ms达标或全部CPU/网络原因已定位。离线定向前端1080/1080、Host57/57与独立跨文件审查通过；运行恢复与最终边界以[完整报告](../reports/2026-10-25-reset-ack-latency-review.md)为准。
