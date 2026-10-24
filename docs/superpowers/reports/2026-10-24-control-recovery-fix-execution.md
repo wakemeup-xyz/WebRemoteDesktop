@@ -123,3 +123,13 @@ Host候选仅增加plist ProcessType=Interactive；修复先copy再cmp的加载�
 后续独立review发现 `host-launchctl.test.js` 既有3个runner子进程未覆盖 `WRD_HOST_LAUNCH_LOG`，默认写/可能裁剪真实 `/tmp/wrd-host-launch.log`。新增事务mock本身隔离，但整文件回归仍会污染wrapper日志；这是本次执行旧测试造成的额外证据污染。Host运行日志back-debug与Signal运行日志不受这条路径影响，未通过测试重启生产job。将每次runner spawn的wrapper/runtime日志强制指向私有临时project，并补继承模拟生产日志canary；不拿真实生产文件做canary。
 
 Host runner隔离已修正：统一runnerEnv末尾覆盖私有wrapper/runtime路径；使用大于1MiB的私有继承wrapper canary与runtime canary验证内容和mtime不变，新日志确实输出到独立路径。单文件最终22/22通过；独立helper事务审查无额外必修。Signal最终18/18，启动前真实路径校验已补齐；本次修改尚未加载时不宣称业务收益。
+
+## 首次Interactive维护加载的预检拒绝
+
+00:19左右调用Host helper，被bootstrap预检拒绝，原Host35629仍online、旧installed配置未变。旧restart-host脚本在预检前删除PID文件，造成status一度host_alive=false但host_online=true；已按进程工作目录核实并恢复两个PID文件，未手工重启Host。
+
+独立4个唯一probe的2×2反例确认：Host原XML和plistlib XML各自无后缀都bootstrap错误5，相同内容改为.plist后缀都成功0。所有probe已清理；不是GUI权限不足、不是固定label被禁用。将Host预检改为唯一私有目录/probe.plist和唯一label，并在清理失败时保留拒绝；restart脚本失败后重新核实实际Host并维护PID文件，仍退出非0。服务helper原本吞掉子脚本stdout/stderr的CalledProcessError已修复为先输出脚本诊断再明确失败，19/19回归通过。
+
+00:25–00:26先独立加载Signal：新PID59457，launchctl实测spawn interactive4，12个线程priority31/max63；Host35629仍原daemon，保持online。正式域名health200，cloudflared6438启动时间未变，safe URL仍缺失；Terminal admin登录及bootstrap enabled=true、会话池空闲通过。此阶段只证明Signal配置已应用及入口可用，Host调度和业务短断线仍待下一轮。
+
+Host预检与PID修正最终离线34/34通过（host-launchctl及restart-host两文件）、0skip；7个核心反例原代码全RED后GREEN，另覆盖partial注册、probe写入失败与PID写入失败。bash语法/diff检查通过，独立复审无必修。实际Host加载在本次提交后执行，不以测试替代运行证据。

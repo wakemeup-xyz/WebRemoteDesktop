@@ -21,36 +21,52 @@ wrd_host_launchctl_bootout() {
   launchctl remove "$WRD_HOST_LABEL" 2>/dev/null || true
 }
 
-# Prove this shell can register a throwaway agent before we are allowed to
-# remove a healthy one. Non-GUI contexts (agent shells, ssh, CI) fail with
-# "Bootstrap failed: 5: Input/output error"; without this probe that failure
-# would strand the host agent in a booted-out state with no way back.
+# Prove a throwaway agent can register and be removed before replacing a
+# loaded Host. launchctl requires a .plist suffix; error 5 alone does not
+# identify the cause of registration failure.
 wrd_host_launchctl_can_bootstrap() {
-  local probe_plist probe_output
-  probe_plist="$(mktemp -t wrd-bootstrap-probe)" || return 1
-  cat > "$probe_plist" <<PLIST
+  local probe_dir probe_plist probe_label probe_output="" cleanup_output=""
+  local probe_failed=0 cleanup_failed=0
+  probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/wrd-bootstrap-probe.XXXXXX")" || return 1
+  probe_plist="$probe_dir/probe.plist"
+  probe_label="${WRD_HOST_PREFLIGHT_LABEL}.${probe_dir##*/}"
+  if ! cat > "$probe_plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${WRD_HOST_PREFLIGHT_LABEL}</string>
+  <key>Label</key><string>${probe_label}</string>
   <key>ProgramArguments</key><array><string>/usr/bin/true</string></array>
   <key>RunAtLoad</key><true/>
 </dict>
 </plist>
 PLIST
-
-  if ! probe_output=$(launchctl bootstrap "$WRD_HOST_DOMAIN" "$probe_plist" 2>&1); then
-    rm -f "$probe_plist"
-    echo "  bootstrap probe failed: ${probe_output:-unknown launchctl error}" >&2
+  then
+    if ! rm -rf "$probe_dir"; then
+      echo "  bootstrap probe directory cleanup failed: $probe_dir" >&2
+    fi
+    echo "  could not write bootstrap probe plist" >&2
     return 1
   fi
 
-  launchctl bootout "$WRD_HOST_DOMAIN" "$probe_plist" >/dev/null 2>&1 \
-    || launchctl remove "$WRD_HOST_PREFLIGHT_LABEL" >/dev/null 2>&1 \
-    || true
-  rm -f "$probe_plist"
-  return 0
+  if ! probe_output=$(launchctl bootstrap "$WRD_HOST_DOMAIN" "$probe_plist" 2>&1); then
+    echo "  bootstrap probe failed: ${probe_output:-unknown launchctl error}" >&2
+    probe_failed=1
+  fi
+
+  # Even a failed bootstrap may have partially registered this unique probe.
+  # Never call the Host bootout helper from this cleanup path.
+  if ! cleanup_output=$(launchctl bootout "$WRD_HOST_DOMAIN" "$probe_plist" 2>&1); then
+    if ! cleanup_output=$(launchctl remove "$probe_label" 2>&1); then
+      echo "  bootstrap probe cleanup not confirmed: ${cleanup_output:-unknown launchctl error}" >&2
+      cleanup_failed=1
+    fi
+  fi
+  if ! rm -rf "$probe_dir"; then
+    echo "  bootstrap probe directory cleanup failed: $probe_dir" >&2
+    return 1
+  fi
+  [ "$probe_failed" -eq 0 ] && [ "$cleanup_failed" -eq 0 ]
 }
 
 # Restore a prior registration after a replacement failed. A successful probe
@@ -101,9 +117,8 @@ wrd_host_launchctl_start() {
       return 1
     fi
     if ! wrd_host_launchctl_can_bootstrap; then
-      echo "refusing to reload $WRD_HOST_LABEL: this shell cannot bootstrap LaunchAgents" >&2
+      echo "refusing to reload $WRD_HOST_LABEL: bootstrap preflight did not complete" >&2
       echo "  the currently loaded agent was left loaded and untouched" >&2
-      echo "  hint: run ./scripts/start-safe-wrd.sh from a GUI Terminal session (Terminal.app)" >&2
       return 1
     fi
     previous_plist="$(mktemp -t wrd-host-plist-backup)" || return 1
@@ -123,7 +138,7 @@ wrd_host_launchctl_start() {
   if ! bootstrap_output=$(launchctl bootstrap "$WRD_HOST_DOMAIN" "$WRD_HOST_PLIST_DST" 2>&1); then
     echo "failed to bootstrap $WRD_HOST_LABEL" >&2
     [ -n "$bootstrap_output" ] && echo "  $bootstrap_output" >&2
-    echo "  hint: LaunchAgent registration needs a GUI Terminal session; sandboxed or agent shells fail with 'Bootstrap failed: 5: Input/output error'" >&2
+    echo "  inspect the launchctl error and plist before retrying" >&2
     if [ -n "$previous_plist" ]; then wrd_host_launchctl_restore "$previous_plist" || true; fi
     return 1
   fi

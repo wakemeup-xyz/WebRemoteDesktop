@@ -1,0 +1,55 @@
+{
+  "kind": "only-own-unique-probes-bootstrap-file-format-ab",
+  "productionLabelsChanged": false,
+  "results": [
+    {
+      "schema": "host-xml",
+      "suffix": "",
+      "bootstrap": {
+        "returncode": 5,
+        "stderr": "Bootstrap failed: 5: Input/output error\nTry re-running the command as root for richer errors."
+      },
+      "registered": false,
+      "cleanupReturncode": 3,
+      "absentAfterCleanup": true
+    },
+    {
+      "schema": "host-xml",
+      "suffix": ".plist",
+      "bootstrap": {
+        "returncode": 0,
+        "stderr": ""
+      },
+      "registered": true,
+      "cleanupReturncode": 0,
+      "absentAfterCleanup": true
+    },
+    {
+      "schema": "plistlib",
+      "suffix": "",
+      "bootstrap": {
+        "returncode": 5,
+        "stderr": "Bootstrap failed: 5: Input/output error\nTry re-running the command as root for richer errors."
+      },
+      "registered": false,
+      "cleanupReturncode": 3,
+      "absentAfterCleanup": true
+    },
+    {
+      "schema": "plistlib",
+      "suffix": ".plist",
+      "bootstrap": {
+        "returncode": 0,
+        "stderr": ""
+      },
+      "registered": true,
+      "cleanupReturncode": 0,
+      "absentAfterCleanup": true
+    }
+  ],
+  "macOS": "13.7.6/22H625",
+  "limitations": [
+    "Only owned temporary labels; no production Host or tunnel label changed.",
+    "Reproduces path-suffix acceptance on this machine; bootstrap error 5 is not uniquely a GUI permission failure."
+  ]
+}

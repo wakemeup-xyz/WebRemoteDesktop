@@ -10,11 +10,26 @@ HOST_STATUS_URL="http://127.0.0.1:8080/api/status"
 source "$PROJECT_DIR/scripts/lib-host-launchctl.sh"
 source "$PROJECT_DIR/scripts/lib-safe-wrd.sh"
 
-rm -f "$PID_FILE"
-rm -f "$SAFE_PID_FILE"
-
 echo "=== Restarting host launchagent ==="
-wrd_host_launchctl_restart
+if wrd_host_launchctl_restart; then
+    rm -f "$PID_FILE"
+    rm -f "$SAFE_PID_FILE"
+else
+    HOST_RESTART_STATUS=$?
+    echo "Host launchagent restart failed (exit $HOST_RESTART_STATUS); reconciling PID files" >&2
+    LIVE_HOST_PID=$(wrd_safe_find_host_pid "$PROJECT_DIR" || true)
+    if wrd_safe_pid_is_running "$LIVE_HOST_PID"; then
+        if ! wrd_safe_write_pid_file "$PID_FILE" "$LIVE_HOST_PID"; then
+            echo "warning: could not refresh $PID_FILE" >&2
+        fi
+        if ! wrd_safe_write_pid_file "$SAFE_PID_FILE" "$LIVE_HOST_PID"; then
+            echo "warning: could not refresh $SAFE_PID_FILE" >&2
+        fi
+    elif ! rm -f "$PID_FILE" "$SAFE_PID_FILE"; then
+        echo "warning: could not clear stale Host PID files" >&2
+    fi
+    exit "$HOST_RESTART_STATUS"
+fi
 
 NEW_PID=""
 for _ in $(seq 1 30); do

@@ -314,6 +314,10 @@ function prepareLaunchctlFixture(t, options = {}) {
   const state = {
     loaded: options.loaded !== false, loadedPlist: oldPlist, calls: [],
     failProbe: options.failProbe === true,
+    partialProbeBootstrap: options.partialProbeBootstrap === true,
+    failProbeBootout: options.failProbeBootout === true || options.failProbeCleanup === true,
+    failProbeRemove: options.failProbeCleanup === true,
+    probeLoaded: false,
     failNewBootstrap: options.failNewBootstrap === true,
     partialNewBootstrap: options.partialNewBootstrap === true,
     failRestoreBootstrap: options.failRestoreBootstrap === true,
@@ -329,13 +333,26 @@ const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
 const [command, ...args] = process.argv.slice(2);
 const installedPath = process.env.WRD_TEST_INSTALLED;
 const plistPath = args.at(-1);
-const probe = command === 'remove' ? plistPath.endsWith('bootstrap-probe')
+const probe = command === 'remove' ? plistPath.startsWith('com.webremotedesktop.host.bootstrap-probe')
   : ['bootstrap', 'bootout'].includes(command) && plistPath !== installedPath;
 const installed = fs.existsSync(installedPath) ? fs.readFileSync(installedPath, 'utf8') : null;
-state.calls.push({ command, probe, installed, loaded: state.loaded, loadedPlist: state.loadedPlist });
+const probePlist = probe && command === 'bootstrap' ? fs.readFileSync(plistPath, 'utf8') : '';
+const probeLabel = probePlist.match(/<key>Label<\\/key>\\s*<string>([^<]+)<\\/string>/)?.[1];
+state.calls.push({ command, probe, installed, loaded: state.loaded, loadedPlist: state.loadedPlist,
+  ...(probe && command === 'bootstrap' ? { probeLabel, probePath: plistPath,
+    privateDirectoryMode: fs.statSync(require('node:path').dirname(plistPath)).mode & 0o777 } : {}) });
 let code = 0;
 if (command === 'print') code = state.loaded ? 0 : 1;
-else if (command === 'bootstrap' && probe) code = state.failProbe ? 5 : 0;
+else if (command === 'bootstrap' && probe) {
+  code = state.failProbe || !plistPath.endsWith('.plist') ? 5 : 0;
+  if (!code || state.partialProbeBootstrap) state.probeLoaded = true;
+} else if (command === 'bootout' && probe) {
+  if (state.failProbeBootout || !state.probeLoaded) code = 5;
+  else state.probeLoaded = false;
+} else if (command === 'remove' && probe) {
+  if (state.failProbeRemove || !state.probeLoaded) code = 5;
+  else state.probeLoaded = false;
+}
 else if (command === 'bootstrap') {
   const config = fs.readFileSync(plistPath, 'utf8');
   if (config === state.newPlist && state.failNewBootstrap) {
@@ -362,7 +379,11 @@ set -euo pipefail
 source ${shellQuote(helperPath)}
 WRD_HOST_PLIST_DST="$WRD_TEST_INSTALLED"
 launchctl() { "$WRD_TEST_NODE" "$WRD_TEST_LAUNCHCTL" "$@"; }
-mktemp() { command mktemp "$WRD_TEST_TEMPORARY/$2.XXXXXX"; }
+mktemp() {
+  if [ "$1" = -t ]; then command mktemp "$WRD_TEST_TEMPORARY/$2.XXXXXX";
+  else command mktemp "$@"; fi
+}
+cat() { if [ "\${WRD_TEST_FAIL_PROBE_WRITE:-0}" = 1 ]; then return 1; else command cat "$@"; fi; }
 mkdir() {
   if [ "$#" = 2 ] && [ "$1" = -p ] && [ "$2" = "$HOME/Library/LaunchAgents" ]; then return 0; fi
   command mkdir "$@"
@@ -373,7 +394,12 @@ cp() {
   if [ "\${WRD_TEST_FAIL_RESTORE_COPY:-0}" = 1 ] && [ "$1" != "$WRD_HOST_PLIST_SRC" ] && [ "$2" = "$WRD_HOST_PLIST_DST" ]; then return 1; fi
   command cp "$@"
 }
-wrd_host_launchctl_start
+if [ "\${WRD_TEST_PROBE_ONLY:-0}" = 1 ]; then
+  wrd_host_launchctl_can_bootstrap
+  wrd_host_launchctl_can_bootstrap
+else
+  wrd_host_launchctl_start
+fi
 `);
   return { sourcePath, installedPath, oldPlist, newPlist, temporaryDir,
     run() {
@@ -384,6 +410,8 @@ wrd_host_launchctl_start
           WRD_HOST_LOG_FILE: path.join(projectDir, 'back-debug.log'),
           TMPDIR: temporaryDir, WRD_TEST_INSTALLED: installedPath,
           WRD_TEST_TEMPORARY: temporaryDir,
+          WRD_TEST_PROBE_ONLY: options.probeOnly ? '1' : '0',
+          WRD_TEST_FAIL_PROBE_WRITE: options.failProbeWrite ? '1' : '0',
           WRD_TEST_NODE: process.execPath, WRD_TEST_LAUNCHCTL: mockPath,
           WRD_TEST_LAUNCHCTL_STATE: statePath,
           WRD_TEST_FAIL_INSTALL: options.failInstall ? '1' : '0',
@@ -431,8 +459,75 @@ test('failed bootstrap probe preserves the old loaded job and installed plist by
   assert.equal(result.state.loadedPlist, h.oldPlist);
   assert.equal(fs.readFileSync(h.installedPath, 'utf8'), h.oldPlist);
   assert.equal(fs.statSync(h.installedPath).mtimeMs, before);
-  assert.deepEqual(result.state.calls.map(row => row.command), ['print', 'bootstrap']);
+  assert.deepEqual(result.state.calls.map(row => row.command), ['print', 'bootstrap', 'bootout', 'remove']);
   assert.match(result.stderr, /left loaded and untouched/);
+  assert.doesNotMatch(result.stderr, /this shell cannot bootstrap|GUI Terminal/);
+  assert.deepEqual(fs.readdirSync(h.temporaryDir), []);
+});
+
+test('bootstrap probes use private directories, plist suffixes and unique labels without residue', (t) => {
+  const h = prepareLaunchctlFixture(t, { probeOnly: true });
+  const result = h.run();
+  assert.equal(result.status, 0, result.stderr);
+  const probes = result.state.calls.filter(row => row.command === 'bootstrap');
+  assert.equal(probes.length, 2);
+  for (const probe of probes) {
+    assert.equal(path.basename(probe.probePath), 'probe.plist');
+    assert.equal(probe.privateDirectoryMode, 0o700);
+    assert.match(probe.probeLabel, /^com\.webremotedesktop\.host\.bootstrap-probe\.[A-Za-z0-9.-]+$/);
+    assert.equal(fs.existsSync(path.dirname(probe.probePath)), false);
+  }
+  assert.notEqual(probes[0].probeLabel, probes[1].probeLabel);
+  assert.notEqual(probes[0].probePath, probes[1].probePath);
+  assert.equal(result.state.loaded, true);
+  assert.equal(result.state.loadedPlist, h.oldPlist);
+  assert.equal(result.state.probeLoaded, false);
+  assert.deepEqual(fs.readdirSync(h.temporaryDir), []);
+});
+
+test('failed probe cleanup blocks reload and leaves the old Host and installed plist untouched', (t) => {
+  const h = prepareLaunchctlFixture(t, { failProbeCleanup: true });
+  const before = fs.statSync(h.installedPath).mtimeMs;
+  const result = h.run();
+  assert.notEqual(result.status, 0);
+  assert.equal(result.state.loaded, true);
+  assert.equal(result.state.loadedPlist, h.oldPlist);
+  assert.equal(fs.readFileSync(h.installedPath, 'utf8'), h.oldPlist);
+  assert.equal(fs.statSync(h.installedPath).mtimeMs, before);
+  assert.equal(result.state.calls.some(row => ['bootout', 'remove', 'kickstart'].includes(row.command) && !row.probe), false);
+  assert.match(result.stderr, /probe cleanup/);
+  assert.deepEqual(fs.readdirSync(h.temporaryDir), []);
+});
+
+test('probe cleanup can fall back to removing only its own unique label', (t) => {
+  const h = prepareLaunchctlFixture(t, { failProbeBootout: true });
+  const result = h.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.state.loadedPlist, h.newPlist);
+  assert.equal(result.state.probeLoaded, false);
+  assert.ok(result.state.calls.some(row => row.command === 'remove' && row.probe));
+  assert.deepEqual(fs.readdirSync(h.temporaryDir), []);
+});
+
+test('a partially registered failed probe cleans only itself and does not reload the Host', (t) => {
+  const h = prepareLaunchctlFixture(t, { failProbe: true, partialProbeBootstrap: true });
+  const result = h.run();
+  assert.notEqual(result.status, 0);
+  assert.equal(result.state.loaded, true);
+  assert.equal(result.state.loadedPlist, h.oldPlist);
+  assert.equal(result.state.probeLoaded, false);
+  assert.equal(result.state.calls.some(row => ['bootout', 'remove', 'kickstart'].includes(row.command) && !row.probe), false);
+  assert.deepEqual(fs.readdirSync(h.temporaryDir), []);
+});
+
+test('failed probe plist write is explicit even when caller tests the helper return status', (t) => {
+  const h = prepareLaunchctlFixture(t, { failProbeWrite: true });
+  const result = h.run();
+  assert.notEqual(result.status, 0);
+  assert.equal(result.state.loaded, true);
+  assert.equal(result.state.loadedPlist, h.oldPlist);
+  assert.deepEqual(result.state.calls.map(row => row.command), ['print']);
+  assert.match(result.stderr, /could not write bootstrap probe plist/);
   assert.deepEqual(fs.readdirSync(h.temporaryDir), []);
 });
 
@@ -550,4 +645,126 @@ test('missing repo plist cannot stop or replace a loaded host', (t) => {
   assert.equal(result.state.loaded, true);
   assert.equal(fs.readFileSync(h.installedPath, 'utf8'), h.oldPlist);
   assert.equal(result.state.calls.some(row => ['bootout', 'remove', 'kickstart'].includes(row.command)), false);
+});
+
+function prepareRestartHostFixture(t, { helperStatus = 7, livePid = '7001', oldPid = '7001', failPidWrite = false } = {}) {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-restart-host-mock-'));
+  t.after(() => fs.rmSync(projectDir, { recursive: true, force: true }));
+  const scriptsDir = path.join(projectDir, 'scripts');
+  fs.mkdirSync(scriptsDir);
+  fs.mkdirSync(path.join(projectDir, 'python-host'));
+  const pidPath = path.join(projectDir, 'host.pid');
+  const safePidPath = path.join(projectDir, 'safe-host.pid');
+  const tracePath = path.join(projectDir, 'trace.txt');
+  const seenPidPath = path.join(projectDir, 'helper-seen-host.pid');
+  const seenSafePidPath = path.join(projectDir, 'helper-seen-safe.pid');
+  const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  const source = fs.readFileSync(path.join(__dirname, 'restart-host.sh'), 'utf8')
+    .replace(/^PID_FILE=.*$/m, `PID_FILE=${quote(pidPath)}`)
+    .replace(/^SAFE_PID_FILE=.*$/m, `SAFE_PID_FILE=${quote(safePidPath)}`);
+  const restartPath = path.join(scriptsDir, 'restart-host.sh');
+  fs.writeFileSync(restartPath, source);
+  fs.writeFileSync(pidPath, `${oldPid}\n`);
+  fs.writeFileSync(safePidPath, `${oldPid}\n`);
+  fs.writeFileSync(path.join(scriptsDir, 'lib-host-launchctl.sh'), `
+wrd_host_launchctl_restart() {
+  [ ! -f "$PID_FILE" ] || cp "$PID_FILE" "$WRD_TEST_SEEN_PID"
+  [ ! -f "$SAFE_PID_FILE" ] || cp "$SAFE_PID_FILE" "$WRD_TEST_SEEN_SAFE_PID"
+  if [ "$WRD_TEST_HELPER_STATUS" != 0 ]; then echo 'mock helper reason: bootstrap preflight rejected' >&2; fi
+  return "$WRD_TEST_HELPER_STATUS"
+}
+`);
+  // Retain the actual project's locator and cwd filter; replace only process
+  // discovery/liveness primitives with deterministic private fixture data.
+  fs.writeFileSync(path.join(scriptsDir, 'lib-safe-wrd.sh'),
+    fs.readFileSync(path.join(__dirname, 'lib-safe-wrd.sh'), 'utf8') + `
+pgrep() {
+  printf 'pgrep\\n' >> "$WRD_TEST_TRACE"
+  printf '9009\\n'
+  [ -z "$WRD_TEST_LIVE_PID" ] || printf '%s\\n' "$WRD_TEST_LIVE_PID"
+  return 0
+}
+lsof() {
+  local fixture_pid=''
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = -p ]; then fixture_pid="$2"; shift 2; else shift; fi
+  done
+  if [ "$fixture_pid" = 9009 ]; then printf 'n/foreign-project/python-host\\n'
+  elif [ -n "$WRD_TEST_LIVE_PID" ] && [ "$fixture_pid" = "$WRD_TEST_LIVE_PID" ]; then printf 'n%s/python-host\\n' "$PROJECT_DIR"
+  else return 1; fi
+}
+kill() {
+  [ "\${1:-}" = -0 ] || return 99
+  [ -n "\${2:-}" ] || return 1
+  [ "$2" = 9009 ] || { [ -n "$WRD_TEST_LIVE_PID" ] && [ "$2" = "$WRD_TEST_LIVE_PID" ]; }
+}
+curl() { printf 'health\\n' >> "$WRD_TEST_TRACE"; printf '{"hostOnline":true}'; }
+sleep() { return 0; }
+if [ "\${WRD_TEST_FAIL_PID_WRITE:-0}" = 1 ]; then
+  wrd_safe_write_pid_file() { printf 'write-attempt\\n' >> "$WRD_TEST_TRACE"; return 19; }
+fi
+`);
+  return { pidPath, safePidPath, seenPidPath, seenSafePidPath,
+    run() {
+      const result = spawnSync('bash', [restartPath], { encoding: 'utf8', timeout: 5_000,
+        env: { ...process.env, WRD_TEST_HELPER_STATUS: String(helperStatus),
+          WRD_TEST_LIVE_PID: livePid, WRD_TEST_SEEN_PID: seenPidPath,
+          WRD_TEST_SEEN_SAFE_PID: seenSafePidPath, WRD_TEST_TRACE: tracePath,
+          WRD_TEST_FAIL_PID_WRITE: failPidWrite ? '1' : '0' } });
+      assert.ifError(result.error);
+      return { ...result, trace: fs.existsSync(tracePath) ? fs.readFileSync(tracePath, 'utf8') : '' };
+    } };
+}
+
+for (const [name, livePid, oldPid] of [
+  ['preflight rejected while the original project Host remains live', '7001', '7001'],
+  ['failed replacement rolled back to a new project Host PID', '8002', '7001'],
+]) {
+  test(`restart-host reconciles both PID files when ${name}`, (t) => {
+    const h = prepareRestartHostFixture(t, { livePid, oldPid });
+    const result = h.run();
+    assert.equal(result.status, 7);
+    assert.match(result.stderr, /mock helper reason: bootstrap preflight rejected/);
+    assert.equal(fs.existsSync(h.seenPidPath), true, 'old PID file must still exist when helper runs');
+    assert.equal(fs.existsSync(h.seenSafePidPath), true);
+    assert.equal(fs.readFileSync(h.seenPidPath, 'utf8'), `${oldPid}\n`);
+    assert.equal(fs.readFileSync(h.seenSafePidPath, 'utf8'), `${oldPid}\n`);
+    assert.equal(fs.readFileSync(h.pidPath, 'utf8'), `${livePid}\n`);
+    assert.equal(fs.readFileSync(h.safePidPath, 'utf8'), `${livePid}\n`);
+    assert.match(result.trace, /pgrep/);
+    assert.doesNotMatch(result.trace, /health/, 'helper failure must not become a successful health result');
+  });
+}
+
+test('restart-host failure removes stale PID files when no matching project Host remains', (t) => {
+  const h = prepareRestartHostFixture(t, { livePid: '', oldPid: '9009' });
+  const result = h.run();
+  assert.equal(result.status, 7);
+  assert.equal(fs.readFileSync(h.seenPidPath, 'utf8'), '9009\n');
+  assert.equal(fs.readFileSync(h.seenSafePidPath, 'utf8'), '9009\n');
+  assert.equal(fs.existsSync(h.pidPath), false);
+  assert.equal(fs.existsSync(h.safePidPath), false);
+  assert.match(result.trace, /pgrep/, 'an alive foreign-project PID is not evidence of a Host');
+  assert.doesNotMatch(result.trace, /health/);
+});
+
+test('restart-host success still refreshes the new project PID and waits for hostOnline', (t) => {
+  const h = prepareRestartHostFixture(t, { helperStatus: 0, livePid: '8003' });
+  const result = h.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(h.seenPidPath), true, 'PID removal happens only after successful helper completion');
+  assert.equal(fs.readFileSync(h.pidPath, 'utf8'), '8003\n');
+  assert.equal(fs.readFileSync(h.safePidPath, 'utf8'), '8003\n');
+  assert.match(result.trace, /health/);
+  assert.match(result.stdout, /Host started with PID: 8003/);
+});
+
+test('restart-host keeps the helper failure status when PID refresh also fails', (t) => {
+  const h = prepareRestartHostFixture(t, { helperStatus: 7, livePid: '8002', failPidWrite: true });
+  const result = h.run();
+  assert.equal(result.status, 7);
+  assert.match(result.stderr, /mock helper reason: bootstrap preflight rejected/);
+  assert.match(result.stderr, /warning: could not refresh/);
+  assert.equal(result.trace.split('\n').filter(line => line === 'write-attempt').length, 2);
+  assert.doesNotMatch(result.trace, /health/);
 });

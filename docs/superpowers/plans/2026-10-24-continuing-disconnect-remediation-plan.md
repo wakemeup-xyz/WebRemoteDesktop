@@ -144,3 +144,9 @@
 - [x] Host plist显式Interactive；Signal helper使用私有参数数组plist和预检/失败恢复，18/18测试通过；实际启动路径无效时在停旧服务前拒绝。
 - [ ] focused回归/独立review、main提交后，在无Viewer维护窗口加载；核实实际调度类型和健康，不操作tunnel。
 - [ ] 重跑短断线及活动capture/资源对照；只在实际指标改善后记录收益，不把独立timer分布替代逐帧/输入延迟。
+
+### Host加载阻断的实测修正
+
+- [x] 独立4个probe确认临时文件缺.plist后缀导致bootstrap5；改唯一私有目录/probe.plist及唯一label，清理未确认时拒绝reload。
+- [x] restart-host失败保留/刷新真实项目PID；无Host才清理；helper先输出子脚本诊断再返回失败。34项Host相关回归及19项service helper通过，7个核心反例RED→GREEN。
+- [x] Signal已加载Interactive并核实31/63与本地/公网/Terminal admin bootstrap；Host仍待预检修正提交后加载。
