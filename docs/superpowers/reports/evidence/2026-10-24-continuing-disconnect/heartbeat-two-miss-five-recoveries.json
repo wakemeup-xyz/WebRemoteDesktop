@@ -1,0 +1,1807 @@
+{
+  "schemaVersion": 1,
+  "evidenceVersion": 1,
+  "generatedAtUtc": "2026-10-24T18:37:35Z",
+  "scope": "five-independent-ordinary-within-grace-recoveries-with-planned-native-signal-close",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "deployment": {
+    "signalSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+    "viewerSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+    "hostSourceCommit": "9e352fc8d3abb315d69194ff45f82fa76bc8c22c",
+    "signalPid": 15428,
+    "hostPid": 64981,
+    "viewerBuildId": "79d27719867d5814",
+    "runtimeConfigCommit": "2e611d5",
+    "sourceEvidence": "root-attested per-run manifests and deployment snapshots",
+    "publicManifestMatchesLocalInAllFiveDeploymentSnapshots": true,
+    "sameLongRunningHostAcrossRuns": true,
+    "hostSourceIsNotInferredFromCurrentRepositoryHead": true
+  },
+  "result": {
+    "ordinaryRecoveryPasses": 5,
+    "ordinaryRecoveryFailures": 0,
+    "classification": "within-grace-rebind",
+    "continuousSessionStatus": "INCOMPLETE",
+    "continuityReason": "Each run deliberately interrupts its Signal transport once; five successful recoveries are not an uninterrupted continuity qualification.",
+    "threeHourContinuityMet": false,
+    "heartbeatAckBlackholeWatchdogQualification": "NOT_RUN",
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN"
+  },
+  "method": {
+    "scenario": "within-grace",
+    "networkMode": "relay",
+    "baselineRequestedSecondsPerRun": 300,
+    "faultInstrumentation": "native-direct",
+    "faultTriggerCountPerRun": 1,
+    "faultMeaning": "The ordinary probe explicitly closes its current native Signal transport once; this does not directly exercise two missing heartbeat ACK deadlines.",
+    "restorePath": "Existing authenticated Signal reconnect and formal Host viewer-session rebind, followed by required mouse and keyboard resets.",
+    "hostWindowSelection": "Resource/queue windows: each deployment snapshot verification time through its first subsequent Signal viewer_disconnect_grace_expired event. Peer cleanup events additionally include a fixed 2000ms read-only observation tail so cleanup dispatched at the final boundary can settle; no probe gate or recovery deadline is changed.",
+    "hostSamplingLimit": "Host resource/queue fields are sampled windows, not continuous proof of zero transient queue depth or zero resource cost.",
+    "crossClockLimit": "Browser-derived UTC labels are provenance anchors only; no browser-to-Host wall-clock subtraction is used for latency metrics."
+  },
+  "resetLatencyContract": {
+    "unit": "ms",
+    "uniqueResetInputAssociationsPerRun": 2,
+    "actions": [
+      "mouse.reset",
+      "keyboard.reset"
+    ],
+    "transport": "socket",
+    "metricWindowMs": 5000,
+    "snapshotPollIntervalApproxMs": 1000,
+    "metricBearingSnapshotsPerRun": 5,
+    "aggregation": "For each metric, retain the maximum reported rolling-window p95 across the five overlapping snapshots. Each window count is 2; current percentile implementation selects the larger of the two samples. These are per-run two-sample maxima, not whole-session or population p95 values.",
+    "noSnapshotCountMultiplication": "The five snapshots repeatedly observe the same two input associations; they are not ten independent inputs.",
+    "inputAckRttMs": "Viewer transport submission to its matching successful input ACK callback; includes transport, browser/Signal/Host scheduling and execution.",
+    "inputToPostApplyFrameMs": "Viewer submission to its same-scope matched RTP/SSRC video-frame callback carrying a fresh capture after successful application. Two inputs can share one presented frame. This is not evidence of application response content or physical display presentation.",
+    "hostQueueMs": "Host adapter-local monotonic nanoseconds from adapter queue boundary to native apply start, divided by 1000000.",
+    "hostApplyMs": "Host native apply interval in the same monotonic clock, divided by 1000000.",
+    "hostAdapterAwaitMs": "Host adapter entry through adapter return measured by perf_counter seconds times 1000; includes adapter-local queue time but excludes the outer Host admission wait.",
+    "forbiddenDerivations": [
+      "Do not add metric p95 values; maxima may belong to different reset actions.",
+      "Do not subtract Host adapter duration from ACK RTT and label the remainder network latency.",
+      "Do not add ACK RTT and post-apply-frame duration; both start at the same Viewer submission.",
+      "Do not treat a frame callback as controlled visible effect.",
+      "Do not treat Host ACK enqueue as Viewer receipt; the separate Viewer ACK RTT metric provides the matched-receipt evidence here."
+    ],
+    "frameBeforeAckIsAllowed": "The matched post-apply video callback can precede the ACK callback because these observations arrive over different paths.",
+    "implementationReferences": [
+      "web-client/js/latency-monitor.js:75",
+      "web-client/js/latency-monitor.js:87",
+      "web-client/js/latency-monitor.js:350",
+      "web-client/js/latency-monitor.js:403",
+      "web-client/js/webrtc.js:288",
+      "web-client/js/webrtc.js:6600",
+      "python-host/input_timing.py:23",
+      "python-host/host.py:2847",
+      "docs/需求文档/WebRemoteDesktop-需求文档.md:558"
+    ]
+  },
+  "runs": [
+    {
+      "run": 1,
+      "provenance": {
+        "artifacts": {
+          "summary": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-1/summary.json",
+            "sha256": "27086bd90895752ec2c43106bedd5059db6939c42fc804a5a2d544e65e34295a"
+          },
+          "lifecycle": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-1/lifecycle.json",
+            "sha256": "61f354db6b23f642bf46984f2e84a300f204db7600e27924bbce2d7b2b426342"
+          },
+          "samples": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-1/samples.jsonl",
+            "sha256": "2c7eaa1cfdcf9951ffbd18e7944875ce618e76b0fe42e4206c9e25213e9905ce"
+          },
+          "deployment": {
+            "path": "/tmp/wrd-20261025-two-miss-deployment-1.json",
+            "sha256": "6d56ce603ab2a08c561544d4e283347b021d305179a8f9d74846a98eb7d17124"
+          }
+        },
+        "manifestSha256": "fc52550ab970a9ad81cf68c9240eb09b50949b9e375dacc20da4d23993c7df7c",
+        "sourceEvidence": "root-attested",
+        "deploymentVerifiedAtUtc": "2026-10-24T18:00:01.874Z",
+        "runtimeBindingMatchesCommonDeployment": true,
+        "observedNonNullBuildIds": [
+          "79d27719867d5814"
+        ]
+      },
+      "ordinaryRecovery": {
+        "status": "PASS",
+        "classification": "within-grace-rebind",
+        "requestedScenario": "within-grace",
+        "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+        "recoverySeconds": 5.000484385993332,
+        "recoveredStableSeconds": 30.024388537043706,
+        "serverCoverage": "complete",
+        "reason": "none"
+      },
+      "failure": null,
+      "fault": {
+        "instrumentation": "native-direct",
+        "triggerCount": 1,
+        "blockedHttp": 0,
+        "blockedWebSocket": 0,
+        "blockSeconds": 0
+      },
+      "baselineQualification": {
+        "status": "INCOMPLETE",
+        "requestedSeconds": 300,
+        "elapsedSeconds": 300.29666889598593,
+        "samples": 301,
+        "missingSamples": 0,
+        "lateSamples": 0,
+        "failedObservations": 0,
+        "identityChangeObservations": 0,
+        "pathChangeObservations": 0,
+        "pathConvergenceObservations": 0,
+        "maxObservedNoProgressMs": 533.2999999999884,
+        "frameStallThresholdMs": 5000,
+        "frameEvidence": "requestVideoFrameCallback",
+        "threeHourContinuityMet": false
+      },
+      "sampleCoverage": {
+        "totalRows": 346,
+        "phaseRows": {
+          "startup": 10,
+          "baseline": 300,
+          "recovering": 5,
+          "recovered-stability": 31
+        },
+        "qualifiedBaselineSampleCount": 301,
+        "phaseTaggedBaselineRows": 300,
+        "baselineCountNote": "The canonical baseline counter includes its boundary observation; do not substitute only rows labeled baseline.",
+        "firstSampleBrowserDerivedUtc": "2026-10-24T18:00:12.549Z",
+        "lastSampleBrowserDerivedUtc": "2026-10-24T18:05:55.563Z"
+      },
+      "hostObservation": {
+        "status": "stable",
+        "coverage": "complete",
+        "samples": 346,
+        "hostDisconnectObserved": false
+      },
+      "resetLatency": {
+        "uniqueInputAssociations": 2,
+        "overlappingSnapshotCount": 5,
+        "sampleLineNumbers": [
+          315,
+          316,
+          317,
+          318,
+          319
+        ],
+        "phases": {
+          "recovering": 1,
+          "recovered-stability": 4
+        },
+        "countPerMetric": {
+          "inputAckRttMs": 2,
+          "inputToPostApplyFrameMs": 2,
+          "hostQueueMs": 2,
+          "hostApplyMs": 2,
+          "hostAdapterAwaitMs": 2
+        },
+        "windowLargerValueMs": {
+          "inputAckRttMs": 405.5,
+          "inputToPostApplyFrameMs": 398.99999990465585,
+          "hostQueueMs": 0.350586,
+          "hostApplyMs": 0.149381,
+          "hostAdapterAwaitMs": 1.0161020327359438
+        },
+        "generation": 1,
+        "leaseEpoch": 1,
+        "allMetricScopesStable": true,
+        "visibleEffectCount": 0
+      },
+      "lifecycle": {
+        "captureStatus": "ok",
+        "writeStatus": "ok",
+        "cleanupStatus": "api-finished-exit-unknown",
+        "ownedProcessExitEvidence": "not-observed",
+        "browserCloseStatus": "closed",
+        "browserCloseApiDurationMs": 53,
+        "managerStopStatus": "ok",
+        "browserEventRingCoverage": "partial",
+        "browserEventRingDroppedEvents": 999,
+        "browserEventMissingReferences": 5,
+        "browserCounters": {
+          "sd": 1,
+          "ec": 1,
+          "sc": 2,
+          "ra": 1,
+          "rr": 1,
+          "rf": 0,
+          "preclose": 1
+        },
+        "browserPrecloseDerivedUtc": [
+          "2026-10-24T18:05:54.098Z"
+        ]
+      },
+      "signalEvidence": {
+        "source": "/tmp/wrd-structured/signal-server.jsonl",
+        "windowStartUtc": "2026-10-24T18:00:01.874Z",
+        "windowEndUtc": "2026-10-24T18:06:25.809Z",
+        "injectedDisconnect": {
+          "line": 87,
+          "ts": "2026-10-24T18:05:20.728Z"
+        },
+        "formalRebind": {
+          "line": 90,
+          "ts": "2026-10-24T18:05:24.190Z",
+          "leaseEpoch": 1
+        },
+        "ownedCleanupDisconnect": {
+          "line": 98,
+          "ts": "2026-10-24T18:05:55.806Z"
+        },
+        "postCleanupLeaseExpiry": {
+          "line": 101,
+          "ts": "2026-10-24T18:06:07.179Z",
+          "resetOnlyEpoch": 2,
+          "classification": "owned-cleanup-followed-by-lease-expiry-not-another-active-session-failure"
+        },
+        "postCleanupResetCompleted": [
+          {
+            "line": 102,
+            "ts": "2026-10-24T18:06:07.225Z",
+            "state": "FREE",
+            "status": "applied"
+          }
+        ],
+        "heartbeatSocketSummaries": [
+          {
+            "stage": "injected-disconnect",
+            "line": 86,
+            "ts": "2026-10-24T18:05:20.728Z",
+            "received": 102,
+            "accepted": 102,
+            "rejected": 0,
+            "ackRequested": 102,
+            "ackEnqueued": 102,
+            "leaseEpoch": 1,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 102,
+            "lastAckEnqueuedHeartbeatSeq": 102,
+            "lastReceivedAgeMs": 820,
+            "lastAcceptedAgeMs": 820,
+            "lastGrantAgeMs": 304326,
+            "maxReceiveGapMs": 3473
+          },
+          {
+            "stage": "owned-cleanup-disconnect",
+            "line": 97,
+            "ts": "2026-10-24T18:05:55.806Z",
+            "received": 11,
+            "accepted": 11,
+            "rejected": 0,
+            "ackRequested": 11,
+            "ackEnqueued": 11,
+            "leaseEpoch": 1,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 11,
+            "lastAckEnqueuedHeartbeatSeq": 11,
+            "lastReceivedAgeMs": 1189,
+            "lastAcceptedAgeMs": 1189,
+            "lastGrantAgeMs": 31614,
+            "maxReceiveGapMs": 3020
+          }
+        ],
+        "ackEnqueuedIsNotReceived": true
+      },
+      "hostSameWindowEvidence": {
+        "sourceFiles": {
+          "back-debug.log": {
+            "firstLine": 1103,
+            "lastLine": 2173
+          }
+        },
+        "sampledWindowCount": 68,
+        "firstSampleUtc": "2026-10-24T18:00:04.981286+00:00",
+        "lastSampleUtc": "2026-10-24T18:06:22.985882+00:00",
+        "maxObservedEventLoopLagMs": 13.464,
+        "maxReportedMissedLoopSamples": 0,
+        "threadCountsObserved": [
+          6,
+          8
+        ],
+        "taskCountsObserved": [
+          7,
+          13,
+          14
+        ],
+        "currentRssMiBRange": [
+          378.3359375,
+          467.9609375
+        ],
+        "maxReliablePending": 0,
+        "maxReliableInFlight": 0,
+        "maxUnorderedPending": 0,
+        "maxUnorderedInFlight": 0,
+        "maxInputWaiters": 0,
+        "maxRelayPendingFrames": 0,
+        "cleanupPendingWindowCount": 0,
+        "resourceStatusCounts": {
+          "ok": 68
+        },
+        "maxReportedCaptureFailures": 0,
+        "resetActions": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2054,
+            "ts": "2026-10-24T18:05:24.620455+00:00",
+            "inputType": "mouse",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2058,
+            "ts": "2026-10-24T18:05:24.624124+00:00",
+            "inputType": "keyboard",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          }
+        ],
+        "appliedResultCount": 2,
+        "ackEnqueueAcceptedCount": 2,
+        "peerCleanupEvents": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 1110,
+            "ts": "2026-10-24T18:00:17.486Z",
+            "reason": "new-offer",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 1111,
+            "ts": "2026-10-24T18:00:17.487Z",
+            "reason": "new-offer",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 0.857261,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2163,
+            "ts": "2026-10-24T18:06:07.180Z",
+            "reason": "control-transition",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2167,
+            "ts": "2026-10-24T18:06:07.224Z",
+            "reason": "control-transition",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 43.774514,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2172,
+            "ts": "2026-10-24T18:06:25.810Z",
+            "reason": "viewer-disconnected",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2173,
+            "ts": "2026-10-24T18:06:25.812Z",
+            "reason": "viewer-disconnected",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 1.151708,
+            "clipped": false
+          }
+        ],
+        "cleanupObservationTailMs": 2000,
+        "cleanupObservationEndUtc": "2026-10-24T18:06:27.809Z",
+        "peerCleanupTerminalCoverage": "complete-within-bounded-observation-tail",
+        "peerCleanupReturnDoesNotProveBrowserProcessExit": true,
+        "resourceWindowSourceFiles": {
+          "back-debug.log": {
+            "firstLine": 1103,
+            "lastLine": 2170
+          }
+        },
+        "sourceFileRangeMeaning": "First and last source line among the selected resource windows, reset observations and cleanup events including the separately bounded cleanup tail; this is a provenance range, not an export of every line."
+      },
+      "businessInput": "NOT_RUN",
+      "visibleEffect": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN"
+    },
+    {
+      "run": 2,
+      "provenance": {
+        "artifacts": {
+          "summary": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-2/summary.json",
+            "sha256": "96db52557940a82872a013b571cdd49bad47cbbeac71512ccd8505e1d6a3999a"
+          },
+          "lifecycle": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-2/lifecycle.json",
+            "sha256": "c0065f919eb72c4b9ab3938d79aea431a665e34719066d5a9ab4b54517ba5def"
+          },
+          "samples": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-2/samples.jsonl",
+            "sha256": "3e7413c2a655225db785fe1b1b156e42f6296162c2f60e9da565e219d1dffab9"
+          },
+          "deployment": {
+            "path": "/tmp/wrd-20261025-two-miss-deployment-2.json",
+            "sha256": "28a97b0822a811ec1307801ad7c83d8f21cce0ce7c1ac386ccb20db33f15b6bc"
+          }
+        },
+        "manifestSha256": "b52dedce58c3192445bf0d6c10949aa5c09a8f09f65926b6ed835e2a804b808b",
+        "sourceEvidence": "root-attested",
+        "deploymentVerifiedAtUtc": "2026-10-24T18:08:11.032Z",
+        "runtimeBindingMatchesCommonDeployment": true,
+        "observedNonNullBuildIds": [
+          "79d27719867d5814"
+        ]
+      },
+      "ordinaryRecovery": {
+        "status": "PASS",
+        "classification": "within-grace-rebind",
+        "requestedScenario": "within-grace",
+        "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+        "recoverySeconds": 4.000096172094345,
+        "recoveredStableSeconds": 30.02286366210319,
+        "serverCoverage": "complete",
+        "reason": "none"
+      },
+      "failure": null,
+      "fault": {
+        "instrumentation": "native-direct",
+        "triggerCount": 1,
+        "blockedHttp": 0,
+        "blockedWebSocket": 0,
+        "blockSeconds": 0
+      },
+      "baselineQualification": {
+        "status": "INCOMPLETE",
+        "requestedSeconds": 300,
+        "elapsedSeconds": 300.2800356540829,
+        "samples": 301,
+        "missingSamples": 0,
+        "lateSamples": 0,
+        "failedObservations": 0,
+        "identityChangeObservations": 0,
+        "pathChangeObservations": 0,
+        "pathConvergenceObservations": 0,
+        "maxObservedNoProgressMs": 416.6000000000058,
+        "frameStallThresholdMs": 5000,
+        "frameEvidence": "requestVideoFrameCallback",
+        "threeHourContinuityMet": false
+      },
+      "sampleCoverage": {
+        "totalRows": 344,
+        "phaseRows": {
+          "startup": 9,
+          "baseline": 300,
+          "recovering": 4,
+          "recovered-stability": 31
+        },
+        "qualifiedBaselineSampleCount": 301,
+        "phaseTaggedBaselineRows": 300,
+        "baselineCountNote": "The canonical baseline counter includes its boundary observation; do not substitute only rows labeled baseline.",
+        "firstSampleBrowserDerivedUtc": "2026-10-24T18:08:17.255Z",
+        "lastSampleBrowserDerivedUtc": "2026-10-24T18:13:57.802Z"
+      },
+      "hostObservation": {
+        "status": "stable",
+        "coverage": "complete",
+        "samples": 344,
+        "hostDisconnectObserved": false
+      },
+      "resetLatency": {
+        "uniqueInputAssociations": 2,
+        "overlappingSnapshotCount": 5,
+        "sampleLineNumbers": [
+          313,
+          314,
+          315,
+          316,
+          317
+        ],
+        "phases": {
+          "recovering": 1,
+          "recovered-stability": 4
+        },
+        "countPerMetric": {
+          "inputAckRttMs": 2,
+          "inputToPostApplyFrameMs": 2,
+          "hostQueueMs": 2,
+          "hostApplyMs": 2,
+          "hostAdapterAwaitMs": 2
+        },
+        "windowLargerValueMs": {
+          "inputAckRttMs": 427.5,
+          "inputToPostApplyFrameMs": 387.7000000476837,
+          "hostQueueMs": 0.176157,
+          "hostApplyMs": 0.089407,
+          "hostAdapterAwaitMs": 1.9532579462975264
+        },
+        "generation": 1,
+        "leaseEpoch": 3,
+        "allMetricScopesStable": true,
+        "visibleEffectCount": 0
+      },
+      "lifecycle": {
+        "captureStatus": "ok",
+        "writeStatus": "ok",
+        "cleanupStatus": "api-finished-exit-unknown",
+        "ownedProcessExitEvidence": "not-observed",
+        "browserCloseStatus": "closed",
+        "browserCloseApiDurationMs": 52,
+        "managerStopStatus": "ok",
+        "browserEventRingCoverage": "partial",
+        "browserEventRingDroppedEvents": 998,
+        "browserEventMissingReferences": 5,
+        "browserCounters": {
+          "sd": 1,
+          "ec": 1,
+          "sc": 2,
+          "ra": 1,
+          "rr": 1,
+          "rf": 0,
+          "preclose": 1
+        },
+        "browserPrecloseDerivedUtc": [
+          "2026-10-24T18:13:57.272Z"
+        ]
+      },
+      "signalEvidence": {
+        "source": "/tmp/wrd-structured/signal-server.jsonl",
+        "windowStartUtc": "2026-10-24T18:08:11.032Z",
+        "windowEndUtc": "2026-10-24T18:14:28.063Z",
+        "injectedDisconnect": {
+          "line": 116,
+          "ts": "2026-10-24T18:13:23.981Z"
+        },
+        "formalRebind": {
+          "line": 119,
+          "ts": "2026-10-24T18:13:26.681Z",
+          "leaseEpoch": 3
+        },
+        "ownedCleanupDisconnect": {
+          "line": 127,
+          "ts": "2026-10-24T18:13:58.057Z"
+        },
+        "postCleanupLeaseExpiry": {
+          "line": 130,
+          "ts": "2026-10-24T18:14:09.652Z",
+          "resetOnlyEpoch": 4,
+          "classification": "owned-cleanup-followed-by-lease-expiry-not-another-active-session-failure"
+        },
+        "postCleanupResetCompleted": [
+          {
+            "line": 131,
+            "ts": "2026-10-24T18:14:09.699Z",
+            "state": "FREE",
+            "status": "applied"
+          }
+        ],
+        "heartbeatSocketSummaries": [
+          {
+            "stage": "injected-disconnect",
+            "line": 115,
+            "ts": "2026-10-24T18:13:23.980Z",
+            "received": 101,
+            "accepted": 101,
+            "rejected": 0,
+            "ackRequested": 101,
+            "ackEnqueued": 101,
+            "leaseEpoch": 3,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 101,
+            "lastAckEnqueuedHeartbeatSeq": 101,
+            "lastReceivedAgeMs": 2955,
+            "lastAcceptedAgeMs": 2955,
+            "lastGrantAgeMs": 304060,
+            "maxReceiveGapMs": 3534
+          },
+          {
+            "stage": "owned-cleanup-disconnect",
+            "line": 126,
+            "ts": "2026-10-24T18:13:58.056Z",
+            "received": 11,
+            "accepted": 11,
+            "rejected": 0,
+            "ackRequested": 11,
+            "ackEnqueued": 11,
+            "leaseEpoch": 3,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 11,
+            "lastAckEnqueuedHeartbeatSeq": 11,
+            "lastReceivedAgeMs": 950,
+            "lastAcceptedAgeMs": 950,
+            "lastGrantAgeMs": 31373,
+            "maxReceiveGapMs": 3014
+          }
+        ],
+        "ackEnqueuedIsNotReceived": true
+      },
+      "hostSameWindowEvidence": {
+        "sourceFiles": {
+          "back-debug.log": {
+            "firstLine": 2193,
+            "lastLine": 3260
+          }
+        },
+        "sampledWindowCount": 67,
+        "firstSampleUtc": "2026-10-24T18:08:13.982388+00:00",
+        "lastSampleUtc": "2026-10-24T18:14:23.023288+00:00",
+        "maxObservedEventLoopLagMs": 13.342,
+        "maxReportedMissedLoopSamples": 0,
+        "threadCountsObserved": [
+          6,
+          8
+        ],
+        "taskCountsObserved": [
+          7,
+          12,
+          13,
+          14
+        ],
+        "currentRssMiBRange": [
+          459.73046875,
+          471.6015625
+        ],
+        "maxReliablePending": 0,
+        "maxReliableInFlight": 0,
+        "maxUnorderedPending": 0,
+        "maxUnorderedInFlight": 0,
+        "maxInputWaiters": 0,
+        "maxRelayPendingFrames": 0,
+        "cleanupPendingWindowCount": 0,
+        "resourceStatusCounts": {
+          "ok": 67
+        },
+        "maxReportedCaptureFailures": 0,
+        "resetActions": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3139,
+            "ts": "2026-10-24T18:13:27.111896+00:00",
+            "inputType": "mouse",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3143,
+            "ts": "2026-10-24T18:13:27.114592+00:00",
+            "inputType": "keyboard",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          }
+        ],
+        "appliedResultCount": 2,
+        "ackEnqueueAcceptedCount": 2,
+        "peerCleanupEvents": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2199,
+            "ts": "2026-10-24T18:08:21.015Z",
+            "reason": "new-offer",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 2200,
+            "ts": "2026-10-24T18:08:21.016Z",
+            "reason": "new-offer",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 0.819138,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3250,
+            "ts": "2026-10-24T18:14:09.658Z",
+            "reason": "control-transition",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3254,
+            "ts": "2026-10-24T18:14:09.698Z",
+            "reason": "control-transition",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 39.890669,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3259,
+            "ts": "2026-10-24T18:14:28.065Z",
+            "reason": "viewer-disconnected",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3260,
+            "ts": "2026-10-24T18:14:28.067Z",
+            "reason": "viewer-disconnected",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 2.243411,
+            "clipped": false
+          }
+        ],
+        "cleanupObservationTailMs": 2000,
+        "cleanupObservationEndUtc": "2026-10-24T18:14:30.063Z",
+        "peerCleanupTerminalCoverage": "complete-within-bounded-observation-tail",
+        "peerCleanupReturnDoesNotProveBrowserProcessExit": true,
+        "resourceWindowSourceFiles": {
+          "back-debug.log": {
+            "firstLine": 2193,
+            "lastLine": 3257
+          }
+        },
+        "sourceFileRangeMeaning": "First and last source line among the selected resource windows, reset observations and cleanup events including the separately bounded cleanup tail; this is a provenance range, not an export of every line."
+      },
+      "businessInput": "NOT_RUN",
+      "visibleEffect": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN"
+    },
+    {
+      "run": 3,
+      "provenance": {
+        "artifacts": {
+          "summary": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-3/summary.json",
+            "sha256": "d3321ea2d4769df3745315145aaa7e72450aaffae74ac317c9ed41d69d182eae"
+          },
+          "lifecycle": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-3/lifecycle.json",
+            "sha256": "783da499d82e565813f48730d4a91ea81c27f2d063ad1bd5b1864f6ae464d5a9"
+          },
+          "samples": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-3/samples.jsonl",
+            "sha256": "255ffd26b74201d82548c3f45fc2b5a42fc4991918d53e867f0dedcfd4c3e172"
+          },
+          "deployment": {
+            "path": "/tmp/wrd-20261025-two-miss-deployment-3.json",
+            "sha256": "914afd3e6b377b0aa3bcb17f6101911261bb1b8703b6f57d0990ed603a523c7a"
+          }
+        },
+        "manifestSha256": "af0f5b1c0a5c757421c52357a52191769a8d9d0ae6bf53b7b2453bc4648dd622",
+        "sourceEvidence": "root-attested",
+        "deploymentVerifiedAtUtc": "2026-10-24T18:14:34.505Z",
+        "runtimeBindingMatchesCommonDeployment": true,
+        "observedNonNullBuildIds": [
+          "79d27719867d5814"
+        ]
+      },
+      "ordinaryRecovery": {
+        "status": "PASS",
+        "classification": "within-grace-rebind",
+        "requestedScenario": "within-grace",
+        "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+        "recoverySeconds": 3.994059740100056,
+        "recoveredStableSeconds": 30.025243940996006,
+        "serverCoverage": "complete",
+        "reason": "none"
+      },
+      "failure": null,
+      "fault": {
+        "instrumentation": "native-direct",
+        "triggerCount": 1,
+        "blockedHttp": 0,
+        "blockedWebSocket": 0,
+        "blockSeconds": 0
+      },
+      "baselineQualification": {
+        "status": "INCOMPLETE",
+        "requestedSeconds": 300,
+        "elapsedSeconds": 300.3258539629169,
+        "samples": 301,
+        "missingSamples": 0,
+        "lateSamples": 0,
+        "failedObservations": 0,
+        "identityChangeObservations": 0,
+        "pathChangeObservations": 0,
+        "pathConvergenceObservations": 0,
+        "maxObservedNoProgressMs": 1233.2000000000044,
+        "frameStallThresholdMs": 5000,
+        "frameEvidence": "requestVideoFrameCallback",
+        "threeHourContinuityMet": false
+      },
+      "sampleCoverage": {
+        "totalRows": 345,
+        "phaseRows": {
+          "startup": 10,
+          "baseline": 300,
+          "recovering": 4,
+          "recovered-stability": 31
+        },
+        "qualifiedBaselineSampleCount": 301,
+        "phaseTaggedBaselineRows": 300,
+        "baselineCountNote": "The canonical baseline counter includes its boundary observation; do not substitute only rows labeled baseline.",
+        "firstSampleBrowserDerivedUtc": "2026-10-24T18:14:42.036Z",
+        "lastSampleBrowserDerivedUtc": "2026-10-24T18:20:23.649Z"
+      },
+      "hostObservation": {
+        "status": "stable",
+        "coverage": "complete",
+        "samples": 345,
+        "hostDisconnectObserved": false
+      },
+      "resetLatency": {
+        "uniqueInputAssociations": 2,
+        "overlappingSnapshotCount": 5,
+        "sampleLineNumbers": [
+          314,
+          315,
+          316,
+          317,
+          318
+        ],
+        "phases": {
+          "recovering": 1,
+          "recovered-stability": 4
+        },
+        "countPerMetric": {
+          "inputAckRttMs": 2,
+          "inputToPostApplyFrameMs": 2,
+          "hostQueueMs": 2,
+          "hostApplyMs": 2,
+          "hostAdapterAwaitMs": 2
+        },
+        "windowLargerValueMs": {
+          "inputAckRttMs": 436.2000000476837,
+          "inputToPostApplyFrameMs": 370.90000004769536,
+          "hostQueueMs": 0.719329,
+          "hostApplyMs": 0.228189,
+          "hostAdapterAwaitMs": 1.470679882913828
+        },
+        "generation": 1,
+        "leaseEpoch": 5,
+        "allMetricScopesStable": true,
+        "visibleEffectCount": 0
+      },
+      "lifecycle": {
+        "captureStatus": "ok",
+        "writeStatus": "ok",
+        "cleanupStatus": "api-finished-exit-unknown",
+        "ownedProcessExitEvidence": "not-observed",
+        "browserCloseStatus": "closed",
+        "browserCloseApiDurationMs": 65,
+        "managerStopStatus": "ok",
+        "browserEventRingCoverage": "partial",
+        "browserEventRingDroppedEvents": 991,
+        "browserEventMissingReferences": 5,
+        "browserCounters": {
+          "sd": 1,
+          "ec": 1,
+          "sc": 2,
+          "ra": 1,
+          "rr": 1,
+          "rf": 0,
+          "preclose": 1
+        },
+        "browserPrecloseDerivedUtc": [
+          "2026-10-24T18:20:22.487Z"
+        ]
+      },
+      "signalEvidence": {
+        "source": "/tmp/wrd-structured/signal-server.jsonl",
+        "windowStartUtc": "2026-10-24T18:14:34.505Z",
+        "windowEndUtc": "2026-10-24T18:20:53.907Z",
+        "injectedDisconnect": {
+          "line": 144,
+          "ts": "2026-10-24T18:19:49.809Z"
+        },
+        "formalRebind": {
+          "line": 147,
+          "ts": "2026-10-24T18:19:52.197Z",
+          "leaseEpoch": 5
+        },
+        "ownedCleanupDisconnect": {
+          "line": 154,
+          "ts": "2026-10-24T18:20:23.904Z"
+        },
+        "postCleanupLeaseExpiry": {
+          "line": 158,
+          "ts": "2026-10-24T18:20:35.035Z",
+          "resetOnlyEpoch": 6,
+          "classification": "owned-cleanup-followed-by-lease-expiry-not-another-active-session-failure"
+        },
+        "postCleanupResetCompleted": [
+          {
+            "line": 159,
+            "ts": "2026-10-24T18:20:35.176Z",
+            "state": "FREE",
+            "status": "applied"
+          }
+        ],
+        "heartbeatSocketSummaries": [
+          {
+            "stage": "injected-disconnect",
+            "line": 143,
+            "ts": "2026-10-24T18:19:49.808Z",
+            "received": 102,
+            "accepted": 102,
+            "rejected": 0,
+            "ackRequested": 102,
+            "ackEnqueued": 102,
+            "leaseEpoch": 5,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 102,
+            "lastAckEnqueuedHeartbeatSeq": 102,
+            "lastReceivedAgeMs": 323,
+            "lastAcceptedAgeMs": 323,
+            "lastGrantAgeMs": 303838,
+            "maxReceiveGapMs": 4152
+          },
+          {
+            "stage": "owned-cleanup-disconnect",
+            "line": 153,
+            "ts": "2026-10-24T18:20:23.904Z",
+            "received": 11,
+            "accepted": 11,
+            "rejected": 0,
+            "ackRequested": 11,
+            "ackEnqueued": 11,
+            "leaseEpoch": 5,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 11,
+            "lastAckEnqueuedHeartbeatSeq": 11,
+            "lastReceivedAgeMs": 1037,
+            "lastAcceptedAgeMs": 1037,
+            "lastGrantAgeMs": 31705,
+            "maxReceiveGapMs": 3541
+          }
+        ],
+        "ackEnqueuedIsNotReceived": true
+      },
+      "hostSameWindowEvidence": {
+        "sourceFiles": {
+          "back-debug.log": {
+            "firstLine": 3262,
+            "lastLine": 4334
+          }
+        },
+        "sampledWindowCount": 69,
+        "firstSampleUtc": "2026-10-24T18:14:35.009839+00:00",
+        "lastSampleUtc": "2026-10-24T18:20:53.016290+00:00",
+        "maxObservedEventLoopLagMs": 30.21,
+        "maxReportedMissedLoopSamples": 0,
+        "threadCountsObserved": [
+          6,
+          8
+        ],
+        "taskCountsObserved": [
+          7,
+          13,
+          14
+        ],
+        "currentRssMiBRange": [
+          397.171875,
+          486.58203125
+        ],
+        "maxReliablePending": 0,
+        "maxReliableInFlight": 0,
+        "maxUnorderedPending": 0,
+        "maxUnorderedInFlight": 0,
+        "maxInputWaiters": 0,
+        "maxRelayPendingFrames": 0,
+        "cleanupPendingWindowCount": 0,
+        "resourceStatusCounts": {
+          "ok": 69
+        },
+        "maxReportedCaptureFailures": 0,
+        "resetActions": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4213,
+            "ts": "2026-10-24T18:19:52.637420+00:00",
+            "inputType": "mouse",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4217,
+            "ts": "2026-10-24T18:19:52.640147+00:00",
+            "inputType": "keyboard",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          }
+        ],
+        "appliedResultCount": 2,
+        "ackEnqueueAcceptedCount": 2,
+        "peerCleanupEvents": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3269,
+            "ts": "2026-10-24T18:14:46.523Z",
+            "reason": "new-offer",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 3270,
+            "ts": "2026-10-24T18:14:46.524Z",
+            "reason": "new-offer",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 1.636317,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4323,
+            "ts": "2026-10-24T18:20:35.084Z",
+            "reason": "control-transition",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4327,
+            "ts": "2026-10-24T18:20:35.175Z",
+            "reason": "control-transition",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 90.867655,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4333,
+            "ts": "2026-10-24T18:20:53.908Z",
+            "reason": "viewer-disconnected",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4334,
+            "ts": "2026-10-24T18:20:53.910Z",
+            "reason": "viewer-disconnected",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 1.700221,
+            "clipped": false
+          }
+        ],
+        "cleanupObservationTailMs": 2000,
+        "cleanupObservationEndUtc": "2026-10-24T18:20:55.907Z",
+        "peerCleanupTerminalCoverage": "complete-within-bounded-observation-tail",
+        "peerCleanupReturnDoesNotProveBrowserProcessExit": true,
+        "resourceWindowSourceFiles": {
+          "back-debug.log": {
+            "firstLine": 3262,
+            "lastLine": 4331
+          }
+        },
+        "sourceFileRangeMeaning": "First and last source line among the selected resource windows, reset observations and cleanup events including the separately bounded cleanup tail; this is a provenance range, not an export of every line."
+      },
+      "businessInput": "NOT_RUN",
+      "visibleEffect": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN"
+    },
+    {
+      "run": 4,
+      "provenance": {
+        "artifacts": {
+          "summary": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-4/summary.json",
+            "sha256": "ead87cdc7538df4411bac1f174b94e3120a0e3f32c79b6c73607b3e061c2308a"
+          },
+          "lifecycle": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-4/lifecycle.json",
+            "sha256": "443eeb90bd3630cbfd0dc56bfc21c4370f585a6252be32b2baaa581fbd11fcc6"
+          },
+          "samples": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-4/samples.jsonl",
+            "sha256": "4c4004d2cb1ab66d984527a94c4be816372ac74e75f69f5c0aec4256be6b782e"
+          },
+          "deployment": {
+            "path": "/tmp/wrd-20261025-two-miss-deployment-4.json",
+            "sha256": "6a0cb182207f176b33d46a164acbe5f082237541fde1a02f016d2863508cffef"
+          }
+        },
+        "manifestSha256": "50ad4b9c185550df14a939d1bee11da16235a36b7a4e6d96b47a33dea5d51bab",
+        "sourceEvidence": "root-attested",
+        "deploymentVerifiedAtUtc": "2026-10-24T18:21:00.567Z",
+        "runtimeBindingMatchesCommonDeployment": true,
+        "observedNonNullBuildIds": [
+          "79d27719867d5814"
+        ]
+      },
+      "ordinaryRecovery": {
+        "status": "PASS",
+        "classification": "within-grace-rebind",
+        "requestedScenario": "within-grace",
+        "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+        "recoverySeconds": 4.004420024110004,
+        "recoveredStableSeconds": 30.026362603064626,
+        "serverCoverage": "complete",
+        "reason": "none"
+      },
+      "failure": null,
+      "fault": {
+        "instrumentation": "native-direct",
+        "triggerCount": 1,
+        "blockedHttp": 0,
+        "blockedWebSocket": 0,
+        "blockSeconds": 0
+      },
+      "baselineQualification": {
+        "status": "INCOMPLETE",
+        "requestedSeconds": 300,
+        "elapsedSeconds": 300.2758244329598,
+        "samples": 301,
+        "missingSamples": 0,
+        "lateSamples": 0,
+        "failedObservations": 0,
+        "identityChangeObservations": 0,
+        "pathChangeObservations": 0,
+        "pathConvergenceObservations": 0,
+        "maxObservedNoProgressMs": 633.2999999999884,
+        "frameStallThresholdMs": 5000,
+        "frameEvidence": "requestVideoFrameCallback",
+        "threeHourContinuityMet": false
+      },
+      "sampleCoverage": {
+        "totalRows": 344,
+        "phaseRows": {
+          "startup": 9,
+          "baseline": 300,
+          "recovering": 4,
+          "recovered-stability": 31
+        },
+        "qualifiedBaselineSampleCount": 301,
+        "phaseTaggedBaselineRows": 300,
+        "baselineCountNote": "The canonical baseline counter includes its boundary observation; do not substitute only rows labeled baseline.",
+        "firstSampleBrowserDerivedUtc": "2026-10-24T18:21:12.467Z",
+        "lastSampleBrowserDerivedUtc": "2026-10-24T18:26:53.001Z"
+      },
+      "hostObservation": {
+        "status": "stable",
+        "coverage": "complete",
+        "samples": 344,
+        "hostDisconnectObserved": false
+      },
+      "resetLatency": {
+        "uniqueInputAssociations": 2,
+        "overlappingSnapshotCount": 5,
+        "sampleLineNumbers": [
+          313,
+          314,
+          315,
+          316,
+          317
+        ],
+        "phases": {
+          "recovering": 1,
+          "recovered-stability": 4
+        },
+        "countPerMetric": {
+          "inputAckRttMs": 2,
+          "inputToPostApplyFrameMs": 2,
+          "hostQueueMs": 2,
+          "hostApplyMs": 2,
+          "hostAdapterAwaitMs": 2
+        },
+        "windowLargerValueMs": {
+          "inputAckRttMs": 417,
+          "inputToPostApplyFrameMs": 339.1000000953791,
+          "hostQueueMs": 0.169387,
+          "hostApplyMs": 0.075465,
+          "hostAdapterAwaitMs": 0.6061429157853127
+        },
+        "generation": 1,
+        "leaseEpoch": 7,
+        "allMetricScopesStable": true,
+        "visibleEffectCount": 0
+      },
+      "lifecycle": {
+        "captureStatus": "ok",
+        "writeStatus": "ok",
+        "cleanupStatus": "api-finished-exit-unknown",
+        "ownedProcessExitEvidence": "not-observed",
+        "browserCloseStatus": "closed",
+        "browserCloseApiDurationMs": 66,
+        "managerStopStatus": "ok",
+        "browserEventRingCoverage": "partial",
+        "browserEventRingDroppedEvents": 996,
+        "browserEventMissingReferences": 7,
+        "browserCounters": {
+          "sd": 1,
+          "ec": 1,
+          "sc": 2,
+          "ra": 1,
+          "rr": 1,
+          "rf": 0,
+          "preclose": 1
+        },
+        "browserPrecloseDerivedUtc": [
+          "2026-10-24T18:26:52.017Z"
+        ]
+      },
+      "signalEvidence": {
+        "source": "/tmp/wrd-structured/signal-server.jsonl",
+        "windowStartUtc": "2026-10-24T18:21:00.567Z",
+        "windowEndUtc": "2026-10-24T18:27:23.244Z",
+        "injectedDisconnect": {
+          "line": 171,
+          "ts": "2026-10-24T18:26:19.143Z"
+        },
+        "formalRebind": {
+          "line": 174,
+          "ts": "2026-10-24T18:26:21.359Z",
+          "leaseEpoch": 7
+        },
+        "ownedCleanupDisconnect": {
+          "line": 182,
+          "ts": "2026-10-24T18:26:53.244Z"
+        },
+        "postCleanupLeaseExpiry": {
+          "line": 185,
+          "ts": "2026-10-24T18:27:05.388Z",
+          "resetOnlyEpoch": 8,
+          "classification": "owned-cleanup-followed-by-lease-expiry-not-another-active-session-failure"
+        },
+        "postCleanupResetCompleted": [
+          {
+            "line": 186,
+            "ts": "2026-10-24T18:27:05.465Z",
+            "state": "FREE",
+            "status": "applied"
+          }
+        ],
+        "heartbeatSocketSummaries": [
+          {
+            "stage": "injected-disconnect",
+            "line": 170,
+            "ts": "2026-10-24T18:26:19.143Z",
+            "received": 101,
+            "accepted": 101,
+            "rejected": 0,
+            "ackRequested": 101,
+            "ackEnqueued": 101,
+            "leaseEpoch": 7,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 101,
+            "lastAckEnqueuedHeartbeatSeq": 101,
+            "lastReceivedAgeMs": 1917,
+            "lastAcceptedAgeMs": 1917,
+            "lastGrantAgeMs": 302970,
+            "maxReceiveGapMs": 3734
+          },
+          {
+            "stage": "owned-cleanup-disconnect",
+            "line": 181,
+            "ts": "2026-10-24T18:26:53.244Z",
+            "received": 11,
+            "accepted": 11,
+            "rejected": 0,
+            "ackRequested": 11,
+            "ackEnqueued": 11,
+            "leaseEpoch": 7,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 11,
+            "lastAckEnqueuedHeartbeatSeq": 11,
+            "lastReceivedAgeMs": 818,
+            "lastAcceptedAgeMs": 818,
+            "lastGrantAgeMs": 31888,
+            "maxReceiveGapMs": 3014
+          }
+        ],
+        "ackEnqueuedIsNotReceived": true
+      },
+      "hostSameWindowEvidence": {
+        "sourceFiles": {
+          "back-debug.log": {
+            "firstLine": 4336,
+            "lastLine": 5404
+          }
+        },
+        "sampledWindowCount": 68,
+        "firstSampleUtc": "2026-10-24T18:21:05.014636+00:00",
+        "lastSampleUtc": "2026-10-24T18:27:23.012295+00:00",
+        "maxObservedEventLoopLagMs": 16.376,
+        "maxReportedMissedLoopSamples": 0,
+        "threadCountsObserved": [
+          6,
+          7,
+          8
+        ],
+        "taskCountsObserved": [
+          7,
+          12,
+          13,
+          14,
+          15
+        ],
+        "currentRssMiBRange": [
+          351.17578125,
+          473.24609375
+        ],
+        "maxReliablePending": 0,
+        "maxReliableInFlight": 0,
+        "maxUnorderedPending": 0,
+        "maxUnorderedInFlight": 0,
+        "maxInputWaiters": 0,
+        "maxRelayPendingFrames": 0,
+        "cleanupPendingWindowCount": 0,
+        "resourceStatusCounts": {
+          "ok": 68
+        },
+        "maxReportedCaptureFailures": 0,
+        "resetActions": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5283,
+            "ts": "2026-10-24T18:26:22.430567+00:00",
+            "inputType": "mouse",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5287,
+            "ts": "2026-10-24T18:26:22.431780+00:00",
+            "inputType": "keyboard",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          }
+        ],
+        "appliedResultCount": 2,
+        "ackEnqueueAcceptedCount": 2,
+        "peerCleanupEvents": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4342,
+            "ts": "2026-10-24T18:21:16.621Z",
+            "reason": "new-offer",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 4343,
+            "ts": "2026-10-24T18:21:16.622Z",
+            "reason": "new-offer",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 0.914031,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5393,
+            "ts": "2026-10-24T18:27:05.398Z",
+            "reason": "control-transition",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5397,
+            "ts": "2026-10-24T18:27:05.463Z",
+            "reason": "control-transition",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 65.175415,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5403,
+            "ts": "2026-10-24T18:27:23.245Z",
+            "reason": "viewer-disconnected",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5404,
+            "ts": "2026-10-24T18:27:23.247Z",
+            "reason": "viewer-disconnected",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 1.590492,
+            "clipped": false
+          }
+        ],
+        "cleanupObservationTailMs": 2000,
+        "cleanupObservationEndUtc": "2026-10-24T18:27:25.244Z",
+        "peerCleanupTerminalCoverage": "complete-within-bounded-observation-tail",
+        "peerCleanupReturnDoesNotProveBrowserProcessExit": true,
+        "resourceWindowSourceFiles": {
+          "back-debug.log": {
+            "firstLine": 4336,
+            "lastLine": 5401
+          }
+        },
+        "sourceFileRangeMeaning": "First and last source line among the selected resource windows, reset observations and cleanup events including the separately bounded cleanup tail; this is a provenance range, not an export of every line."
+      },
+      "businessInput": "NOT_RUN",
+      "visibleEffect": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN"
+    },
+    {
+      "run": 5,
+      "provenance": {
+        "artifacts": {
+          "summary": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-5/summary.json",
+            "sha256": "83126177cb7e0a3db0737d96843dc38b5948361b26c842da229a801f856310fe"
+          },
+          "lifecycle": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-5/lifecycle.json",
+            "sha256": "d0b48b896986806aabf6b9e29cb193510fda84972b7af6ae0041889da244bb64"
+          },
+          "samples": {
+            "path": "/tmp/wrd-20261025-two-miss-within-grace-5/samples.jsonl",
+            "sha256": "f6496cfb81462ac4938684127db6c9c75a0bd529f189a597d6e1fc25160b6f64"
+          },
+          "deployment": {
+            "path": "/tmp/wrd-20261025-two-miss-deployment-5.json",
+            "sha256": "de6fc890b5ad1597636c367b24917310a4fc07500f96e1e6a95e0a0c412b964a"
+          }
+        },
+        "manifestSha256": "d0d14b9929cd6b2d58cc5ffce49612d136a8da1d4343c527dd68f12bfd26b9e5",
+        "sourceEvidence": "root-attested",
+        "deploymentVerifiedAtUtc": "2026-10-24T18:27:30.150Z",
+        "runtimeBindingMatchesCommonDeployment": true,
+        "observedNonNullBuildIds": [
+          "79d27719867d5814"
+        ]
+      },
+      "ordinaryRecovery": {
+        "status": "PASS",
+        "classification": "within-grace-rebind",
+        "requestedScenario": "within-grace",
+        "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+        "recoverySeconds": 3.997279159957543,
+        "recoveredStableSeconds": 30.028741989983246,
+        "serverCoverage": "complete",
+        "reason": "none"
+      },
+      "failure": null,
+      "fault": {
+        "instrumentation": "native-direct",
+        "triggerCount": 1,
+        "blockedHttp": 0,
+        "blockedWebSocket": 0,
+        "blockSeconds": 0
+      },
+      "baselineQualification": {
+        "status": "INCOMPLETE",
+        "requestedSeconds": 300,
+        "elapsedSeconds": 300.2890596399084,
+        "samples": 301,
+        "missingSamples": 0,
+        "lateSamples": 0,
+        "failedObservations": 0,
+        "identityChangeObservations": 0,
+        "pathChangeObservations": 0,
+        "pathConvergenceObservations": 0,
+        "maxObservedNoProgressMs": 516.6000000000058,
+        "frameStallThresholdMs": 5000,
+        "frameEvidence": "requestVideoFrameCallback",
+        "threeHourContinuityMet": false
+      },
+      "sampleCoverage": {
+        "totalRows": 344,
+        "phaseRows": {
+          "startup": 9,
+          "baseline": 300,
+          "recovering": 4,
+          "recovered-stability": 31
+        },
+        "qualifiedBaselineSampleCount": 301,
+        "phaseTaggedBaselineRows": 300,
+        "baselineCountNote": "The canonical baseline counter includes its boundary observation; do not substitute only rows labeled baseline.",
+        "firstSampleBrowserDerivedUtc": "2026-10-24T18:27:36.970Z",
+        "lastSampleBrowserDerivedUtc": "2026-10-24T18:33:17.539Z"
+      },
+      "hostObservation": {
+        "status": "stable",
+        "coverage": "complete",
+        "samples": 344,
+        "hostDisconnectObserved": false
+      },
+      "resetLatency": {
+        "uniqueInputAssociations": 2,
+        "overlappingSnapshotCount": 5,
+        "sampleLineNumbers": [
+          313,
+          314,
+          315,
+          316,
+          317
+        ],
+        "phases": {
+          "recovering": 1,
+          "recovered-stability": 4
+        },
+        "countPerMetric": {
+          "inputAckRttMs": 2,
+          "inputToPostApplyFrameMs": 2,
+          "hostQueueMs": 2,
+          "hostApplyMs": 2,
+          "hostAdapterAwaitMs": 2
+        },
+        "windowLargerValueMs": {
+          "inputAckRttMs": 496.2999999523163,
+          "inputToPostApplyFrameMs": 428.3999998092768,
+          "hostQueueMs": 0.17216,
+          "hostApplyMs": 0.079561,
+          "hostAdapterAwaitMs": 0.49930717796087265
+        },
+        "generation": 1,
+        "leaseEpoch": 9,
+        "allMetricScopesStable": true,
+        "visibleEffectCount": 0
+      },
+      "lifecycle": {
+        "captureStatus": "ok",
+        "writeStatus": "ok",
+        "cleanupStatus": "api-finished-exit-unknown",
+        "ownedProcessExitEvidence": "not-observed",
+        "browserCloseStatus": "closed",
+        "browserCloseApiDurationMs": 65,
+        "managerStopStatus": "ok",
+        "browserEventRingCoverage": "partial",
+        "browserEventRingDroppedEvents": 998,
+        "browserEventMissingReferences": 5,
+        "browserCounters": {
+          "sd": 1,
+          "ec": 1,
+          "sc": 2,
+          "ra": 1,
+          "rr": 1,
+          "rf": 0,
+          "preclose": 1
+        },
+        "browserPrecloseDerivedUtc": [
+          "2026-10-24T18:33:16.997Z"
+        ]
+      },
+      "signalEvidence": {
+        "source": "/tmp/wrd-structured/signal-server.jsonl",
+        "windowStartUtc": "2026-10-24T18:27:30.150Z",
+        "windowEndUtc": "2026-10-24T18:33:47.810Z",
+        "injectedDisconnect": {
+          "line": 199,
+          "ts": "2026-10-24T18:32:43.813Z"
+        },
+        "formalRebind": {
+          "line": 202,
+          "ts": "2026-10-24T18:32:46.485Z",
+          "leaseEpoch": 9
+        },
+        "ownedCleanupDisconnect": {
+          "line": 209,
+          "ts": "2026-10-24T18:33:17.807Z"
+        },
+        "postCleanupLeaseExpiry": {
+          "line": 213,
+          "ts": "2026-10-24T18:33:29.810Z",
+          "resetOnlyEpoch": 10,
+          "classification": "owned-cleanup-followed-by-lease-expiry-not-another-active-session-failure"
+        },
+        "postCleanupResetCompleted": [
+          {
+            "line": 214,
+            "ts": "2026-10-24T18:33:29.929Z",
+            "state": "FREE",
+            "status": "applied"
+          }
+        ],
+        "heartbeatSocketSummaries": [
+          {
+            "stage": "injected-disconnect",
+            "line": 198,
+            "ts": "2026-10-24T18:32:43.813Z",
+            "received": 102,
+            "accepted": 102,
+            "rejected": 0,
+            "ackRequested": 102,
+            "ackEnqueued": 102,
+            "leaseEpoch": 9,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 102,
+            "lastAckEnqueuedHeartbeatSeq": 102,
+            "lastReceivedAgeMs": 354,
+            "lastAcceptedAgeMs": 354,
+            "lastGrantAgeMs": 303836,
+            "maxReceiveGapMs": 3345
+          },
+          {
+            "stage": "owned-cleanup-disconnect",
+            "line": 208,
+            "ts": "2026-10-24T18:33:17.806Z",
+            "received": 11,
+            "accepted": 11,
+            "rejected": 0,
+            "ackRequested": 11,
+            "ackEnqueued": 11,
+            "leaseEpoch": 9,
+            "scopeAttemptSequence": 1,
+            "lastAcceptedHeartbeatSeq": 11,
+            "lastAckEnqueuedHeartbeatSeq": 11,
+            "lastReceivedAgeMs": 811,
+            "lastAcceptedAgeMs": 811,
+            "lastGrantAgeMs": 31319,
+            "maxReceiveGapMs": 3491
+          }
+        ],
+        "ackEnqueuedIsNotReceived": true
+      },
+      "hostSameWindowEvidence": {
+        "sourceFiles": {
+          "back-debug.log": {
+            "firstLine": 5406,
+            "lastLine": 6475
+          }
+        },
+        "sampledWindowCount": 67,
+        "firstSampleUtc": "2026-10-24T18:27:34.013493+00:00",
+        "lastSampleUtc": "2026-10-24T18:33:47.041583+00:00",
+        "maxObservedEventLoopLagMs": 12.245,
+        "maxReportedMissedLoopSamples": 0,
+        "threadCountsObserved": [
+          6,
+          8
+        ],
+        "taskCountsObserved": [
+          7,
+          13,
+          14
+        ],
+        "currentRssMiBRange": [
+          351.1640625,
+          472.48828125
+        ],
+        "maxReliablePending": 0,
+        "maxReliableInFlight": 0,
+        "maxUnorderedPending": 0,
+        "maxUnorderedInFlight": 0,
+        "maxInputWaiters": 0,
+        "maxRelayPendingFrames": 0,
+        "cleanupPendingWindowCount": 0,
+        "resourceStatusCounts": {
+          "ok": 67
+        },
+        "maxReportedCaptureFailures": 0,
+        "resetActions": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 6356,
+            "ts": "2026-10-24T18:32:47.018218+00:00",
+            "inputType": "mouse",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 6360,
+            "ts": "2026-10-24T18:32:47.056554+00:00",
+            "inputType": "keyboard",
+            "action": "reset",
+            "transport": "socket",
+            "status": "accepted"
+          }
+        ],
+        "appliedResultCount": 2,
+        "ackEnqueueAcceptedCount": 2,
+        "peerCleanupEvents": [
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5412,
+            "ts": "2026-10-24T18:27:40.440Z",
+            "reason": "new-offer",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 5413,
+            "ts": "2026-10-24T18:27:40.442Z",
+            "reason": "new-offer",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 1.594778,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 6465,
+            "ts": "2026-10-24T18:33:29.811Z",
+            "reason": "control-transition",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 6469,
+            "ts": "2026-10-24T18:33:29.928Z",
+            "reason": "control-transition",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 116.945236,
+            "clipped": false
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 6474,
+            "ts": "2026-10-24T18:33:47.810Z",
+            "reason": "viewer-disconnected",
+            "event": "start"
+          },
+          {
+            "sourceFile": "back-debug.log",
+            "line": 6475,
+            "ts": "2026-10-24T18:33:47.811Z",
+            "reason": "viewer-disconnected",
+            "event": "terminal",
+            "outcome": "returned",
+            "elapsedMs": 0.984116,
+            "clipped": false
+          }
+        ],
+        "cleanupObservationTailMs": 2000,
+        "cleanupObservationEndUtc": "2026-10-24T18:33:49.810Z",
+        "peerCleanupTerminalCoverage": "complete-within-bounded-observation-tail",
+        "peerCleanupReturnDoesNotProveBrowserProcessExit": true,
+        "resourceWindowSourceFiles": {
+          "back-debug.log": {
+            "firstLine": 5406,
+            "lastLine": 6472
+          }
+        },
+        "sourceFileRangeMeaning": "First and last source line among the selected resource windows, reset observations and cleanup events including the separately bounded cleanup tail; this is a provenance range, not an export of every line."
+      },
+      "businessInput": "NOT_RUN",
+      "visibleEffect": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN"
+    }
+  ],
+  "priorFailuresPreserved": [
+    {
+      "path": "docs/superpowers/reports/evidence/2026-10-24-continuing-disconnect/interactive-natural-lease-expiry-3.json",
+      "sha256": "e4ff5078d37110ab4f12ec90b81adedca22a094c587fa9f5352aacc8042c67f3",
+      "disposition": "Unchanged historical failure evidence; these five new-version passes do not reclassify or erase it."
+    },
+    {
+      "path": "docs/superpowers/reports/evidence/2026-10-24-continuing-disconnect/heartbeat-single-timeout-baseline-failure.json",
+      "sha256": "e9b83a0b9f06683529850e7a6f120ae9fe08c99693fa88b6acdee5d57e9a3a9b",
+      "disposition": "Unchanged historical failure evidence; these five new-version passes do not reclassify or erase it."
+    }
+  ],
+  "limitations": [
+    "Five short ordinary recovery runs do not establish a 30-minute or three-hour uninterrupted session, a public-path latency SLO, or immunity to later natural disconnects.",
+    "The prior natural lease-expiry failure and the older single-timeout-watchdog baseline failure remain retained as failures; neither is counted as a pass here.",
+    "Only mandatory recovery reset actions were measured. Business mouse/keyboard actions, controlled marker visible effects and physical display latency were not run.",
+    "Browser lifecycle ring coverage is partial and drops older bounded events; counters and source summaries are retained, but a complete browser event history is unavailable.",
+    "Owned browser close API completion is known, while owned browser process exit was not observed; cleanup remains api-finished-exit-unknown.",
+    "Lease expiry and reset-only cleanup after the owned browser closes are expected teardown observations, not additional active-session recovery failures.",
+    "Signal accepted/ACK-enqueued summaries do not establish remote ACK delivery and must not be summed across repeated summary events."
+  ],
+  "collectionActions": {
+    "readExistingArtifactsAndLogs": true,
+    "testsRun": false,
+    "sourceModified": false,
+    "serviceAction": false,
+    "viewerStarted": false,
+    "otherEvidenceModified": false
+  }
+}

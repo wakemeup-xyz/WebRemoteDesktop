@@ -1,14 +1,15 @@
 # 2026-10-24 控制恢复修复记录
 
-## 最新状态（2026-10-25，维护验收继续）
+## 最新状态（2026-10-25）
 
-本段为当前结论：main的0a0bc6d/build6fd0已加载，v3媒体/心跳/唯一计数生产闭环通过；但单次ACK watchdog在约66秒自然baseline触发，严格恢复验收仍未通过。当前正在改为同scope连续两次失确认触发，不能宣布控制稳定已解决。下列更早的两次PASS和30分钟窗口保留各自版本归属。
+当前生产 Signal/Viewer 已加载 main 的 `a88f7fe` / build `79d27719867d5814`（Signal PID15428）。同scope连续两次心跳失确认才触发自动恢复，五次原租约短断线均通过，另一次30分钟公网TURN被动连续性通过。Host Python仍为 `9e352fc8` / PID64981，启动配置来自 `2e611d5`；不能把最新HEAD当成Host已重新加载的Python版本。下方历史失败保留，不回改为PASS。
 
 - 三个确定恢复/诊断缺口已提交并加载；Host和Signal已实际切换launchd Interactive，修复了Host配置比较、无.plist后缀预检、失败PID和诊断输出缺口，tunnel未操作。
 - 新调度首轮fresh18.307Hz、重用8.305%，旧quiet分别7.800Hz/60.426%；grab仍约25ms，而pacing超睡从约77ms降到约5ms。不同负载/进程年龄不作严格因果量化。
-- 首次严格原租约短断线PASS：7.016秒恢复、30.014秒稳定；第二次也PASS（7.001秒恢复、30.033秒稳定），第三次在无注入的baseline发生真实lease-expired，尚未解决，见下方；不能据前两PASS宣布稳定。此前30分钟PASS属于旧09d5c24/build5448，仅证明该窗口passive连续性。
+- 当前版本五次独立strict原租约恢复均PASS：每次5分钟/301次无缺测基线、一次native direct-close，3.994–5.000秒恢复并稳定至少30秒，Host/Server证据完整。故意断开使各轮continuity为INCOMPLETE；不等于连续长测失败或PASS。更早的自然lease expiry和单次ACK误触发分别属于旧版本。
 - 正常UI上报发现runtime重复计数；唯一raw40log/9trace被旧receipt计80/18，修复75ac794已加载，真实UI复核1报告/40log/9trace，旧错误证据保留。
-- 新配置RSS尚无30分钟稳定平台证明，业务输入/marker可见效果及物理显示仍NOT RUN；不能宣布全部目标完成。早前历史诊断删除及测试日志污染的事故与限制在文末完整披露。
+- 新配置30分钟正式域名TURN会话PASS：1,800.170秒/1,801次观察，缺测、身份/路径变化、心跳timeout/reject均0，最大观测无新帧666.6ms。资源仍有优化空间：Host RSS有回收但峰值540.465MiB；capture lifetime max275.659ms，不能宣布max≤250ms达标或无内存泄漏。
+- 真实业务输入、marker可见效果和物理显示仍NOT RUN；两条reset关联的ACK较大值405.5–496.3ms也没有达到200ms目标。不能宣布全部性能/输入效果验收完成。早前历史诊断删除及测试日志污染的事故与限制在下方完整披露。
 
 ## 确认的问题
 
@@ -172,7 +173,7 @@ Browser visible/online/focused、lag最大9ms，Engine仍有周期tx/flush；但
 
 真实raw内已有约18FPS和实测drop delta0，但receipt仍missing：v3事件正文被正确清空，而投影器仅读events。修复保留单调5秒内、同request/current/prior owner且实际selected inbound归属当前track的有限区间证明，缺字段/暖机/track变更/异步旧请求保持unknown；原始id/SSRC/track不进入新payload。不改变媒体health selector。v3 interval delta与legacy口径未知的事件counter分列，重叠报告不合并成会话掉帧总数。
 
-另修正sampleStats.last错误取排序最大值，以及runtime/diagnostic资源数组先分组再拼接的顺序错误，统一有界FIFO。focused runtime+stats21、Viewer/producer9、redactor2，共32项通过；独立review提出的跨track await、selected inbound归属及资源顺序三条反例已闭合。尚未部署，不能回改原receipt的missing或声称生产已覆盖。
+另修正sampleStats.last错误取排序最大值，以及runtime/diagnostic资源数组先分组再拼接的顺序错误，统一有界FIFO。focused runtime+stats21、Viewer/producer9、redactor2，共32项通过；独立review提出的跨track await、selected inbound归属及资源顺序三条反例已闭合。本节为0a加载前记录，彼时尚未部署，不能回改原receipt的missing；后续新上报验证另列。
 
 只读核对tunnel6438的17个线程base/max均20/20；这是另一个待阶段采样的上下文线索，不证明它造成12秒控制续租失效，也不构成操作授权。tunnel进程、配置和启动时间均未改动。
 
@@ -184,9 +185,9 @@ Browser visible/online/focused、lag最大9ms，Engine仍有周期tx/flush；但
 
 诊断持久化保留固定heartbeat计数、单调age、last/max ACK RTT和单层lastFailure；ACK RTT包含调度、传输及Signal处理，不等于纯网络耗时或输入可见效果。真实critical builder→deferred UI builder→pending replay→Signal redactor→私有raw/daily summary闭环1/1通过，lease/socket canary及nested failure被剔除。Server只在失效/首拒绝/disconnect输出有界接收/续租/ACK enqueue摘要，ACK enqueue不宣称Viewer收到。
 
-定向HB24/24、旧连续性兼容4/4通过；Viewer初次全套1527/1527。最终source freeze后，webrtc/diagnostic/HB相关文件495/495通过。Signal初轮572中571通过，唯一失败是connected消息精确期望未加入新能力字段；已明确补该字段，保留原精确断言，完整复跑中。最终隔离build6fd0dc72ca413149；源码和文档尚待统一提交加载，生产自然lease expiry尚不能记解决。
+定向HB24/24、旧连续性兼容4/4通过；Viewer初次全套1527/1527。最终source freeze后，webrtc/diagnostic/HB相关文件495/495通过。Signal初轮572中571通过，唯一失败是connected消息精确期望未加入新能力字段；已明确补该字段，保留原精确断言。本节为01:38加载前时点，彼时完整复跑与提交加载尚待完成；最终离线及实际结果见后续记录，不能以该时点代码存在记自然失效已解决。
 
-Signal最终完整复跑572/572通过，0skip；新能力字段仍用精确值1断言。离线验证及日志SHA见heartbeat-media-offline-validation.json，隔离build6fd0dc72ca413149。接下来仅在无Viewer时提交并加载本地Signal，Host与tunnel保持原进程；所有实测结果随后另记，不能把离线通过当自然失效已经修好。
+Signal最终完整复跑572/572通过，0skip；新能力字段仍用精确值1断言。离线验证及日志SHA见heartbeat-media-offline-validation.json，隔离build6fd0dc72ca413149。这仍是01:38加载前离线记录；维护加载及其后单次ACK误触发见下节，不能把离线通过当自然失效已经修好。
 
 ## 0a0bc6d加载后的真实验证及单次ACK误触发
 
@@ -196,4 +197,50 @@ Signal最终完整复跑572/572通过，0skip；新能力字段仍用精确值1�
 
 同一加载版本随后loopback正常UI20秒、7个唯一ACK的RTT为0.8–12.5ms（median0.9ms）；先前公网20秒8ACK为429–1134ms（median505.75ms）。这是顺序窗口，不同负载不作严格A/B；但公网信令路径有显著额外耗时，不能再全部归Host抓帧/CPU。单次2.5秒即关闭对这条慢路径过于激进，正改为同scope连续两次miss后恢复，同时保留单次deadline/单pending/3秒周期及12秒TTL。真实失败与新方案分别记录，不回改PASS。
 
-连续两次修正的最终离线验证：Viewer相关471/471、Signal完整test/websocket576/576，0skip，独立review无遗留必修；隔离build79d27719867d5814。新增seq摘要的跨grant反例先红9!=null后绿，sendGrant仅epoch变化清scopeAttemptSequence/acceptedSeq/ACK-enqueuedSeq，同epoch重复grant不重置。received/accepted总计及lastAcceptedAge仍为socket生命周期口径，不能结合新epoch误称该epoch已续租；必须同时查看当前scope的seq是否已知。源码即将提交加载，实际重复/长会话未验收。
+连续两次修正的最终离线验证：Viewer相关471/471、Signal完整test/websocket576/576，0skip，独立review无遗留必修；隔离build79d27719867d5814。新增seq摘要的跨grant反例先红9!=null后绿，sendGrant仅epoch变化清scopeAttemptSequence/acceptedSeq/ACK-enqueuedSeq，同epoch重复grant不重置。received/accepted总计及lastAcceptedAge仍为socket生命周期口径，不能结合新epoch误称该epoch已续租；必须同时查看当前scope的seq是否已知。本段为01:59加载前时点，实际加载/重复断线/长会话结果见下文，不用离线结果替代。
+
+## a88f7fe最终加载与五次原租约恢复
+
+01:59仅重启Signal为15428，生产build为79d27719867d5814。Host64981及其Python源9e352fc8未变，Host/Signal均保持Interactive；cloudflared6438及其10月24日09:54:07启动时间未变。正式域名与本地manifest一致，健康及Host在线通过；safe URL文件仍缺失，没有重建tunnel。末次维护后再次核实同一组PID、配置和build。
+
+五次独立strict within-grace实际通过，每次先运行301次/5分钟无缺测基线，再一次native direct-close，恢复耗时依次为5.000、4.000、3.994、4.004、3.997秒；各自稳定30.023–30.029秒，Host/Server coverage完整、最终capture成功。每轮故意断开使整段continuity=INCOMPLETE，这是刺激边界，不改为passive PASS。首轮结束紧接下一预检时，Signal尚有该owned连接的关闭宽限，预检正确拒绝；私有批次驱动增加只读等待再检查空闲后继续，没有抢占用户或强行清lease。
+
+每轮只产生mouse/keyboard reset两个唯一输入关联，五个重叠窗口不是十个输入。各轮两样本rolling ACK较大值405.5–496.3ms、post-apply-frame较大值339.1–428.4ms；Host queue/apply很小，但不通过相减推算纯网络，不将ACK与后帧相加。post-apply-frame证明当前scope/RTP下应用后的帧呈现，不证明目标应用可见内容改变。200ms输入目标尚未达标；业务输入和可见效果NOT RUN。
+
+完整脱敏证据：[五次原租约恢复](evidence/2026-10-24-continuing-disconnect/heartbeat-two-miss-five-recoveries.json)。旧自然lease-expiry、单次ACK误触发和观察器缺口均保留原结果，不能被新PASS覆盖。
+
+## 当前版本30分钟公网长会话与性能
+
+正式域名公网TURN被动会话实际1,800.170秒、1,801次观察，missing/late/failed/identity/path change均0，最大观测无进展666.6ms，所有样本Socket/PC及input gate正常。近似对齐的资源/日志窗口为本地02:35:12.047–03:05:12.050；该窗口用heartbeat两种浏览器时钟对齐，非逐帧native时间戳。所有样本实测build均为79d27719867d5814，另有运行前后外部部署pin；这不是canonical持续绑定native manifest的证明，后pin也晚于随后功能测试。
+
+| 来源与窗口口径 | 实际结果 | 解释与未通过项 |
+| --- | --- | --- |
+| 心跳1Hz独立观察，1,800条 | 600次ACK计数增量；事件RTT median588.6/p95 716.9/max1,277.5ms；timeout/reject=0 | 包含调度、传输、Signal处理，不是纯网络；不与业务输入200ms目标混用 |
+| OS进程采样1,800条，missed=0 | Host单核等效平均58.26%，Signal约0.09%；Host RSS首468.137/末509.758、p95 525.316/max540.465MiB | RSS有明显回收，非单调；仍不能证明无泄漏或长期平台 |
+| Host runtime 323个快照 | 新截图rolling cadence median18.722Hz；last-grab快照median32.969/p95 47.252ms | 快照分位数不是全部抓帧分位数，不能据此宣布capture p95目标通过 |
+| capture本窗口新增极值配对 | wall275.659ms（18:52:33Z更新），同次threadCPU21.742/nonCPU253.917ms | max仍超过250ms目标；该配对支持等待占主导，不表示CPU调度、CoreGraphics、换页贡献均已拆清 |
+| event-loop滚动窗口 | 最大窗口p95 13.591ms、观测max28.387ms，missed samples最大0 | 是已记录窗口的结果，未伪造完整逐次延迟分布 |
+| 编码358个窗口/34,513次 | 近似加权均值6.173ms；窗口p95最大24.047ms、单次窗口max最大105.303ms | H.264 VideoToolbox/1152×720，窗口p95不能合并成全程p95 |
+| Viewer stats 1,800条 | FPS median19.0，1条0FPS、6条<15FPS；video dropped非零行0 | passive各观察间隔仍有进展；RTP loss非零2行、freeze非零97行分别保留，不叫无抖动/无freeze |
+
+独立HB sidecar无丢行，canonical退出0。浏览器生命周期诊断每次cursor gap0/truncated=false，累计ring eviction从0到5,660是128项环对已消费旧事件的淘汰，不是JSONL缺行、输入丢失或媒体丢帧。canonical cleanup为api-finished-exit-unknown，browser/manager API已完成，OS进程退出未观测。三小时连续性、业务输入、marker可见效果和物理显示仍NOT RUN。
+
+Host runtime实际覆盖02:35:14.044–03:05:07.048，共1,793.004秒，窗口头1.997秒/尾5.002秒未被该来源覆盖，不插值。完成计数69→33,652，差分33,583/1,793.004=18.730Hz。18:52:33Z观测到本次会话新增275.659ms慢grab，同一分钟RSS随后回收到249.617MiB；时序共现不证明回收导致慢帧。维护全部owned页面关闭后的独立90秒/91点idle观察中Host RSS保持506.621MiB、CPU仅增加0.45秒，短期高水位未释放不能直接叫泄漏，也不是长期内存平台证明。本轮没有同窗完整整机CPU idle/独立swap差分验收，系统资源契约仍未全覆盖。
+
+证据：[当前版本30分钟](evidence/2026-10-24-continuing-disconnect/heartbeat-final-passive-30m.json)。原始日志/逐秒观察保留本机，仓库仅保存脱敏标量、覆盖边界和源文件SHA。
+
+## 连续两次控制心跳黑洞功能验收
+
+为区分“原生连接关闭”与“连接open但控制上行失效”，单独使用维护owned页面、正常登录及一次UI Start，通过Playwright路由精确丢弃当前scope连续两个control-heartbeat，第二次立即解除；其它消息原样转发。未调用产品engine.close、手动抢lease、重放输入或二次Start。路由send的计数仅代表调用，公共API不提供异步转发交付确认，因此该测试只记routed-heartbeat-drop-functional，不叫native outage或五次strict验收的替代。
+
+首轮已经原epoch13恢复、9.363秒，但私有探针将累计ring eviction误作未读gap，10秒稳定观察时停止，原结果INCOMPLETE保留。复核证明n1→125连续、gap0，环满后淘汰的是已消费n1..3。仅修私有探针为cursor gap>0/capacity才失败；终点仍要求诊断队列排空，生产代码及canonical sampler未修改。三项纯fixture先红后绿，覆盖正常淘汰、真实未读gap和truncated不能终点PASS。
+
+重跑完整PASS：两个drop，timeout增量2、最后失败streak2，实际自动engine/Socket重连及Server正式rebind；原epoch17、同attempt/PC，首次drop至恢复9.448秒、第二次drop后6.448秒，再稳定30.023秒，Host/Server coverage完整，证据writer完整且丢行0。这个9.448秒包含两次ACK预算与检测，不能和native direct-close后的4–5秒混为同一恢复起点。cleanup API完成但OS退出未观测，输入/可见效果/物理测试仍NOT RUN。两轮及独立Signal/Host链路复核见[心跳黑洞功能证据](evidence/2026-10-24-continuing-disconnect/heartbeat-watchdog-functional.json)。
+
+## 最终诊断上报和剩余方案
+
+当前build通过正常UI发送手动诊断并获保存确认：唯一raw reported81/retained0/redacted81/trace9，runtime计数恰为1报告；interval FPS21.0、实测video dropped delta0均available。runtime receipt窗口始于1792865120731、查询于其证据内capturedAt，summary gap0、ringDrop185；这是该Signal进程累计观测窗口，不是该20秒页面的掉帧/输入丢失数。coverage.missing仅列inputToVisibleEffectMs；另行保留的legacy droppedFrames口径未知仍unavailable，不能泛称所有指标齐全。Terminal admin bootstrap enabled=true、session池空闲。证据：[最终UI保存与receipt](evidence/2026-10-24-continuing-disconnect/heartbeat-final-production-ui-receipt.json)。
+
+之前没有一次修完，是因为媒体ACK幂等、DC同步异常、单向控制续租、调度超睡和公网ACK延迟属于不同故障路径；早期health/短测没有覆盖open但续租不可确认。新正向ACK又暴露单次超时过激，已按真实反例改为连续两次，并独立验证自动恢复。不能据此认定所有用户网络路径均已解决。
+
+下一步按收益与证据排序：先在同设备/同网络记录业务输入ACK及后帧，定位公网额外等待；在受控隔离GUI内补真实marker效果及覆盖率；再做等负载capture后端A/B和长时RSS跟踪。当前capturemax与输入ACK门槛未全达成，不通过延长授权TTL、放宽reset门禁、忙等或擅改tunnel掩盖。服务保持运行，整体性能目标不标记全部完成。

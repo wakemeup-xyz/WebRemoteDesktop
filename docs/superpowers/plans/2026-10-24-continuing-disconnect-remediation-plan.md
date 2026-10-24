@@ -71,7 +71,7 @@
 3. UI 明确区分 `page-hidden`、`transport-lost`、`negotiating`、`media-stalled`，并在 page visibility 恢复时只提交一个 generation 新的 resume。
 4. `/api/admin/observability/summary` 显示 Host receipt 的缺测原因，不把 heartbeat ring drop 当成 RTP drop。
 
-通过门槛：真实 marker 会话 ACK p95≤200ms、max≤1,000ms；expired ACK=0；`inputToVisibleEffectMs` 覆盖率≥95%；reported/retained/redacted/trace 计数各自准确，未知保持 null，summary gap=0。
+通过门槛：真实marker会话业务输入/reset ACK（不含heartbeat）p95≤200ms、max≤1,000ms；expired ACK=0；`inputToVisibleEffectMs` 覆盖率≥95%；reported/retained/redacted/trace 计数各自准确，未知保持 null，summary gap=0。
 
 ## 阶段 4：维护窗口发布和验收
 
@@ -90,7 +90,7 @@
 ## 当前状态
 
 - 阶段 0：已完成今天日志基线和诊断文档；Host 00:00–08:18 的证据缺失已标注。CPU 归因复核已纠正 GIL/2x/分位数口径；全机压力与 native 等待的受控 A/B 仍未运行。
-- 阶段 1：未实施受控采集隔离 A/B。阶段 2–3：下方三个确定缺口已完成代码和离线验证；其余广泛整改仍待独立证据。阶段 4：本次最小修复正在加载和验收，不能把 health 正常或单次短测宣布为持续可用。
+- 阶段 1：未实施受控采集隔离A/B。阶段 2–3：确定的恢复、心跳与诊断缺口已完成代码、离线验证及加载；广泛整改仍按证据决定。阶段 4：a88f7fe/build79d27719867d5814已通过五次strict原租约短断线和30分钟公网TURN被动连续性；真实业务输入可见效果及全部性能门槛尚未通过。
 
 ## 本次最小修复清单（22 点补充）
 
@@ -100,7 +100,7 @@
 - [x] 修复同步 DC send 失败的 Socket fallback，验证成功 DC 不双发、Socket 离线 fail-closed、序列化错误不被吞掉。
 - [x] 贯通 reported/retained/redacted/trace 计数，验证原文不落盘、raw 淘汰后日汇总仍保留计数、历史未知不伪装为 0。
 - [x] 运行初次最小修复的 Signal/Viewer 回归和隔离前端构建；review 实现及文档，提交到 main（09d5c24）。
-- [x] 按现有维护授权在无 Viewer 时加载本地修复；初次09d5c24及最新4826f72均只重启Signal，Host/tunnel未变。验收结果分别记录，不以加载替代通过。
+- [x] 初期按现有维护授权在无Viewer时加载09d5c24及随后4826f72，彼时均只重启Signal、Host/tunnel未变。后续Host调度及a88加载另列，验收结果分别记录，不以加载替代通过。
 - [x] 分别记录离线通过、生产已加载、passive/短断线和真实可见效果状态；真实业务输入及可见效果仍为NOT RUN，前两次短断线保留INCOMPLETE。
 
 初次最小修复离线结果：Viewer 1,507/1,507，Signal 432/432；独立媒体审查未发现必修问题；隔离构建 buildId `544814d637669668`。本轮回归触发旧诊断测试清理生产目录的隔离缺陷，历史 raw 丢失；现已修复并新增生产 canary 回归。事故及证据边界见 `../reports/2026-10-24-control-recovery-fix-execution.md`。
@@ -143,13 +143,13 @@
 - [x] 修复Host helper先覆盖配置再比较的加载缺口；22/22测试覆盖私有日志canary、预检、安装、部分注册及回滚失败。
 - [x] Host plist显式Interactive；Signal helper使用私有参数数组plist和预检/失败恢复，18/18测试通过；实际启动路径无效时在停旧服务前拒绝。
 - [x] 调度候选focused回归/独立review、main提交后已在无Viewer维护窗口加载；实际Interactive及本地/公网健康已核实，tunnel未操作。
-- [x] 调度候选已重跑两次strict原租约短断线和活动capture/资源观察；fresh/pacing改善已有运行证据。第三次自然lease expiry保留失败，HB新修复及新配置30分钟仍待下方独立验收。
+- [x] 调度候选已重跑两次strict原租约短断线和活动capture/资源观察；fresh/pacing改善已有运行证据。第三次自然lease expiry保留旧版本失败；后续a88心跳修复及30分钟新配置验收结果见下方，不回改旧结果。
 
 ### Host加载阻断的实测修正
 
 - [x] 独立4个probe确认临时文件缺.plist后缀导致bootstrap5；改唯一私有目录/probe.plist及唯一label，清理未确认时拒绝reload。
 - [x] restart-host失败保留/刷新真实项目PID；无Host才清理；helper先输出子脚本诊断再返回失败。34项Host相关回归及19项service helper通过，7个核心反例RED→GREEN。
-- [x] Signal已加载Interactive并核实31/63与本地/公网/Terminal admin bootstrap；Host已在2e611d5提交后通过修复预检重启64981，实际interactive4/max63；短断线进行中。
+- [x] Signal已加载Interactive并核实31/63与本地/公网/Terminal admin bootstrap；Host已在2e611d5提交后通过修复预检重启64981，实际interactive4/max63。当前版本短断线和30分钟被动验收结果见下方。
 
 ### 真实上报后发现的计数重复
 
@@ -162,7 +162,7 @@
 - [x] 保留第三次无fault的真实baseline-failed及完整时间线；前两PASS不能外推长期稳定。
 - [x] 实现协商式heartbeat ACK、当前scope单pending/2500ms预算、固定摘要；正常engine重连接入现有正式rebind，TTL/授权不变。
 - [x] 真实Signal+Viewer反例红绿、旧能力/晚ACK/隐藏/手动/拒绝/定时器有界复核；补真实Engine.IO non-draining transport和晚capability反例，24/24通过，独立复审无遗留必修。
-- [ ] 与v3 interval观测修复一起回归/隔离build，在无Viewer时提交加载；再重跑重复断线和长会话资源，不因新代码存在勾选通过。
+- [x] 与v3 interval观测修复一起回归/隔离build并在无Viewer时提交加载。0a单次ACK误触发保留失败；最终a88版本重复断线和长会话结果独立记录。
 
 ### 媒体区间观测闭环
 
@@ -170,7 +170,7 @@
 - [x] request/current/prior owner、所选 inbound 的实际 track 及稳定 counters 归属、5秒单调freshness、白名单及独立 interval delta scope 已实现；不改原媒体健康 selector。
 - [x] 修复 sampleStats.last 排序取最大值及跨资源来源顺序错误；使用统一有界 FIFO，max 与 last 分离。
 - [x] focused 32项通过并完成独立只读复审；三条复审反例均补齐。
-- [ ] 与心跳闭环统一完整回归、最终隔离build、main提交后加载；正常UI上报核对真实 receipt。旧报告不能补造为新协议覆盖。
+- [x] 与心跳闭环统一完整回归、隔离build、main提交后加载；0a和a88均完成正常UI真实receipt核对。旧报告不补造为新协议覆盖。
 
 只读附记：现有tunnel进程6438的线程base/max仍为20/20。这只是调度上下文线索，尚无该进程的阶段耗时或控制失效因果证据；本轮未操作tunnel，不将Host/Signal的收益外推到tunnel。
 
@@ -180,4 +180,15 @@
 - [x] 首次新strict无fault baseline约66秒失败，保留forced-close证据；测试随即cleanup，不把它误称自动rebind失败。
 - [x] 顺序正常UI对比同版本公网与loopback ACK，保留原样本和顺序/负载限制，不把差值叫纯网络。
 - [x] 连续2个current-scope ACK miss触发恢复，deadline/TTL/reset期限不变；28项HB及1项真实诊断链通过，有效ACK清零、旧晚ACK、隐藏、重复grant、真实non-drain、新epoch seq清空均覆盖。
-- [ ] 完成定向回归/独立复审/隔离build并提交，仅无Viewer维护窗口加载；重新运行五次strict≤10秒和新配置30分钟资源/连续性，失败继续保留。
+- [x] a88定向回归：Viewer相关471/471、Signal完整576/576、HB28/28及诊断持久化1/1，独立复审/隔离build完成；main提交后无Viewer维护窗口仅重启Signal，build79d27719867d5814已核实。
+- [x] 五次strict原租约恢复均≤10秒，Host/Server coverage完整，每次恢复后稳定≥30秒；完整脱敏证据为heartbeat-two-miss-five-recoveries.json。
+- [x] 当前版本30分钟公网TURN被动连续性PASS，1801样本无缺测，心跳timeout/reject为0；实际CPU/RSS/FPS/抓帧/编码及诊断环边界单列记录，不能把连续性PASS称作全部性能门槛通过。
+- [x] 连续两个心跳黑洞的自动恢复功能验收：首轮私有探针ring误判的INCOMPLETE保留；修复探针后独立重跑PASS，9.448秒原租约恢复、稳定30.023秒，证据heartbeat-watchdog-functional.json。仅为routed功能验证，不代替native outage/strict或业务输入验收。
+- [ ] 输入ACK仍高于200ms目标；真实业务输入/marker可见效果、三小时连续性及受控采集后端A/B待独立验收，不伪造覆盖。
+
+### 剩余性能工作顺序（最终实测后更新）
+
+1. 在同设备/同网络受控窗口分别测DC业务ACK与Socket reset ACK，利用已有reset哈希、Signal本地request→Host ACK及Viewer同钟RTT分段；未知跨时钟不直接相减为单向网络。当前两条reset的405.5–496.3ms只证明该样本超过目标，不能外推全部DC业务输入。
+2. 准备满足既有隔离GUI边界的marker目标，才执行真实业务输入与内容效果验收；未满足时保留NOT RUN，不绕过guard或向任意桌面窗口发送业务输入。
+3. 进行原生异步capture/独立进程/当前线程的等负载A/B，比较实际source→paint age、新鲜cadence、控制响应、RSS/CPU与停止后的资源回收；当前max275.659ms已在本长测内新增，不能用last快照p95代替达标。
+4. 补齐同窗整机CPU idle、独立swap差分和更长RSS平台/回收证据，再做三小时连续性；不调整其它业务进程、不操作tunnel来制造低负载通过。

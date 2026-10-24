@@ -2,6 +2,8 @@
 
 日期：2026-10-24，Asia/Shanghai。只读分析日志、依赖源码和系统采样；未修改业务代码、未重启服务、未调整其它业务进程或 tunnel。
 
+以上描述初始只读阶段。10月25日后续已修复并加载本地服务调度、控制恢复和观测代码，tunnel未操作；最新实测见文末及[实施记录](2026-10-24-control-recovery-fix-execution.md)。
+
 ## 结论
 
 **部分窗口观测到 CPU/系统资源压力，慢帧主要不是抓帧线程自身持续计算；资源压力的因果贡献仍待受控对比。** 线程 CPU 很低而抓帧墙钟很长，表示时间主要没有计入抓帧线程 CPU；可能是 CoreGraphics/WindowServer 工作或等待、调度、换页、锁或 GIL 重新获取。现有数据不能在这些原因中唯一归因。
@@ -65,7 +67,7 @@
 3. **在维护窗口做等负载 A/B。** 保留当前 1x/单线程配置，对比现线程实现、capture 独立进程和原生异步抓屏流。只有测到具体改善才切生产；其它业务资源调整需另行授权。
 4. **验收新鲜画面与控制。** decoded FPS 正常而 fresh capture 低仍不能通过；分别报告 Host 执行、ACK RTT 和 marker→rVFC，不互相替代。
 
-诊断、spec 和 plan 已同步修正。本轮业务代码与服务运行配置均未变，不能宣布断连已修复。
+截至本节初始只读归因时点，诊断、spec和plan已同步修正，业务代码与服务运行配置尚未改变；后续实际实施及维护验收见文末，不以初始诊断替代修复。
 
 ## 10月25日追加：launchd上下文可复现timer长尾
 
@@ -74,3 +76,13 @@
 独立唯一LaunchAgent默认/Interactive对照（主线程各20次20ms）：默认excess p50/p95/max=17.634/134.308/155.981ms，Interactive=2.038/7.395/9.768ms，进程CPU约1.37/1.26ms。两个临时label均已bootout且不存在；后续thread阶段未在35秒预算完成，不纳入结果。该反例证明默认启动上下文可产生明显timer长尾，支持Interactive作为候选；不能单凭探针宣称真实capture或ACK已改善。
 
 这也解释为何此前只看Host CPU利用率或普通shell timer阴性仍未定位：进程服务类型不同，且高压力时另有CoreGraphics IPC、调度和内存压力。当前调度候选仅作用于本地Host/Signal，不改nice/全局电源/LegacyTimers，不采用忙等；部署后仍需核实实际spawn/priority与真实会话fresh cadence、loop、资源、短断线和可见输入。对应证据：`evidence/2026-10-24-continuing-disconnect/launchagent-timer-context-ab.json`。
+
+## 当前版本实测：不能简单叫作CPU算不过来
+
+Host64981及Signal15428已实际加载launchd Interactive。旧quiet窗口请求约25ms的pacing实际100–105ms，加载后首轮实际约27ms，新截图完成率约7.8→18.3Hz；不同负载与进程年龄不能作为严格等负载A/B收益。这个结果支持服务调度上下文是一个可修复因素，不证明CoreGraphics/WindowServer等待全部消失。
+
+当前build79d27719867d5814的30分钟正式域名TURN会话中，Host单核等效平均CPU58.26%，新截图rolling rate median18.722Hz，event-loop观测max28.387ms；capture最后操作快照median32.969/p95 47.252ms，仍不是全帧分布。本窗口18:52:33Z新增的capture max275.659ms中，抓帧线程只使用21.742ms CPU，nonCPU253.917ms，约92.1%没有计入该线程CPU。其余线程、WindowServer、调度/换页/锁/GIL恢复各占多少尚未隔离，因此不能把它解释为“Host抓帧计算占满CPU”。RSS峰值540.465MiB、有明显回收；既不能据此确认泄漏，也不能宣称内存优化完成。
+
+公网控制路径也存在独立延迟：同旧加载版本顺序短测公网ACK median505.75ms、loopback median0.9ms；新30分钟心跳ACK median588.6/p95 716.9ms。它们包含调度及传输，不是纯网络时延，更不是输入效果。五次恢复中reset ACK的两样本较大值405.5–496.3ms仍高于200ms目标，不能通过继续优化Host抓帧就假设这部分必然消失。
+
+目前已分别完成控制恢复代码修复、五次原租约短断线及30分钟被动连续性，尚未完成全帧capture性能、同负载后端A/B及业务输入可见效果。原生异步后端保留为受控候选，先验证fresh cadence、端到端输入、CPU/RSS与资源回收，再决定替换；不因为同步grab指标消失就判优化成功。详细覆盖及源文件SHA见[当前长会话证据](evidence/2026-10-24-continuing-disconnect/heartbeat-final-passive-30m.json)。

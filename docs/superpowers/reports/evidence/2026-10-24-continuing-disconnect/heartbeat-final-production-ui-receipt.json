@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "scope": "normal-owned-UI-v3-persistence-and-runtime-receipt",
+  "signalViewerSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+  "hostPythonSourceCommit": "9e352fc8d3abb315d69194ff45f82fa76bc8c22c",
+  "buildId": "79d27719867d5814",
+  "signalPid": 15428,
+  "hostPid": 64981,
+  "serverConfirmedSaved": true,
+  "raw": {
+    "receivedAt": "2026-10-24T19:08:01.220Z",
+    "sha256": "3bdbd5666f2b01f5998df0e81b6d6786aed3d2816d585e4c7abe7327d873365e",
+    "reportedLogCount": 81,
+    "retainedLogCount": 0,
+    "redactedLogCount": 81,
+    "inputTraceEventCount": 9,
+    "mediaInterval": {
+      "schemaVersion": 1,
+      "kind": "webrtc-inbound-interval",
+      "elapsedMs": 999.7999999523163,
+      "sampleAgeMs": 728.7999999523163,
+      "fpsObserved": true,
+      "droppedFramesObserved": true
+    },
+    "derivedFps": 21,
+    "framesDroppedDelta": 0,
+    "controlHeartbeat": {
+      "supported": true,
+      "ackBudgetMs": 2500,
+      "consecutiveTimeouts": 0,
+      "reconnectThreshold": 2,
+      "currentScopeSequence": 8,
+      "lastAcknowledgedSequence": 8,
+      "pending": false,
+      "pendingAgeMs": null,
+      "lastAckAgeMs": 1120.5,
+      "lastAckRttMs": 589.0999999046326,
+      "maxAckRttMs": 589.0999999046326,
+      "sent": 8,
+      "acknowledged": 8,
+      "timeouts": 0,
+      "rejected": 0,
+      "reason": "acknowledged"
+    }
+  },
+  "receiptCapturedAtEpochMs": 1792868976098,
+  "receipt": {
+    "schemaVersion": 1,
+    "window": {
+      "startedAt": 1792865120731,
+      "endedAt": null,
+      "reportCount": 1
+    },
+    "diagnostics": {
+      "logCount": {
+        "total": 81,
+        "reportsWithLogs": 1,
+        "zeroLogReports": 0,
+        "unknownReports": 0
+      },
+      "retainedLogCount": 0,
+      "redactedLogCount": 81,
+      "inputTraceEventCount": 9,
+      "metadataOnlyReports": 1,
+      "summaryGapCount": 0,
+      "summaryGaps": [],
+      "ringDropCount": 185
+    },
+    "resources": {
+      "rssMiB": {
+        "available": true,
+        "count": 1,
+        "last": 79.578125,
+        "p50": 79.578125,
+        "p95": 79.578125,
+        "max": 79.578125
+      },
+      "cpuPercent": {
+        "available": true,
+        "count": 1,
+        "last": 0.2763390993262512,
+        "p50": 0.2763390993262512,
+        "p95": 0.2763390993262512,
+        "max": 0.2763390993262512
+      }
+    },
+    "media": {
+      "fps": {
+        "available": true,
+        "count": 1,
+        "last": 21,
+        "p50": 21,
+        "p95": 21,
+        "max": 21
+      },
+      "droppedFrames": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "droppedFramesScope": "legacy-event-counter-unspecified",
+      "droppedFramesIntervalDelta": {
+        "available": true,
+        "count": 1,
+        "last": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "droppedFramesIntervalDeltaScope": "webrtc-inbound-interval"
+    },
+    "visibleEffect": {
+      "sent": null,
+      "samples": null,
+      "coverage": null
+    },
+    "coverage": {
+      "complete": false,
+      "missing": [
+        "inputToVisibleEffectMs"
+      ]
+    }
+  },
+  "receiptScope": "Cumulative in-process observation window shown by receipt.window.startedAt through receiptCapturedAtEpochMs; ringDropCount is bounded diagnostic retention, not media/input loss. Not a fresh 20-second-only window.",
+  "heartbeatReadonlySnapshots": {
+    "sampleCount": 20,
+    "uniqueAcknowledgedSampleCount": 7,
+    "ackRttMs": {
+      "min": 393.40000009536743,
+      "max": 500,
+      "median": 408.2999999523163
+    },
+    "last": {
+      "supported": true,
+      "ackBudgetMs": 2500,
+      "pending": true,
+      "consecutiveTimeouts": 0,
+      "reconnectThreshold": 2,
+      "currentScopeSequence": 8,
+      "lastAcknowledgedSequence": 7,
+      "pendingAgeMs": 112.40000009536743,
+      "lastAckAgeMs": 2714.4000000953674,
+      "lastAckRttMs": 393.40000009536743,
+      "maxAckRttMs": 500,
+      "sent": 8,
+      "acknowledged": 7,
+      "timeouts": 0,
+      "rejected": 0,
+      "reason": "sent"
+    },
+    "scope": "Viewer same-clock send to accepted Signal ACK, includes scheduling/transport/Signal, not pure network"
+  },
+  "terminalBootstrapEnabled": true,
+  "terminalPoolCapacity": {
+    "sessionCount": 0,
+    "cleanupPendingCount": 0,
+    "maxSessions": 8,
+    "availableSessions": 8,
+    "replayBufferBytesPerSession": 262144,
+    "maxReplayBytes": 2097152
+  },
+  "cleanupStatus": "api-finished-exit-unknown",
+  "ownedProcessExitEvidence": "not-observed",
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "sourceFileDigests": [
+    {
+      "name": "wrd-20261025-final-heartbeat-manual-diagnostic-ui-result.json",
+      "sha256": "1c9486c264eef85f7e128853bdee3ec6a3b60666c7da068bebc600cd29b0d2d4",
+      "bytes": 10373
+    },
+    {
+      "name": "wrd-20261025-final-runtime-receipt-private.json",
+      "sha256": "a796d93b0662f99a70f6e9698f314dbd86b4c739001a3c8816d7f537466fd960",
+      "bytes": 2291
+    }
+  ],
+  "finalServiceCheck": {
+    "atEpochMs": 1792869446473,
+    "localHealthHttp": 200,
+    "localHealthStatus": "ok",
+    "publicHealthHttp": 200,
+    "publicHealthStatus": "ok",
+    "publicProbeRoute": "bypass-env-proxy",
+    "hostOnline": true,
+    "viewerCount": 0,
+    "relayViewerCount": 0
+  }
+}

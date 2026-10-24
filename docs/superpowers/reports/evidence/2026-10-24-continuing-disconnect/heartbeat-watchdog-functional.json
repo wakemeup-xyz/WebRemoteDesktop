@@ -1,0 +1,718 @@
+{
+  "schemaVersion": 1,
+  "evidenceVersion": 1,
+  "generatedAtUtc": "2026-10-24T19:15:19Z",
+  "scope": "routed-heartbeat-drop-functional-only",
+  "result": {
+    "routedHeartbeatWatchdogFunctional": "PASS",
+    "priorRun": "INCOMPLETE-preserved",
+    "strictOriginalLeaseNativeOutage": "NOT_RUN",
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physical": "NOT_RUN"
+  },
+  "deployment": {
+    "sourceEvidence": "root-attested-runtime-source-and-observed-viewer-build",
+    "signalSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+    "observedViewerBuildId": "79d27719867d5814",
+    "allSamplesMatchExpectedBuild": true,
+    "repositorySourceFilesMatchCommit": true,
+    "runtimeProcessIdentityNotExported": true
+  },
+  "method": {
+    "source": "Independent static source review plus private run artifacts and corresponding Signal/Host log rows; no browser or service actions during this review.",
+    "entry": "Owned page, guarded vacant-only admission, one UI Start; no second Start or product manual recovery call in the reviewed probe.",
+    "fault": "Drop only two consecutive current-scope control-heartbeat EVENT packets, then synchronously disarm; other messages use unchanged forwarding calls.",
+    "observationBudgetSecondsFromFirstDrop": 45,
+    "requiredRecoveredStableSeconds": 30,
+    "heartbeatSequenceMeaning": "Scope-local sequence resets after the transport rebind; cumulative acknowledged count spans those scopes.",
+    "hostAndSignalTiming": "Host adapter-await includes queue wait; Signal forward-to-ACK duration includes Host work. They are distinct clocks/scopes and are not added or subtracted.",
+    "forwardingBoundary": "Public Playwright send calls expose invocation, not asynchronous delivery receipts; visible route/send exceptions make the probe incomplete.",
+    "cleanupBoundary": "API cleanup finished; operating-system process exit was not observed."
+  },
+  "probeRevision": {
+    "path": "/tmp/wrd-20261025-watchdog-heartbeat-drop.py",
+    "firstRunSha256": "f53ecde608fa348d524202cbeaff44f8e1069b4d22be0025573b9048d328b680",
+    "repairedSha256": "aa7b332ae90c1bbc7c137f58ac8573a1eaff513ee7c7f5471ad9460c66302659",
+    "originalShaVerifiedByReversingOnlyTheRecordedPatch": true,
+    "change": "Only the private guard changed: reject unread delta.gap > 0 or capacity; keep cumulative ring evictions as observation and retain terminal truncated=false rule.",
+    "canonicalAndProductUnchanged": true,
+    "frozenSharedHelperSha256": "dd4502c731954de4f30ac60d6a26f250ab8c9cb119c2a7a2bd18819c21d60ffa",
+    "pureValidation": {
+      "fixturePath": "/tmp/wrd-20261025-watchdog-observer-fixtures.py",
+      "fixtureSha256": "98536d129becfe546337fd14d8328681c276d1d71a2d1f329139c9ff89ce0ee9",
+      "method": "Pure AST boolean-expression fixtures; neither probe nor helper imported or executed.",
+      "oldConditionConsumedEvictionResult": "RED-reproduced",
+      "repairedResult": "3/3-PASS",
+      "cases": [
+        {
+          "name": "already-consumed-ring-eviction",
+          "result": "PASS"
+        },
+        {
+          "name": "unread-delta-gap-and-capacity",
+          "result": "PASS"
+        },
+        {
+          "name": "truncated-terminal-drain",
+          "result": "PASS"
+        }
+      ],
+      "probeAST": "PASS",
+      "fixtureAST": "PASS"
+    }
+  },
+  "runs": [
+    {
+      "run": 1,
+      "outputDirectory": "/tmp/wrd-20261025-watchdog-functional-1",
+      "probeSha256AtRunStart": "f53ecde608fa348d524202cbeaff44f8e1069b4d22be0025573b9048d328b680",
+      "summary": {
+        "scope": "routed-heartbeat-drop-functional-only",
+        "status": "INCOMPLETE",
+        "phase": "recovered-stability",
+        "failure": {
+          "phase": "recovered-stability",
+          "reason": "diagnostic-observation-gap"
+        },
+        "sourceEvidence": "root-attested",
+        "signalSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+        "expectedBuildId": "79d27719867d5814",
+        "elapsedSeconds": 34.847446,
+        "serverCoverage": "complete",
+        "serverObserverFailure": null,
+        "recoveryClassification": "original-lease-rebind",
+        "recoverySecondsFromFirstDrop": 9.36265732999891,
+        "recoverySecondsFromSecondDrop": 6.368208525003865,
+        "recoveryObservationBudgetSeconds": 45,
+        "recoveredStableSeconds": 10.012112442869693,
+        "lifecycle": {
+          "captureStatus": "ok",
+          "cleanupStatus": "api-finished-exit-unknown",
+          "writeStatus": "ok",
+          "ownedProcessExitEvidence": "not-observed"
+        },
+        "nativeOutage": "NOT_RUN",
+        "strictOriginalLease": "NOT_RUN",
+        "businessInput": "NOT_RUN",
+        "visibleEffect": "NOT_RUN",
+        "physical": "NOT_RUN",
+        "instrumentation": "Playwright routed WebSocket; DOM close events are routed, not native wire proof",
+        "sharedHelperSha256": "dd4502c731954de4f30ac60d6a26f250ab8c9cb119c2a7a2bd18819c21d60ffa",
+        "writerComplete": true,
+        "droppedEvidenceRows": 0
+      },
+      "sourceFiles": [
+        "/tmp/wrd-20261025-watchdog-functional-1/summary.json",
+        "/tmp/wrd-20261025-watchdog-functional-1/samples.jsonl",
+        "/tmp/wrd-20261025-watchdog-functional-1/lifecycle.json"
+      ],
+      "rawLogSourceRanges": [
+        {
+          "path": "/tmp/wrd-structured/signal-server.jsonl",
+          "firstLine": 262,
+          "lastLine": 278,
+          "sha256": "5c3864c4757b3950ac1687c02051587131249b74df10473b51267a8ae76edadc"
+        },
+        {
+          "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+          "firstLine": 11996,
+          "lastLine": 12003,
+          "sha256": "d7cc998083a1099686ded13b0b6d8e44017431daeffc7021665ecf6b2cba68e9"
+        }
+      ],
+      "sampleWindow": {
+        "firstAtUtc": "2026-10-24T19:05:57.934Z",
+        "lastAtUtc": "2026-10-24T19:06:26.186Z",
+        "sampleCount": 31,
+        "jsonlRowCount": 36
+      },
+      "twoDropWatchdogEvidence": {
+        "dropCount": 2,
+        "dropEpoch": 13,
+        "dropSequences": [
+          3,
+          4
+        ],
+        "dropTimesUtc": [
+          "2026-10-24T19:06:06.811Z",
+          "2026-10-24T19:06:09.805Z"
+        ],
+        "sequencesConsecutive": true,
+        "bothMatchArmedScope": true,
+        "disarmedAfterSecond": true,
+        "firstTwoTimeoutsObservedAtUtc": "2026-10-24T19:06:13.170Z",
+        "retainedFailure": {
+          "reason": "ack-timeout",
+          "consecutiveTimeouts": 2,
+          "currentScopeSequence": 4
+        },
+        "cumulativeTimeouts": 2,
+        "domWebSocketCloseEvents": 1,
+        "baselineConnectionCounters": {
+          "sd": 0,
+          "ec": 0,
+          "sc": 1,
+          "ra": 0,
+          "rr": 0
+        },
+        "recoveredConnectionCounters": {
+          "sd": 1,
+          "ec": 1,
+          "sc": 2,
+          "ra": 1,
+          "rr": 1
+        },
+        "routeConnectionsBefore": 1,
+        "routeConnectionsAfter": 2,
+        "visibleRoutingErrors": 0,
+        "forwardInvocations": {
+          "clientToServer": 41,
+          "serverToClient": 30,
+          "deliveryEvidence": "not-observable-with-public-send-api"
+        }
+      },
+      "rebindProof": {
+        "graceStartedAtUtc": "2026-10-24T19:06:12.530Z",
+        "rebindConfirmedAtUtc": "2026-10-24T19:06:14.293Z",
+        "baselineLeaseEpoch": 13,
+        "recoveredLeaseEpoch": 13,
+        "sameBrowserSession": true,
+        "previousViewerMatchesDisconnectedViewer": true,
+        "newViewerDistinct": true,
+        "originalLeaseRetained": true,
+        "resetRequests": [
+          {
+            "inputType": "mouse",
+            "action": "reset",
+            "transport": "socket",
+            "leaseEpoch": 13,
+            "signalRequestAtUtc": "2026-10-24T19:06:14.735Z",
+            "hostAppliedAtLocal": "2026-10-25 03:06:14,746",
+            "hostTimeZone": "Asia/Shanghai",
+            "hostAdapterAwaitMs": 9.086,
+            "hostTimingScope": "host-adapter-await",
+            "hostTimingIncludesQueueWait": true,
+            "hostAckEnqueued": true,
+            "signalAckAtUtc": "2026-10-24T19:06:14.751Z",
+            "signalRequestToAckMs": 16.349861999973655,
+            "durationScope": "signal-forward-to-host-ack-including-host",
+            "targetAvailable": true,
+            "shapeValid": true,
+            "forwarded": true,
+            "ackLeaseMatchesRequest": true,
+            "ackTypeMatchesRequest": true,
+            "crossLayerRequestHashMatches": true,
+            "requestTargetsReboundViewer": true,
+            "signalSourceLines": [
+              268,
+              270
+            ],
+            "hostSourceLines": [
+              11996,
+              11998,
+              11999
+            ]
+          },
+          {
+            "inputType": "keyboard",
+            "action": "reset",
+            "transport": "socket",
+            "leaseEpoch": 13,
+            "signalRequestAtUtc": "2026-10-24T19:06:14.738Z",
+            "hostAppliedAtLocal": "2026-10-25 03:06:14,753",
+            "hostTimeZone": "Asia/Shanghai",
+            "hostAdapterAwaitMs": 0.872,
+            "hostTimingScope": "host-adapter-await",
+            "hostTimingIncludesQueueWait": true,
+            "hostAckEnqueued": true,
+            "signalAckAtUtc": "2026-10-24T19:06:14.755Z",
+            "signalRequestToAckMs": 17.226407999638468,
+            "durationScope": "signal-forward-to-host-ack-including-host",
+            "targetAvailable": true,
+            "shapeValid": true,
+            "forwarded": true,
+            "ackLeaseMatchesRequest": true,
+            "ackTypeMatchesRequest": true,
+            "crossLayerRequestHashMatches": true,
+            "requestTargetsReboundViewer": true,
+            "signalSourceLines": [
+              269,
+              271
+            ],
+            "hostSourceLines": [
+              12000,
+              12002,
+              12003
+            ]
+          }
+        ]
+      },
+      "stableWindow": {
+        "recoverySnapshotAtUtc": "2026-10-24T19:06:16.173Z",
+        "lastSnapshotAtUtc": "2026-10-24T19:06:26.186Z",
+        "reportedStableSeconds": 10.012112442869693,
+        "observationCount": 11,
+        "allObservedGatesAllowed": true,
+        "sameLeaseAndAttemptSequence": true,
+        "samePeerAndAttempt": true,
+        "additionalConnectionEvents": 0,
+        "frameCallbackDelta": 173,
+        "frameCallbackMeaning": "requestVideoFrameCallback progress; not a fresh-capture or physical-visible-effect measurement",
+        "terminalHeartbeatAcknowledged": 6,
+        "terminalHeartbeatSequence": 4,
+        "terminalHeartbeatLastAckAgeMs": 2098.7000000476837,
+        "terminalDiagnosticTruncated": false
+      },
+      "diagnosticCoverage": {
+        "savedEventSequenceContiguous": true,
+        "firstSavedSequence": 1,
+        "lastSavedSequence": 125,
+        "maximumUnreadDeltaGap": 0,
+        "savedTruncatedTicks": 2,
+        "maximumRecordedRingEvictions": 0,
+        "cleanupRing": {
+          "firstSequence": 4,
+          "lastSequence": 131,
+          "retainedEvents": 128,
+          "cumulativeEvictions": 3
+        },
+        "evictionMeaning": "128-entry ring eviction count includes events already consumed by earlier deltas; it is not unread event loss"
+      },
+      "cleanupTail": {
+        "probeTerminatedAfterLastSavedSnapshot": true,
+        "subsequentGraceStartedAtUtc": "2026-10-24T19:06:27.399Z",
+        "leaseExpiredFencingAtUtc": "2026-10-24T19:06:39.676Z",
+        "fencedEpoch": 14,
+        "resetCompletedAtUtc": "2026-10-24T19:06:39.734Z",
+        "resetState": "FREE",
+        "outsideActiveRecoveryAndStabilityWindow": true,
+        "osProcessExit": "not-observed"
+      },
+      "firstRunToolFailure": {
+        "originalResultPreserved": true,
+        "cause": "private-probe-treated-normal-cumulative-ring-eviction-as-unread-gap",
+        "evidence": "Saved diagnostic events 1..125 are contiguous with every delta gap zero; final 128-entry ring retains 4..131 and has evicted already-consumed 1..3.",
+        "failedTickSaved": false,
+        "failedTickNote": "The old guard raised before writer.emit; its exact rejected delta is not present in samples.jsonl.",
+        "sharedObserverDuplicateConsumptionEvidence": false,
+        "productFailureEstablished": false
+      }
+    },
+    {
+      "run": 2,
+      "outputDirectory": "/tmp/wrd-20261025-watchdog-functional-2",
+      "probeSha256AtRunStart": "aa7b332ae90c1bbc7c137f58ac8573a1eaff513ee7c7f5471ad9460c66302659",
+      "summary": {
+        "scope": "routed-heartbeat-drop-functional-only",
+        "status": "PASS",
+        "phase": "recovered-stability",
+        "failure": null,
+        "sourceEvidence": "root-attested",
+        "signalSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+        "expectedBuildId": "79d27719867d5814",
+        "elapsedSeconds": 53.972531,
+        "serverCoverage": "complete",
+        "serverObserverFailure": null,
+        "recoveryClassification": "original-lease-rebind",
+        "recoverySecondsFromFirstDrop": 9.447652213973925,
+        "recoverySecondsFromSecondDrop": 6.4477910220157355,
+        "recoveryObservationBudgetSeconds": 45,
+        "recoveredStableSeconds": 30.023303711088374,
+        "lifecycle": {
+          "captureStatus": "ok",
+          "cleanupStatus": "api-finished-exit-unknown",
+          "writeStatus": "ok",
+          "ownedProcessExitEvidence": "not-observed"
+        },
+        "nativeOutage": "NOT_RUN",
+        "strictOriginalLease": "NOT_RUN",
+        "businessInput": "NOT_RUN",
+        "visibleEffect": "NOT_RUN",
+        "physical": "NOT_RUN",
+        "instrumentation": "Playwright routed WebSocket; DOM close events are routed, not native wire proof",
+        "sharedHelperSha256": "dd4502c731954de4f30ac60d6a26f250ab8c9cb119c2a7a2bd18819c21d60ffa",
+        "writerComplete": true,
+        "droppedEvidenceRows": 0
+      },
+      "sourceFiles": [
+        "/tmp/wrd-20261025-watchdog-functional-2/summary.json",
+        "/tmp/wrd-20261025-watchdog-functional-2/samples.jsonl",
+        "/tmp/wrd-20261025-watchdog-functional-2/lifecycle.json"
+      ],
+      "rawLogSourceRanges": [
+        {
+          "path": "/tmp/wrd-structured/signal-server.jsonl",
+          "firstLine": 300,
+          "lastLine": 316,
+          "sha256": "30cb06ca631b5c663e02d8129c5ab91464d8b2e159b19dc55547dcaddc56b8f7"
+        },
+        {
+          "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+          "firstLine": 12311,
+          "lastLine": 12318,
+          "sha256": "2c169ea67cf4a1995a6d0f32d8773592d7cfce4a45ff03d186ba3f6297fc7708"
+        }
+      ],
+      "sampleWindow": {
+        "firstAtUtc": "2026-10-24T19:09:29.601Z",
+        "lastAtUtc": "2026-10-24T19:10:17.981Z",
+        "sampleCount": 51,
+        "jsonlRowCount": 56
+      },
+      "twoDropWatchdogEvidence": {
+        "dropCount": 2,
+        "dropEpoch": 17,
+        "dropSequences": [
+          3,
+          4
+        ],
+        "dropTimesUtc": [
+          "2026-10-24T19:09:38.510Z",
+          "2026-10-24T19:09:41.510Z"
+        ],
+        "sequencesConsecutive": true,
+        "bothMatchArmedScope": true,
+        "disarmedAfterSecond": true,
+        "firstTwoTimeoutsObservedAtUtc": "2026-10-24T19:09:44.953Z",
+        "retainedFailure": {
+          "reason": "ack-timeout",
+          "consecutiveTimeouts": 2,
+          "currentScopeSequence": 4
+        },
+        "cumulativeTimeouts": 2,
+        "domWebSocketCloseEvents": 1,
+        "baselineConnectionCounters": {
+          "sd": 0,
+          "ec": 0,
+          "sc": 1,
+          "ra": 0,
+          "rr": 0
+        },
+        "recoveredConnectionCounters": {
+          "sd": 1,
+          "ec": 1,
+          "sc": 2,
+          "ra": 1,
+          "rr": 1
+        },
+        "routeConnectionsBefore": 1,
+        "routeConnectionsAfter": 2,
+        "visibleRoutingErrors": 0,
+        "forwardInvocations": {
+          "clientToServer": 68,
+          "serverToClient": 37,
+          "deliveryEvidence": "not-observable-with-public-send-api"
+        }
+      },
+      "rebindProof": {
+        "graceStartedAtUtc": "2026-10-24T19:09:44.206Z",
+        "rebindConfirmedAtUtc": "2026-10-24T19:09:45.958Z",
+        "baselineLeaseEpoch": 17,
+        "recoveredLeaseEpoch": 17,
+        "sameBrowserSession": true,
+        "previousViewerMatchesDisconnectedViewer": true,
+        "newViewerDistinct": true,
+        "originalLeaseRetained": true,
+        "resetRequests": [
+          {
+            "inputType": "mouse",
+            "action": "reset",
+            "transport": "socket",
+            "leaseEpoch": 17,
+            "signalRequestAtUtc": "2026-10-24T19:09:46.446Z",
+            "hostAppliedAtLocal": "2026-10-25 03:09:46,448",
+            "hostTimeZone": "Asia/Shanghai",
+            "hostAdapterAwaitMs": 0.632,
+            "hostTimingScope": "host-adapter-await",
+            "hostTimingIncludesQueueWait": true,
+            "hostAckEnqueued": true,
+            "signalAckAtUtc": "2026-10-24T19:09:46.448Z",
+            "signalRequestToAckMs": 2.569649999961257,
+            "durationScope": "signal-forward-to-host-ack-including-host",
+            "targetAvailable": true,
+            "shapeValid": true,
+            "forwarded": true,
+            "ackLeaseMatchesRequest": true,
+            "ackTypeMatchesRequest": true,
+            "crossLayerRequestHashMatches": true,
+            "requestTargetsReboundViewer": true,
+            "signalSourceLines": [
+              306,
+              308
+            ],
+            "hostSourceLines": [
+              12311,
+              12313,
+              12314
+            ]
+          },
+          {
+            "inputType": "keyboard",
+            "action": "reset",
+            "transport": "socket",
+            "leaseEpoch": 17,
+            "signalRequestAtUtc": "2026-10-24T19:09:46.446Z",
+            "hostAppliedAtLocal": "2026-10-25 03:09:46,449",
+            "hostTimeZone": "Asia/Shanghai",
+            "hostAdapterAwaitMs": 0.436,
+            "hostTimingScope": "host-adapter-await",
+            "hostTimingIncludesQueueWait": true,
+            "hostAckEnqueued": true,
+            "signalAckAtUtc": "2026-10-24T19:09:46.450Z",
+            "signalRequestToAckMs": 3.670971999876201,
+            "durationScope": "signal-forward-to-host-ack-including-host",
+            "targetAvailable": true,
+            "shapeValid": true,
+            "forwarded": true,
+            "ackLeaseMatchesRequest": true,
+            "ackTypeMatchesRequest": true,
+            "crossLayerRequestHashMatches": true,
+            "requestTargetsReboundViewer": true,
+            "signalSourceLines": [
+              307,
+              309
+            ],
+            "hostSourceLines": [
+              12315,
+              12317,
+              12318
+            ]
+          }
+        ]
+      },
+      "stableWindow": {
+        "recoverySnapshotAtUtc": "2026-10-24T19:09:47.958Z",
+        "lastSnapshotAtUtc": "2026-10-24T19:10:17.981Z",
+        "reportedStableSeconds": 30.023303711088374,
+        "observationCount": 31,
+        "allObservedGatesAllowed": true,
+        "sameLeaseAndAttemptSequence": true,
+        "samePeerAndAttempt": true,
+        "additionalConnectionEvents": 0,
+        "frameCallbackDelta": 544,
+        "frameCallbackMeaning": "requestVideoFrameCallback progress; not a fresh-capture or physical-visible-effect measurement",
+        "terminalHeartbeatAcknowledged": 13,
+        "terminalHeartbeatSequence": 11,
+        "terminalHeartbeatLastAckAgeMs": 1350.0999999046326,
+        "terminalDiagnosticTruncated": false
+      },
+      "diagnosticCoverage": {
+        "savedEventSequenceContiguous": true,
+        "firstSavedSequence": 1,
+        "lastSavedSequence": 193,
+        "maximumUnreadDeltaGap": 0,
+        "savedTruncatedTicks": 2,
+        "maximumRecordedRingEvictions": 65,
+        "cleanupRing": {
+          "firstSequence": 67,
+          "lastSequence": 194,
+          "retainedEvents": 128,
+          "cumulativeEvictions": 66
+        },
+        "evictionMeaning": "128-entry ring eviction count includes events already consumed by earlier deltas; it is not unread event loss"
+      },
+      "cleanupTail": {
+        "probeTerminatedAfterLastSavedSnapshot": true,
+        "subsequentGraceStartedAtUtc": "2026-10-24T19:10:18.196Z",
+        "leaseExpiredFencingAtUtc": "2026-10-24T19:10:28.895Z",
+        "fencedEpoch": 18,
+        "resetCompletedAtUtc": "2026-10-24T19:10:28.978Z",
+        "resetState": "FREE",
+        "outsideActiveRecoveryAndStabilityWindow": true,
+        "osProcessExit": "not-observed"
+      },
+      "independentQualification": {
+        "exactlyTwoDroppedHeartbeatEvents": true,
+        "watchdogTwoTimeoutProof": true,
+        "originalLeaseRebindConfirmed": true,
+        "recoveryWithin45SecondsFromFirstDrop": true,
+        "atLeast30SecondsObservedStable": true,
+        "terminalDiagnosticQueueDrained": true,
+        "resetACKRouteAndApplicationProven": true,
+        "qualification": "PASS-routed-functional-only"
+      }
+    }
+  ],
+  "sourceFileDigests": [
+    {
+      "path": "/tmp/wrd-20261025-watchdog-heartbeat-drop.py",
+      "role": "repaired-private-probe",
+      "sha256Scope": "entire-file",
+      "sha256": "aa7b332ae90c1bbc7c137f58ac8573a1eaff513ee7c7f5471ad9460c66302659",
+      "bytes": 32029
+    },
+    {
+      "path": "/tmp/wrd-20261025-watchdog-observer-fixtures.py",
+      "role": "pure-AST-condition-fixtures",
+      "sha256Scope": "entire-file",
+      "sha256": "98536d129becfe546337fd14d8328681c276d1d71a2d1f329139c9ff89ce0ee9",
+      "bytes": 2562
+    },
+    {
+      "path": "/tmp/wrd-20261025-passive-heartbeat-wrapper.py",
+      "role": "frozen-private-heartbeat-reader",
+      "sha256Scope": "entire-file",
+      "sha256": "dd4502c731954de4f30ac60d6a26f250ab8c9cb119c2a7a2bd18819c21d60ffa",
+      "bytes": 13574
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/web-client/js/webrtc.js",
+      "role": "repository-source",
+      "sha256Scope": "entire-file",
+      "sha256": "629d6541e0139f43e4707325bcb4a7cdc1cf173ef2aecafde6aacde50e81f979",
+      "bytes": 356423,
+      "sourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+      "matchesSourceCommit": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/signal-server/websocket/signaling.js",
+      "role": "repository-source",
+      "sha256Scope": "entire-file",
+      "sha256": "4c505792116a3d1d3b967dad403601b06160b6677268a51b6a899047fc3d846d",
+      "bytes": 97473,
+      "sourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+      "matchesSourceCommit": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/scripts/passive_session_sampler.js",
+      "role": "repository-source",
+      "sha256Scope": "entire-file",
+      "sha256": "f862b739cbe7eb543ccab304203c71c62a43014530fa2da9a7655cba293665d3",
+      "bytes": 24928,
+      "sourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+      "matchesSourceCommit": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/scripts/ordinary_session_recovery.py",
+      "role": "repository-source",
+      "sha256Scope": "entire-file",
+      "sha256": "4e5d8890afdc34574f67212e1cefbd949cb1f6be8c48419cf43ca955e0b93e4f",
+      "bytes": 93583,
+      "sourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+      "matchesSourceCommit": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/scripts/passive_session_soak.py",
+      "role": "repository-source",
+      "sha256Scope": "entire-file",
+      "sha256": "1178b3e03e38eabfbc584677e0bf9eafa1f31d609fb9d31347d56a996792225c",
+      "bytes": 61236,
+      "sourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+      "matchesSourceCommit": true
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/scripts/ordinary_recovery_fault.py",
+      "role": "repository-source",
+      "sha256Scope": "entire-file",
+      "sha256": "67f799909c03158012106421a74d80a673949a5380a312c10609de754650c494",
+      "bytes": 14893,
+      "sourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+      "matchesSourceCommit": true
+    },
+    {
+      "path": "/tmp/wrd-20261025-watchdog-functional-1/summary.json",
+      "role": "private-run-artifact",
+      "sha256Scope": "entire-file",
+      "sha256": "e17a0aabd68129d5c7e04c15dd4f5a27a9d2e38a9dad9682e1f272444ae1bbbb",
+      "bytes": 2382,
+      "run": 1
+    },
+    {
+      "path": "/tmp/wrd-20261025-watchdog-functional-1/samples.jsonl",
+      "role": "private-run-artifact",
+      "sha256Scope": "entire-file",
+      "sha256": "4cc1fdd6cd9842e5b240ea9cd5932de7f74c0ade1f486d4be1530d6528cd1bce",
+      "bytes": 140583,
+      "run": 1
+    },
+    {
+      "path": "/tmp/wrd-20261025-watchdog-functional-1/lifecycle.json",
+      "role": "private-run-artifact",
+      "sha256Scope": "entire-file",
+      "sha256": "c4c9b1b1f3c8a2db814302ed2688556ef836afbf9b706856a2553b090c810fe1",
+      "bytes": 8371,
+      "run": 1
+    },
+    {
+      "path": "/tmp/wrd-structured/signal-server.jsonl",
+      "role": "signal-recovery-plus-cleanup-tail",
+      "run": 1,
+      "sha256Scope": "inclusive-line-range-with-original-line-endings",
+      "firstLine": 262,
+      "lastLine": 278,
+      "sha256": "5c3864c4757b3950ac1687c02051587131249b74df10473b51267a8ae76edadc"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "role": "host-two-reset-application-and-ACK-enqueue",
+      "run": 1,
+      "sha256Scope": "inclusive-line-range-with-original-line-endings",
+      "firstLine": 11996,
+      "lastLine": 12003,
+      "sha256": "d7cc998083a1099686ded13b0b6d8e44017431daeffc7021665ecf6b2cba68e9"
+    },
+    {
+      "path": "/tmp/wrd-20261025-watchdog-functional-2/summary.json",
+      "role": "private-run-artifact",
+      "sha256Scope": "entire-file",
+      "sha256": "d1bb2b59d83b91fdfce65f091908f1d69e7b09cca62e004833734a1bc1eb217d",
+      "bytes": 2313,
+      "run": 2
+    },
+    {
+      "path": "/tmp/wrd-20261025-watchdog-functional-2/samples.jsonl",
+      "role": "private-run-artifact",
+      "sha256Scope": "entire-file",
+      "sha256": "43271f3cfb478ae78208dfa28e739aed34267dfa380a8d815ce20105cec60fd1",
+      "bytes": 233957,
+      "run": 2
+    },
+    {
+      "path": "/tmp/wrd-20261025-watchdog-functional-2/lifecycle.json",
+      "role": "private-run-artifact",
+      "sha256Scope": "entire-file",
+      "sha256": "8af649cb4f6ab5a58bb6da53585f4baa1ba497f03331ff270af593070053c00b",
+      "bytes": 8439,
+      "run": 2
+    },
+    {
+      "path": "/tmp/wrd-structured/signal-server.jsonl",
+      "role": "signal-recovery-plus-cleanup-tail",
+      "run": 2,
+      "sha256Scope": "inclusive-line-range-with-original-line-endings",
+      "firstLine": 300,
+      "lastLine": 316,
+      "sha256": "30cb06ca631b5c663e02d8129c5ab91464d8b2e159b19dc55547dcaddc56b8f7"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log",
+      "role": "host-two-reset-application-and-ACK-enqueue",
+      "run": 2,
+      "sha256Scope": "inclusive-line-range-with-original-line-endings",
+      "firstLine": 12311,
+      "lastLine": 12318,
+      "sha256": "2c169ea67cf4a1995a6d0f32d8773592d7cfce4a45ff03d186ba3f6297fc7708"
+    }
+  ],
+  "limitations": [
+    "This is a Playwright routed WebSocket functional result, not native network-loss or strict original-lease outage qualification.",
+    "One-second browser/Host observations establish the sampled gates and callback progress, not continuous optical behavior or business-input latency.",
+    "Normal reset inputs are product recovery safety actions; no business input or visible-effect test was performed by this probe.",
+    "The first INCOMPLETE artifact remains unchanged and is not relabeled as PASS.",
+    "Post-cleanup lease expiry/reset is recorded separately and must not be attributed to the successful active recovery."
+  ],
+  "privacy": {
+    "rawIdentityFieldsExported": false,
+    "rawMessagesExported": false,
+    "credentialsExported": false,
+    "inputPayloadOrCoordinatesExported": false,
+    "correlationComparedOnlyInMemory": true
+  },
+  "collectionActions": {
+    "repositoryChanges": "only-this-new-evidence-JSON",
+    "browserActions": false,
+    "serviceActions": false,
+    "productTestsRun": false
+  }
+}

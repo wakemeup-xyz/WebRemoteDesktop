@@ -6,7 +6,9 @@
 
 ## 结论先行
 
-今天的故障是三个故障面叠加，而不是一个单点“网页打不开”：
+最新实施结论（10月25日）：Signal/Viewer `a88f7fe` / build `79d27719867d5814` 已加载，五次严格原租约短断线恢复3.994–5.000秒，30分钟公网TURN被动连续性通过；Host Python `9e352fc8` / PID64981，两个本地服务均为Interactive，tunnel未操作。实测慢抓帧仍主要含非CPU等待，公网ACK也有独立额外耗时，不能全部归为Host计算忙。真实输入可见效果和全部性能门槛尚未通过，具体证据及版本见[实施记录](2026-10-24-control-recovery-fix-execution.md)。
+
+以下为10月24日截至19:42的原始基线，不能代表修复后的当前故障率。原窗口存在三个故障面：
 
 1. **Host 抓帧长尾与系统资源压力均已观测到，因果需要分开。** 当前 WebRTC 连接可以保持 `connected/completed`，但 MSS 抓帧仍有数百毫秒到数秒的耗时。21:33 的新增反例表明，抓帧暂停时事件循环也会卡顿；不能断言抓帧线程导致了全部 ACK、ICE 或事件循环超时。慢帧的线程 CPU/非 CPU 配对分析见下方复核。
 2. **媒体恢复多次遇到关闭 PC/sender，需要复现生命周期缺口。** 今天出现 42 次 `host_media_resume_failed`，全部是 `reason=closed`、`sender=false`；另有 30 次恢复成功。计数和时序提示恢复 churn，但要区分新 offer 正常过渡、用户主动重连和真正的重复恢复缺陷。
@@ -86,21 +88,21 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 - 自动诊断快照的旧 `logCount=0` 是 schema 3 原文脱敏策略的结果。`inputTrace.droppedEvents` 从几百到 5,000 级，指有界诊断 ring 淘汰/脱敏丢弃条目，不是键鼠输入未投递。实际 ACK timeout 和恢复状态应看独立事件；当前仍保留有限的结构化状态转移，不能还原全天完整历史。
 - `DC_DIAGNOSTIC_ADMISSION` 的 drop 是诊断通道拥塞/不可用（某些会话出现 `congested` 或 `unavailable`），不是媒体 RTP 丢帧；`capture_stats` 的 drop 仍为 0。报告不把两者混为一谈。
 
-## 根因排序
+## 排查优先级与待验证因果
 
-### P0：WebRTC 抓帧仍在和事件循环争用执行资源
+### P0：抓帧长尾与事件循环等待的因果仍需分离
 
 现有 `ScreenCaptureTrack` 已有后台 MSS 抓帧线程、latest buffer 和独立单线程图像 executor；`recv()` 不直接执行或等待 native grab。生产 factory 已使用 `CaptureExperiment(1.0, 1)`，即 1x 抓帧和 OpenCV 单线程。本机 MSS 10.2.0 走 ctypes/CoreGraphics，CDLL native 调用期间释放 GIL，不能归因为“MSS/PyObjC 一直持有 GIL”。Python 像素复制、GIL 重新获取、WindowServer 等待和全机调度/换页压力均需进一步区分。
 
 21:24 的慢帧为 wall=3,905.411ms、抓帧线程 CPU=39.383ms、非 CPU=3,866.028ms（99.0%）；21:33 抓帧暂停超过 8 分钟时，event-loop 滚动 max 仍为 2,014.977ms。这支持“等待/资源压力与抓帧长尾共存”，不支持“抓帧计算占满 CPU 是唯一原因”。详见 [CPU 归因复核](2026-10-24-capture-cpu-attribution.md)。
 
-### P0：关闭 PC/sender 上的恢复尝试没有被一次性终止
+### P0：核对关闭 PC/sender 的恢复是否重复
 
 `host_media_resume_failed(reason=closed)` 多次出现，附近有新 offer、候选缓存和 keyframe 请求。现有 fail-closed 和媒体锁已存在；应以同 attempt/generation 的最小反例区分正常替换过渡与重复恢复缺陷，不能仅由这些事件共现认定旧 PC 未被淘汰。
 
-### P1：Viewer transport/网络路径不稳定
+### P1：核对 Viewer transport/公网路径的异常来源
 
-4 次 transport close、3 次 TURN/STUN timeout、34 次 socket send exception 说明公网路径和 TURN relay 仍有抖动；但 Signal 进程健康，且部分会话在 ping/pong 完整时仍被关闭，所以不能把责任全部归给 Signal 心跳，也不能只靠延长 grace。
+4 次 transport close、3 次 TURN/STUN timeout、34 次 socket send exception 是传输异常线索，尚不能仅凭数量定位到公网路径或 TURN 的某一层；但 Signal 进程健康，且部分会话在 ping/pong 完整时仍被关闭，所以不能把责任全部归给 Signal 心跳，也不能只靠延长 grace。
 
 ### P1：页面隐藏被表现成“断连”
 
@@ -135,15 +137,15 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 
 ### 第四阶段：验收和上线门槛
 
-- 30 分钟正式域名长会话：event-loop p95≤20ms、max≤100ms；capture p95≤100ms、max≤250ms；活动期 decoded FPS p50≥18、新鲜抓帧 cadence≥15 FPS；暂停期单列，缓存复用不计新鲜帧；RSS 无持续单调增长。RTP dropped/freezes 单列，不与诊断 drop 混算。
-- 五次不超过 20 秒的短断线：每次在 grace 内完成 rebind 或一次 fresh attempt，恢复≤10 秒；不得出现旧 lease 输入执行。
-- 真实输入验收：ACK p95≤200ms、max≤1,000ms；控制 reset ACK 过期为 0；marker→rVFC 的 `inputToVisibleEffectMs` 覆盖率≥95%。
+- 30 分钟正式域名长会话：event-loop p95≤20ms、max≤100ms；capture p95≤100ms、max≤250ms；活动期 decoded FPS p50≥18、新鲜抓帧 cadence≥15 FPS；暂停期单列，缓存复用不计新鲜帧；RSS 无持续单调增长。接收端视频帧丢弃、RTP丢包及freeze各自单列，不与诊断drop混算。
+- 五次不超过 20 秒的短断线：每次在grace内完成原租约rebind、恢复≤10秒；可以创建新媒体attempt，但重新获取新lease不能算strict within-grace通过；不得出现旧 lease 输入执行。
+- 真实业务输入/reset验收（不含heartbeat）：ACK p95≤200ms、max≤1,000ms；控制 reset ACK 过期为 0；marker→rVFC 的 `inputToVisibleEffectMs` 覆盖率≥95%。
 - 诊断验收：分别报告 `reportedLogCount`、`retainedLogCount`、`redactedLogCount` 与 `inputTraceEventCount`；原文禁止保留时，保留条数为 0 是正常策略。未知上送计数保持 null/缺测，不要求伪造 `logCount>0`。`summaryGapCount=0`，ring drop 单独标注为诊断环覆盖计数。
 - 维护窗口结束时保持本地 Signal/Host 可用；不以停止服务或重建 tunnel 作为通过条件。
 
 ## 当前建议
 
-本地服务和正式网页入口在原检查时健康，但持续控制仍有失败。下一步先完成资源归因和最小恢复缺陷复现，再决定是否需要进程隔离；不得把 snapshot p95 当作逐次抓帧 p95、unordered drop 当作可靠输入丢失，或把所有超时归因 CPU。当前仍不能宣布持续控制验收完成。
+本地服务和正式网页入口健康。已完成最小恢复缺陷复现、代码修复及当前版本五次短断线/30分钟被动验收；剩余工作是公网输入延迟、受控采集后端A/B及真实可见效果。不得把snapshot p95当作逐次抓帧p95、unordered drop当作可靠输入丢失，或把所有超时归因CPU。当前仍不能宣布全部性能与业务输入验收完成。
 
 ## 22 点复核发现的可复现代码缺口
 
@@ -156,4 +158,4 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 
 ## 10月25日追加定位
 
-低负载长会话中，抓帧rolling约25ms，但pacing请求约25ms、实际约100–105ms，原生栈主要在nanosleep。只读核对发现Host和Signal都是launchd默认daemon3、线程priority/max20/20；同LaunchAgent独立Interactive候选为31/63且两轮timer长尾显著更小。这是已复现的启动上下文问题，不能继续简单归因为Host CPU计算满载；全机压力、CoreGraphics等待仍各自存在。默认类型与Interactive的probe来源、未完成的逐帧/输入验收及维护加载结果，见[CPU归因复核](2026-10-24-capture-cpu-attribution.md)和[实施记录](2026-10-24-control-recovery-fix-execution.md)。
+部署前低负载长会话中，抓帧rolling约25ms，但pacing请求约25ms、实际约100–105ms，原生栈主要在nanosleep。部署前Host和Signal都是launchd默认daemon3、线程priority/max20/20；同LaunchAgent独立Interactive候选为31/63且两轮timer长尾显著更小。现已加载Interactive，实测pacing等待改善，但不同负载窗口不是受控A/B。不能继续简单归因为Host CPU计算满载；全机压力、CoreGraphics等待仍各自存在。probe来源、未完成的逐帧/输入验收及维护加载结果，见[CPU归因复核](2026-10-24-capture-cpu-attribution.md)和[实施记录](2026-10-24-control-recovery-fix-execution.md)。

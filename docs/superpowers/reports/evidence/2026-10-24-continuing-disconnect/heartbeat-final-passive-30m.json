@@ -1,0 +1,402 @@
+{
+  "schemaVersion": 1,
+  "kind": "redacted-scalar-final-passive-session-evidence",
+  "sourceFiles": [
+    "summary.json",
+    "lifecycle.json",
+    "samples.jsonl",
+    "wrd-20261025-final-hb-passive-30m-resources.jsonl",
+    "wrd-20261025-final-hb-passive-30m-heartbeat.jsonl",
+    "back-debug.log"
+  ],
+  "window": {
+    "startUtcApprox": "2026-10-24T18:35:12.047+00:00",
+    "endUtcApprox": "2026-10-24T19:05:12.050+00:00",
+    "durationSeconds": 1800.003,
+    "alignment": "median browserEpochMs minus browserNowMs from observed heartbeat rows; Host and resource rows filtered to this approximate sample window",
+    "mode": "relay",
+    "originClass": "formal"
+  },
+  "passiveContinuity": {
+    "status": "PASS",
+    "requestedSeconds": 1800,
+    "elapsedSeconds": 1800.17,
+    "samples": 1801,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathChangeObservations": 0,
+    "pathConvergenceObservations": 0,
+    "maxObservedNoProgressMs": 666.6,
+    "frameStallThresholdMs": 5000,
+    "frameEvidence": "requestVideoFrameCallback",
+    "callbackDelta": 33359,
+    "decodedFrameDelta": 34517,
+    "frameAgeSnapshotMs": {
+      "count": 1801,
+      "min": 1.4,
+      "median": 25.8,
+      "p95": 66.4,
+      "max": 409.3
+    },
+    "scopeStableSamples": 1801,
+    "socketConnectedSamples": 1801,
+    "pcConnectedSamples": 1801,
+    "startProofStatus": "verified",
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "cleanupStatus": "api-finished-exit-unknown",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "resources": {
+    "sampleCountInWindow": 1800,
+    "psStatusCounts": {
+      "ok": 1800
+    },
+    "missedIntervalsSincePreviousSum": 0,
+    "hostAndSignal": {
+      "host": {
+        "statusCounts": {
+          "ok": 1800
+        },
+        "rssMiB": {
+          "first": 468.137,
+          "last": 509.758,
+          "count": 1800,
+          "min": 249.617,
+          "median": 485.434,
+          "p95": 525.316,
+          "max": 540.465
+        },
+        "cpuTimeSeconds": {
+          "first": 1358.86,
+          "last": 2406.9,
+          "delta": 1048.04,
+          "negativeIntervalDeltas": 0
+        },
+        "averageCpuPercentOfOneCore": 58.26
+      },
+      "signal": {
+        "statusCounts": {
+          "ok": 1800
+        },
+        "rssMiB": {
+          "first": 80.379,
+          "last": 76.266,
+          "count": 1800,
+          "min": 76.105,
+          "median": 76.645,
+          "p95": 80.387,
+          "max": 80.504
+        },
+        "cpuTimeSeconds": {
+          "first": 5.26,
+          "last": 6.83,
+          "delta": 1.57,
+          "negativeIntervalDeltas": 0
+        },
+        "averageCpuPercentOfOneCore": 0.09
+      }
+    },
+    "systemLoadOneMinute": {
+      "count": 1800,
+      "min": 4.89,
+      "median": 8.494,
+      "p95": 12.45,
+      "max": 15.354
+    },
+    "rssMinimumAtUtc": "2026-10-24T18:52:34.031+00:00"
+  },
+  "heartbeat": {
+    "sampleRowsInWindow": 1800,
+    "readStatusCounts": {
+      "observed": 1800
+    },
+    "connectedAndControllerRows": 1800,
+    "pcConnectedRows": 1800,
+    "scopeChangedRows": 0,
+    "ackBudgetMs": 2500,
+    "sentFirstLast": [
+      1,
+      601
+    ],
+    "acknowledgedFirstLast": [
+      1,
+      601
+    ],
+    "ackIncrementCount": 600,
+    "ackIncrementJumps": {
+      "1": 600
+    },
+    "ackEventRttMs": {
+      "count": 600,
+      "min": 552.0,
+      "median": 588.6,
+      "p95": 716.9,
+      "max": 1277.5
+    },
+    "timeoutCounterFirstLast": [
+      0,
+      0
+    ],
+    "rejectedCounterFirstLast": [
+      0,
+      0
+    ],
+    "maxConsecutiveTimeoutsObserved": 0,
+    "observerDroppedRowsMax": 0,
+    "observerEndStatus": {
+      "stopped": true,
+      "canonicalExitCode": 0
+    }
+  },
+  "mediaAndHostLog": {
+    "viewerStatsRows": 1800,
+    "viewerFpsPerRow": {
+      "count": 1800,
+      "min": 0.0,
+      "median": 19.0,
+      "p95": 20.1,
+      "max": 26.0
+    },
+    "viewerZeroFpsRows": 1,
+    "viewerBelow15FpsRows": 6,
+    "viewerNonzeroLostRows": 2,
+    "viewerNonzeroDroppedRows": 0,
+    "viewerNonzeroFreezeRows": 97,
+    "viewerCandidateCounts": {
+      "relay": 1800
+    },
+    "captureStatsWindows": 358,
+    "captureFpsFiveSecondWindows": {
+      "count": 358,
+      "min": 16.6,
+      "median": 19.2,
+      "p95": 19.4,
+      "max": 19.6
+    },
+    "captureReuseFiveSecondWindows": {
+      "count": 358,
+      "min": 3.0,
+      "median": 11.0,
+      "p95": 17.0,
+      "max": 25.0
+    },
+    "captureAttemptedFirstLast": [
+      69,
+      33652
+    ],
+    "captureFailedFirstLast": [
+      0,
+      0
+    ],
+    "captureLastDurationSnapshotMs": {
+      "count": 323,
+      "min": 24.945,
+      "median": 32.969,
+      "p95": 47.252,
+      "max": 206.954
+    },
+    "captureLastThreadCpuSnapshotMs": {
+      "count": 323,
+      "min": 5.797,
+      "median": 9.112,
+      "p95": 14.047,
+      "max": 20.782
+    },
+    "captureLastNonCpuSnapshotMs": {
+      "count": 323,
+      "min": 18.836,
+      "median": 23.516,
+      "p95": 34.158,
+      "max": 186.172
+    },
+    "captureLifetimeMaxWallMsAtLastLog": 275.659,
+    "captureLifetimeMaxPairAtLastLogMs": {
+      "threadCpu": 21.742,
+      "nonCpu": 253.917
+    },
+    "captureRollingRateHz": {
+      "count": 323,
+      "min": 18.057,
+      "median": 18.722,
+      "p95": 19.029,
+      "max": 19.118
+    },
+    "maxRollingGrabMs": 275.659,
+    "hostLoopLagLogRows": 323,
+    "hostLoopLagObservedMaxMs": 28.387,
+    "hostLoopWindowP95MaxMs": 13.591,
+    "hostLoopWindowMissedSamplesMax": 0,
+    "encoderWindows": 358,
+    "encoderCodecCounts": {
+      "h264_videotoolbox": 358
+    },
+    "encoderPolicyCounts": {
+      "relay-peak-sliced-v1": 358
+    },
+    "encoderSizeCounts": {
+      "1152x720": 358
+    },
+    "encoderFrameCountSum": 34513,
+    "encoderApproxWeightedMeanMs": 6.173,
+    "encoderWindowP95Ms": {
+      "count": 358,
+      "min": 6.276,
+      "median": 10.832,
+      "max": 24.047
+    },
+    "encoderWindowMaxMs": {
+      "count": 358,
+      "min": 8.652,
+      "median": 18.734,
+      "p95": 42.964,
+      "max": 105.303
+    },
+    "encoderLargestIndividualMaxMs": 105.303,
+    "paintIntervalFiveSecondWindowP95Ms": {
+      "count": 1801,
+      "min": 66.6,
+      "median": 83.4,
+      "max": 433.3
+    },
+    "runtimeCoverage": {
+      "firstUtc": "2026-10-24T18:35:14.044137+00:00",
+      "lastUtc": "2026-10-24T19:05:07.048392+00:00",
+      "sampleCount": 323,
+      "coveredSeconds": 1793.004255,
+      "headUncoveredSeconds": 1.997137,
+      "tailUncoveredSeconds": 5.001608,
+      "completedFirst": 69,
+      "completedLast": 33652,
+      "freshCompletionDelta": 33583,
+      "freshCompletionsPerSecond": 18.730017,
+      "maxGrabNewlyObservedInRun": true,
+      "maxGrabUpdateUtc": "2026-10-24T18:52:33.066782+00:00",
+      "note": "Counters use first/last runtime snapshots; no interpolation over head/tail, no conversion to whole-frame latency percentiles."
+    }
+  },
+  "coverage": {
+    "summaryMissingSamples": 0,
+    "runtimeDiagnosticGapSum": 0,
+    "runtimeDiagnosticTruncatedRows": 0,
+    "runtimeDiagnosticCoverageCounts": {
+      "partial": 1801
+    },
+    "runtimeDiagnosticDroppedEventsFirstLast": [
+      0,
+      5660
+    ],
+    "runtimeDiagnosticDroppedEventsInterpretation": "cumulative 128-entry diagnostic ring eviction after cursor consumption; not evidence of JSONL row loss",
+    "heartbeatObserverDroppedRowsMax": 0,
+    "percentileCaveat": "Encoder and paint interval p95 values come from short application windows; reported min/median/max summarize those window p95s and are not a whole-session p95. Host loop window p95 max is likewise a maximum over windows. Snapshot distributions are over sampled snapshots, not all frames or grabs.",
+    "passiveOnly": true,
+    "inputToVisibleEffect": "NOT_RUN",
+    "externalDeploymentPin": "EXTERNAL_BEFORE_AFTER_PINS_AND_ALL_SAMPLE_BUILD_OBSERVED",
+    "externalDeploymentPinNote": "Formal public TURN path was exercised. External pre-run pin is separate from canonical passive verdict and is not continuous native source/PID attestation.",
+    "snapshotQuantileAlgorithm": "Nearest rank: sorted[max(0, ceil(p * count) - 1)], rounded to displayed precision. The median fields are p50 under this convention (lower central value for even sample counts).",
+    "reuseUnit": "captureReuseFiveSecondWindows values are reused output frame counts per logged window, not reuse percentages."
+  },
+  "sourceFileDigests": [
+    {
+      "name": "summary.json",
+      "bytes": 4011,
+      "sha256": "610914d19673726643eba7336991f3b18b7e8f661e8c80d07a719911723b3cda"
+    },
+    {
+      "name": "lifecycle.json",
+      "bytes": 8757,
+      "sha256": "4fe97535befa1782456aa6832a0ea1054415f49ebcbbaf27e3deffbfea6f438a"
+    },
+    {
+      "name": "samples.jsonl",
+      "bytes": 6245965,
+      "sha256": "f20a6e68ded1b41adb6c23726f1cd67335cd1791d492fced49f5c1c598d8a1c0"
+    },
+    {
+      "name": "wrd-20261025-final-hb-passive-30m-resources.jsonl",
+      "bytes": 960586,
+      "sha256": "24abc9482ad853cd7c53e8679955affa8d8907347a735f046293bda8b38ad143"
+    },
+    {
+      "name": "wrd-20261025-final-hb-passive-30m-heartbeat.jsonl",
+      "bytes": 1596724,
+      "sha256": "a29c0c4cb8ca32abac4af44ed0a5933172604c06287a843fb6cfb56d88bb0bd6"
+    },
+    {
+      "name": "wrd-20261025-passive-heartbeat-wrapper.py",
+      "bytes": 13574,
+      "sha256": "dd4502c731954de4f30ac60d6a26f250ab8c9cb119c2a7a2bd18819c21d60ffa"
+    },
+    {
+      "name": "wrd-20261025-two-miss-short-99-manifest.json",
+      "bytes": 1162,
+      "sha256": "b9922b3a10e55c2e7463738ba428d705d95cf5b0fb1c166b083d7f473faff066"
+    },
+    {
+      "name": "wrd-20261025-two-miss-deployment-99.json",
+      "bytes": 544,
+      "sha256": "f97c450a6b3e2b365b2303c6152dfd9e6d2eb730624ff814f4a2407c0fbba3f5"
+    },
+    {
+      "name": "wrd-20261025-two-miss-deployment-100.json",
+      "bytes": 544,
+      "sha256": "94edfed4235c9322c56d3897065d78ff16e3f78ba581bdf9faa08bbf47fb294f"
+    },
+    {
+      "name": "wrd-20261025-final-idle-resources.jsonl",
+      "bytes": 46525,
+      "sha256": "50328dd6539646f77941ee31a9404fcb3f57e711b6ac8d1a088d30f01896b459"
+    }
+  ],
+  "deployment": {
+    "cloudflaredState": "6438 Sat Oct 24 09:54:07 2026",
+    "hostPid": 64981,
+    "hostPythonSourceCommit": "9e352fc8d3abb315d69194ff45f82fa76bc8c22c",
+    "hostSpawnType": "interactive4",
+    "publicBuildId": "79d27719867d5814",
+    "publicManifestMatchesLocal": true,
+    "publicManifestProbeRoute": "bypass-env-proxy",
+    "runtimeConfigCommit": "2e611d5",
+    "safeUrlFilePresent": false,
+    "signalPid": 15428,
+    "signalSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+    "signalSpawnType": "interactive4",
+    "verifiedAtEpochMs": 1792866866516,
+    "sampleBuildCounts": {
+      "79d27719867d5814": 1801
+    },
+    "attestationBoundary": "External before/after source/build/PID pins plus build observed in every passive sample; no continuously bound canonical native manifest. After pin was taken after the later watchdog/UI runs, not exactly at passive teardown. Source commit ownership is per component."
+  },
+  "deploymentAfterAllRuns": {
+    "cloudflaredState": "6438 Sat Oct 24 09:54:07 2026",
+    "hostPid": 64981,
+    "hostPythonSourceCommit": "9e352fc8d3abb315d69194ff45f82fa76bc8c22c",
+    "hostSpawnType": "interactive4",
+    "publicBuildId": "79d27719867d5814",
+    "publicManifestMatchesLocal": true,
+    "publicManifestProbeRoute": "bypass-env-proxy",
+    "runtimeConfigCommit": "2e611d5",
+    "safeUrlFilePresent": false,
+    "signalPid": 15428,
+    "signalSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+    "signalSpawnType": "interactive4",
+    "verifiedAtEpochMs": 1792869116245
+  },
+  "postMaintenanceIdleObservation": {
+    "startUtc": "2026-10-24T19:11:20.178+00:00",
+    "endUtc": "2026-10-24T19:12:50.190+00:00",
+    "elapsedSeconds": 90.012,
+    "sampleCount": 91,
+    "missedIntervals": 0,
+    "hostRssMiBFirst": 506.62109375,
+    "hostRssMiBLast": 506.62109375,
+    "hostRssMiBMin": 506.62109375,
+    "hostRssMiBMax": 506.62109375,
+    "hostCpuSecondsDelta": 0.45,
+    "note": "Separate 90-second idle observation after all owned browsers closed; does not establish leak absence or compare equivalent allocation load."
+  }
+}

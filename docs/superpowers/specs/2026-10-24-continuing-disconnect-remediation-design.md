@@ -1,7 +1,7 @@
 # 持续断连与控制中断整改设计
 
 日期：2026-10-24
-状态：三个确定恢复缺口及诊断增强已实施并加载；整体性能、控制及断线验收未完成
+状态：确定的恢复/诊断缺口已实施并加载；当前版本五次原租约短断线及30分钟被动连续性通过，整体性能与真实输入效果未全部验收
 关联报告：[2026-10-24 持续断连专项诊断](../reports/2026-10-24-continuing-disconnect-diagnosis.md)
 
 ## 问题定义
@@ -98,10 +98,12 @@ Signal admin receipt 和 Host diagnostic summary 统一输出：
 | 抓帧 | capture p95≤100ms、max≤250ms；有效 cadence≥15 FPS |
 | 画面 | 活动期 decoded FPS p50≥18、新鲜采集 cadence≥15 FPS；暂停窗口单列，缓存复用不得计为新鲜帧 |
 | 短断线 | 5 次≤20 秒断线；每次≤10 秒恢复，旧 lease 输入=0 |
-| 控制 | ACK p95≤200ms、max≤1,000ms；过期 ACK=0 |
+| 控制（业务输入/reset，不含heartbeat） | ACK p95≤200ms、max≤1,000ms；过期 ACK=0 |
 | 可见效果 | marker→rVFC 覆盖率≥95%，缺测保留 `NOT RUN` |
 | 资源 | RSS 无持续单调增长；记录全机 swap 差分和 CPU idle，不能以累计 swap 或 Host RSS 代替全机压力；sender/PC 无重复恢复风暴 |
 | 诊断 | 日志计数区分 reported/retained/redacted，trace 独立统计，未知为 null；`summaryGapCount=0`，诊断 drop 与 RTP drop 分离 |
+
+本轮200ms为恢复阶段的业务输入/reset观测门槛；总稳定性设计中的TURN 150ms目标仍保留，满足200ms不等于通过150ms目标。heartbeat RTT独立报告，不用于业务输入或可见效果验收。
 
 ## 失败处理
 
@@ -145,7 +147,7 @@ Signal 仅对已验证且向 Host 转发的 v2 mouse/keyboard reset 关联后续
 
 ### 10月25日 launchd 调度候选及加载契约
 
-Host及Signal当前launchd spawn type均为daemon、线程priority/maxpriority均20；普通shell短进程为31/63。仅独立LaunchAgent的首轮20次20ms timer对照，默认excess p95约134.31ms，Interactive约7.40ms，CPU耗时仅约1.3ms。这支持启动上下文可导致额外等待，但不是Host抓帧/ACK性能A/B。
+部署前快照中Host及Signal的launchd spawn type均为daemon、线程priority/maxpriority均20；普通shell短进程为31/63。仅独立LaunchAgent的首轮20次20ms timer对照，默认excess p95约134.31ms，Interactive约7.40ms，CPU耗时仅约1.3ms。这支持启动上下文可导致额外等待，但不是Host抓帧/ACK性能A/B。
 
 候选为两个本地实时交互服务显式ProcessType=Interactive，不设置全局电源、nice、实时优先级、LegacyTimers或忙等。Host继续使用现有plist及restart-host脚本；必须先比较已安装与源配置，再决定kickstart复用或预检后re-bootstrap，预检失败不能覆盖旧配置或停止健康job。Signal helper将submit改为参数数组和plistlib生成的私有plist，经唯一label预检gui bootstrap后再停旧服务；真实bootstrap失败须尝试恢复原submit路径并明确失败，不能宣称Interactive已加载。不得操作任何tunnel label或进程。
 
