@@ -66,6 +66,18 @@ test('durable summaries retain only console counts and input trace counts after 
   for(const key of ['logs','inputTrace','events','keyboardDebug'])assert.equal(Object.hasOwn(row,key),false);
 });
 
+test('durable recovery failure reason survives raw eviction without accepting free-form reasons', t => {
+  const f=fixture(t,{maxPerViewer:1});
+  f.write('recovery','fixture-viewer',{reason:'recovery-failed'});
+  f.tick();f.write('newest');
+  f.tick();f.write('unsafe','other-viewer',{reason:'recovery-failed:PRIVATE_REASON_CANARY'});
+  const records=f.store.listSummary({from:0,to:Infinity}).records;
+  assert.equal(records.find(row=>!row.rawAvailable).reason,'recovery-failed');
+  assert.ok(records.some(row=>row.reason===null));
+  const summary=fs.readdirSync(path.join(f.dir,'summary')).map(name=>fs.readFileSync(path.join(f.dir,'summary',name),'utf8')).join('');
+  assert.equal(summary.includes('PRIVATE_REASON_CANARY'),false);
+});
+
 test('summary console counters preserve unknown and reject malformed counter metadata', t => {
   const f=fixture(t);
   f.write('historical','viewer-old',{logCount:0,logs:[],inputTrace:{events:[{stage:'ack'}]}});

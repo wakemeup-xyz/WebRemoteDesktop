@@ -15,6 +15,9 @@ function fixture(options = {}) {
   const lease = new DesktopControlLease({ now: () => now, makeLeaseId: () => require("node:crypto").randomUUID() });
   const io = makeIo();
   setupSignaling(io, { runtimeContext: runtime, desktopControlLease: lease, now: () => now,
+    // These admission fixtures intentionally drive one 8s grace/one ACK timer.
+    // Production defaults (30s and bounded retries) have separate contract tests.
+    viewerDisconnectGraceMs: 8000, rebindAckTimeoutsMs: [1500],
     structuredLogger: options.structuredLogger,
     scheduler: { setInterval: () => ({ unref() {} }), setTimeout(fn, ms) {
       const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer;

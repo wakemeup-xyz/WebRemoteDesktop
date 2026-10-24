@@ -153,6 +153,7 @@ const Input = {
   _mobileResetAckInFlight: false,
   _recoveryTimer: null,
   _recoveryAutoIdentity: null,
+  _recoveryFailureCaptureCycle: null,
   // A recovery overlay may release the current lease before asking the user
   // to explicitly request a new one. Keep this small UI state local to Input
   // so fullscreen/hidden chrome still has a reachable request action without
@@ -1057,12 +1058,25 @@ const Input = {
     cycle.reason = String(reason || 'recovery-failed');
     cycle.retryAvailable = true;
     this._mobileResetAckInFlight = false;
-    this._recordInputTrace('recovery', {
-      inputType: 'control', action: 'recovery', state: 'failed',
-      reason: cycle.reason, generation: cycle.generation, source: cycle.source || 'recovery',
-    });
-    this.updateKeyboardUI();
-    if (typeof WebRTC !== 'undefined') WebRTC.requestControlRecovery?.(cycle.generation);
+    const previousCapture = this._recoveryFailureCaptureCycle;
+    this._recoveryFailureCaptureCycle = cycle;
+    try {
+      this._recordInputTrace('recovery', {
+        inputType: 'control', action: 'recovery', state: 'failed',
+        reason: cycle.reason, generation: cycle.generation, source: cycle.source || 'recovery',
+      });
+      this.updateKeyboardUI();
+      // UI and diagnostic snapshots may expire the other reset barrier. Its
+      // timeout must not release this cycle's lease during synchronous capture.
+      try {
+        if (this._sameRecoveryIdentity(cycle) && typeof Diagnostic !== 'undefined') {
+          Diagnostic._handleInputTraceIncident?.('recovery-failed', this._traceIdentity());
+        }
+      } catch (_) { /* Diagnostics cannot change the control recovery result. */ }
+    } finally {
+      this._recoveryFailureCaptureCycle = previousCapture;
+      if (typeof WebRTC !== 'undefined') WebRTC.requestControlRecovery?.(cycle.generation);
+    }
     return true;
   },
 
@@ -1404,6 +1418,8 @@ const Input = {
     this._reliableAckRecoveryPending = true;
     if (record.reset || record.action === 'reset') {
       this._desktopWriteRecovery = { state: 'reacquire-required', status: 'ack-timeout' };
+      if (this._recoveryFailureCaptureCycle === this._recoveryCycle
+        && this._sameRecoveryIdentity(this._recoveryFailureCaptureCycle)) return;
       if (!this._markRecoveryFailure('recovery-timeout') && this.activeControlLease
         && typeof WebRTC !== 'undefined') WebRTC.requestControlRecovery?.(this._recoveryCycle.generation);
       return;

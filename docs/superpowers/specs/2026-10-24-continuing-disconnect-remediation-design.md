@@ -128,3 +128,13 @@ Signal admin receipt 和 Host diagnostic summary 统一输出：
 Signal 的 media/relay 拒绝回复必须携带验证后的请求 state/generation/attempt；不得回显 lease。Viewer 只处理当前请求的 scoped rejection。Host 的失败 ACK reason 仅允许固定业务枚举，禁止自由文本透传。必须通过真实注册的 Signal handler 验证重复 generation 在到达 Host 前被拒绝的路径，不能仅用直接调用 Viewer ACK 的 fixture 代替。
 
 诊断回归在模块导入前配置唯一临时目录，所有清理须验证目录归属；默认生产目录只能做纯路径推导断言。通过继承模拟生产目录的子进程 canary 证明测试无生产文件副作用。历史证据被删除必须报告来源和缺失，不能重建摘要后称原件已恢复。
+
+### 维护验收发现的恢复诊断缺口
+
+生命周期 reset 失败没有 DOM incident，必须在同 recovery identity 终态失败、控制释放之前捕获 `recovery-failed` 诊断。保留现有前台/active/lease/身份/15秒节流门禁，采集同步或异步失败都不得影响控制恢复。发送失败和明确 ACK 拒绝不得伪报为 ACK timeout；具体原因只进入既有白名单状态/trace。日汇总保留固定 recovery-failed reason。
+
+Signal 仅对已验证且向 Host 转发的 v2 mouse/keyboard reset 关联后续 ACK，最多32项、TTL10秒，使用本机单调时钟。只记录 inputId 哈希、固定输入类别/状态、租约epoch、目标存在/校验通过/ACK租约及类别匹配/是否转发和 request→ACK 本地耗时；这个耗时包括 Host 和本地传输，不能叫纯网络耗时。无对应 reset、旧 Host 或普通键入不增加逐条日志，观测异常不影响原授权/转发。每项只记录首个匹配 ACK，即使其 shape 无效也消费记录，后续同ID仍按原协议转发而不再逐条记录。它不能证明 Viewer 已收到 ACK。
+
+采集失败快照时，UI/真实diagnostic builder读取keyboard snapshot可能同步触发另一条reset超时。为防止快照完成前嵌套释放，使用仅覆盖同cycle同步采集调用栈的门闩；finally清除并执行一次既有控制恢复。不得跨await持有、不得延长期限、不得忽略正常ACK。测试必须用真实双reset定时器及真实builder，直接手工调用失败函数不能替代这条反例。
+
+验收脚本的 status-reader 失败另记有界 stage/errorCategory/elapsed 的私有 sidecar，保留原 summary/lifecycle schema 与所有期限。无 sidecar 只能是来源未知，不能倒推为浏览器或 Host 故障。

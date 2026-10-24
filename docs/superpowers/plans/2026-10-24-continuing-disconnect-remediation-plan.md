@@ -99,7 +99,7 @@
 - [x] 修复 media ACK 幂等/证明保留/有界时限，验证旧 PC、socket、lease、attempt/generation 和主动暂停不能被激活；覆盖真实 Signal 拒绝/Host reason 转发，而非仅前端模拟。
 - [x] 修复同步 DC send 失败的 Socket fallback，验证成功 DC 不双发、Socket 离线 fail-closed、序列化错误不被吞掉。
 - [x] 贯通 reported/retained/redacted/trace 计数，验证原文不落盘、raw 淘汰后日汇总仍保留计数、历史未知不伪装为 0。
-- [ ] 运行相关 Signal/Viewer 回归和隔离前端构建；review 实现及文档，提交到 main。
+- [x] 运行初次最小修复的 Signal/Viewer 回归和隔离前端构建；review 实现及文档，提交到 main（09d5c24）。
 - [ ] 按现有维护授权在无 Viewer 时加载本地修复并验收；若用户 Viewer 恢复在线则保护其会话，保持待加载状态。tunnel 不操作。
 - [ ] 分别记录离线通过、生产已加载、passive/短断线和真实可见效果状态；未运行的不勾选。
 
@@ -113,3 +113,13 @@
 - [ ] 实现有界 native-buffer source 与 CFRunLoop owner，覆盖 generation fencing、暂停/恢复、resize、晚 callback、stop 排空和 owner 回收；callback 不做全屏 copy/resize。
 - [ ] 同分辨率/20 FPS/编码器/OpenCV 单线程下，对 MSS、独立进程、异步 source 运行同负载轮换；记录系统 load/running/CPU idle，单列 source delivery age、fresh paint 与输入效果。系统压力差异过大的轮次不得相互宣称性能提升。
 - [ ] 通过真实可见效果和 30 分钟资源/帧连续性门槛后，才评估修改默认 backend。本轮接口预检和短测不能勾选此项。
+
+原生接口实验补充：独立子进程收到73次complete/1次stopped，元数据桥接为1152×720/BGRA/stride4608，start/stop返回0；未读取像素。只完成接口和metadata验证，idle、静态恢复、像素归属、资源反复回收及性能A/B仍未运行。
+
+### 维护验收后的日志补充
+
+- [x] status-reader按固定stage/error类别保留失败侧文件，所有期限不变；91项主套及取消/清理focused通过。
+- [x] reset恢复失败在原scope释放前进入既有诊断，使用recovery-failed避免把发送失败/ACK拒绝误报为超时；补齐真实双reset定时器重入，Viewer最终全套1,517项通过。
+- [x] Signal仅针对已转发reset关联ACK目标、校验、租约/类型匹配、转发及本地耗时，保持32项/10秒上限，验证失败日志不改变控制结果。扩展后的全部Signal目录回归537/537通过。
+- [ ] 加载新日志补丁，运行独立第三轮维护验收；前两轮结果保留INCOMPLETE，不通过放宽原lease/期限要求来改判。
+- [ ] 更新生产reported/retained/redacted/trace receipt；真实样本尚未到达时保持null和coverage missing。

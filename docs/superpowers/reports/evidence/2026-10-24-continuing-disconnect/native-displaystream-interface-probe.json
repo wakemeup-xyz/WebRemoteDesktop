@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "kind": "isolated-native-interface-probe",
+  "productionBackendChanged": false,
+  "pixelsReadOrSaved": false,
+  "status": "OBSERVED",
+  "reason": "interface-probe-only",
+  "counts": {
+    "complete": 73,
+    "idle": 0,
+    "blank": 0,
+    "stopped": 1,
+    "other": 0
+  },
+  "bridgeStatus": "metadata-verified",
+  "bridgeErrorClass": null,
+  "format": {
+    "width": 1152,
+    "height": 720,
+    "bytesPerRow": 4608,
+    "pixelFormat": 1111970369
+  },
+  "callbackFirstAtMs": 2016.94,
+  "callbackLastAtMs": 8002.505,
+  "maxCallbackIntervalMs": 165.843,
+  "stopReturnCode": 0,
+  "stoppedCallbackObserved": true,
+  "startReturnCode": 0,
+  "elapsedMs": 8059.225,
+  "limitations": [
+    "No pixels copied; callback-to-frame conversion and production integration NOT_RUN.",
+    "Metadata conversion uses one callback; an eventual backend must move heavy work outside callbacks.",
+    "Stopped callback is observed separately from Stop return; no repeated lifecycle or long-session qualification."
+  ],
+  "atLocal": "2026-10-24T23:08:30+08:00",
+  "preflightScreenPermissionGranted": true,
+  "staticIdleQualified": false,
+  "perFrameLatencyQualified": false,
+  "comparativePerformanceQualified": false
+}

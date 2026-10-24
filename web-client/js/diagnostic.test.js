@@ -216,6 +216,224 @@ function createDiagnosticContext(overrides = {}) {
   return { context, elements, storage: context.localStorage };
 }
 
+function loadRecoveryDiagnosticCoreFixture() {
+  const { context } = createDiagnosticContext();
+  context.console = { log() {}, info() {}, warn() {}, error() {} };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'input-trace.js'), 'utf8'), context);
+  context.window.InputTrace = context.InputTrace;
+  context.window.document = context.document;
+  context.window.WebRTC = context.WebRTC;
+  context.window.localStorage = context.localStorage;
+  context.window.sessionStorage = context.sessionStorage;
+  context.window.performance = context.performance;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'diagnostic-core.js'), 'utf8'), context);
+  const Diagnostic = context.window.Diagnostic;
+  context.Diagnostic = Diagnostic;
+  const Input = loadScript('input.js', context, 'Input');
+  const reports = [], recoveries = [];
+  const originalUpdateKeyboardUI = Input.updateKeyboardUI;
+  Input.updateKeyboardUI = () => {};
+  Input.isActive = true;
+  Input.activeControlLease = { leaseId: 'LEASE_PRIVATE_CANARY', leaseEpoch: 7 };
+  context.WebRTC.currentConnectionAttemptId = 'attempt-recovery-current';
+  context.WebRTC.hasActiveControl = () => Boolean(Input.activeControlLease);
+  context.WebRTC.requestControlRecovery = generation => recoveries.push(generation);
+  context.WebRTC.socket = { connected: true, on() {}, off() {}, timeout() {
+    return { emit(event, payload, ack) {
+      reports.push(payload);
+      ack(null, { accepted: true, diagnosticId: payload.diagnosticId, eventIdHashes: [] });
+    } };
+  } };
+  Input._recoveryCycle = { state: 'waiting', generation: 2, source: 'auto',
+    leaseId: Input.activeControlLease.leaseId, leaseEpoch: 7, attemptId: context.WebRTC.currentConnectionAttemptId,
+    mouseConfirmed: false, keyboardConfirmed: false, retryAvailable: false };
+  return { context, Input, Diagnostic, reports, recoveries, originalUpdateKeyboardUI };
+}
+
+function loadExpiringDualResetDiagnosticFixture({ realUi = true } = {}) {
+  const f = loadRecoveryDiagnosticCoreFixture();
+  let now = 1000, nextTimer = 0;
+  const timers = new Map(), releases = [], writes = [];
+  f.context.performance.now = () => now;
+  f.context.setTimeout = (callback, delay = 0) => {
+    const id = ++nextTimer;
+    timers.set(id, { callback, due: now + delay });
+    return id;
+  };
+  f.context.clearTimeout = id => timers.delete(id);
+  for (const file of ['keyboard-transport.js', 'remote-keyboard-controller.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, file), 'utf8'), f.context);
+  }
+  f.context.WebRTC.sendInput = () => false;
+  f.context.WebRTC.socket.emit = (event, payload) => {
+    if (event === 'input') writes.push(payload);
+  };
+  f.Input.initKeyboardController();
+  f.Input.keyboardController.setLease(f.Input.activeControlLease);
+  f.Input._resetRecoveryCycle();
+  f.Input._mobileSurfaceState = 'uncertain';
+  if (realUi) f.Input.updateKeyboardUI = f.originalUpdateKeyboardUI;
+  f.context.WebRTC.requestControlRecovery = generation => {
+    releases.push({ generation, reportsAtRelease: f.reports.length });
+    f.Input.activeControlLease = null;
+  };
+  assert.equal(f.Input.requestInputRecovery({ source: 'user' }), true);
+  assert.equal(writes.filter(row => row.action === 'reset').length, 2);
+  return { ...f, releases, advance(ms) {
+    now += ms;
+    let timer;
+    while ((timer = [...timers].find(([, entry]) => entry.due <= now))) {
+      timers.delete(timer[0]);
+      timer[1].callback();
+    }
+  } };
+}
+
+for (const realUi of [true, false]) {
+  test(`real dual-reset timeout captures the owned scope before snapshot reentry releases control (UI=${realUi})`, async () => {
+    const f = loadExpiringDualResetDiagnosticFixture({ realUi });
+    f.advance(2999);
+    assert.equal(f.reports.length, 0);
+    assert.equal(f.releases.length, 0);
+    f.advance(2);
+    assert.equal(f.reports.length, 1);
+    assert.equal(f.reports[0].reason, 'recovery-failed');
+    assert.equal(f.reports[0].inputState.hasLease, true);
+    assert.equal(f.reports[0].inputState.leaseEpoch, 7);
+    assert.equal(f.reports[0].inputState.recovery.state, 'failed');
+    assert.equal(f.reports[0].inputState.recovery.reason, 'recovery-timeout');
+    assert.equal(f.releases.length, 1);
+    assert.equal(f.releases[0].reportsAtRelease, 1);
+    assert.equal(f.Input._recoveryFailureCaptureCycle, null);
+    assert.equal(JSON.stringify(f.reports[0]).includes('LEASE_PRIVATE_CANARY'), false);
+    await Promise.resolve();
+  });
+}
+
+for (const failure of ['builder-throw', 'async-reject']) {
+  test(`dual-reset diagnostic ${failure} restores the capture latch and releases control once`, async () => {
+    const f = loadExpiringDualResetDiagnosticFixture();
+    let calls = 0;
+    if (failure === 'builder-throw') {
+      f.Diagnostic.buildConnectionDiagnostic = () => {
+        calls++;
+        f.Input.getDiagnosticState();
+        throw Error('PRIVATE_BUILDER_CANARY');
+      };
+    } else {
+      f.Diagnostic.autoSendFailure = () => {
+        calls++;
+        f.Input.getDiagnosticState();
+        return Promise.reject(Error('PRIVATE_ASYNC_CANARY'));
+      };
+    }
+    assert.doesNotThrow(() => f.advance(3001));
+    assert.equal(calls, 1);
+    assert.equal(f.releases.length, 1);
+    assert.equal(f.Input._recoveryCycle.state, 'failed');
+    assert.equal(f.Input._recoveryFailureCaptureCycle, null);
+    await new Promise(resolve => setImmediate(resolve));
+  });
+}
+
+test('reset ACK timeout uploads one core diagnostic before control recovery without opening the panel', async () => {
+  const f = loadRecoveryDiagnosticCoreFixture();
+  const { Input, Diagnostic, context, reports } = f;
+  const identity = Input._traceIdentity();
+  context.WebRTC.requestControlRecovery = generation => {
+    f.recoveries.push(generation);
+    assert.equal(reports.length, 1, 'capture must precede lease release');
+    Input.activeControlLease = null;
+  };
+  Input._onReliableAckTimeout({ reset: true, action: 'reset', leaseId: Input.activeControlLease.leaseId,
+    leaseEpoch: 7, connectionAttemptId: identity.connectionAttemptId });
+  assert.equal(Diagnostic.panelReady, false);
+  assert.equal(reports.length, 1); assert.deepEqual(f.recoveries, [2]);
+  assert.equal(reports[0].schemaVersion, 3); assert.equal(reports[0].reason, 'recovery-failed');
+  assert.equal(reports[0].connectionAttemptId, identity.connectionAttemptId);
+  assert.ok(reports[0].inputTrace.events.some(event => event.stage === 'recovery' && event.state === 'failed'));
+  assert.equal(JSON.stringify(reports[0]).includes('LEASE_PRIVATE_CANARY'), false);
+  assert.equal(Input._markRecoveryFailure('recovery-timeout'), false);
+  assert.equal(reports.length, 1);
+  await Promise.resolve();
+});
+
+test('reset send failures report recovery failure while preserving their specific safe reason', () => {
+  for (const inputType of ['mouse', 'keyboard']) {
+    const f = loadRecoveryDiagnosticCoreFixture();
+    f.Input._recoveryCycle.state = 'idle';
+    f.Input._recoveryNeedsReset = () => true;
+    f.Input.sendInput = () => 'RESET_PRIVATE_CANARY';
+    f.Input._captureMouseReset = () => inputType === 'mouse' ? null
+      : { inputId: 'RESET_PRIVATE_CANARY', seq: 1, leaseEpoch: 7, attemptId: f.context.WebRTC.currentConnectionAttemptId };
+    f.Input.keyboardController = { reset: () => false, getSnapshot: () => ({ state: 'RESET_REQUIRED' }) };
+    assert.equal(f.Input.requestInputRecovery({ source: 'user' }), false);
+    assert.equal(f.reports.length, 1);
+    const report = f.reports[0], reason = `${inputType}-reset-send-failed`;
+    assert.equal(report.reason, 'recovery-failed');
+    assert.notEqual(report.reason, 'input-ack-timeout');
+    assert.equal(report.inputState.recovery.reason, reason);
+    assert.ok(report.inputTrace.events.some(event => event.stage === 'recovery' && event.reason === reason));
+    assert.equal(JSON.stringify(report).includes('RESET_PRIVATE_CANARY'), false);
+  }
+});
+
+test('explicit reset ACK rejection reports recovery failure without fabricating an ACK timeout', () => {
+  for (const status of ['stale-lease', 'invalid-input', 'unsupported-code', 'execution-failed']) {
+    const f = loadRecoveryDiagnosticCoreFixture();
+    const reset = { inputId: 'RESET_PRIVATE_CANARY', seq: 1, leaseEpoch: 7,
+      connectionAttemptId: f.context.WebRTC.currentConnectionAttemptId,
+      socket: f.context.WebRTC.socket, socketId: null };
+    f.Input.keyboardTransport = { getPendingReset: () => reset,
+      acceptAck: () => ({ status: 'reacquire-required' }), getSnapshot: () => ({ state: 'reacquire-required' }) };
+    f.Input._acceptKeyboardAck({ schemaVersion: 2, inputType: 'keyboard', inputIds: [reset.inputId],
+      leaseEpoch: 7, appliedSeq: 0, status });
+    assert.equal(f.reports.length, 1);
+    const report = f.reports[0], reason = `keyboard-reset-ack-${status}`;
+    assert.equal(report.reason, 'recovery-failed');
+    assert.notEqual(report.reason, 'input-ack-timeout');
+    assert.equal(report.inputState.recovery.reason, reason);
+    assert.ok(report.inputTrace.events.some(event => event.stage === 'recovery' && event.reason === reason));
+    assert.equal(JSON.stringify(report).includes('RESET_PRIVATE_CANARY'), false);
+  }
+});
+
+test('recovery diagnostic keeps current scope foreground lease and existing cooldown guards', () => {
+  for (const kind of ['old-attempt', 'old-lease', 'hidden', 'inactive', 'no-lease', 'not-controller']) {
+    const f = loadRecoveryDiagnosticCoreFixture();
+    if (kind === 'old-attempt') f.context.WebRTC.currentConnectionAttemptId = 'attempt-new';
+    if (kind === 'old-lease') f.Input.activeControlLease = { leaseId: 'other-lease', leaseEpoch: 7 };
+    if (kind === 'hidden') f.context.document.hidden = true;
+    if (kind === 'inactive') f.Input.isActive = false;
+    if (kind === 'no-lease') f.Input.activeControlLease = null;
+    if (kind === 'not-controller') f.context.WebRTC.hasActiveControl = () => false;
+    assert.equal(f.Input._markRecoveryFailure('recovery-timeout'), true);
+    assert.equal(f.reports.length, 0, kind);
+  }
+  const f = loadRecoveryDiagnosticCoreFixture();
+  f.Input._markRecoveryFailure('recovery-timeout');
+  f.Input._recoveryCycle.state = 'waiting';
+  f.Input._recoveryCycle.generation++;
+  f.Input._markRecoveryFailure('recovery-timeout');
+  assert.equal(f.reports.length, 1, 'existing per-attempt cooldown remains in force');
+});
+
+test('recovery collector exceptions do not prevent control recovery', () => {
+  const f = loadRecoveryDiagnosticCoreFixture(); let calls = 0;
+  f.Diagnostic._handleInputTraceIncident = () => { calls++; throw Error('PRIVATE_COLLECTOR_CANARY'); };
+  assert.doesNotThrow(() => f.Input._markRecoveryFailure('recovery-timeout'));
+  assert.equal(calls, 1); assert.deepEqual(f.recoveries, [2]);
+  assert.equal(f.Input._recoveryCycle.state, 'failed');
+});
+
+test('diagnostic input incidents consume rejected asynchronous sends', async () => {
+  const f = loadRecoveryDiagnosticCoreFixture(); let calls = 0;
+  f.Diagnostic.autoSendFailure = () => { calls++; return Promise.reject(Error('PRIVATE_SEND_CANARY')); };
+  assert.equal(f.Diagnostic._handleInputTraceIncident('recovery-failed', f.Input._traceIdentity()), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+});
+
 test('diagnostic button opens modal without rendering raw keyboard debug output', () => {
   const { context, elements } = createDiagnosticContext();
 

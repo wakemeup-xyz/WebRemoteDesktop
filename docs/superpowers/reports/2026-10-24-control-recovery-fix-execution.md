@@ -41,9 +41,25 @@
 
 新生产 runtime receipt 当前 reportCount=0，reported/retained/redacted/trace 计数均为 null；summary gap=0、ring drop=1（诊断/心跳环保留）。这份运行证据证明缺测被正确暴露，不能证明已经收到新版本诊断报告或真实输入效果。日志计数贯通目前由离线持久化反例验证，生产新样本仍待观测。
 
+独立原生接口探测（23:08，开始时无 Viewer）：权限 preflight=true；CGDisplayStream start/stop 均返回0，约6秒观测收到73个 complete 和1个 stopped 回调。IOSurface→CVPixelBuffer 元数据桥接成功，1152×720、BGRA、bytesPerRow=4608。首次回调距脚本 native 阶段起点约2,017ms，最大观测 callback 间隔165.843ms；该间隔不是逐帧抓取耗时。没有读取或保存像素，没有 resize/编码，没有接入生产。idle=0，静态恢复、像素读取/归属、重复生命周期、资源长期回收及同负载 A/B **NOT RUN**。该结果只解除接口/元数据桥接可行性的部分疑问，不证明 backend 性能提升。
+
+## 重绑定后 reset ACK 的关联复核
+
+第二次维护窗口中，22:55:54.632 Signal 已确认原 lease 重绑定，56.774/.776 转发双 Socket reset。Host 于57.294/.848 应用成功，57.409/.849 提交 ACK。Viewer 从 waiting 转 failed，Signal59.211 记录主动 released，59.818 复位进入FREE，之后重新 grant。失败前 socket/attempt/PC/media 均稳定；没有媒体 hard fallback 先行的证据。浏览器 observer 的1秒 lag采样最大仅16ms，不能泛称浏览器主线程阻塞3秒。Host 到 Signal 已确认是 established loopback 连接。
+
+真实 Host Socket ACK方法→Signal注册handler→Viewer注册handler的离线7种对照中，正常新Socket及同对象换id均可recovered；刻意旧目标、错误序号、二次身份变更、ACK在browser处理延迟到3.1秒才分别失败。现场没有重现正常owner守卫误拒，故不修改身份门禁。浏览器packet观察在55.505至58.278之间无rx，覆盖Host ACK提交区间，支持端到端交付迟到；但没有具体ACK标签，不能断言哪条ACK在哪一层丢失或延迟。Host ACK enqueue不能代替Viewer接收。
+
 ## 验收探针诊断增强
 
 `read_local_host_status()` 原来把连接、HTTP 头/body、关闭及期限错误都压成相同 ValueError。现保留原错误契约，另携带固定 stage/errorCategory 和 bounded elapsedMs，失败时只在该次验收私有输出目录写 `status-observation-failure.json`；不写异常原文、URL、身份或密码，不更改严格 summary/lifecycle schema。页面观察失败本身不能生成 status-reader 证据。750ms status、2s tick、1s final export 及 cleanup 时限不变；写入失败保留首失败且不能生成 PASS。主套 91/91 与取消/清理期限 focused 6/6 通过。旧两次验收没有该侧文件，无法回溯具体失败阶段。
+
+## 后续日志补丁及系统性复核
+
+- 真实reset barrier超时、发送失败、明确ACK拒绝此前没有DOM incident，可能完全不上报。本次在同recovery identity释放前进入既有前台/active/lease/15秒节流入口，以固定 `recovery-failed` 报告，具体原因保留在已脱敏状态/trace。同步采集throw和异步发送reject不影响恢复；日汇总保留固定原因。
+- 独立review用真实双reset定时器发现，UI或builder读取keyboard snapshot会触发第二条超时重入，提前释放导致证据丢失。已用仅覆盖同cycle同步采集阶段的门闩修复，finally清理并执行一次既有恢复；真实定时器+builder的4项反例先红后绿，原3秒期限和身份门禁不变。
+- 新 `signal_reset_ack_observed` 只关联已转发reset，32项/10秒；包含哈希、固定状态、目标/shape/租约与类型匹配布尔、是否转发、Signal本地request→Host ACK耗时。明确包括Host处理，不当作纯网络耗时或Viewer接收。首个匹配ACK消费记录，badshape也消费；后续同IDACK仍按原协议处理。日志sink异常不影响转发。
+- 最终回归：Viewer全部1,517/1,517；Signal的test及所有websocket测试537/537，无跳过。扩展Signal目录时曾出现12项旧fixture失败，根因为该组隐含8秒grace/单次ACK与现行30秒/有界重试不一致；现显式固定该组短时钟，32项边界用例及全套通过，未修改生产默认值。
+- 最终隔离构建 buildId `3fb4a1fd0774bdcc`；`git diff --check`通过。独立review未发现遗留必修。以上后续补丁尚待当前30分钟旧已加载版本的TURN连续性测试结束后统一加载；不得把离线结果写成已经上线。
 
 ## 尚未解决
 

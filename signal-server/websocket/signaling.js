@@ -2,6 +2,7 @@ const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
 const { normalizeDisconnectReason } = require('../lib/observability/runtime');
+const { createResetAckObserver } = require('../lib/observability/reset-ack-observer');
 const { DesktopControlLease } = require('../lib/desktop-control-lease');
 const { ControlTransitionRetry } = require('../lib/control-transition-retry');
 const { createRuntimeContext } = require('./runtime-context');
@@ -45,6 +46,19 @@ const V2_INPUT_ACK_STATUSES = new Set([
   'unsupported-code',
   'execution-failed',
 ]);
+
+function validV2InputAckShape(data) {
+  if (data.schemaVersion !== 2) return false;
+  const independentAck = data.inputType === 'mouse';
+  return Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0
+    && ['keyboard', 'mouse', 'command'].includes(data.inputType)
+    && (independentAck
+      ? (data.appliedSeq === undefined || (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0))
+      : (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0))
+    && V2_INPUT_ACK_STATUSES.has(data.status)
+    && (independentAck || (Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0))
+    && (independentAck || (Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0));
+}
 const MEDIA_ACTIVITY_ACK_FAILURE_REASONS = new Set([
   'stale-generation',
   'closed',
@@ -159,6 +173,22 @@ function setupSignaling(io, options = {}) {
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || null;
   const structuredLogger = options.structuredLogger || null;
+  // Observation only: each server instance retains at most 32 reset IDs for
+  // ten seconds. No lease token, input payload, socket, or timer is retained.
+  const resetAckObserver = createResetAckObserver({
+    now: options.resetAckNow,
+    onObservation(meta) {
+      const payload = {
+        domain: 'input',
+        event: 'signal_reset_ack_observed',
+        message: 'Signal reset request to ACK outcome (includes Host processing)',
+        meta,
+      };
+      // Each sink is optional and must never become part of ACK delivery.
+      try { structuredLogger?.info?.(payload); } catch (_error) {}
+      try { recentEventStore?.append?.(payload); } catch (_error) {}
+    },
+  });
   const desktopLease = options.desktopControlLease || new DesktopControlLease({
     now: options.now || Date.now,
     makeLeaseId: options.makeLeaseId || (() => `lease-${require('node:crypto').randomUUID()}`),
@@ -1529,6 +1559,13 @@ function setupSignaling(io, options = {}) {
           transport: 'socket',
           viewerId: socket.id
         });
+        if (data?.schemaVersion === 2 && data.action === 'reset'
+          && ['keyboard', 'mouse'].includes(data.type)) {
+          resetAckObserver.noteForwarded({
+            schemaVersion: data.schemaVersion, type: data.type, action: data.action,
+            leaseEpoch: data.leaseEpoch, inputIds: data.inputIds, viewerId: socket.id,
+          });
+        }
         emitInputEvent('signal_input_relayed', socket, data, { status: 'accepted' });
       } else {
         console.warn('[INPUT] No host connected, dropping input');
@@ -1542,7 +1579,11 @@ function setupSignaling(io, options = {}) {
         return;
       }
       const viewerSocket = connections.viewers.get(String(data.viewerId || ''));
-      if (!viewerSocket) return;
+      const shapeValid = validV2InputAckShape(data);
+      const observeAck = forwarded => resetAckObserver.observeAck(data, {
+        targetAvailable: Boolean(viewerSocket), shapeValid, forwarded,
+      });
+      if (!viewerSocket) { observeAck(false); return; }
       const inputIds = Array.isArray(data.inputIds) ? data.inputIds.slice(0, 64) : [];
       const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
       const hostExecuteMs = duration(data.hostExecuteMs);
@@ -1553,17 +1594,10 @@ function setupSignaling(io, options = {}) {
         hostApplyMs: duration(data.hostApplyMs),
       } : {};
       if (data.schemaVersion === 2) {
-        const validEpoch = Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0;
-        const validStatus = V2_INPUT_ACK_STATUSES.has(data.status);
         const inputType = data.inputType;
         const independentAck = inputType === 'mouse';
-        const validInputType = ['keyboard', 'mouse', 'command'].includes(inputType);
-        const validSeq = independentAck
-          ? (data.appliedSeq === undefined || (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0))
-          : (Number.isSafeInteger(data.appliedSeq) && data.appliedSeq >= 0);
-        const validPressed = independentAck || (Number.isSafeInteger(data.pressedKeyCount) && data.pressedKeyCount >= 0);
-        const validModifiers = independentAck || (Number.isSafeInteger(data.modifierMask) && data.modifierMask >= 0);
-        if (!validEpoch || !validInputType || !validSeq || !validStatus || !validPressed || !validModifiers) {
+        if (!shapeValid) {
+          observeAck(false);
           logger.warn?.('[INPUT] invalid v2 ack');
           return;
         }
@@ -1580,6 +1614,7 @@ function setupSignaling(io, options = {}) {
           ...timing,
           transport: 'socket',
         });
+        observeAck(true);
         return;
       }
       viewerSocket.emit('input-ack', {
@@ -1590,6 +1625,7 @@ function setupSignaling(io, options = {}) {
         ...timing,
         transport: 'socket',
       });
+      observeAck(true);
     });
 
     // Diagnostic logs relay (viewer -> host) + persist to disk

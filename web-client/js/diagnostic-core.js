@@ -112,7 +112,7 @@
   };
 
   Diagnostic._handleInputTraceIncident = function _handleInputTraceIncident(reason, identity = {}) {
-    if (reason !== 'input-ack-timeout' && reason !== 'input-gate-unexpected') return false;
+    if (reason !== 'input-ack-timeout' && reason !== 'input-gate-unexpected' && reason !== 'recovery-failed') return false;
     const safeIdentity = {
       connectionAttemptId: typeof identity?.connectionAttemptId === 'string'
         && SAFE_CONNECTION_ATTEMPT.test(identity.connectionAttemptId)
@@ -134,7 +134,7 @@
       return false;
     }
     try {
-      this.autoSendFailure(reason);
+      Promise.resolve(this.autoSendFailure(reason)).catch(() => {});
       return true;
     } catch (_error) {
       return false;

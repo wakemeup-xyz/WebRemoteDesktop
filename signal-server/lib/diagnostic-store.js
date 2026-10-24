@@ -190,7 +190,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
         monotonicMs:typeof r.captured?.monotonicMs==='number' && Number.isFinite(r.captured.monotonicMs) && r.captured.monotonicMs>=0?r.captured.monotonicMs:null,
         bootIdHash:digest(r.captured?.bootIdHash)},
       build:{id:digest(r.build?.id),builtAt:Number.isSafeInteger(r.build?.builtAt) && r.build.builtAt>=0?r.build.builtAt:(time(r.build?.builtAt)===null?null:r.build.builtAt)},
-      reason:enumValue(r.reason || r.traceSummary?.reason,['manual','input-ack-timeout','pc-failed','pc-disconnected','ice-disconnected','dc-error','dc-stuck','direct-failed-suggest-relay','relay-failed-suggest-tunnel']),
+      reason:enumValue(r.reason || r.traceSummary?.reason,['manual','input-ack-timeout','recovery-failed','pc-failed','pc-disconnected','ice-disconnected','dc-error','dc-stuck','direct-failed-suggest-relay','relay-failed-suggest-tunnel']),
       state:enumValue(r.inputState?.gate?.runtimePhase,['active','suspending','suspended','resuming']),
       mode:enumValue(r.mode,['auto','direct','relay','tunnel','stun','turn']),
       // The durable daily summary outlives raw eviction. Keep only measured
