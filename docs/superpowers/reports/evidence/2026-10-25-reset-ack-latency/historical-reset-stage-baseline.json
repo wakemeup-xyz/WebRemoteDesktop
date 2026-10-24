@@ -1,0 +1,1396 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-10-24T22:05:37.450286+00:00",
+  "scope": "read-only-ten-reset-baseline-correlation-from-existing-five-recovery-runs",
+  "deployment": {
+    "signalSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+    "viewerSourceCommit": "a88f7fecb2dc630ed7658c315acc71e4bed3f03b",
+    "hostSourceCommit": "9e352fc8d3abb315d69194ff45f82fa76bc8c22c",
+    "signalPid": 15428,
+    "hostPid": 64981,
+    "viewerBuildId": "79d27719867d5814",
+    "runtimeConfigCommit": "2e611d5",
+    "sourceEvidence": "root-attested per-run manifests and deployment snapshots",
+    "publicManifestMatchesLocalInAllFiveDeploymentSnapshots": true,
+    "sameLongRunningHostAcrossRuns": true,
+    "hostSourceIsNotInferredFromCurrentRepositoryHead": true
+  },
+  "inputScope": "mandatory recovery mouse.reset and keyboard.reset only; no business action or visible-effect qualification",
+  "counts": {
+    "runs": 5,
+    "uniqueResetInputs": 10,
+    "SignalForwardAckChainsMatched": 10,
+    "HostReceiveApplyAckChainsMatched": 10,
+    "metricBearingProjections": 25,
+    "knownPerInputViewerAckValues": 5,
+    "unknownPerInputViewerAckValues": 5
+  },
+  "evidenceFileSHA256": "2c5e4b48ca9589f5fc8068326368a683b547ad5d31653eb23da9c38b00bba820",
+  "sourceFileReadSnapshots": [
+    {
+      "path": "/tmp/wrd-structured/signal-server.jsonl",
+      "bytesRead": 920943,
+      "sha256OfReadBytes": "7e43ab50dff323c23f45dbe4ac08c97d5932affcdb2012c0d663b6789249a370",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/Users/macstudio1/AI/Claude/WebRemoteDesktop/back-debug.log.1",
+      "bytesRead": 10483899,
+      "sha256OfReadBytes": "838afbc9af3efcda4ec3e8cab8bfe9c02f9485f0d180841b96e400c4cb977742",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-1/samples.jsonl",
+      "bytesRead": 1310401,
+      "sha256OfReadBytes": "2c7eaa1cfdcf9951ffbd18e7944875ce618e76b0fe42e4206c9e25213e9905ce",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-1/lifecycle.json",
+      "bytesRead": 8816,
+      "sha256OfReadBytes": "61f354db6b23f642bf46984f2e84a300f204db7600e27924bbce2d7b2b426342",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-2/samples.jsonl",
+      "bytesRead": 1304861,
+      "sha256OfReadBytes": "3e7413c2a655225db785fe1b1b156e42f6296162c2f60e9da565e219d1dffab9",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-2/lifecycle.json",
+      "bytesRead": 8815,
+      "sha256OfReadBytes": "c0065f919eb72c4b9ab3938d79aea431a665e34719066d5a9ab4b54517ba5def",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-3/samples.jsonl",
+      "bytesRead": 1309159,
+      "sha256OfReadBytes": "255ffd26b74201d82548c3f45fc2b5a42fc4991918d53e867f0dedcfd4c3e172",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-3/lifecycle.json",
+      "bytesRead": 8858,
+      "sha256OfReadBytes": "783da499d82e565813f48730d4a91ea81c27f2d063ad1bd5b1864f6ae464d5a9",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-4/samples.jsonl",
+      "bytesRead": 1304603,
+      "sha256OfReadBytes": "4c4004d2cb1ab66d984527a94c4be816372ac74e75f69f5c0aec4256be6b782e",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-4/lifecycle.json",
+      "bytesRead": 8812,
+      "sha256OfReadBytes": "443eeb90bd3630cbfd0dc56bfc21c4370f585a6252be32b2baaa581fbd11fcc6",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-5/samples.jsonl",
+      "bytesRead": 1305846,
+      "sha256OfReadBytes": "f6496cfb81462ac4938684127db6c9c75a0bd529f189a597d6e1fc25160b6f64",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    },
+    {
+      "path": "/tmp/wrd-20261025-two-miss-within-grace-5/lifecycle.json",
+      "bytesRead": 8814,
+      "sha256OfReadBytes": "d0b48b896986806aabf6b9e29cb193510fda84972b7af6ae0041889da244bb64",
+      "meaning": "exact read snapshot; current append-only log can later grow or rotate"
+    }
+  ],
+  "sourceCodeReadSnapshots": [
+    {
+      "repositoryPath": "web-client/js/input.js",
+      "sha256OfReadBytes": "4264440fd05ab5738a007dc1aeda380314a914824f5f454755c29f957783af50",
+      "lines": [
+        378,
+        435,
+        2631,
+        2660
+      ]
+    },
+    {
+      "repositoryPath": "web-client/js/latency-monitor.js",
+      "sha256OfReadBytes": "7e6ac33ef5a92ecf964d7eea58e77366154baca7d193273bb59048009478007a",
+      "lines": [
+        87,
+        320,
+        333,
+        350,
+        362,
+        403
+      ]
+    },
+    {
+      "repositoryPath": "web-client/js/webrtc.js",
+      "sha256OfReadBytes": "629d6541e0139f43e4707325bcb4a7cdc1cf173ef2aecafde6aacde50e81f979",
+      "lines": [
+        1379,
+        1427,
+        179,
+        270,
+        6515,
+        6523
+      ]
+    },
+    {
+      "repositoryPath": "signal-server/lib/observability/reset-ack-observer.js",
+      "sha256OfReadBytes": "f7c55dad9775a13ad51e2f5232be866f42fac4a699375969c9efd7d03a96cb20",
+      "lines": [
+        47,
+        81,
+        115
+      ]
+    },
+    {
+      "repositoryPath": "signal-server/websocket/signaling.js",
+      "sha256OfReadBytes": "4c505792116a3d1d3b967dad403601b06160b6677268a51b6a899047fc3d846d",
+      "lines": [
+        1640,
+        1649,
+        1690,
+        1702
+      ]
+    },
+    {
+      "repositoryPath": "python-host/host.py",
+      "sha256OfReadBytes": "9a33f058208d805c9564a9c26f77f805159e1a54b95329995481909b194fd67c",
+      "lines": [
+        2833,
+        2847,
+        2871,
+        2886,
+        2965,
+        2977
+      ]
+    },
+    {
+      "repositoryPath": "python-host/input_timing.py",
+      "sha256OfReadBytes": "21b15c950d6172b1e6b0b4a25ee609f2e2ac596c53d1d9c0a491de8420b88e4e",
+      "lines": [
+        7,
+        13,
+        23
+      ]
+    },
+    {
+      "repositoryPath": "scripts/passive_session_sampler.js",
+      "sha256OfReadBytes": "f862b739cbe7eb543ccab304203c71c62a43014530fa2da9a7655cba293665d3",
+      "lines": [
+        361
+      ]
+    }
+  ],
+  "metricDefinitions": {
+    "ViewerInputAckRtt": "performance.now at Input.recordLatency after successful socket.emit, controlled-send observation and transport trace, to LatencyMonitor.onInputAck after synchronous current-owner/controller ACK validation; same Viewer clock",
+    "ViewerInputToPostApplyFrame": "same stored submitted clock to actual requestVideoFrameCallback now for a scope/RTP/SSRC matched fresh frame captured after application; late metadata joins retain original callback clock; not optical or application content proof",
+    "HostQueue": "adapter-local perf_counter_ns entry to native-apply start; excludes outer Host InputAdmissionQueue wait",
+    "HostApply": "adapter-local monotonic native start through native finish",
+    "HostAdapterAwait": "Host perf_counter around awaited adapter method; includes adapter-local queue, excludes outer Host admission wait",
+    "SignalRequestToAck": "Node performance.now after Host emit to after validated ACK emitted toward Viewer; both local directions plus Host and server work, not delivery to Viewer or pure network"
+  },
+  "timestampBracketReview": {
+    "truePreEmitTimestampAvailable": false,
+    "sendMetricStarts": "after socket.emit returns and after synchronous observer/trace work; this slightly undercounts a pre-emit submission bracket rather than adding earlier recovery wait",
+    "preGrantOrRecoveryWaitIncluded": false,
+    "domAtMsUsedAsRttStart": false,
+    "ACKMetricEnds": "after synchronous ACK owner/controller validation; original arrival clock exists separately for controlled action observations, but reset metric does not use it",
+    "ACKValidationCostMeasuredSeparately": false,
+    "socketEmitToLatencyRecordCostMeasured": false,
+    "projectionPollIntervalApproxMs": 1000,
+    "projectionDelayAddedToStoredRtt": false,
+    "projectionEvidence": "five repeated snapshots per run have constant last/max values while their sample ages grow by approximately four seconds",
+    "lateFrameMetadataJoinDelayAddedToFrameLatency": false,
+    "frameJoinLimitMs": 2000,
+    "scopeAndInputFiltersUnchanged": true
+  },
+  "perRun": [
+    {
+      "run": 1,
+      "uniqueResetAssociations": 2,
+      "overlappingSnapshotCount": 5,
+      "metricLineNumbers": [
+        315,
+        316,
+        317,
+        318,
+        319
+      ],
+      "signalTransportAtFinalDiagnostic": "websocket",
+      "browserDiagnosticLagMaxMs": 9,
+      "windowMetrics": {
+        "inputAckRttMs": {
+          "count": 2,
+          "lastMs": 405.5,
+          "twoSampleMaximumMs": 405.5
+        },
+        "inputToPostApplyFrameMs": {
+          "count": 2,
+          "lastMs": 397.69999995233957,
+          "twoSampleMaximumMs": 398.99999990465585
+        },
+        "hostQueueMs": {
+          "count": 2,
+          "lastMs": 0.206891,
+          "twoSampleMaximumMs": 0.350586
+        },
+        "hostApplyMs": {
+          "count": 2,
+          "lastMs": 0.149381,
+          "twoSampleMaximumMs": 0.149381
+        },
+        "hostAdapterAwaitMs": {
+          "count": 2,
+          "lastMs": 0.7886078674346209,
+          "twoSampleMaximumMs": 1.0161020327359438
+        }
+      },
+      "firstAndLastProjectionAgeAfterLastAckMs": [
+        687.7999999523163,
+        4689.299999952316
+      ],
+      "lastActionAssociation": "keyboard: last Host-adapter value uniquely matches keyboard Host result at 0.001ms log precision; all last ACK timing metrics share the exact sample timestamp",
+      "lastPostFrameAssociation": "same Viewer submitted clock recovered independently as ackAt-minus-RTT and frameAt-minus-post-frame; zero residual",
+      "sameViewerSubmittedClockResidualMs": 0.0,
+      "keyboardAckAcceptedAfterPostApplyFrameCallbackMs": 7.800000047660433,
+      "hashCorrelationSucceeded": true
+    },
+    {
+      "run": 2,
+      "uniqueResetAssociations": 2,
+      "overlappingSnapshotCount": 5,
+      "metricLineNumbers": [
+        313,
+        314,
+        315,
+        316,
+        317
+      ],
+      "signalTransportAtFinalDiagnostic": "websocket",
+      "browserDiagnosticLagMaxMs": 10,
+      "windowMetrics": {
+        "inputAckRttMs": {
+          "count": 2,
+          "lastMs": 427.5,
+          "twoSampleMaximumMs": 427.5
+        },
+        "inputToPostApplyFrameMs": {
+          "count": 2,
+          "lastMs": 386.5,
+          "twoSampleMaximumMs": 387.7000000476837
+        },
+        "hostQueueMs": {
+          "count": 2,
+          "lastMs": 0.176157,
+          "twoSampleMaximumMs": 0.176157
+        },
+        "hostApplyMs": {
+          "count": 2,
+          "lastMs": 0.089407,
+          "twoSampleMaximumMs": 0.089407
+        },
+        "hostAdapterAwaitMs": {
+          "count": 2,
+          "lastMs": 0.507568009197712,
+          "twoSampleMaximumMs": 1.9532579462975264
+        }
+      },
+      "firstAndLastProjectionAgeAfterLastAckMs": [
+        442.7999999523163,
+        4446.099999904633
+      ],
+      "lastActionAssociation": "keyboard: last Host-adapter value uniquely matches keyboard Host result at 0.001ms log precision; all last ACK timing metrics share the exact sample timestamp",
+      "lastPostFrameAssociation": "same Viewer submitted clock recovered independently as ackAt-minus-RTT and frameAt-minus-post-frame; zero residual",
+      "sameViewerSubmittedClockResidualMs": 0.0,
+      "keyboardAckAcceptedAfterPostApplyFrameCallbackMs": 41.0,
+      "hashCorrelationSucceeded": true
+    },
+    {
+      "run": 3,
+      "uniqueResetAssociations": 2,
+      "overlappingSnapshotCount": 5,
+      "metricLineNumbers": [
+        314,
+        315,
+        316,
+        317,
+        318
+      ],
+      "signalTransportAtFinalDiagnostic": "websocket",
+      "browserDiagnosticLagMaxMs": 13,
+      "windowMetrics": {
+        "inputAckRttMs": {
+          "count": 2,
+          "lastMs": 436.2000000476837,
+          "twoSampleMaximumMs": 436.2000000476837
+        },
+        "inputToPostApplyFrameMs": {
+          "count": 2,
+          "lastMs": 370.90000004769536,
+          "twoSampleMaximumMs": 370.90000004769536
+        },
+        "hostQueueMs": {
+          "count": 2,
+          "lastMs": 0.719329,
+          "twoSampleMaximumMs": 0.719329
+        },
+        "hostApplyMs": {
+          "count": 2,
+          "lastMs": 0.228189,
+          "twoSampleMaximumMs": 0.228189
+        },
+        "hostAdapterAwaitMs": {
+          "count": 2,
+          "lastMs": 1.470679882913828,
+          "twoSampleMaximumMs": 1.470679882913828
+        }
+      },
+      "firstAndLastProjectionAgeAfterLastAckMs": [
+        727,
+        4729.5
+      ],
+      "lastActionAssociation": "keyboard: last Host-adapter value uniquely matches keyboard Host result at 0.001ms log precision; all last ACK timing metrics share the exact sample timestamp",
+      "lastPostFrameAssociation": "same Viewer submitted clock recovered independently as ackAt-minus-RTT and frameAt-minus-post-frame; zero residual",
+      "sameViewerSubmittedClockResidualMs": 0.0,
+      "keyboardAckAcceptedAfterPostApplyFrameCallbackMs": 65.29999999998836,
+      "hashCorrelationSucceeded": true
+    },
+    {
+      "run": 4,
+      "uniqueResetAssociations": 2,
+      "overlappingSnapshotCount": 5,
+      "metricLineNumbers": [
+        313,
+        314,
+        315,
+        316,
+        317
+      ],
+      "signalTransportAtFinalDiagnostic": "websocket",
+      "browserDiagnosticLagMaxMs": 8,
+      "windowMetrics": {
+        "inputAckRttMs": {
+          "count": 2,
+          "lastMs": 417,
+          "twoSampleMaximumMs": 417
+        },
+        "inputToPostApplyFrameMs": {
+          "count": 2,
+          "lastMs": 338.20000000001164,
+          "twoSampleMaximumMs": 339.1000000953791
+        },
+        "hostQueueMs": {
+          "count": 2,
+          "lastMs": 0.079546,
+          "twoSampleMaximumMs": 0.169387
+        },
+        "hostApplyMs": {
+          "count": 2,
+          "lastMs": 0.075465,
+          "twoSampleMaximumMs": 0.075465
+        },
+        "hostAdapterAwaitMs": {
+          "count": 2,
+          "lastMs": 0.2812130842357874,
+          "twoSampleMaximumMs": 0.6061429157853127
+        }
+      },
+      "firstAndLastProjectionAgeAfterLastAckMs": [
+        299,
+        4302.5
+      ],
+      "lastActionAssociation": "keyboard: last Host-adapter value uniquely matches keyboard Host result at 0.001ms log precision; all last ACK timing metrics share the exact sample timestamp",
+      "lastPostFrameAssociation": "same Viewer submitted clock recovered independently as ackAt-minus-RTT and frameAt-minus-post-frame; zero residual",
+      "sameViewerSubmittedClockResidualMs": 0.0,
+      "keyboardAckAcceptedAfterPostApplyFrameCallbackMs": 78.79999999998836,
+      "hashCorrelationSucceeded": true
+    },
+    {
+      "run": 5,
+      "uniqueResetAssociations": 2,
+      "overlappingSnapshotCount": 5,
+      "metricLineNumbers": [
+        313,
+        314,
+        315,
+        316,
+        317
+      ],
+      "signalTransportAtFinalDiagnostic": "websocket",
+      "browserDiagnosticLagMaxMs": 9,
+      "windowMetrics": {
+        "inputAckRttMs": {
+          "count": 2,
+          "lastMs": 496.2999999523163,
+          "twoSampleMaximumMs": 496.2999999523163
+        },
+        "inputToPostApplyFrameMs": {
+          "count": 2,
+          "lastMs": 428.3999998092768,
+          "twoSampleMaximumMs": 428.3999998092768
+        },
+        "hostQueueMs": {
+          "count": 2,
+          "lastMs": 0.155383,
+          "twoSampleMaximumMs": 0.17216
+        },
+        "hostApplyMs": {
+          "count": 2,
+          "lastMs": 0.079561,
+          "twoSampleMaximumMs": 0.079561
+        },
+        "hostAdapterAwaitMs": {
+          "count": 2,
+          "lastMs": 0.4425810184329748,
+          "twoSampleMaximumMs": 0.49930717796087265
+        }
+      },
+      "firstAndLastProjectionAgeAfterLastAckMs": [
+        234,
+        4237.200000047684
+      ],
+      "lastActionAssociation": "keyboard: last Host-adapter value uniquely matches keyboard Host result at 0.001ms log precision; all last ACK timing metrics share the exact sample timestamp",
+      "lastPostFrameAssociation": "same Viewer submitted clock recovered independently as ackAt-minus-RTT and frameAt-minus-post-frame; zero residual",
+      "sameViewerSubmittedClockResidualMs": 0.0,
+      "keyboardAckAcceptedAfterPostApplyFrameCallbackMs": 67.9000001430395,
+      "hashCorrelationSucceeded": true
+    }
+  ],
+  "perInput": [
+    {
+      "run": 1,
+      "resetType": "mouse",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 405.5,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 398.99999990465585,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.350586,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 0.149381,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 1.0161020327359438,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 4.443563999957405,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 1.016,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 92,
+          "lineSHA256": "b1f98fdaea6e496ca7513fd43232186472d615698ee27b20f9dd44488e66412c",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:05:24.620Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 94,
+          "lineSHA256": "614472430b978fb7d98188598616241dcddcb8fd3b9814bcac95112770842be4",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:05:24.624Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 2054,
+          "lineSHA256": "ecce477f1a2a3be14578f475be4f73293a8ac5e945676de97d07fbb8aea666f3",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:05:24.620455+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 2056,
+          "lineSHA256": "ddd0fb4e5067cb0405f956d0dcb26d9c650068a328a6c915bffc6b37c14ee66b",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:05:24.622055+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 2057,
+          "lineSHA256": "a413aa2625576cdd49d1d2c4e144437cfd557c787039ef25990f0e9bafe2aa7d",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:05:24.622455+00:00"
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "resetType": "keyboard",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": 405.5,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 397.69999995233957,
+          "source": "last-post-frame-projection-with-identical-reconstructed-Viewer-submitted-clock",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.206891,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": 0.149381,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 0.7886078674346209,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 5.5567729999893345,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 0.789,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 93,
+          "lineSHA256": "b7d86a5a14a726e5cf5e05f4c3763fd88028ec711926391e851e877f587ef621",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:05:24.621Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 95,
+          "lineSHA256": "8140b64e80d0724a7f310ca258c1b95c521d887e026a26c93f98c277e14e94bb",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:05:24.626Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 2058,
+          "lineSHA256": "2f01d6c2f923d15c3822a8c0e10cd0887b34d5dc0c06399524c406340d39ce7e",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:05:24.624124+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 2060,
+          "lineSHA256": "b3e403a391160b8d2f132b9ca1f4f329882a82fc9571af6839497ce2074c9259",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:05:24.625358+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 2061,
+          "lineSHA256": "99bb2209803e7c5d44eb2abf0fc15bf04f1fb2f5509424eba77475202f000fdf",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:05:24.625797+00:00"
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "resetType": "mouse",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 427.5,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 387.7000000476837,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 0.176157,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 0.089407,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 1.9532579462975264,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 16.074519000016153,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 1.953,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 122,
+          "lineSHA256": "d7399d2e81edefc1d3b4a61421370ddd54b46e2f84f6b887fec3e2a66efe9202",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:13:27.100Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 124,
+          "lineSHA256": "cd73bbef86f6bbb21403f8ec2c5ac203a148781bb75c9aea9f6aaf7f49bbd824",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:13:27.116Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 3139,
+          "lineSHA256": "2e333cc233b3de4b477a11841b5debdbba6617398e5f42fd4f5df0001dec3240",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:13:27.111896+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 3141,
+          "lineSHA256": "6ab1c012f952958e4d4ad567f748237caaba3fabca4163f1a97cd49717e93ca9",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:13:27.114137+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 3142,
+          "lineSHA256": "4d9f06e7a728a031712763ff1cd8b94cbfe4d98a83147136180ddbbb9bf9a778",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:13:27.114405+00:00"
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "resetType": "keyboard",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": 427.5,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 386.5,
+          "source": "last-post-frame-projection-with-identical-reconstructed-Viewer-submitted-clock",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.176157,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": 0.089407,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 0.507568009197712,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 15.962977000046521,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 0.508,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 123,
+          "lineSHA256": "76b303a8fbe9f879aeef24572f29ef3aba6a5f9f0ca693b3fc32a6eaadd8d448",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:13:27.100Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 125,
+          "lineSHA256": "6132c5cfed759ce57f9acb2edc3af40403b1492dc6e67f4b46a7324c190e9e15",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:13:27.116Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 3143,
+          "lineSHA256": "15f19ec8bd10c06e2fb692d1c40e6398ffb3fa01c22f4d7354f3161f34b1208f",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:13:27.114592+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 3145,
+          "lineSHA256": "b49f6a3af3d3d61093f50878acbad9e68b192bdcff9d4454074fe5df6add3c7a",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:13:27.115339+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 3146,
+          "lineSHA256": "ccb53bc72013110a05ae454b419c145807df95887eebd6a0db84871175a5279f",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:13:27.115598+00:00"
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "resetType": "mouse",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 436.2000000476837,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 370.90000004769536,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 0.719329,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 0.228189,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 1.285,
+          "source": "Host-result-same-process-monotonic-adapter-duration-rounded-in-log",
+          "upperBoundMs": null,
+          "logPrecisionMs": 0.001
+        }
+      },
+      "signalRequestToAckMs": 20.668678000103682,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 1.285,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 149,
+          "lineSHA256": "af6eacdecb1c7c6b528da2f3220a18f71a56848ea9b4566f456c4b769aa2f4b0",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:19:52.622Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 151,
+          "lineSHA256": "45503a6e73774e121d800b3276a21e389e172d59a7d8cebae9be395e3abe5032",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:19:52.643Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 4213,
+          "lineSHA256": "5804a08f897236f98686fd9e3da5c682e1553d7890cd985ba71c2ff4542cec21",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:19:52.637420+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 4215,
+          "lineSHA256": "888ac09e3c82aef650ff10dda893fac182819444bb0436590a0d017bba45f23a",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:19:52.639181+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 4216,
+          "lineSHA256": "0b22af45871500e60211c378a1fa33d24ae74a72cdc36c59698fb0666a85442e",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:19:52.639753+00:00"
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "resetType": "keyboard",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": 436.2000000476837,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 370.90000004769536,
+          "source": "last-post-frame-projection-with-identical-reconstructed-Viewer-submitted-clock",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.719329,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": 0.228189,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 1.470679882913828,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 25.085947999963537,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 1.471,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 150,
+          "lineSHA256": "5f08b0ac37454835a28bbf16a1ddbab8e42e906ccc43772e4102e992ac2ef14b",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:19:52.623Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 152,
+          "lineSHA256": "206eb6f4fa1381be15c6ead1eebdf27fc98b8db9deb71202e4a2a461a9610557",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:19:52.648Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 4217,
+          "lineSHA256": "5d63e8e160a4d06466c98e50ff3c3e3bd86944e6b5c4fb70d2db1899e2989935",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:19:52.640147+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 4219,
+          "lineSHA256": "953c47d2d70b924150acd4cc6f0a5576859e6b4529a69fabd4e6d51deaf8b870",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:19:52.642127+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 4220,
+          "lineSHA256": "6c381f5370fabe899e59e7cc392c5aac8509f1abce9f85be0ed1dbee32176486",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:19:52.642773+00:00"
+        }
+      ]
+    },
+    {
+      "run": 4,
+      "resetType": "mouse",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 417,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 339.1000000953791,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.169387,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 0.075465,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 0.6061429157853127,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 9.342579000163823,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 0.606,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 176,
+          "lineSHA256": "f08e9615aaa82c906206e85d2fcd4f6ba8a73c536736c976009840efb778ae2e",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:26:22.423Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 178,
+          "lineSHA256": "5ac398751c1be2cb0db661c49806e83ebe72aae0abfd062c95f6b2fac491d954",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:26:22.433Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 5283,
+          "lineSHA256": "a83281f1e6c644bb0fd7e03648653626552c135e32172113e09e9f2f55f87a1c",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:26:22.430567+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 5285,
+          "lineSHA256": "ffcb983e7779c51433d13d7228cca35dc8f3c10ff80e4b5c1a72734cd9ef39b3",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:26:22.431409+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 5286,
+          "lineSHA256": "686af808511dbe1ff61082e85720dd62489784e92030da6bdd67d026a25addd6",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:26:22.431623+00:00"
+        }
+      ]
+    },
+    {
+      "run": 4,
+      "resetType": "keyboard",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": 417,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 338.20000000001164,
+          "source": "last-post-frame-projection-with-identical-reconstructed-Viewer-submitted-clock",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.079546,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": 0.075465,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 0.2812130842357874,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 9.309963000006974,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 0.281,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 177,
+          "lineSHA256": "64d188c9231cec39d3fddad666d4d127ff01fe02f82c839ff7c71eb48fabc7a8",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:26:22.424Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 179,
+          "lineSHA256": "4048c28280a83732eb6ebfab1947bfdc7025c86d0e8e662e0fc778cb9e67c8ba",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:26:22.433Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 5287,
+          "lineSHA256": "b94d6fc027e92c2a01ab30b22f708a6736631115ae474c1f735eac95416feec0",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:26:22.431780+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 5289,
+          "lineSHA256": "7e6bd7363ecf685fdb26386d2e36cddb4b79b4b37fe855bc89290ba9e0c55e6c",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:26:22.432266+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 5290,
+          "lineSHA256": "0c730743ccfe44bb084f61367c7518e4cd900b161299fd1c08b13ef927089bfc",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:26:22.432475+00:00"
+        }
+      ]
+    },
+    {
+      "run": 5,
+      "resetType": "mouse",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 496.2999999523163,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 428.3999998092768,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.17216,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": null,
+          "source": "not-reconstructable-from-last-and-max-of-two-samples",
+          "upperBoundMs": 0.079561,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 0.49930717796087265,
+          "source": "exact-complement-of-two-sample-max-and-known-keyboard-last",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 4.264251000015065,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 0.499,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 204,
+          "lineSHA256": "b191b1f09e13f18aa703d113cbfd4bb52fc47dc9a49ae63cd670488ad849f626",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:32:47.015Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 205,
+          "lineSHA256": "2fda16b22229e257e30c8cc47df0e8a96615cd5e889b451e4b9fd8adb440de20",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:32:47.020Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 6356,
+          "lineSHA256": "ace440a85c2913071564218e780c6193f2445c214aea653bd39bafb96e2555f7",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:32:47.018218+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 6358,
+          "lineSHA256": "fefc5f16aff888996a47bfd536848a8e964a4a6e8429ab4d6680178f23e4c1af",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:32:47.018975+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 6359,
+          "lineSHA256": "95f925f092a384313a854e222e402807fe8db80d3ca616213f6b47c1aa5f2ef9",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:32:47.019199+00:00"
+        }
+      ]
+    },
+    {
+      "run": 5,
+      "resetType": "keyboard",
+      "action": "reset",
+      "transport": "socket",
+      "uniqueAssociationWithinRun": true,
+      "correlatedBySameSingletonInputHashInMemory": true,
+      "correlationHashPersisted": false,
+      "viewerAndHostMetrics": {
+        "inputAckRttMs": {
+          "valueMs": 496.2999999523163,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "inputToPostApplyFrameMs": {
+          "valueMs": 428.3999998092768,
+          "source": "last-post-frame-projection-with-identical-reconstructed-Viewer-submitted-clock",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostQueueMs": {
+          "valueMs": 0.155383,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostApplyMs": {
+          "valueMs": 0.079561,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        },
+        "hostAdapterAwaitMs": {
+          "valueMs": 0.4425810184329748,
+          "source": "last-projection-associated-via-unique-Host-adapter-value-and-same-ACK-timestamp",
+          "upperBoundMs": null,
+          "logPrecisionMs": null
+        }
+      },
+      "signalRequestToAckMs": 3.6669360001105815,
+      "signalDurationScope": "Node performance.now immediately after Host emit through successful Viewer ACK emit API return; includes both local transport directions, Host admission and execution, Signal scheduling/validation, but not remote Viewer receipt",
+      "hostAdapterDurationFromStructuredLogMs": 0.443,
+      "hostResultStatus": "applied",
+      "hostAckEnqueueAccepted": true,
+      "signalAckShapeValid": true,
+      "signalAckLeaseAndTypeMatch": true,
+      "signalAckForwarded": true,
+      "sourceObservations": [
+        {
+          "source": "Signal JSONL",
+          "line": 206,
+          "lineSHA256": "0714f82884f374572f1a9987e35c11ecf5a56b3b15e33cb7349fb4ebb460bd1a",
+          "event": "signal_input_relayed",
+          "observedUtc": "2026-10-24T18:32:47.054Z"
+        },
+        {
+          "source": "Signal JSONL",
+          "line": 207,
+          "lineSHA256": "a6deb99a997030ed95b769a6249de3a37b9e102d95f188f148b48383d2f226b1",
+          "event": "signal_reset_ack_observed",
+          "observedUtc": "2026-10-24T18:32:47.058Z"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 6360,
+          "lineSHA256": "b27b31c43b9214d0f1f62ad792c1392d36241358100c1a2159754ba9a4ba0980",
+          "event": "host_input_received",
+          "observedUtc": "2026-10-24T18:32:47.056554+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 6362,
+          "lineSHA256": "421c3d6908bade9086ffe4eec26eaf606d5441738d7a9f8db3e3fe6d5bb7d392",
+          "event": "host_input_result",
+          "observedUtc": "2026-10-24T18:32:47.057272+00:00"
+        },
+        {
+          "source": "back-debug.log.1",
+          "line": 6363,
+          "lineSHA256": "01e3b8239e8ff139aa479a672b6b4c682508f50cdce4400be840116f74d61e4b",
+          "event": "host_input_ack_sent",
+          "observedUtc": "2026-10-24T18:32:47.057502+00:00"
+        }
+      ]
+    }
+  ],
+  "observedRangesMs": {
+    "SignalLocalForwardToAckForAllTen": {
+      "min": 3.6669360001105815,
+      "max": 25.085947999963537
+    },
+    "HostAdapterAwaitRoundedLogsForAllTen": {
+      "min": 0.281,
+      "max": 1.953
+    },
+    "FiveKnownKeyboardViewerAckRtts": {
+      "min": 405.5,
+      "max": 496.2999999523163
+    },
+    "KeyboardAckAfterMatchedPostApplyFrameSameViewerClock": {
+      "min": 7.800000047660433,
+      "max": 78.79999999998836
+    }
+  },
+  "directionAndBlindSpots": {
+    "ViewerToSignal": "not independently timed; includes public uplink and pre-noteForwarded Signal receive/validation/log work; no synchronized cross-process timestamp subtraction performed",
+    "SignalToHostAndReturn": "the existing same-Node-clock observer measures both directions as one 3.667-25.086ms interval including Host work; cannot divide its directions",
+    "SignalToViewer": "not independently timed; includes public downstream and browser dispatch/validation; Host/Signal enqueue does not prove receipt",
+    "whatMagnitudeSupports": "observed adapter durations below 2ms and local Signal-to-Host-ACK durations below 26ms are much smaller than the five known 405.5-496.3ms Viewer ACK values. Primary remaining cost lies outside the measured local Host round-trip bracket, but upstream versus downstream versus pre/post-bracket scheduling remains unresolved",
+    "sameViewerEvidence": "keyboard matched fresh post-apply frame callback precedes its validated ACK by 7.8-78.8ms. ACK and video use distinct paths; this demonstrates relative delivery timing only, not controlled visible effect",
+    "unreconstructableValues": "sampler exports only last/max/count, not all keyed samples. Five mouse RTTs and several mouse queue/apply/post-frame values are null with explicit upper bounds. They are not replaced by window maxima or paired by action without evidence."
+  },
+  "optimizationLeads": [
+    {
+      "priority": 1,
+      "candidate": "Add bounded same-clock pre/post socket.emit and raw-ACK-arrival/validated-ACK timestamps for explicitly owned reset diagnostics, plus Signal handler-entry/after-Host-emit and Host-ACK-entry/after-Viewer-emit timestamps. Preserve authority, deadlines, payload privacy and protocol behavior.",
+      "why": "Separates local observation and validation costs from public transport without cross-clock arithmetic."
+    },
+    {
+      "priority": 2,
+      "candidate": "Retain bounded per-input diagnostic scalar samples or action-associated unique sample summaries for the ten reset inputs, without raw IDs, keyboard contents or coordinates.",
+      "why": "Current five-second last/max projection loses half of individual RTTs and cannot support a ten-input p95 or full per-action attribution."
+    },
+    {
+      "priority": 3,
+      "candidate": "Measure the already-established public Signal WebSocket path and its transport flush/drain/backpressure around these resets; compare explicit routes sequentially with load/context retained before changing routing.",
+      "why": "All five sessions used WebSocket; do not assume polling POST or Host apply is the 400ms bottleneck. Existing public heartbeat RTT observations are corroborating path evidence with different scope, not a business-input substitute."
+    },
+    {
+      "priority": 4,
+      "candidate": "Evaluate reset batching or an already-authorized healthy data channel only as a separate protocol design and controlled experiment.",
+      "why": "The current two resets are already issued without waiting for each other. Changing recovery transport must preserve current lease/source/sequence/reset proof, no replay and failure handling; cannot promise a gain from these observations alone."
+    }
+  ],
+  "forbiddenDerivations": [
+    "No subtraction of Viewer and Host or Signal wall clocks for one-way delays.",
+    "No subtracting Host duration from Viewer RTT and labelling residual pure network.",
+    "No adding rolling p95/max values across metrics or snapshots.",
+    "No adding ACK RTT and post-apply-frame duration; they share the same Viewer send origin.",
+    "No counting 25 overlapping metric snapshots as 50 inputs.",
+    "No calling requestVideoFrameCallback or successful resets a visible-effect/business-input acceptance."
+  ],
+  "privacy": {
+    "rawInputIdsPersisted": false,
+    "rawInputHashesPersisted": false,
+    "rawLeaseOrSocketIdsPersisted": false,
+    "inputPayloadOrCoordinatesPersisted": false,
+    "passwordOrTokenPersisted": false,
+    "onlyFixedActionsScalarTimingsAndSourceDigests": true
+  },
+  "collectionActions": {
+    "readExistingArtifactsAndLogs": true,
+    "repositoryModified": false,
+    "testsRun": false,
+    "browserStarted": false,
+    "serviceAction": false,
+    "loadTest": false,
+    "onlyOutputWritten": "/tmp/wrd-20261025-reset-latency-baseline-analysis.json"
+  }
+}
