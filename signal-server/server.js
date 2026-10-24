@@ -415,7 +415,9 @@ function createServerApp(options = {}) {
         error: result.error,
       });
     }
-    runtimeEvidence.observeDiagnostic(result.report);
+    if (!result.duplicate) {
+      try { runtimeEvidence.observeDiagnostic(result.report); } catch { /* Evidence is best effort. */ }
+    }
     if (result.summaryEvent) {
       recentEventStore.append(result.summaryEvent);
       structuredLogger.info(result.summaryEvent);

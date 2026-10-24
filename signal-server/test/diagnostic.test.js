@@ -1076,6 +1076,125 @@ test('diagnostic socket confirms only persisted IDs and preserves viewer authori
   } finally { if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+async function createDiagnosticIngressFixture(t, { evidenceThrows = false } = {}) {
+  const { io } = require('socket.io-client');
+  const { loadConfig } = require('../lib/config');
+  const { createRuntimeContext } = require('../websocket/runtime-context');
+  const { createRuntimeEvidenceRecorder } = require('../lib/observability/runtime-evidence');
+  const previousDir = process.env.WRD_DIAG_DIR;
+  const dir = fs.mkdtempSync(path.join(diagnosticTestDir, 'ingress-evidence-'));
+  process.env.WRD_DIAG_DIR = dir;
+  const context = createRuntimeContext();
+  const evidence = createRuntimeEvidenceRecorder();
+  if (evidenceThrows) evidence.observeDiagnostic = () => { throw new Error('evidence-sink-failure'); };
+  const runtime = createServerApp({
+    config: { ...loadConfig(), nodeEnv: 'test', enableDiagPersist: true,
+      enableTerminal: false, logDir: '', terminalAuditLog: '' },
+    signalingRuntimeContext: context,
+    runtimeEvidence: evidence,
+    logger: {},
+  });
+  let client;
+  t.after(async () => {
+    client?.disconnect();
+    context.connections.host = null;
+    await runtime.close();
+    await new Promise(resolve => runtime.io.close(resolve));
+    if (previousDir === undefined) delete process.env.WRD_DIAG_DIR;
+    else process.env.WRD_DIAG_DIR = previousDir;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  await new Promise(resolve => runtime.server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${runtime.server.address().port}`;
+  const token = signAccessToken('viewer', 'diagnostic-evidence-viewer');
+  const session = 'diagnostic-evidence-session';
+  const { ticket } = context.viewerAdmission.issue('diagnostic-evidence-viewer', session);
+  client = io(origin, { transports: ['websocket'], reconnection: false,
+    auth: { role: 'viewer', token, viewerSessionId: session, viewerAdmission: { mode: 'explicit', ticket } } });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('diagnostic fixture socket admission timed out')), 2000);
+    const finish = handler => value => { clearTimeout(timer); handler(value); };
+    client.once('connected', finish(resolve));
+    client.once('connect_error', finish(reject));
+    client.once('viewer-admission-rejected', finish(value => reject(new Error(value.reason))));
+  });
+  const hostReports = [];
+  context.connections.host = { emit: (event, report) => { if (event === 'diagnostic') hostReports.push(report); } };
+  return {
+    dir, runtime, evidence, hostReports,
+    async send(transport, payload) {
+      if (transport === 'socket') {
+        return new Promise((resolve, reject) => client.timeout(2000).emit('diagnostic', payload,
+          (error, receipt) => error ? reject(error) : resolve(receipt)));
+      }
+      const response = await fetch(`${origin}/api/diagnostics`, {
+        method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 202, 'saved HTTP diagnostic must retain its successful receipt');
+      const { connectionAttemptId, ...receipt } = await response.json();
+      return receipt;
+    },
+  };
+}
+
+for (const order of [['socket', 'http'], ['http', 'socket']]) {
+  test(`diagnostic evidence counts one persisted report across ${order.join(' then ')} retries`, async (t) => {
+    const fixture = await createDiagnosticIngressFixture(t);
+    const payload = runtimeFixture();
+    payload.logs = Array.from({ length: 40 }, () => 'PRIVATE_LOG_CANARY');
+    payload.inputTrace.events = Array.from({ length: 9 }, (_, index) => ({
+      eventId: index + 1, stage: 'ack', inputType: 'keyboard', status: 'applied',
+    }));
+    const first = await fixture.send(order[0], payload);
+    const retry = await fixture.send(order[1], payload);
+    assert.equal(first.accepted, true);
+    assert.equal(first.diagnosticId, payload.diagnosticId);
+    assert.deepEqual(retry, first);
+    const receipt = fixture.evidence.receipt();
+    assert.equal(receipt.window.reportCount, 1);
+    assert.equal(receipt.diagnostics.logCount.total, 40);
+    assert.equal(receipt.diagnostics.retainedLogCount, 0);
+    assert.equal(receipt.diagnostics.redactedLogCount, 40);
+    assert.equal(receipt.diagnostics.inputTraceEventCount, 9);
+    assert.equal(fixture.hostReports.length, 1);
+    assert.equal(fixture.runtime.recentEventStore.summary().byEvent['viewer.diagnostic_uploaded'], 1);
+    const runtimeFiles = fs.readdirSync(path.join(fixture.dir, 'raw')).filter(name => name.startsWith('runtime_'));
+    assert.equal(runtimeFiles.length, 1);
+    const stored = JSON.parse(fs.readFileSync(path.join(fixture.dir, 'raw', runtimeFiles[0]), 'utf8'));
+    assert.equal(stored.reportedLogCount, 40);
+    assert.equal(stored.inputTraceEventCount, 9);
+  });
+}
+
+test('diagnostic evidence treats legacy reports without IDs as independent uploads', async (t) => {
+  const fixture = await createDiagnosticIngressFixture(t);
+  const payload = { schemaVersion: 2, connectionAttemptId: 'legacy-evidence-attempt', logs: ['first', 'second'],
+    inputTrace: { events: [{ stage: 'ack', inputType: 'keyboard', status: 'applied' }] } };
+  assert.equal((await fixture.send('socket', payload)).accepted, true);
+  assert.equal((await fixture.send('http', payload)).accepted, true);
+  const receipt = fixture.evidence.receipt();
+  assert.equal(receipt.window.reportCount, 2);
+  assert.equal(receipt.diagnostics.logCount.total, 4);
+  assert.equal(receipt.diagnostics.inputTraceEventCount, 2);
+  assert.equal(fixture.hostReports.length, 2);
+  assert.equal(fixture.runtime.recentEventStore.summary().byEvent['viewer.diagnostic_uploaded'], 2);
+});
+
+for (const transport of ['http', 'socket']) {
+  test(`saved diagnostic ${transport} receipt survives a throwing runtime evidence sink`, async (t) => {
+    const fixture = await createDiagnosticIngressFixture(t, { evidenceThrows: true });
+    const payload = runtimeFixture();
+    const receipt = await fixture.send(transport, payload);
+    assert.equal(receipt.accepted, true);
+    assert.equal(receipt.diagnosticId, payload.diagnosticId);
+    assert.equal(receipt.eventIdHashes.length, 1);
+    assert.equal(fixture.hostReports.length, 1);
+    assert.equal(fixture.runtime.recentEventStore.summary().byEvent['viewer.diagnostic_uploaded'], 1);
+    assert.equal(fs.readdirSync(path.join(fixture.dir, 'raw')).filter(name => name.startsWith('runtime_')).length, 1);
+  });
+}
+
 test('ingress persists only redacted runtime raw and summary and merges one incident by SHA', () => {
   const { createDiagnosticStore } = require('../lib/diagnostic-store');
   const previousDir=process.env.WRD_DIAG_DIR,dir=fs.mkdtempSync(path.join(diagnosticTestDir,'w3b-private-'));

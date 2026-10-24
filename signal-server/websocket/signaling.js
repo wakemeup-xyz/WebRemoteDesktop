@@ -1653,7 +1653,7 @@ function setupSignaling(io, options = {}) {
         config,
         logger,
       });
-      if (result.accepted) {
+      if (result.accepted && !result.duplicate) {
         try { options.observeDiagnostic?.(result.report); } catch { /* Evidence is best effort. */ }
       }
       if (result.accepted && result.summaryEvent) {
