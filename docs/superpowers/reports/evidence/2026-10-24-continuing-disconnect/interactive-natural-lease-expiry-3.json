@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "scenario": "within-grace",
+  "mode": "relay",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "ordinaryRecovery": {
+    "status": "NOT_RUN",
+    "classification": "not-attempted",
+    "requestedScenario": "within-grace",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "recoverySeconds": null,
+    "recoveredStableSeconds": 0,
+    "serverCoverage": "complete",
+    "reason": "baseline-failed"
+  },
+  "failure": {
+    "phase": "baseline",
+    "reason": "baseline-failed"
+  },
+  "lifecycle": {
+    "captureStatus": "ok",
+    "cleanupStatus": "api-finished-exit-unknown",
+    "writeStatus": "ok",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "fault": {
+    "capability": "available",
+    "status": "disarmed",
+    "instrumentation": "native-direct",
+    "triggerCount": 0,
+    "blockedHttp": 0,
+    "blockedWebSocket": 0,
+    "blockSeconds": 0
+  },
+  "continuity": {
+    "status": "INCOMPLETE",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 31.02736416598782,
+    "samples": 32,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 1,
+    "pathChangeObservations": 0,
+    "pathConvergenceObservations": 0,
+    "maxObservedNoProgressMs": 429.83399995231593,
+    "progressAfterBaseline": true,
+    "frameStallThresholdMs": 5000,
+    "frameEvidence": "requestVideoFrameCallback",
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+    "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+  },
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physical": "NOT_RUN",
+  "hostObservation": {
+    "status": "stable",
+    "coverage": "complete",
+    "samples": 44,
+    "hostDisconnectObserved": false
+  },
+  "sourceCommit": "75ac7940a8f4ba87d4e9c2d60600cfa0b40ebfe1",
+  "buildId": "3fb4a1fd0774bdcc",
+  "browserObservation": {
+    "anchors": {
+      "browserWallEpochMs": 1792861303549,
+      "browserTimeOriginEpochMs": 1792861301567,
+      "browserAnchorNowMs": 1982
+    },
+    "counters": {
+      "sd": 0,
+      "mc": 0,
+      "ec": 0,
+      "se": 0,
+      "re": 0,
+      "rx": 13,
+      "tx": 55,
+      "sc": 1,
+      "mo": 1,
+      "ra": 0,
+      "rr": 0,
+      "rf": 0,
+      "ep": 1,
+      "eo": 1,
+      "ef": 55,
+      "eu": 0,
+      "bind": 3,
+      "vis": 1,
+      "net": 1,
+      "focus": 1,
+      "hide": 0,
+      "show": 0,
+      "freeze": 0,
+      "resume": 0,
+      "preclose": 1,
+      "cap": 0
+    },
+    "state": {
+      "visibility": "visible",
+      "online": true,
+      "focus": true,
+      "socketState": "connected",
+      "pingReceivedAtMs": 28712,
+      "pongCreatedAtMs": 28712,
+      "flushAtMs": 40292,
+      "lag": {
+        "lastMs": 3,
+        "maxMs": 9,
+        "count": 40,
+        "missedIntervals": 0,
+        "buckets": [
+          40,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "droppedEvents": 6
+  },
+  "timelineUTC": [
+    {
+      "at": "2026-10-24T17:02:23.508Z",
+      "event": "lease-expired",
+      "leaseEpoch": 6
+    },
+    {
+      "at": "2026-10-24T17:02:23.550Z",
+      "event": "host-peer-closed-and-track-stopped"
+    },
+    {
+      "at": "2026-10-24T17:02:23.552Z",
+      "event": "reset-completed-free"
+    },
+    {
+      "at": "2026-10-24T17:02:24.018Z",
+      "event": "probe-failure-detected"
+    },
+    {
+      "at": "2026-10-24T17:02:24.472Z",
+      "event": "viewer-transport-close-after-cleanup"
+    }
+  ],
+  "limitations": [
+    "No injected fault; real control lease expiration before observer abort.",
+    "Browser packet flush is not Signal receipt or successful heartbeat authorization; accepted heartbeat history was not logged.",
+    "Host peer closure followed expiration; last decoded/buffered frame does not prove ongoing healthy media after reset.",
+    "No proof for a unique network hop, CPU cause or incorrect owner guard; do not extend lease TTL to hide it."
+  ]
+}

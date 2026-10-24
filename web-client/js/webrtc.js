@@ -397,6 +397,11 @@ const WebRTC = {
   socket: null,
   controlState: { state: 'FREE', controller: false, lease: null, hostOnline: false },
   _controlHeartbeatTimer: null,
+  _controlHeartbeatCapability: null,
+  _controlHeartbeatScope: null,
+  _controlHeartbeatPending: null,
+  _controlHeartbeatObservation: null,
+  _controlHeartbeatLastFailure: null,
   _controlRequestId: 0,
   _controlAcquireIntent: null,
   _controlRecoveryGeneration: 0,
@@ -478,6 +483,8 @@ const WebRTC = {
   _paintStalled6sTimer: null,
   _paintIssueKind: null,
   _lastPaintStats: null,
+  _diagnosticMediaInterval: null,
+  _diagnosticStatsOwner: null,
   _paintObservationWindow: null,
   _lastPaintObservation: null,
   _keyframeRequested: false,
@@ -1512,6 +1519,9 @@ const WebRTC = {
       });
     }
     this.bindCurrentConnectionAttempt();
+    if (this.hasActiveControl() && this._controlHeartbeatCapability?.socket === this.socket) {
+      this.startControlHeartbeat();
+    }
     this.syncDesktopInputGate();
     return this.currentConnectionAttemptId;
   },
@@ -2108,6 +2118,11 @@ const WebRTC = {
 
   notePaintStats(stats = {}) {
     if (!this.startupAllowed()) return;
+    // Provenance is captured before canonical null -> zero normalization in
+    // processStatsSnapshot. Native owner references remain only in memory.
+    this._diagnosticMediaInterval = stats.source === 'stats' && stats.diagnosticInterval && stats.diagnosticOwner
+      ? { ...stats.diagnosticInterval, ...stats.diagnosticOwner }
+      : null;
     const canonical = this.canonicalMediaStats(stats);
     const videoWidth = Number(stats.videoWidth || 0);
     const decodedDelta = canonical.decodedDelta;
@@ -3877,6 +3892,8 @@ const WebRTC = {
     };
 
     onCurrentSocket('connect', async () => {
+      this.stopControlHeartbeat();
+      this._controlHeartbeatCapability = null;
       this.ensureDesktopSessionState()?.applyConnection({
         attemptId: this.currentConnectionAttemptId,
         state: 'online',
@@ -3926,6 +3943,12 @@ const WebRTC = {
     });
 
     onCurrentSocket('connected', (data) => {
+      this._controlHeartbeatCapability = data.controlHeartbeatAckVersion === 1
+        ? { socket, socketId: socket.id } : null;
+      if (this.hasActiveControl()) {
+        this.bindCurrentConnectionAttempt();
+        this.startControlHeartbeat();
+      }
       if (!this.readProofAdmission() && data.viewerAdmission?.mode === 'resume') {
         this._viewerAdmission = { mode: 'resume', generation: data.viewerAdmission.generation };
         // Socket.IO retries the same auth object; drop the consumed ticket now.
@@ -4070,7 +4093,10 @@ const WebRTC = {
     onCurrentSocket('control-acquire-result', (data) => this.handleControlAcquireResult(data));
     onCurrentSocket('control-revoked', () => this.freezeControl('control-revoked'));
     onCurrentSocket('control-transition-failed', () => this.freezeControl('control-transition-failed'));
-    onCurrentSocket('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
+    onCurrentSocket('control-heartbeat-rejected', () => {
+      this.observeControlHeartbeat('rejected');
+      this.freezeControl('control-heartbeat-rejected');
+    });
     onCurrentSocket('media-activity-ack', (data) => this.handleMediaActivityAck(data));
     onCurrentSocket('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
     onCurrentSocket('relay-stream-control-rejected', (data) => this.handleMediaActivityRejected(data));
@@ -4295,7 +4321,10 @@ const WebRTC = {
       this.stopDcKeepalive();
       oldPeer.close();
     }
-    this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch } };
+    const currentLease = this.controlState.lease;
+    const grantedLease = currentLease?.leaseId === data.leaseId && currentLease?.leaseEpoch === data.leaseEpoch
+      ? currentLease : { leaseId: data.leaseId, leaseEpoch: data.leaseEpoch };
+    this.controlState = { ...this.controlState, state: 'ACTIVE', controller: true, lease: grantedLease };
     this._mediaControlLease = { ...this.controlState.lease };
     if (mediaLeaseChanged) this.beginConnectionAttempt('control-identity-changed');
     this.ensureDesktopSessionState()?.applyControl({ attemptId: this.currentConnectionAttemptId, state: 'active' });
@@ -4308,9 +4337,9 @@ const WebRTC = {
     }
     if (!this.hasActiveControl()) return;
     this._cancelControlAcquireIntent();
+    this.bindCurrentConnectionAttempt();
     this.startControlHeartbeat();
     this.updateControlUI();
-    this.bindCurrentConnectionAttempt();
     // Enable input immediately when this attempt already painted; do not wait for
     // the next decoded frame (relay regularly has multi-second 0-FPS gaps).
     this.syncDesktopInputGate();
@@ -4396,21 +4425,148 @@ const WebRTC = {
   },
 
   startControlHeartbeat() {
+    const capability = this._controlHeartbeatCapability;
+    const acknowledged = capability?.socket === this.socket && capability.socketId === this.socket?.id
+      && typeof this.socket?.timeout === 'function';
+    if (acknowledged && this._controlHeartbeatScope?.acknowledged
+      && this.isCurrentControlHeartbeatScope(this._controlHeartbeatScope)) return;
     this.stopControlHeartbeat();
     if (!this.hasActiveControl() || !this.socket?.connected) return;
+    const scope = this._controlHeartbeatScope = {
+      socket: this.socket, socketId: this.socket.id, lease: this.controlState.lease,
+      attempt: this.currentConnectionAttemptId, attemptSequence: this.connectionAttemptSequence,
+      acknowledged, sequence: 0,
+    };
     const heartbeat = () => {
-      const lease = this.controlState.lease;
-      if (this.hasActiveControl() && this.socket?.connected) {
-        this.socket.emit('control-heartbeat', { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch });
+      if (!this.isCurrentControlHeartbeatScope(scope)) return;
+      const payload = { leaseId: scope.lease.leaseId, leaseEpoch: scope.lease.leaseEpoch };
+      if (!scope.acknowledged) {
+        scope.socket.emit('control-heartbeat', payload);
+        return;
+      }
+      if (this._controlHeartbeatPending) return;
+      const sequence = ++scope.sequence;
+      const pending = this._controlHeartbeatPending = {
+        scope, sequence, startedAt: performance.now(), deadline: performance.now() + 2500, timer: null,
+      };
+      this.observeControlHeartbeat('sent');
+      try {
+        // Socket.IO owns the normal deadline and removes its ACK table entry
+        // even when the open WebSocket never delivers this application packet.
+        scope.socket.timeout(2500).emit('control-heartbeat', {
+          ...payload, heartbeatAckVersion: 1, heartbeatSeq: sequence,
+          connectionAttemptId: scope.attempt, connectionAttemptSequence: scope.attemptSequence,
+        }, (error, ack) => {
+          if (this._controlHeartbeatPending !== pending) return;
+          if (!this.isCurrentControlHeartbeatScope(scope)) {
+            this.clearPendingControlHeartbeat();
+            return;
+          }
+          if (error) return this.handleControlHeartbeatTimeout(pending);
+          if (ack?.schemaVersion === 1 && ack.status === 'accepted'
+            && ack.heartbeatSeq === sequence && ack.leaseEpoch === scope.lease.leaseEpoch
+            && ack.connectionAttemptId === scope.attempt && ack.connectionAttemptSequence === scope.attemptSequence
+            && performance.now() < pending.deadline) {
+            this.clearPendingControlHeartbeat();
+            this.observeControlHeartbeat('acknowledged', performance.now() - pending.startedAt);
+            return;
+          }
+          // A malformed/old-scope callback consumes Socket.IO's own ACK timer.
+          // Retain only the remainder of the original deadline, never a reset.
+          if (pending.timer != null) clearTimeout(pending.timer);
+          pending.timer = setTimeout(() => this.handleControlHeartbeatTimeout(pending),
+            Math.max(0, pending.deadline - performance.now()));
+        });
+      } catch (_error) {
+        this.handleControlHeartbeatTimeout(pending);
       }
     };
-    heartbeat();
     this._controlHeartbeatTimer = setInterval(heartbeat, 3000);
+    heartbeat();
+  },
+
+  isCurrentControlHeartbeatScope(scope) {
+    return Boolean(scope && this._controlHeartbeatScope === scope && this.socket === scope.socket
+      && this.socket?.id === scope.socketId && this.socket.connected && this.hasActiveControl()
+      && this.controlState.lease === scope.lease && this.currentConnectionAttemptId === scope.attempt
+      && this.connectionAttemptSequence === scope.attemptSequence && !this.manualDisconnect && !this._superseded);
+  },
+
+  clearPendingControlHeartbeat() {
+    const pending = this._controlHeartbeatPending;
+    if (pending?.timer != null) clearTimeout(pending.timer);
+    this._controlHeartbeatPending = null;
+  },
+
+  observeControlHeartbeat(reason, roundTripMs = null) {
+    const observation = this._controlHeartbeatObservation ||= {
+      sent: 0, acknowledged: 0, timeouts: 0, rejected: 0, lastAckAt: null,
+      lastAckRttMs: null, maxAckRttMs: null, reason: 'none',
+    };
+    const counter = reason === 'ack-timeout' ? 'timeouts' : reason;
+    if (Object.prototype.hasOwnProperty.call(observation, counter) && typeof observation[counter] === 'number') {
+      observation[counter] = Math.min(999999999, observation[counter] + 1);
+    }
+    if (reason === 'acknowledged') {
+      observation.lastAckAt = performance.now();
+      observation.lastAckRttMs = roundTripMs;
+      observation.maxAckRttMs = Math.max(observation.maxAckRttMs || 0, roundTripMs);
+    }
+    observation.reason = reason;
+  },
+
+  getControlHeartbeatSnapshot() {
+    const observation = this._controlHeartbeatObservation;
+    const pending = this._controlHeartbeatPending;
+    return {
+      supported: this._controlHeartbeatCapability?.socket === this.socket
+        && this._controlHeartbeatCapability?.socketId === this.socket?.id,
+      ackBudgetMs: 2500, pending: Boolean(pending),
+      pendingAgeMs: pending ? Math.max(0, performance.now() - pending.startedAt) : null,
+      lastAckAgeMs: observation?.lastAckAt == null ? null : Math.max(0, performance.now() - observation.lastAckAt),
+      lastAckRttMs: observation?.lastAckRttMs ?? null, maxAckRttMs: observation?.maxAckRttMs ?? null,
+      sent: observation?.sent || 0, acknowledged: observation?.acknowledged || 0,
+      timeouts: observation?.timeouts || 0, rejected: observation?.rejected || 0,
+      reason: observation?.reason || 'none',
+      ...(this._controlHeartbeatLastFailure ? {
+        lastFailureAgeMs: Math.max(0, performance.now() - this._controlHeartbeatLastFailure.at),
+        lastFailure: { ...this._controlHeartbeatLastFailure.snapshot },
+      } : {}),
+    };
+  },
+
+  handleControlHeartbeatTimeout(pending) {
+    if (this._controlHeartbeatPending !== pending) return false;
+    const current = this.isCurrentControlHeartbeatScope(pending.scope);
+    this.clearPendingControlHeartbeat();
+    if (!current) return false;
+    this.observeControlHeartbeat('ack-timeout');
+    const { lastFailure, lastFailureAgeMs, ...snapshot } = this.getControlHeartbeatSnapshot();
+    this._controlHeartbeatLastFailure = { at: performance.now(), snapshot };
+    if (document.hidden || this._pageLifecycleHidden || this.manualDisconnect || this._superseded) return false;
+    const engine = pending.scope.socket.io?.engine;
+    this.stopControlHeartbeat();
+    console.warn('[RECOVERY] control-heartbeat-ack-timeout; reconnecting signaling transport');
+    try {
+      if (typeof engine?.close !== 'function') throw new Error('signaling-engine-unavailable');
+      // Close the transport, not the Socket.IO Socket: normal disconnect,
+      // admission resume, Host rebind and reset barriers retain ownership.
+      engine.close();
+      // Engine.IO graceful close waits for drain/upgrade. A stalled polling
+      // POST can never drain, so close its transport to emit the same normal
+      // transport-close event and let the active Socket.IO manager reconnect.
+      if (engine.readyState === 'closing') engine.transport?.close?.();
+    } catch (_error) {
+      this.freezeControl('signal-disconnect');
+    }
+    return true;
   },
 
   stopControlHeartbeat() {
     if (this._controlHeartbeatTimer) clearInterval(this._controlHeartbeatTimer);
     this._controlHeartbeatTimer = null;
+    this._controlHeartbeatScope = null;
+    this.clearPendingControlHeartbeat();
   },
 
   // DataChannel application-layer keepalive.
@@ -6291,15 +6447,21 @@ if (this.tunnelLastObjectUrl) {
     if (!this._statsSampler) {
       const pc = this.pc;
       const owner = this._statsOwner = this.captureStartupOwner();
+      let diagnosticRequestOwner = null;
       this._statsPc = pc;
       if (!preserveConnection) {
         this.syncLinkQualityPath({ applyProfile: false, reason: 'stats-start' });
         this.ensureLinkQualityController()?.beginConnection?.();
       }
       this._statsSampler = WebRtcStats.createWebRtcStatsSampler({
-        getStats: () => pc.getStats(),
+        getStats: () => {
+          diagnosticRequestOwner = this.captureDiagnosticMediaOwner();
+          return pc.getStats();
+        },
         intervalMs: 1000,
-        onSample: (snapshot) => { if (this.ownsStartupOwner(owner)) this.processStatsSnapshot(snapshot); },
+        onSample: (snapshot) => {
+          if (this.ownsStartupOwner(owner)) this.processStatsSnapshot(snapshot, { diagnosticOwner: diagnosticRequestOwner });
+        },
         onError: (error) => { if (this.ownsStartupOwner(owner)) console.warn('[STATS] getStats failed:', error?.message || error); },
       });
     }
@@ -6643,6 +6805,8 @@ if (this.tunnelLastObjectUrl) {
   },
 
   stopMediaTelemetry() {
+    this._diagnosticMediaInterval = null;
+    this._diagnosticStatsOwner = null;
     if (this._statsOwner) this._statsOwner.retired = true;
     if (this._statsSampler) this._statsSampler.stop();
     this._statsSampler = null;
@@ -6656,6 +6820,30 @@ if (this.tunnelLastObjectUrl) {
 
   nullableMediaLatency(value) {
       return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  },
+
+  getDiagnosticMediaInterval() {
+      const value = this._diagnosticMediaInterval;
+      if (!this.sameDiagnosticMediaOwner(value, this.captureDiagnosticMediaOwner())) return null;
+      const sampleAgeMs = performance.now() - value.sampledAtMs;
+      if (!Number.isFinite(sampleAgeMs) || sampleAgeMs < 0 || sampleAgeMs > 5000) return null;
+      return { schemaVersion: 1, kind: 'webrtc-inbound-interval', elapsedMs: value.elapsedMs,
+        sampleAgeMs, fpsObserved: value.fpsObserved, droppedFramesObserved: value.droppedFramesObserved };
+  },
+
+  captureDiagnosticMediaOwner() {
+      try {
+        const tracks = this.remoteStream?.getVideoTracks?.() || [];
+        return this.pc && this.currentConnectionAttemptId && Number.isSafeInteger(this.connectionAttemptSequence)
+          && tracks.length === 1 && tracks[0]?.kind === 'video' && tracks[0].readyState === 'live'
+          ? { pc: this.pc, stream: this.remoteStream, track: tracks[0],
+            attemptId: this.currentConnectionAttemptId, sequence: this.connectionAttemptSequence } : null;
+      } catch (_) { return null; }
+  },
+
+  sameDiagnosticMediaOwner(first, second) {
+      return Boolean(first && second && ['pc', 'stream', 'track', 'attemptId', 'sequence']
+        .every(key => first[key] === second[key]));
   },
 
   canonicalMediaStats(stats = {}) {
@@ -6679,7 +6867,26 @@ if (this.tunnelLastObjectUrl) {
       };
   },
 
-  processStatsSnapshot(stats = {}) {
+  processStatsSnapshot(stats = {}, provenance = {}) {
+      const rawDuration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+      const rawCounter = value => Number.isSafeInteger(value) && value >= 0;
+      const currentOwner = this.captureDiagnosticMediaOwner();
+      const diagnosticOwner = Object.hasOwn(provenance, 'diagnosticOwner') ? provenance.diagnosticOwner : currentOwner;
+      const previousOwner = this._diagnosticStatsOwner;
+      const sameOwner = this.sameDiagnosticMediaOwner(diagnosticOwner, currentOwner)
+        && this.sameDiagnosticMediaOwner(diagnosticOwner, previousOwner);
+      this._diagnosticStatsOwner = diagnosticOwner;
+      // A replaced track's first sample may still span the old stats baseline.
+      const diagnosticInterval = sameOwner && stats.diagnosticInbound?.intervalSourceStable === true
+        && typeof diagnosticOwner.track.id === 'string' && diagnosticOwner.track.id.length > 0
+        && stats.diagnosticInbound.trackIdentifier === diagnosticOwner.track.id
+        && stats.interval === true && stats.warmup === false
+        && rawDuration(stats.elapsedMs) && stats.elapsedMs > 0 && stats.elapsedMs <= 60000
+        && rawDuration(stats.sampledAt)
+        ? { elapsedMs: stats.elapsedMs, sampledAtMs: stats.sampledAt,
+          fpsObserved: rawCounter(stats.decodedDelta) && rawDuration(stats.derivedFps),
+          droppedFramesObserved: rawCounter(stats.framesDroppedDelta) }
+        : null;
       const canonical = this.canonicalMediaStats(stats);
       const fps = canonical.derivedFps;
       const latencyMs = canonical.rttMs;
@@ -6892,6 +7099,8 @@ if (this.tunnelLastObjectUrl) {
       const videoEl = document.getElementById('remoteVideo');
       this.notePaintStats({
         ...canonical,
+        diagnosticInterval,
+        diagnosticOwner,
         videoWidth: Number(stats.videoWidth || videoEl?.videoWidth || 0),
         videoHeight: Number(stats.videoHeight || videoEl?.videoHeight || 0),
         source: 'stats',

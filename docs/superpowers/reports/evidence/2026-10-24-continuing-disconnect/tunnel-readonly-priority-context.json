@@ -1,0 +1,115 @@
+{
+  "scope": "read-only-tunnel-scheduling-context",
+  "observedAtEpochMs": 1792862722351,
+  "process": {
+    "pid": 6438,
+    "threadCount": 17,
+    "threads": [
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 1
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      },
+      {
+        "curpri": 20,
+        "priority": 20,
+        "maxpriority": 20,
+        "run_state": 3
+      }
+    ]
+  },
+  "inference": "Thread base/max priority remains 20/20. This does not establish tunnel latency or causation of the natural lease expiry. No tunnel action was performed.",
+  "tunnelMutationPerformed": false,
+  "hostSignalAlreadyInteractive": true
+}

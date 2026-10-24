@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "scenario": "within-grace",
+  "mode": "relay",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "ordinaryRecovery": {
+    "status": "PASS",
+    "classification": "within-grace-rebind",
+    "requestedScenario": "within-grace",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "recoverySeconds": 7.001062049064785,
+    "recoveredStableSeconds": 30.033086758106947,
+    "serverCoverage": "complete",
+    "reason": "none"
+  },
+  "failure": null,
+  "lifecycle": {
+    "captureStatus": "ok",
+    "cleanupStatus": "api-finished-exit-unknown",
+    "writeStatus": "ok",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "fault": {
+    "capability": "available",
+    "status": "disarmed",
+    "instrumentation": "native-direct",
+    "triggerCount": 1,
+    "blockedHttp": 0,
+    "blockedWebSocket": 0,
+    "blockSeconds": 0
+  },
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physical": "NOT_RUN",
+  "continuity": {
+    "status": "INCOMPLETE",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 300.2898452640511,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathChangeObservations": 0,
+    "pathConvergenceObservations": 0,
+    "maxObservedNoProgressMs": 583.2999999999884,
+    "progressAfterBaseline": true,
+    "frameStallThresholdMs": 5000,
+    "frameEvidence": "requestVideoFrameCallback",
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+    "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+  },
+  "hostObservation": {
+    "status": "stable",
+    "coverage": "complete",
+    "samples": 349,
+    "hostDisconnectObserved": false
+  },
+  "sourceCommit": "2e611d57fc686b8c6bd5a7efa922864ba536e4f1",
+  "buildId": "3fb4a1fd0774bdcc",
+  "note": "Second independent native-direct-close. Continuity intentionally interrupted by planned fault; original-lease ordinary recovery PASS."
+}

@@ -19,11 +19,11 @@ function boundedNumber(value, maximum = MAX_COUNT) {
 }
 
 function sampleStats(samples) {
-  const values = samples.filter(value => boundedNumber(value) !== null)
-    .map(Number).sort((a, b) => a - b);
-  if (!values.length) return { available: false, count: 0, last: null, p50: null, p95: null, max: null };
+  const observed = samples.filter(value => boundedNumber(value) !== null).map(Number);
+  if (!observed.length) return { available: false, count: 0, last: null, p50: null, p95: null, max: null };
+  const values = observed.slice().sort((a, b) => a - b);
   const pick = fraction => values[Math.min(values.length - 1, Math.floor(values.length * fraction))];
-  return { available: true, count: values.length, last: values.at(-1), p50: pick(.5), p95: pick(.95), max: values.at(-1) };
+  return { available: true, count: values.length, last: observed.at(-1), p50: pick(.5), p95: pick(.95), max: values.at(-1) };
 }
 
 function metricCount(metrics, name) {
@@ -81,7 +81,20 @@ function projectDiagnostic(report = {}) {
   const visibleCoverage = ratio(visible, sent);
   const fps = [];
   const dropped = [];
-  for (const item of Array.isArray(report.events) ? report.events.slice(-MAX_SAMPLES) : []) {
+  const droppedIntervalDelta = [];
+  const summary = report.traceSummary;
+  const interval = summary?.mediaInterval;
+  const elapsedMs = boundedNumber(interval?.elapsedMs, 60000);
+  const sampleAgeMs = boundedNumber(interval?.sampleAgeMs, 5000);
+  if (metadataOnly && interval?.schemaVersion === 1 && interval.kind === 'webrtc-inbound-interval'
+      && elapsedMs !== null && elapsedMs > 0 && interval.elapsedMs <= 60000
+      && sampleAgeMs !== null && interval.sampleAgeMs <= 5000) {
+    const value = boundedNumber(summary.derivedFps, 240);
+    if (interval.fpsObserved === true && value !== null) fps.push(value);
+    const delta = boundedCount(summary.framesDroppedDelta);
+    if (interval.droppedFramesObserved === true && delta !== null) droppedIntervalDelta.push(delta);
+  }
+  for (const item of !metadataOnly && Array.isArray(report.events) ? report.events.slice(-MAX_SAMPLES) : []) {
     if (!item || typeof item !== 'object') continue;
     for (const key of ['fps', 'derivedFps', 'decodeFps']) {
       const value = boundedNumber(item[key], 240);
@@ -105,6 +118,7 @@ function projectDiagnostic(report = {}) {
     ringDropCount,
     fps,
     dropped,
+    droppedIntervalDelta,
     rssMiB: rss,
     cpuPercent: cpu,
     visibleEffect: {
@@ -128,7 +142,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
   let startedAt = null;
   let endedAt = null;
   let reports = [];
-  let runtimeSamples = [];
+  let resourceSamples = [];
   let heartbeat = { samples: 0, ringDropped: 0 };
   let summaryCoverage = { observed: false, droppedSummaryCount: 0, gaps: [] };
 
@@ -138,6 +152,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const projected = projectDiagnostic(report);
     reports.push(projected);
     if (reports.length > maxReports) reports.shift();
+    observeResource({ rssMiB: projected.rssMiB, cpuPercent: projected.cpuPercent });
     return projected;
   }
   function observeHeartbeat(data = {}) {
@@ -159,11 +174,14 @@ function createRuntimeEvidenceRecorder(options = {}) {
   }
   function observeRuntime(runtime = {}) {
     if (startedAt === null) start();
-    runtimeSamples.push({
+    observeResource({
       rssMiB: boundedNumber(runtime.currentRssMiB, 1048576),
       cpuPercent: boundedNumber(runtime.processCpuPercent, 10000),
     });
-    if (runtimeSamples.length > maxReports) runtimeSamples.shift();
+  }
+  function observeResource(sample) {
+    resourceSamples.push(sample);
+    if (resourceSamples.length > maxReports) resourceSamples.shift();
   }
   function stop() { if (startedAt !== null && endedAt === null) endedAt = now(); }
   function snapshot() {
@@ -173,18 +191,21 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const sumKnown = key => projected.some(row => row[key] !== null) ? sum(key) : null;
     const fps = projected.flatMap(row => row.fps);
     const dropped = projected.flatMap(row => row.dropped);
+    const droppedIntervalDelta = projected.flatMap(row => row.droppedIntervalDelta);
     const visibleRows = projected.map(row => row.visibleEffect).filter(row => row.metricAvailable);
     const visibleSamples = visibleRows.reduce((total, row) => total + (row.samples ?? 0), 0);
     const sent = visibleRows.reduce((total, row) => total + (row.sent ?? 0), 0);
     const visibleCoverage = ratio(visibleSamples, sent);
-    const rss = sampleStats([...projected.map(row => row.rssMiB), ...runtimeSamples.map(row => row.rssMiB)]);
-    const cpu = sampleStats([...projected.map(row => row.cpuPercent), ...runtimeSamples.map(row => row.cpuPercent)]);
+    const rss = sampleStats(resourceSamples.map(row => row.rssMiB));
+    const cpu = sampleStats(resourceSamples.map(row => row.cpuPercent));
     if (!projected.length) recordMissing(missing, 'diagnostics');
     if (projected.every(row => row.logCount === null)) recordMissing(missing, 'logCount');
     if (!summaryCoverage.observed && projected.every(row => row.summaryGapCount === null)) recordMissing(missing, 'summaryGapCount');
     if (!heartbeat.samples) recordMissing(missing, 'ringDropped');
     if (!fps.length) recordMissing(missing, 'fps');
-    if (!dropped.length) recordMissing(missing, 'droppedFrames');
+    if (projected.some(row => row.metadataOnly)) {
+      if (!droppedIntervalDelta.length) recordMissing(missing, 'droppedFramesIntervalDelta');
+    } else if (!dropped.length) recordMissing(missing, 'droppedFrames');
     if (!rss.available) recordMissing(missing, 'rssMiB');
     if (!cpu.available) recordMissing(missing, 'cpuPercent');
     if (!visibleRows.length || visibleCoverage === null) recordMissing(missing, 'inputToVisibleEffectMs');
@@ -204,7 +225,10 @@ function createRuntimeEvidenceRecorder(options = {}) {
         ringDropCount: heartbeat.ringDropped + sum('ringDropCount'),
       },
       resources: { rssMiB: rss, cpuPercent: cpu },
-      media: { fps: sampleStats(fps), droppedFrames: sampleStats(dropped) },
+      media: { fps: sampleStats(fps), droppedFrames: sampleStats(dropped),
+        droppedFramesScope: 'legacy-event-counter-unspecified',
+        droppedFramesIntervalDelta: sampleStats(droppedIntervalDelta),
+        droppedFramesIntervalDeltaScope: 'webrtc-inbound-interval' },
       visibleEffect: { sent: sent || null, samples: visibleSamples || null, coverage: visibleCoverage },
       coverage: { complete: missing.length === 0, missing },
     };

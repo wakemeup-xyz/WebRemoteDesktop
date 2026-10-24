@@ -216,6 +216,55 @@ function createDiagnosticContext(overrides = {}) {
   return { context, elements, storage: context.localStorage };
 }
 
+test('control heartbeat failure snapshot survives core, deferred, replay and private durable diagnostic ingestion', () => {
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrd-heartbeat-diagnostic-'));
+  const previousDir = process.env.WRD_DIAG_DIR;
+  process.env.WRD_DIAG_DIR = dir;
+  try {
+    const { context } = createDiagnosticContext();
+    const heartbeat = { supported: true, ackBudgetMs: 2500, pending: false, pendingAgeMs: null,
+      lastAckAgeMs: 3000, lastAckRttMs: 2400, maxAckRttMs: 2400,
+      sent: 4, acknowledged: 3, timeouts: 1, rejected: 0, reason: 'acknowledged' };
+    context.WebRTC.getControlHeartbeatSnapshot = () => ({ ...heartbeat, lastFailureAgeMs: 500,
+      lastFailure: { ...heartbeat, reason: 'ack-timeout', leaseId: 'HEARTBEAT_PRIVATE_CANARY',
+        lastFailure: { reason: 'HEARTBEAT_PRIVATE_CANARY' } }, socket: 'HEARTBEAT_PRIVATE_CANARY' });
+    const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+    const critical = Diagnostic.buildRuntimeDiagnostic({ reason: 'manual' });
+    const deferred = Diagnostic.buildConnectionDiagnostic({ reason: 'manual' });
+    const replay = context.runtimeDiagnosticForStorage(deferred, context.LATENCY_METRIC_NAMES);
+    for (const payload of [critical, deferred, replay]) {
+      assert.equal(payload.traceSummary.controlHeartbeat.sent, 4);
+      assert.equal(payload.traceSummary.controlHeartbeat.timeouts, 1);
+      assert.equal(payload.traceSummary.controlHeartbeat.lastAckRttMs, 2400);
+      assert.equal(payload.traceSummary.controlHeartbeat.lastFailure.reason, 'ack-timeout');
+      assert.equal(payload.traceSummary.controlHeartbeat.lastFailure.lastFailure, undefined);
+      assert.equal(JSON.stringify(payload).includes('HEARTBEAT_PRIVATE_CANARY'), false);
+    }
+    const { ingestDiagnosticPayload } = require('../../signal-server/lib/diagnostic');
+    const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'heartbeat-diagnostic-test',
+      data: deferred, config: { enableDiagPersist: true }, logger: {} });
+    assert.equal(result.persisted, true);
+    const rawFile = fs.readdirSync(path.join(dir, 'raw')).find(name => name.startsWith('runtime_'));
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, 'raw', rawFile), 'utf8'));
+    const summaryFile = fs.readdirSync(path.join(dir, 'summary')).find(name => name.endsWith('.ndjson'));
+    const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary', summaryFile), 'utf8').trim());
+    for (const report of [result.report, raw, summary]) {
+      const observed = report.traceSummary.controlHeartbeat;
+      assert.equal(observed.supported, true);
+      assert.equal(observed.acknowledged, 3);
+      assert.equal(observed.lastFailure.reason, 'ack-timeout');
+      assert.equal(observed.maxAckRttMs, 2400);
+      assert.equal(observed.lastFailureAgeMs, 500);
+      assert.equal(JSON.stringify(report).includes('HEARTBEAT_PRIVATE_CANARY'), false);
+    }
+  } finally {
+    if (previousDir === undefined) delete process.env.WRD_DIAG_DIR;
+    else process.env.WRD_DIAG_DIR = previousDir;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function loadRecoveryDiagnosticCoreFixture() {
   const { context } = createDiagnosticContext();
   context.console = { log() {}, info() {}, warn() {}, error() {} };
@@ -824,6 +873,19 @@ test('buildConnectionDiagnostic includes paint continuity fields', () => {
   assert.equal(payload.traceSummary.fps, 0);
   assert.equal(payload.traceSummary.keyframeRequested, true);
   assert.equal(payload.traceSummary.keyframeEmitted, false);
+});
+
+test('diagnostic interval evidence comes from the current WebRTC owner rather than inferred paint zeros', () => {
+  const { context } = createDiagnosticContext();
+  const interval = { schemaVersion: 1, kind: 'webrtc-inbound-interval', elapsedMs: 1000,
+    sampleAgeMs: 100, fpsObserved: true, droppedFramesObserved: true };
+  context.WebRTC.getDiagnosticMediaInterval = () => interval;
+  context.WebRTC._lastPaintStats = { derivedFps: 18, decodedDelta: 18, framesDroppedDelta: 0 };
+  const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
+  assert.deepEqual(Diagnostic.buildConnectionDiagnostic().traceSummary.mediaInterval, interval);
+  context.WebRTC.getDiagnosticMediaInterval = () => null;
+  context.WebRTC.hasPaintedFrame = true;
+  assert.equal(Diagnostic.buildConnectionDiagnostic().traceSummary.mediaInterval, null);
 });
 
 test('sendConnectionDiagnostic queues payload when socket and fetch fail', async () => {

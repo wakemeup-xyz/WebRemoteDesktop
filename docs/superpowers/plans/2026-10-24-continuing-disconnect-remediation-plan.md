@@ -6,7 +6,7 @@
 
 ## 执行边界
 
-本计划基于 2026-10-24 日志。初版只完成诊断；后续已在 main 提交三个确定恢复缺口及诊断增强，并在维护授权下仅重启本地 Signal 加载。Host 原进程及 tunnel 均未重启。实施继续沿用 `webremote-service` 规则：先读启动文档，重启只允许本地 Signal/Host，结束前必须核对 health、Host online、Viewer 范围和当前密码。
+本计划基于 2026-10-24 日志。初版只完成诊断；后续已在 main 提交三个确定恢复缺口及诊断增强，并在维护授权下仅重启本地 Signal 加载。初期Host原进程未重启；10月25日调度修复后Host也已按脚本重启，tunnel始终未重启。实施继续沿用 `webremote-service` 规则：先读启动文档，重启只允许本地 Signal/Host，结束前必须核对 health、Host online、Viewer 范围和当前密码。
 
 ## 阶段 0：建立可重复基线
 
@@ -122,7 +122,7 @@
 - [x] reset恢复失败在原scope释放前进入既有诊断，使用recovery-failed避免把发送失败/ACK拒绝误报为超时；补齐真实双reset定时器重入，Viewer最终全套1,517项通过。
 - [x] Signal仅针对已转发reset关联ACK目标、校验、租约/类型匹配、转发及本地耗时，保持32项/10秒上限，验证失败日志不改变控制结果。扩展后的全部Signal目录回归537/537通过。
 - [x] 23:54:27加载新日志补丁4826f72/build3fb4a1fd0774bdcc，第三轮在baseline观察缺口停止、未注入故障；三轮结果保留INCOMPLETE，不通过放宽原lease/期限要求来改判。
-- [ ] 更新生产reported/retained/redacted/trace receipt；真实样本尚未到达时保持null和coverage missing。
+- [x] 正常UI真实上报后核对生产reported/retained/redacted/trace receipt；发现并修复duplicate双计数，75ac794加载后为1报告/40log/0保留/40脱敏/9trace，gap0/ring0。
 
 ### 低负载 pacing 追加实验
 
@@ -142,11 +142,34 @@
 - [x] 修复验收Host状态记时（94/94回归）：采用status分支实际完成的单调时间，不用慢页面完成时刻；真实gap仍失败，失败后保留同owner且schema有效的最终诊断。
 - [x] 修复Host helper先覆盖配置再比较的加载缺口；22/22测试覆盖私有日志canary、预检、安装、部分注册及回滚失败。
 - [x] Host plist显式Interactive；Signal helper使用私有参数数组plist和预检/失败恢复，18/18测试通过；实际启动路径无效时在停旧服务前拒绝。
-- [ ] focused回归/独立review、main提交后，在无Viewer维护窗口加载；核实实际调度类型和健康，不操作tunnel。
-- [ ] 重跑短断线及活动capture/资源对照；只在实际指标改善后记录收益，不把独立timer分布替代逐帧/输入延迟。
+- [x] 调度候选focused回归/独立review、main提交后已在无Viewer维护窗口加载；实际Interactive及本地/公网健康已核实，tunnel未操作。
+- [x] 调度候选已重跑两次strict原租约短断线和活动capture/资源观察；fresh/pacing改善已有运行证据。第三次自然lease expiry保留失败，HB新修复及新配置30分钟仍待下方独立验收。
 
 ### Host加载阻断的实测修正
 
 - [x] 独立4个probe确认临时文件缺.plist后缀导致bootstrap5；改唯一私有目录/probe.plist及唯一label，清理未确认时拒绝reload。
 - [x] restart-host失败保留/刷新真实项目PID；无Host才清理；helper先输出子脚本诊断再返回失败。34项Host相关回归及19项service helper通过，7个核心反例RED→GREEN。
-- [x] Signal已加载Interactive并核实31/63与本地/公网/Terminal admin bootstrap；Host仍待预检修正提交后加载。
+- [x] Signal已加载Interactive并核实31/63与本地/公网/Terminal admin bootstrap；Host已在2e611d5提交后通过修复预检重启64981，实际interactive4/max63；短断线进行中。
+
+### 真实上报后发现的计数重复
+
+- [x] 正常UI手动报告唯一raw为40log/9trace，Socket/HTTP重送使旧receipt错误计80/18，已保存生产反例。
+- [x] 两入口只对非duplicate更新runtime recorder，HTTP sink异常不再破坏保存ACK；真实注册入口两种顺序、legacy及sink失败5项反例通过。
+- [x] 第二轮结束加载计数修复，正常UI重试后唯一raw/runtime receipt一致；旧错误窗口不回改。
+
+### 自然租约过期后的心跳闭环
+
+- [x] 保留第三次无fault的真实baseline-failed及完整时间线；前两PASS不能外推长期稳定。
+- [x] 实现协商式heartbeat ACK、当前scope单pending/2500ms预算、固定摘要；正常engine重连接入现有正式rebind，TTL/授权不变。
+- [x] 真实Signal+Viewer反例红绿、旧能力/晚ACK/隐藏/手动/拒绝/定时器有界复核；补真实Engine.IO non-draining transport和晚capability反例，24/24通过，独立复审无遗留必修。
+- [ ] 与v3 interval观测修复一起回归/隔离build，在无Viewer时提交加载；再重跑重复断线和长会话资源，不因新代码存在勾选通过。
+
+### 媒体区间观测闭环
+
+- [x] 复现 v3 原文清空后 receipt FPS/drop 缺失，保持无 provenance/default-zero/旧报告 unknown。
+- [x] request/current/prior owner、所选 inbound 的实际 track 及稳定 counters 归属、5秒单调freshness、白名单及独立 interval delta scope 已实现；不改原媒体健康 selector。
+- [x] 修复 sampleStats.last 排序取最大值及跨资源来源顺序错误；使用统一有界 FIFO，max 与 last 分离。
+- [x] focused 32项通过并完成独立只读复审；三条复审反例均补齐。
+- [ ] 与心跳闭环统一完整回归、最终隔离build、main提交后加载；正常UI上报核对真实 receipt。旧报告不能补造为新协议覆盖。
+
+只读附记：现有tunnel进程6438的线程base/max仍为20/20。这只是调度上下文线索，尚无该进程的阶段耗时或控制失效因果证据；本轮未操作tunnel，不将Host/Signal的收益外推到tunnel。

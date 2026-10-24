@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "scenario": "within-grace",
+  "mode": "relay",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "ordinaryRecovery": {
+    "status": "PASS",
+    "classification": "within-grace-rebind",
+    "requestedScenario": "within-grace",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "recoverySeconds": 7.01589024416171,
+    "recoveredStableSeconds": 30.013926374958828,
+    "serverCoverage": "complete",
+    "reason": "none"
+  },
+  "failure": null,
+  "lifecycle": {
+    "captureStatus": "ok",
+    "cleanupStatus": "api-finished-exit-unknown",
+    "writeStatus": "ok",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "fault": {
+    "capability": "available",
+    "status": "disarmed",
+    "instrumentation": "native-direct",
+    "triggerCount": 1,
+    "blockedHttp": 0,
+    "blockedWebSocket": 0,
+    "blockSeconds": 0
+  },
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physical": "NOT_RUN",
+  "continuity": {
+    "status": "INCOMPLETE",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 300.294286302058,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathChangeObservations": 0,
+    "pathConvergenceObservations": 0,
+    "maxObservedNoProgressMs": 983.2999999999884,
+    "progressAfterBaseline": true,
+    "frameStallThresholdMs": 5000,
+    "frameEvidence": "requestVideoFrameCallback",
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+    "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+  },
+  "hostObservation": {
+    "status": "stable",
+    "coverage": "complete",
+    "samples": 353,
+    "hostDisconnectObserved": false
+  },
+  "sourceCommit": "2e611d57fc686b8c6bd5a7efa922864ba536e4f1",
+  "buildId": "3fb4a1fd0774bdcc",
+  "note": "Continuity INCOMPLETE is intentional after native fault injection (interrupted=attempted); strict ordinaryRecovery is PASS, original lease preserved. This is lifecycle reset/control gate recovery, not business input or visible-effect proof."
+}

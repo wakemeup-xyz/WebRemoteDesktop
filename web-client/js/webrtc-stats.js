@@ -105,8 +105,14 @@ const WebRtcStats = (() => {
     const selected = selectActiveCandidatePair(stats);
     const codec = getReport(stats, inbound.codecId);
     const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    const identity = value => typeof value === 'string' && value.length > 0 && value.length <= 256 ? value : null;
     const current = {
       sampledAt,
+      // Kept only in the sampler's one previous/current snapshot. Diagnostic
+      // payloads export a bounded proof, never these raw browser identities.
+      diagnosticInboundId: identity(inbound.id),
+      diagnosticTrackIdentifier: identity(inbound.trackIdentifier),
+      diagnosticSsrc: Number.isSafeInteger(inbound.ssrc) && inbound.ssrc >= 0 && inbound.ssrc <= 0xffffffff ? inbound.ssrc : null,
       totalDecodeTime: duration(inbound.totalDecodeTime),
       framesReceived: duration(inbound.framesReceived),
       framesDecoded: duration(inbound.framesDecoded),
@@ -147,6 +153,12 @@ const WebRtcStats = (() => {
       interval: true,
       warmup: !previous,
       sampledAt,
+      diagnosticInbound: { trackIdentifier: current.diagnosticTrackIdentifier,
+        intervalSourceStable: Boolean(previous && current.diagnosticInboundId !== null
+          && current.diagnosticTrackIdentifier !== null && current.diagnosticSsrc !== null
+          && current.diagnosticInboundId === previous.diagnosticInboundId
+          && current.diagnosticTrackIdentifier === previous.diagnosticTrackIdentifier
+          && current.diagnosticSsrc === previous.diagnosticSsrc) },
       browserReportedFps: duration(inbound.framesPerSecond),
       rttMs,
       codec: String(codec?.mimeType || ''),

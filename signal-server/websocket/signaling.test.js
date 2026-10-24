@@ -2329,6 +2329,7 @@ test('v2 activation advertises capabilities and refuses an older host', () => {
   assert.deepEqual(viewer.sent.find((entry) => entry.event === 'connected').data, {
     viewerAdmission: viewer.sent.find(e => e.event === 'connected').data.viewerAdmission,
     role: 'viewer', status: 'ok', hostOnline: true,
+    controlHeartbeatAckVersion: 1,
     inputProtocolVersion: 2, hostInputProtocolVersion: 1,
     hostCapabilities: {
       inputFrameCorrelationVersion: null,

@@ -1,6 +1,6 @@
 const { createDiagnosticStore, getDiagDir } = require('./diagnostic-store');
 const { loadConfig } = require('./config');
-const { sanitizeDataChannelWatchdog, sanitizeSignalingFailure } = require('../../web-client/js/runtime-diagnostic');
+const { sanitizeDataChannelWatchdog, sanitizeSignalingFailure, sanitizeControlHeartbeat } = require('../../web-client/js/runtime-diagnostic');
 
 const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
 const crypto = require('node:crypto');
@@ -93,6 +93,17 @@ function redactRuntimeDiagnostic(payload) {
   for (const key of ['hasPaintedFrame', 'keyframeRequested', 'keyframeEmitted', 'explicitOverride1080']) {
     const value = payload.traceSummary?.[key];
     if (typeof value === 'boolean') clean.traceSummary[key] = value;
+  }
+  const interval = payload.traceSummary?.mediaInterval;
+  const controlHeartbeat = sanitizeControlHeartbeat(payload.traceSummary?.controlHeartbeat);
+  if (controlHeartbeat) clean.traceSummary.controlHeartbeat = controlHeartbeat;
+  const elapsedMs = finiteNonnegative(interval?.elapsedMs);
+  const sampleAgeMs = finiteNonnegative(interval?.sampleAgeMs);
+  if (interval?.schemaVersion === 1 && interval.kind === 'webrtc-inbound-interval'
+      && elapsedMs !== null && elapsedMs > 0 && elapsedMs <= 60000
+      && sampleAgeMs !== null && sampleAgeMs <= 5000) {
+    clean.traceSummary.mediaInterval = { schemaVersion: 1, kind: 'webrtc-inbound-interval', elapsedMs, sampleAgeMs,
+      fpsObserved: interval.fpsObserved === true, droppedFramesObserved: interval.droppedFramesObserved === true };
   }
   // Trim only optional context; mandatory schema/capture/build/M1 explanation remains.
   clean.truncation = { dropped: countValue(payload.truncation?.dropped) };

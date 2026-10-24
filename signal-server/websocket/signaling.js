@@ -1,5 +1,6 @@
 const { loadConfig } = require('../lib/config');
 const { verifyAccessToken } = require('../lib/auth');
+const { performance } = require('node:perf_hooks');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
 const { normalizeDisconnectReason } = require('../lib/observability/runtime');
 const { createResetAckObserver } = require('../lib/observability/reset-ack-observer');
@@ -173,6 +174,50 @@ function setupSignaling(io, options = {}) {
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || null;
   const structuredLogger = options.structuredLogger || null;
+  const heartbeatNow = typeof options.controlHeartbeatNow === 'function'
+    ? options.controlHeartbeatNow : () => performance.now();
+  const heartbeatCount = value => Math.min(999999999, Math.max(0, Math.floor(value)));
+  function controlHeartbeatObservation(socket) {
+    return socket._wrdControlHeartbeatObservation ||= {
+      received: 0, accepted: 0, rejected: 0, ackRequested: 0, ackEnqueued: 0,
+      lastReceivedAt: null, lastAcceptedAt: null, lastGrantAt: null, maxReceiveGapMs: 0, leaseEpoch: null,
+    };
+  }
+  function observeControlHeartbeat(socket, data, result) {
+    const now = heartbeatNow();
+    const observation = controlHeartbeatObservation(socket);
+    if (observation.lastReceivedAt !== null) {
+      observation.maxReceiveGapMs = Math.max(observation.maxReceiveGapMs,
+        heartbeatCount(now - observation.lastReceivedAt));
+    }
+    observation.lastReceivedAt = now;
+    observation.received = heartbeatCount(observation.received + 1);
+    const counter = result.ok ? 'accepted' : 'rejected';
+    observation[counter] = heartbeatCount(observation[counter] + 1);
+    if (data.heartbeatAckVersion === 1) observation.ackRequested = heartbeatCount(observation.ackRequested + 1);
+    if (result.ok) {
+      observation.lastAcceptedAt = now;
+      observation.leaseEpoch = data.leaseEpoch;
+    }
+    return observation;
+  }
+  function summarizeControlHeartbeat(socket, reason) {
+    const observation = socket?._wrdControlHeartbeatObservation;
+    if (!observation) return;
+    const now = heartbeatNow();
+    const payload = { domain: 'control', event: 'control_heartbeat_observed',
+      message: 'Bounded control heartbeat receive and renewal summary', meta: {
+        reason, received: observation.received, accepted: observation.accepted, rejected: observation.rejected,
+        ackRequested: observation.ackRequested, ackEnqueued: observation.ackEnqueued,
+        leaseEpoch: Number.isSafeInteger(observation.leaseEpoch) ? observation.leaseEpoch : null,
+        lastReceivedAgeMs: observation.lastReceivedAt === null ? null : heartbeatCount(now - observation.lastReceivedAt),
+        lastAcceptedAgeMs: observation.lastAcceptedAt === null ? null : heartbeatCount(now - observation.lastAcceptedAt),
+        lastGrantAgeMs: observation.lastGrantAt === null ? null : heartbeatCount(now - observation.lastGrantAt),
+        maxReceiveGapMs: observation.maxReceiveGapMs,
+      } };
+    try { structuredLogger?.info?.(payload); } catch (_error) {}
+    try { recentEventStore?.append?.(payload); } catch (_error) {}
+  }
   // Observation only: each server instance retains at most 32 reset IDs for
   // ten seconds. No lease token, input payload, socket, or timer is retained.
   const resetAckObserver = createResetAckObserver({
@@ -754,6 +799,9 @@ function setupSignaling(io, options = {}) {
 
   function dispatchLeaseEffect(effect, reason = effect?.reason) {
     if (!effect || (!effect.reason && !effect.transition)) return false;
+    if (reason === 'lease-expired') {
+      for (const viewer of connections.viewers.values()) summarizeControlHeartbeat(viewer, 'lease-expired');
+    }
     const snapshotAfter = (() => {
       // Prefer lease snapshot after the mutation that produced this effect.
       return desktopLease.snapshot();
@@ -782,6 +830,9 @@ function setupSignaling(io, options = {}) {
   function sendGrant(viewerId, lease) {
     const viewerSocket = connections.viewers.get(viewerId);
     if (!viewerSocket || !lease) return;
+    const observation = controlHeartbeatObservation(viewerSocket);
+    observation.leaseEpoch = lease.leaseEpoch;
+    observation.lastGrantAt = heartbeatNow();
     viewerSocket.emit('control-grant', { controller: true, ...lease });
     broadcastControlState('granted');
   }
@@ -1223,6 +1274,7 @@ function setupSignaling(io, options = {}) {
       socket.emit('connected', {
         role: 'viewer',
         status: 'ok',
+        controlHeartbeatAckVersion: 1,
         ...(humanAdmission ? { viewerAdmission: { mode: 'resume', generation: humanAdmission.generation } } : {}),
         hostOnline: connections.host !== null,
         inputProtocolVersion: socket.inputProtocolVersion,
@@ -1331,14 +1383,29 @@ function setupSignaling(io, options = {}) {
       }
     });
 
-    socket.on('control-heartbeat', (data = {}) => {
+    socket.on('control-heartbeat', (data = {}, acknowledge) => {
       if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
       const result = withLeaseExpiry(() => desktopLease.heartbeat({
         viewerId: socket.id,
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
       }));
+      const observation = observeControlHeartbeat(socket, data, result);
+      if (!result.ok && observation.rejected === 1) summarizeControlHeartbeat(socket, 'rejected');
       if (!result.ok) socket.emit('control-heartbeat-rejected', { reason: result.reason });
+      const progress = mediaActivityProgress.get(socket.id);
+      if (result.ok && data.heartbeatAckVersion === 1 && typeof acknowledge === 'function'
+        && Number.isSafeInteger(data.heartbeatSeq) && data.heartbeatSeq >= 1
+        && progress?.connectionAttemptId === data.connectionAttemptId
+        && progress?.connectionAttemptSequence === data.connectionAttemptSequence) {
+        try {
+          acknowledge({ schemaVersion: 1, status: 'accepted', heartbeatSeq: data.heartbeatSeq,
+            leaseEpoch: data.leaseEpoch, connectionAttemptId: progress.connectionAttemptId,
+            connectionAttemptSequence: progress.connectionAttemptSequence });
+          observation.ackEnqueued = heartbeatCount(observation.ackEnqueued + 1);
+        } catch (_error) { /* Renewal is already committed; ACK enqueue is best effort. */ }
+      }
     });
 
     socket.on('control-release', (data = {}) => {
@@ -2078,6 +2145,7 @@ function setupSignaling(io, options = {}) {
     });
 
     socket.on('disconnect', (reason) => {
+      if (role === 'viewer') summarizeControlHeartbeat(socket, 'socket-disconnected');
       const disconnectEvent = {
         domain: 'signaling', event: 'signal_socket_disconnected',
         message: 'Signaling socket disconnected',

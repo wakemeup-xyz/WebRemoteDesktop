@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "window": {
+    "startedAt": 1792859943430,
+    "endedAt": null,
+    "reportCount": 2
+  },
+  "diagnostics": {
+    "logCount": {
+      "total": 80,
+      "reportsWithLogs": 2,
+      "zeroLogReports": 0,
+      "unknownReports": 0
+    },
+    "retainedLogCount": 0,
+    "redactedLogCount": 80,
+    "inputTraceEventCount": 18,
+    "metadataOnlyReports": 2,
+    "summaryGapCount": 0,
+    "summaryGaps": [],
+    "ringDropCount": 1
+  },
+  "resources": {
+    "rssMiB": {
+      "available": true,
+      "count": 1,
+      "last": 99.52734375,
+      "p50": 99.52734375,
+      "p95": 99.52734375,
+      "max": 99.52734375
+    },
+    "cpuPercent": {
+      "available": true,
+      "count": 1,
+      "last": 0.029416168844053243,
+      "p50": 0.029416168844053243,
+      "p95": 0.029416168844053243,
+      "max": 0.029416168844053243
+    }
+  },
+  "media": {
+    "fps": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p50": null,
+      "p95": null,
+      "max": null
+    },
+    "droppedFrames": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p50": null,
+      "p95": null,
+      "max": null
+    }
+  },
+  "visibleEffect": {
+    "sent": null,
+    "samples": null,
+    "coverage": null
+  },
+  "coverage": {
+    "complete": false,
+    "missing": [
+      "fps",
+      "droppedFrames",
+      "inputToVisibleEffectMs"
+    ]
+  },
+  "note": "BEFORE DUPLICATE-RECEIPT FIX: one unique manually sent persisted v3 report has reported40/retained0/redacted40/trace9; Socket/HTTP replay was wrongly counted twice in this runtime receipt. Do not use total80/trace18 as unique report counts. Media/visible missing stays explicit."
+}

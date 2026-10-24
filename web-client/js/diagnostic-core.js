@@ -349,6 +349,7 @@
       dataChannelWatchdog: currentRtc()?.getDataChannelWatchdogSnapshot?.(),
       signalingFailure: currentRtc()?.getSignalingFailureSnapshot?.() }),
     getResources: () => null,
+    getControlHeartbeat: () => currentRtc()?.getControlHeartbeatSnapshot?.(),
     getLatency: context => collector()?.snapshot?.(context) || null,
     takeClosedScopeSummaries: context => collector()?.takeClosedScopeSummaries?.(context) || null,
   });

@@ -53,6 +53,30 @@
       socketConnected: boolean('socketConnected'), socketActive: boolean('socketActive'), fallbackSelected: boolean('fallbackSelected'),
       connectBudgetMs: duration('connectBudgetMs', 30000), ageMs: duration('ageMs', 3600000) };
   }
+  function sanitizeControlHeartbeat(value, includeFailure = true) {
+    if (!value || typeof value !== 'object') return null;
+    const fields = ['supported', 'ackBudgetMs', 'pending', 'pendingAgeMs', 'lastAckAgeMs', 'lastAckRttMs',
+      'maxAckRttMs', 'sent', 'acknowledged', 'timeouts', 'rejected', 'reason', 'lastFailureAgeMs', 'lastFailure'];
+    const values = {};
+    for (const key of fields) { try { values[key] = value[key]; } catch (_) { values[key] = null; } }
+    const duration = (key, max = 999999999) => typeof values[key] === 'number' && Number.isFinite(values[key])
+      && values[key] >= 0 && values[key] <= max ? values[key] : null;
+    const count = key => Number.isSafeInteger(values[key]) && values[key] >= 0
+      && values[key] <= 999999999 ? values[key] : null;
+    const result = { supported: typeof values.supported === 'boolean' ? values.supported : null,
+      ackBudgetMs: values.ackBudgetMs === 2500 ? 2500 : null,
+      pending: typeof values.pending === 'boolean' ? values.pending : null,
+      pendingAgeMs: duration('pendingAgeMs'), lastAckAgeMs: duration('lastAckAgeMs'),
+      // ACK RTT includes scheduling, transport and Signal processing, not only network transit.
+      lastAckRttMs: duration('lastAckRttMs', 2500), maxAckRttMs: duration('maxAckRttMs', 2500),
+      sent: count('sent'), acknowledged: count('acknowledged'), timeouts: count('timeouts'), rejected: count('rejected'),
+      reason: ['none', 'sent', 'acknowledged', 'ack-timeout', 'rejected'].includes(values.reason) ? values.reason : null };
+    if (includeFailure && values.lastFailure && typeof values.lastFailure === 'object') {
+      result.lastFailureAgeMs = duration('lastFailureAgeMs');
+      result.lastFailure = sanitizeControlHeartbeat(values.lastFailure, false);
+    }
+    return result;
+  }
   function boundRuntimeDiagnostic(payload) {
     const result = clone(payload);
     result.truncation = { dropped: Number.isSafeInteger(result.truncation?.dropped) ? result.truncation.dropped : 0 };
@@ -111,6 +135,9 @@
       trigger: payload.trigger, connectionAttemptId: storageHash(payload.connectionAttemptId),
       captured: clone(payload.captured), build: clone(payload.build), latencyStatus: payload.latencyStatus,
       latency: latency(payload.latency), inputState: {},
+      ...(payload.traceSummary?.controlHeartbeat ? { traceSummary: {
+        controlHeartbeat: sanitizeControlHeartbeat(payload.traceSummary.controlHeartbeat),
+      } } : {}),
       inputTrace: { schemaVersion: 3, traceNowMs: safeNumber(trace.traceNowMs),
         counters: Object.fromEntries(Object.entries(trace.counters || {}).filter(([key, value]) => /^[a-zA-Z]{1,40}$/.test(key) && Number.isSafeInteger(value) && value >= 0)),
         events: (trace.events || []).slice(-256).map(event => ({ at: safeNumber(event.at), inputIdHash: digest(event.inputIdHash) })) },
@@ -120,7 +147,7 @@
     };
   }
   function createRuntimeDiagnosticBuilder({ nowMs = () => performance.now(), wallNow = () => new Date().toISOString(),
-    getScope, getBuild, getInput, getStartup, getResources, getLatency, takeClosedScopeSummaries,
+    getScope, getBuild, getInput, getStartup, getResources, getLatency, getControlHeartbeat, takeClosedScopeSummaries,
   } = {}) {
     const bootIdHash = randomHash();
     let events = []; let dropped = 0;
@@ -152,11 +179,13 @@
       const latency = read(getLatency, null, { nowMs: monotonicMs, scope });
       const input = read(getInput, {});
       const startup = read(getStartup, {});
+      const controlHeartbeat = sanitizeControlHeartbeat(read(getControlHeartbeat, null));
       return boundRuntimeDiagnostic({ schemaVersion: 3, diagnosticId: randomHash(), reason,
         captured: { wallTime: read(wallNow, null), monotonicMs, bootIdHash },
         build: read(getBuild, { id: null, builtAt: null }),
         latencyStatus: latency ? 'available' : 'collector-unavailable', latency,
         inputState: input.inputState || {}, inputTrace: input.inputTrace || {},
+        ...(controlHeartbeat ? { traceSummary: { controlHeartbeat } } : {}),
         startup: { ...startup, dataChannelWatchdog: sanitizeDataChannelWatchdog(startup?.dataChannelWatchdog), signalingFailure: sanitizeSignalingFailure(read(() => startup?.signalingFailure, null)) }, resources: read(getResources, null),
         scopeEnded: { events: clone(events), dropped },
       });
@@ -180,7 +209,7 @@
     };
     return build;
   }
-  const api = { sanitizeSignalingFailure, sanitizeDataChannelWatchdog, createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
+  const api = { sanitizeControlHeartbeat, sanitizeSignalingFailure, sanitizeDataChannelWatchdog, createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
   Object.assign(global, api);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this));

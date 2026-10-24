@@ -84,7 +84,7 @@ Signal admin receipt 和 Host diagnostic summary 统一输出：
 
 - 上送、保留、脱敏日志数及结构化 trace 条数，`summaryGapCount`、ring overwrite/drop（注明是诊断环覆盖）；
 - Signal RSS/CPU、Host RSS/CPU、event-loop/capture/encode p95/max；
-- Viewer decoded FPS、RTP dropped/freezes；
+- Viewer decoded FPS、接收端视频帧丢弃区间增量（framesDroppedDelta）、RTP丢包（packetsLostDelta）和freeze，分别记录；
 - input ACK expired/dropped/stale-lease；
 - `inputToVisibleEffectMs` coverage 和 `NOT RUN` 原因。
 
@@ -150,3 +150,23 @@ Host及Signal当前launchd spawn type均为daemon、线程priority/maxpriority�
 候选为两个本地实时交互服务显式ProcessType=Interactive，不设置全局电源、nice、实时优先级、LegacyTimers或忙等。Host继续使用现有plist及restart-host脚本；必须先比较已安装与源配置，再决定kickstart复用或预检后re-bootstrap，预检失败不能覆盖旧配置或停止健康job。Signal helper将submit改为参数数组和plistlib生成的私有plist，经唯一label预检gui bootstrap后再停旧服务；真实bootstrap失败须尝试恢复原submit路径并明确失败，不能宣称Interactive已加载。不得操作任何tunnel label或进程。
 
 上线前审查配置加载/回滚与纯临时mock测试；无Viewer维护窗口只重启本地服务。核实实际spawn type/线程priority及本地、公网健康，再重复strict短断线和真实会话capture/CPU/RSS/fresh cadence。仅timer探针改善不能勾选整体验收。
+
+### 生产重送后的唯一计数契约
+
+同一已持久化v3 diagnosticId经Socket/HTTP回退重复送达时，继续返回原持久化ACK，原store去重与Host单次转发保持；runtime evidence只观察首次非duplicate报告。legacy无ID无法证明同一报告，仍按独立上传计数。运行统计sink异常不得把已成功保存的HTTP/Socket报告ACK变为失败。测试必须用真实注册HTTP+Socket入口、两种顺序及私有diagnostic目录，验证raw/summary/Host转发/计数均不重复，不能只调用recorder模拟。
+
+### 单向控制心跳的确认与恢复
+
+自然baseline已复现Socket/PC短时仍connected而lease12秒过期。缺少逐次成功接收历史，不能唯一归因某跳；确定缺口是Viewer无法确认续租是否成功。新增显式controlHeartbeatAckV1能力协商，未支持的旧Server/Viewer保持原行为。新请求和ACK用seq/epoch/attempt及attemptSequence关联，内存进一步绑定当前socket对象/id、lease对象和连接scope；ACK只证明既有authorize+heartbeat成功，不授予控制。
+
+每3秒心跳最多一个pending，ACK预算2500ms，使用Socket.IO timeout释放ACK表。有效ACK清除pending；旧scope/乱序/晚ACK无效；明确拒绝保持原freeze，不自动争抢。能力确认、可见、仍持有当前控制且非手动断开时超时，单次关闭当前engine，走现有自动重连和正式resume/rebind。Engine.IO的close会等待writeBuffer排空；若捕获的同一engine仍closing，关闭该engine自己的transport，避免polling挂起POST使恢复永久停在closing。不得再读取successor engine或关闭后来连接。不得调用manual disconnect取消用户intent，不延长12秒TTL、不重放输入、不把其它消息当续租。2500ms预算不是网络SLO保证；公共链路慢ACK可能触发恢复，必须测量误触发及原租约恢复结果。初始grant先完成当前attempt绑定，再启动带scope心跳；保留legacy兼容。已有legacy scope不能阻止晚到的ACK capability升级，复用只允许同一已启ACK的scope。
+
+观测只记录固定原因、seq/epoch、计数和单调age的有界摘要，禁止leaseId/token/输入内容。测试需覆盖正常2400ms确认不恢复、2500ms后晚ACK无效、明确拒绝、隐藏/手动关闭、旧能力、并发/重复定时器和当前owner边界。
+
+### v3 媒体区间的真实覆盖证明
+
+v3 事件正文按设计丢弃，runtime receipt 因只读取 events 而缺失实际已采集的 FPS/drop。不能直接把 canonical 默认零填入 receipt。producer 在 canonical 归一化前证明区间已观测、非 warmup、elapsed 正且有限、请求前/完成时/上一请求的 PC、attempt、stream 和 track owner 一致；所选 inbound 的 trackIdentifier 必须匹配当前 track，id/SSRC/trackIdentifier 在两端均已知且稳定。未支持这些字段或来源有歧义保持 unknown，不改变媒体健康选择策略。
+
+原始 owner、track/id/SSRC 仅在有界内存中保留；诊断只输出 schema1 interval kind、elapsed/sampleAge 和 FPS/drop 已观测布尔值。同 performance 时钟下 sampleAge 必须在0–5000ms。Signal 白名单继续验证边界后，v3 receipt 才提取 FPS 和独立的 droppedFramesIntervalDelta（webrtc-inbound-interval）；legacy 事件counter（累计/区间口径未知）独立保留，不能混称累计丢帧或唯一去重的长会话总数。多个诊断可能覆盖重叠区间，不能将这些 delta 相加当整段掉帧。
+
+统计 last 取实际输入顺序中的最后有效值，max/分位数使用排序副本；runtime 和 diagnostic 的资源样本共享有界 FIFO，不能先按来源分组再拼接而改变最后值。

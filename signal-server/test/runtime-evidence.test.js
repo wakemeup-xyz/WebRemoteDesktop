@@ -2,7 +2,116 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createRuntimeEvidenceRecorder, projectDiagnostic } = require('../lib/observability/runtime-evidence');
+const { createRuntimeEvidenceRecorder, projectDiagnostic, sampleStats } = require('../lib/observability/runtime-evidence');
+
+test('sampleStats last preserves observation order while quantiles and maximum use sorted values', () => {
+  assert.deepEqual(sampleStats([8, 3, NaN, null, 2]), {
+    available: true, count: 3, last: 2, p50: 3, p95: 8, max: 8,
+  });
+  assert.equal(sampleStats([8, -1, 0, undefined]).last, 0);
+  assert.deepEqual(sampleStats([null, undefined, NaN, -1]), {
+    available: false, count: 0, last: null, p50: null, p95: null, max: null,
+  });
+});
+
+test('resource last follows interleaved runtime and diagnostic observation order', () => {
+  const evidence = createRuntimeEvidenceRecorder();
+  evidence.observeRuntime({ currentRssMiB: 100, processCpuPercent: 10 });
+  evidence.observeDiagnostic({ resources: { currentRssMiB: 50, processCpuPercent: 5 } });
+  let receipt = evidence.receipt();
+  assert.equal(receipt.resources.rssMiB.last, 50);
+  assert.equal(receipt.resources.cpuPercent.last, 5);
+  assert.equal(receipt.resources.rssMiB.max, 100);
+  evidence.observeRuntime({ currentRssMiB: 0, processCpuPercent: 0 });
+  evidence.observeDiagnostic({});
+  receipt = evidence.receipt();
+  assert.equal(receipt.resources.rssMiB.last, 0);
+  assert.equal(receipt.resources.cpuPercent.last, 0);
+});
+
+function observedInterval(overrides = {}) {
+  return { schemaVersion: 1, kind: 'webrtc-inbound-interval', elapsedMs: 1000,
+    sampleAgeMs: 100, fpsObserved: true, droppedFramesObserved: true, ...overrides };
+}
+
+test('schema3 projects measured canonical interval metadata instead of discarded or legacy events', () => {
+  // Scalar-only reproduction of the production report; no console or identity data.
+  const media = { derivedFps: 18, framesDroppedDelta: 0, decodedDelta: 18,
+    receivedDelta: 20, hasPaintedFrame: true };
+  const historical = projectDiagnostic({ schemaVersion: 3, events: [], traceSummary: media });
+  assert.deepEqual(historical.fps, []);
+  assert.deepEqual(historical.droppedIntervalDelta, []);
+  const row = projectDiagnostic({ schemaVersion: 3, events: [{ fps: 99, dropped: 88 }],
+    traceSummary: { ...media, mediaInterval: observedInterval() } });
+  assert.deepEqual(row.fps, [18]);
+  assert.deepEqual(row.dropped, []);
+  assert.deepEqual(row.droppedIntervalDelta, [0]);
+});
+
+test('schema3 interval evidence rejects defaults, stale samples, invalid metadata and counter coercion', () => {
+  for (const mediaInterval of [undefined, {}, observedInterval({ elapsedMs: 0 }),
+    observedInterval({ elapsedMs: '1000' }), observedInterval({ elapsedMs: Infinity }),
+    observedInterval({ sampleAgeMs: null }), observedInterval({ sampleAgeMs: -1 }),
+    observedInterval({ sampleAgeMs: 5001 }), observedInterval({ kind: 'video-element' }),
+    observedInterval({ fpsObserved: false, droppedFramesObserved: false })]) {
+    const row = projectDiagnostic({ schemaVersion: 3, traceSummary: {
+      derivedFps: 0, framesDroppedDelta: 0, hasPaintedFrame: true, mediaInterval } });
+    assert.deepEqual(row.fps, []);
+    assert.deepEqual(row.droppedIntervalDelta, []);
+  }
+  const zero = projectDiagnostic({ schemaVersion: 3, traceSummary: {
+    derivedFps: 0, framesDroppedDelta: 0, mediaInterval: observedInterval() } });
+  assert.deepEqual(zero.fps, [0]);
+  assert.deepEqual(zero.droppedIntervalDelta, [0]);
+  for (const value of [null, undefined, '', '0', true, NaN, Infinity, -1]) {
+    const row = projectDiagnostic({ schemaVersion: 3, traceSummary: {
+      derivedFps: value, framesDroppedDelta: value, mediaInterval: observedInterval() } });
+    assert.deepEqual(row.fps, []);
+    assert.deepEqual(row.droppedIntervalDelta, []);
+  }
+  const partial = projectDiagnostic({ schemaVersion: 3, traceSummary: {
+    derivedFps: 18, framesDroppedDelta: 0, mediaInterval: observedInterval({ droppedFramesObserved: false }) } });
+  assert.deepEqual(partial.fps, [18]);
+  assert.deepEqual(partial.droppedIntervalDelta, []);
+});
+
+test('schema3 redactor preserves only bounded interval evidence and drops private owner data', () => {
+  const { redactDiagnosticPayload } = require('../lib/diagnostic');
+  const clean = redactDiagnosticPayload({ schemaVersion: 3, traceSummary: {
+    derivedFps: 18, framesDroppedDelta: 0,
+    mediaInterval: { ...observedInterval(), owner: 'PRIVATE_OWNER_CANARY' } } });
+  assert.deepEqual(clean.traceSummary.mediaInterval, observedInterval());
+  assert.equal(JSON.stringify(clean).includes('PRIVATE_OWNER_CANARY'), false);
+  assert.deepEqual(projectDiagnostic(clean).fps, [18]);
+  assert.deepEqual(projectDiagnostic(clean).droppedIntervalDelta, [0]);
+  for (const invalid of [{ elapsedMs: 0 }, { elapsedMs: 60001 }, { sampleAgeMs: 5001 },
+    { elapsedMs: null }, { sampleAgeMs: null }, { elapsedMs: '1000' }, { schemaVersion: 2 }, { kind: 'video-element' }]) {
+    const report = redactDiagnosticPayload({ schemaVersion: 3, traceSummary: {
+      derivedFps: 0, framesDroppedDelta: 0, mediaInterval: observedInterval(invalid) } });
+    assert.equal(Object.hasOwn(report.traceSummary, 'mediaInterval'), false);
+    assert.deepEqual(projectDiagnostic(report).fps, []);
+    assert.deepEqual(projectDiagnostic(report).droppedIntervalDelta, []);
+  }
+});
+
+test('receipt keeps interval dropped deltas separate from legacy counter values', () => {
+  const evidence = createRuntimeEvidenceRecorder();
+  evidence.observeDiagnostic({ events: [{ fps: 20, droppedFrames: 88 }] });
+  evidence.observeDiagnostic({ schemaVersion: 3, traceSummary: {
+    derivedFps: 18, framesDroppedDelta: 0, mediaInterval: observedInterval() } });
+  const receipt = evidence.receipt();
+  assert.equal(receipt.media.fps.last, 18);
+  assert.equal(receipt.media.droppedFrames.last, 88);
+  assert.equal(receipt.media.droppedFramesScope, 'legacy-event-counter-unspecified');
+  assert.equal(receipt.media.droppedFramesIntervalDelta.last, 0);
+  assert.equal(receipt.media.droppedFramesIntervalDeltaScope, 'webrtc-inbound-interval');
+  assert.equal(receipt.coverage.missing.includes('droppedFramesIntervalDelta'), false);
+  const missing = createRuntimeEvidenceRecorder();
+  missing.observeDiagnostic({ schemaVersion: 3, traceSummary: { derivedFps: 0, framesDroppedDelta: 0 } });
+  assert.equal(missing.receipt().media.fps.available, false);
+  assert.equal(missing.receipt().media.droppedFramesIntervalDelta.available, false);
+  assert.ok(missing.receipt().coverage.missing.includes('droppedFramesIntervalDelta'));
+});
 
 test('projects only explicit diagnostic evidence and keeps visible-effect coverage independent from ACKs', () => {
   const row = projectDiagnostic({

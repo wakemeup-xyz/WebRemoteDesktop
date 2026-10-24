@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { sanitizeControlHeartbeat } = require('../../web-client/js/runtime-diagnostic');
 const DAY = 86400000;
 const RECEIPT_TTL_MS = DAY;
 const RECEIPT_MAX_ENTRIES = 10000;
@@ -200,6 +201,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
       retainedLogCount:knownCount(r.retainedLogCount)??(Array.isArray(r.logs)?r.logs.length:knownCount(r.logCount)),
       redactedLogCount:knownCount(r.redactedLogCount),
       inputTraceEventCount:Array.isArray(r.inputTrace?.events)?r.inputTrace.events.length:knownCount(r.inputTraceEventCount),
+      ...(r.traceSummary?.controlHeartbeat?{traceSummary:{controlHeartbeat:sanitizeControlHeartbeat(r.traceSummary.controlHeartbeat)}}:{}),
       sampleCount:metrics && typeof metrics==='object'?Object.values(metrics).reduce((n,item)=>Math.min(Number.MAX_SAFE_INTEGER,n+count(item?.count)),0):0};
   }
   const dayStart=at=>Math.floor(at/DAY)*DAY;

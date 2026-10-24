@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "kind": "heartbeat-and-media-observation-offline-validation",
+  "baseCommit": "75ac794",
+  "results": [
+    {
+      "name": "viewer-full",
+      "pass": 1527,
+      "fail": 0,
+      "skipped": 0,
+      "logBasename": "wrd-20261025-heartbeat-viewer-full.tap",
+      "sha256": "e611a9d21c6bd47be5adbe2bc8e0e4c8a7cca1e111fa15126c18eabedd0e8b03",
+      "note": "Before last non-draining close refinement; followed by frozen changed-file regression."
+    },
+    {
+      "name": "frozen-related",
+      "pass": 495,
+      "fail": 0,
+      "skipped": 0,
+      "logBasename": "wrd-20261025-heartbeat-frozen-regression.tap",
+      "sha256": "f7b61fba46d218037779d175e5eb37a3435bee9d70cac203805ef6241082e567",
+      "note": "Frozen final webrtc/diagnostic and real registered heartbeat tests."
+    },
+    {
+      "name": "signal-final",
+      "pass": 572,
+      "fail": 0,
+      "skipped": 0,
+      "logBasename": "wrd-20261025-heartbeat-signal-final.tap",
+      "sha256": "90ebaa0cb2e082ae9eb61a86b461625b909bf00aab3a1347c3a06f5990164cd9",
+      "note": "Final test and websocket directories after explicit capability expectation update."
+    }
+  ],
+  "previewBuildId": "6fd0dc72ca413149",
+  "productionLoaded": false,
+  "independentReview": {
+    "mediaRequiredFindingsResolved": 3,
+    "heartbeatRequiredFindingsResolved": 2,
+    "remainingRequiredFindings": 0
+  },
+  "limits": [
+    "Offline validation does not change the third natural production lease-expiry failure.",
+    "ACK RTT includes scheduler, transport and Signal processing.",
+    "No real business input, visible effect or physical display qualification."
+  ]
+}

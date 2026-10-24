@@ -391,6 +391,8 @@
       adaptiveMedia,
       traceSummary: {
         ...(basePayload.traceSummary || snapshot.traceSummary || {}),
+        controlHeartbeat: sanitizeControlHeartbeat(typeof WebRTC !== 'undefined'
+          ? WebRTC.getControlHeartbeatSnapshot?.() : null),
         trigger: meta.trigger || basePayload.traceSummary?.trigger || 'manual',
         reason: meta.reason || basePayload.traceSummary?.reason || null,
         uiPhase: (typeof WebRTC !== 'undefined' && WebRTC.uiPhase) || null,
@@ -411,6 +413,8 @@
         videoWidth: Number(lastStats.videoWidth || videoEl?.videoWidth || 0),
         videoHeight: Number(lastStats.videoHeight || videoEl?.videoHeight || 0),
         readyState: Number(videoEl?.readyState || 0),
+        mediaInterval: (typeof WebRTC !== 'undefined' && typeof WebRTC.getDiagnosticMediaInterval === 'function')
+          ? WebRTC.getDiagnosticMediaInterval() : null,
         ...mediaStats,
         jitterBufferMs: typeof lastStats.jitterBufferMs === 'number'
           && Number.isFinite(lastStats.jitterBufferMs) && lastStats.jitterBufferMs >= 0

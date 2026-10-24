@@ -1,0 +1,93 @@
+{
+  "startedAtEpochMs": 1792861248079,
+  "endedAtEpochMs": 1792861257824,
+  "earlierSingleFailure": {
+    "exitCode": 35,
+    "errorCategory": "tls-connect",
+    "beforeOriginHTTP": true
+  },
+  "proxyContext": {
+    "envProxyLoopbackPort": 7892,
+    "systemHTTPProxyEnabled": false,
+    "systemHTTPSProxyEnabled": false,
+    "systemSOCKSProxyEnabled": false
+  },
+  "rows": [
+    {
+      "route": "inherited-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.000455,
+      "tlsSeconds": 2.368651,
+      "totalSeconds": 2.94372,
+      "errorCategory": "none"
+    },
+    {
+      "route": "bypass-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.276966,
+      "tlsSeconds": 1.396876,
+      "totalSeconds": 3.196122,
+      "errorCategory": "none"
+    },
+    {
+      "route": "inherited-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.000426,
+      "tlsSeconds": 1.416928,
+      "totalSeconds": 2.31409,
+      "errorCategory": "none"
+    },
+    {
+      "route": "bypass-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.24819,
+      "tlsSeconds": 2.286975,
+      "totalSeconds": 2.800625,
+      "errorCategory": "none"
+    },
+    {
+      "route": "inherited-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.000355,
+      "tlsSeconds": 0.732233,
+      "totalSeconds": 1.279267,
+      "errorCategory": "none"
+    },
+    {
+      "route": "bypass-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.104182,
+      "tlsSeconds": 0.372989,
+      "totalSeconds": 1.242248,
+      "errorCategory": "none"
+    },
+    {
+      "route": "inherited-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.000348,
+      "tlsSeconds": 0.666969,
+      "totalSeconds": 1.29227,
+      "errorCategory": "none"
+    },
+    {
+      "route": "bypass-env-proxy",
+      "exitCode": 0,
+      "httpCode": "200",
+      "tcpSeconds": 0.093973,
+      "tlsSeconds": 0.291713,
+      "totalSeconds": 1.360216,
+      "errorCategory": "none"
+    }
+  ],
+  "limitations": [
+    "Small read-only probe sample; not user-device failure rate.",
+    "No tunnel/proxy configuration changed. One earlier inherited-proxy TLS failure recovered; error alone does not prove origin down."
+  ]
+}

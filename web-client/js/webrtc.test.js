@@ -8418,6 +8418,139 @@ test('JPEG origin cleanup still clears the just-ended active relay RTT display',
   assert.equal(WebRTC._relayRttView, null);
 });
 
+function diagnosticIntervalFixture() {
+  let now = 10000;
+  let track = { id: 'diagnostic-track', kind: 'video', readyState: 'live' };
+  const { WebRTC, context } = loadWebRTC({ performance: { now: () => now }, console: { log() {}, warn() {}, error() {} } });
+  WebRTC.pc = { connectionState: 'connected', getReceivers: () => [{ track }] };
+  WebRTC.remoteStream = { getVideoTracks: () => [track] };
+  WebRTC.currentConnectionAttemptId = 'diagnostic-attempt'; WebRTC.connectionAttemptSequence = 2;
+  WebRTC.networkMode = 'stun'; WebRTC.uiPhase = 'connected'; WebRTC.hasPaintedFrame = true;
+  const consume = (overrides = {}) => WebRTC.processStatsSnapshot({ interval: true, warmup: false,
+    elapsedMs: 1000, sampledAt: 9900, derivedFps: 18, decodedDelta: 18, receivedDelta: 20,
+    diagnosticInbound: { trackIdentifier: track.id, intervalSourceStable: true },
+    framesDroppedDelta: 0, videoWidth: 1152, videoHeight: 720, ...overrides });
+  consume({ warmup: true, elapsedMs: null, sampledAt: 8900 });
+  return { WebRTC, context, consume, setNow: value => { now = value; }, replaceTrack: () => { track = { id: 'next-track', kind: 'video', readyState: 'live' }; } };
+}
+
+test('diagnostic interval provenance preserves real zero counters before canonical normalization', () => {
+  const { WebRTC, consume } = diagnosticIntervalFixture();
+  consume();
+  assert.deepEqual(JSON.parse(JSON.stringify(WebRTC.getDiagnosticMediaInterval())), {
+    schemaVersion: 1, kind: 'webrtc-inbound-interval', elapsedMs: 1000,
+    sampleAgeMs: 100, fpsObserved: true, droppedFramesObserved: true,
+  });
+  consume({ derivedFps: 0, decodedDelta: 0, framesDroppedDelta: 0 });
+  assert.equal(WebRTC.getDiagnosticMediaInterval().fpsObserved, true);
+  assert.equal(WebRTC.getDiagnosticMediaInterval().droppedFramesObserved, true);
+  consume({ decodedDelta: null, framesDroppedDelta: null });
+  assert.equal(WebRTC._lastPaintStats.decodedDelta, 0);
+  assert.equal(WebRTC._lastPaintStats.framesDroppedDelta, 0);
+  assert.equal(WebRTC.getDiagnosticMediaInterval().fpsObserved, false);
+  assert.equal(WebRTC.getDiagnosticMediaInterval().droppedFramesObserved, false);
+  for (const value of [undefined, '', '0', true, NaN, Infinity, -1, .5]) {
+    consume({ decodedDelta: value, framesDroppedDelta: value });
+    assert.equal(WebRTC.getDiagnosticMediaInterval().fpsObserved, false);
+    assert.equal(WebRTC.getDiagnosticMediaInterval().droppedFramesObserved, false);
+  }
+});
+
+test('diagnostic interval provenance survives actual normalizeStats through redaction and projection', () => {
+  const { WebRtcStats } = require('./webrtc-stats');
+  const { redactDiagnosticPayload } = require('../../signal-server/lib/diagnostic');
+  const { projectDiagnostic } = require('../../signal-server/lib/observability/runtime-evidence');
+  const { WebRTC, consume } = diagnosticIntervalFixture();
+  const current = new Map([['video', { id: 'inbound', ssrc: 10, trackIdentifier: 'diagnostic-track', type: 'inbound-rtp', kind: 'video',
+    framesDecoded: 118, framesReceived: 120, framesDropped: 5 }]]);
+  const previous = WebRtcStats.normalizeStats(new Map([['video', { ...current.get('video'),
+    framesDecoded: 100, framesReceived: 100 }]]), null, 8900).totals;
+  const project = () => projectDiagnostic(redactDiagnosticPayload({ schemaVersion: 3, traceSummary: {
+    ...WebRTC._lastPaintStats, mediaInterval: WebRTC.getDiagnosticMediaInterval() } }));
+  consume(WebRtcStats.normalizeStats(current, previous, 9900));
+  assert.deepEqual(project().fps, [18]);
+  assert.deepEqual(project().droppedIntervalDelta, [0]);
+  current.get('video').framesDropped = undefined;
+  consume(WebRtcStats.normalizeStats(current, previous, 9900));
+  assert.deepEqual(project().fps, [18]);
+  assert.deepEqual(project().droppedIntervalDelta, []);
+  consume(WebRtcStats.normalizeStats(current, null, 9900));
+  assert.deepEqual(project().fps, []);
+  assert.deepEqual(project().droppedIntervalDelta, []);
+});
+
+test('diagnostic interval provenance rejects warmup, invalid clocks and noninterval paint callbacks', () => {
+  for (const overrides of [{ interval: false }, { warmup: true }, { elapsedMs: 0 }, { elapsedMs: null },
+    { elapsedMs: '1000' }, { elapsedMs: Infinity }, { sampledAt: null }, { sampledAt: '9900' }]) {
+    const { WebRTC, consume } = diagnosticIntervalFixture(); consume(overrides);
+    assert.equal(WebRTC.getDiagnosticMediaInterval(), null);
+  }
+  const { WebRTC, consume, setNow } = diagnosticIntervalFixture(); consume();
+  setNow(14901); assert.equal(WebRTC.getDiagnosticMediaInterval(), null);
+  setNow(9800); assert.equal(WebRTC.getDiagnosticMediaInterval(), null);
+  setNow(10000);
+  WebRTC.notePaintStats({ source: 'video-element', framesDecoded: 999, fps: 0, videoWidth: 1152, videoHeight: 720 });
+  assert.equal(WebRTC.getDiagnosticMediaInterval(), null);
+});
+
+test('diagnostic interval provenance is invalidated by attempt, peer, track, stream and telemetry retirement', () => {
+  for (const change of [f => { f.WebRTC.currentConnectionAttemptId = 'next-attempt'; },
+    f => { f.WebRTC.connectionAttemptSequence++; }, f => { f.WebRTC.pc = {}; },
+    f => f.replaceTrack(), f => { f.WebRTC.remoteStream = { getVideoTracks: () => [] }; },
+    f => f.WebRTC.stopMediaTelemetry()]) {
+    const f = diagnosticIntervalFixture(); f.consume();
+    assert.notEqual(f.WebRTC.getDiagnosticMediaInterval(), null);
+    change(f); assert.equal(f.WebRTC.getDiagnosticMediaInterval(), null);
+  }
+});
+
+test('diagnostic interval provenance waits for a new counter baseline after a same-peer track change', () => {
+  const f = diagnosticIntervalFixture(); f.consume();
+  assert.notEqual(f.WebRTC.getDiagnosticMediaInterval(), null);
+  f.replaceTrack();
+  f.consume();
+  assert.equal(f.WebRTC.getDiagnosticMediaInterval(), null);
+  f.consume();
+  assert.notEqual(f.WebRTC.getDiagnosticMediaInterval(), null);
+});
+
+test('diagnostic interval provenance fences an old pending getStats result across a same-peer track change', async () => {
+  const { WebRtcStats } = require('./webrtc-stats');
+  const f = diagnosticIntervalFixture();
+  f.context.WebRtcStats = { createWebRtcStatsSampler: options => WebRtcStats.createWebRtcStatsSampler({
+    ...options, now: () => f.context.performance.now(), setTimer: () => 1, clearTimer() {},
+  }) };
+  const stats = (decoded, dropped, trackIdentifier) => new Map([['video', { id: 'inbound-' + trackIdentifier,
+    ssrc: trackIdentifier === 'diagnostic-track' ? 10 : 11, trackIdentifier, type: 'inbound-rtp', kind: 'video',
+    framesDecoded: decoded, framesReceived: decoded, framesDropped: dropped }]]);
+  let resolveOld, calls = 0, nextStats;
+  f.WebRTC.pc.getStats = () => ++calls === 1 ? new Promise(resolve => { resolveOld = resolve; }) : Promise.resolve(nextStats);
+  f.WebRTC.startStats();
+  f.replaceTrack();
+  resolveOld(stats(120, 4, 'diagnostic-track'));
+  await f.WebRTC._statsSampler.sampleNow();
+  assert.equal(f.WebRTC.getDiagnosticMediaInterval(), null);
+  f.setNow(11000); nextStats = stats(150, 5, 'next-track');
+  await f.WebRTC._statsSampler.sampleNow();
+  assert.equal(f.WebRTC.getDiagnosticMediaInterval(), null, 'B must not use A totals as its baseline');
+  f.setNow(12000); nextStats = stats(168, 5, 'next-track');
+  await f.WebRTC._statsSampler.sampleNow();
+  assert.equal(f.WebRTC.getDiagnosticMediaInterval().fpsObserved, true);
+  assert.equal(f.WebRTC._lastPaintStats.derivedFps, 18);
+});
+
+test('diagnostic interval provenance rejects an inbound row belonging to a different current track', () => {
+  const { WebRtcStats } = require('./webrtc-stats');
+  const f = diagnosticIntervalFixture();
+  const rows = decoded => new Map([
+    ['old', { id: 'old-inbound', ssrc: 10, trackIdentifier: 'old-track', type: 'inbound-rtp', kind: 'video', framesDecoded: decoded, framesDropped: 1 }],
+    ['current', { id: 'current-inbound', ssrc: 11, trackIdentifier: 'diagnostic-track', type: 'inbound-rtp', kind: 'video', framesDecoded: decoded, framesDropped: 1 }],
+  ]);
+  const previous = WebRtcStats.normalizeStats(rows(100), null, 8900).totals;
+  f.consume(WebRtcStats.normalizeStats(rows(118), previous, 9900));
+  assert.equal(f.WebRTC.getDiagnosticMediaInterval(), null);
+});
+
 // Exercise the real consumer chain: process -> handleReceiverStats -> controller.
 test('nullable media latency survives DOM, paint cache, controller and viewer-stats without losing zero', () => {
   const { LinkQualityController } = require('./link-quality-controller');

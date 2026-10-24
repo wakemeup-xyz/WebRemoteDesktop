@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "window": {
+    "startedAt": 1792860817024,
+    "endedAt": null,
+    "reportCount": 1
+  },
+  "diagnostics": {
+    "logCount": {
+      "total": 40,
+      "reportsWithLogs": 1,
+      "zeroLogReports": 0,
+      "unknownReports": 0
+    },
+    "retainedLogCount": 0,
+    "redactedLogCount": 40,
+    "inputTraceEventCount": 9,
+    "metadataOnlyReports": 1,
+    "summaryGapCount": 0,
+    "summaryGaps": [],
+    "ringDropCount": 0
+  },
+  "resources": {
+    "rssMiB": {
+      "available": true,
+      "count": 1,
+      "last": 92.2734375,
+      "p50": 92.2734375,
+      "p95": 92.2734375,
+      "max": 92.2734375
+    },
+    "cpuPercent": {
+      "available": true,
+      "count": 1,
+      "last": 0.058001077254006564,
+      "p50": 0.058001077254006564,
+      "p95": 0.058001077254006564,
+      "max": 0.058001077254006564
+    }
+  },
+  "media": {
+    "fps": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p50": null,
+      "p95": null,
+      "max": null
+    },
+    "droppedFrames": {
+      "available": false,
+      "count": 0,
+      "last": null,
+      "p50": null,
+      "p95": null,
+      "max": null
+    }
+  },
+  "visibleEffect": {
+    "sent": null,
+    "samples": null,
+    "coverage": null
+  },
+  "coverage": {
+    "complete": false,
+    "missing": [
+      "fps",
+      "droppedFrames",
+      "inputToVisibleEffectMs"
+    ]
+  },
+  "note": "After75ac794 loaded: real normal-UI manual diagnostic confirmed saved. One unique report: reported40/retained0/redacted40/trace9; gap0/ring0. FPS/dropped remain missing because v3 interval evidence projection is incomplete; visible effect NOT RUN."
+}

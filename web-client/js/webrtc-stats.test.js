@@ -189,3 +189,17 @@ test('decode averages use same-interval decoded frame count and time', () => {
     { sampledAt: 2000, framesDecoded: 20, totalDecodeTime: .3 });
   assert.ok(Math.abs(result.decodeMs - 20) < .00001);
 });
+
+test('diagnostic inbound scope requires matching report, SSRC and track at both interval endpoints', () => {
+  const report = overrides => stats([{ id: 'inbound-a', type: 'inbound-rtp', kind: 'video',
+    ssrc: 10, trackIdentifier: 'track-a', framesDecoded: 100, framesDropped: 5, ...overrides }]);
+  const previous = WebRtcStats.normalizeStats(report({}), null, 1000).totals;
+  const matching = WebRtcStats.normalizeStats(report({ framesDecoded: 118 }), previous, 2000);
+  assert.equal(matching.diagnosticInbound.intervalSourceStable, true);
+  assert.equal(matching.diagnosticInbound.trackIdentifier, 'track-a');
+  for (const overrides of [{ id: 'inbound-b' }, { ssrc: 11 }, { trackIdentifier: 'track-b' },
+    { id: undefined }, { ssrc: undefined }, { trackIdentifier: undefined }]) {
+    const changed = WebRtcStats.normalizeStats(report({ framesDecoded: 150, ...overrides }), previous, 2000);
+    assert.equal(changed.diagnosticInbound.intervalSourceStable, false);
+  }
+});

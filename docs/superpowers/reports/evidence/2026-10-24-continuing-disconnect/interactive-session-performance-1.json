@@ -1,0 +1,708 @@
+{
+  "schemaVersion": 1,
+  "kind": "passive-host-runtime-observation-during-strict-within-grace-session",
+  "generatedAt": "2026-10-25T00:41:38.228701+08:00",
+  "oldQuiet": {
+    "requestedWindow": {
+      "start": "2026-10-24T23:41:00+08:00",
+      "end": "2026-10-24T23:42:00+08:00"
+    },
+    "runtimeSummaryCount": 10,
+    "runtimeObservedWindow": {
+      "first": "2026-10-24T23:41:05.693000+08:00",
+      "last": "2026-10-24T23:41:55.695000+08:00",
+      "elapsedSeconds": 50.002
+    },
+    "processCpu": {
+      "deltaSeconds": 15.984000000000378,
+      "meanOneCorePercent": 31.966721331147507,
+      "method": "difference of same Host process cumulative user+system CPU seconds at logged window endpoints"
+    },
+    "rssMiBObservedSnapshots": {
+      "count": 10,
+      "min": 468.82421875,
+      "max": 468.91015625,
+      "median": 468.8671875,
+      "first": 468.82421875,
+      "last": 468.91015625
+    },
+    "peakRssMiBLast": 525.59375,
+    "resourceSnapshotAgeMs": {
+      "count": 10,
+      "min": 962.769856,
+      "max": 4988.119121,
+      "median": 2965.574168
+    },
+    "systemLoad1ObservedSnapshots": {
+      "count": 10,
+      "min": 3.397,
+      "max": 3.968,
+      "median": 3.606
+    },
+    "captureCompletedDelta": 390,
+    "captureDeltaRateHz": 7.799688012479501,
+    "rollingCadenceHzObservedSnapshots": {
+      "count": 10,
+      "min": 7.684840527817491,
+      "max": 8.110728998603909,
+      "median": 7.895037341432204
+    },
+    "lastRollingCadenceSnapshot": {
+      "at": "2026-10-24T23:41:55.695000+08:00",
+      "scope": "rolling-60s-completion-buckets",
+      "state": "active",
+      "phase": "pacing",
+      "phaseAgeMs": 52.062301,
+      "intervalCount": 465,
+      "activeIntervalCoveredMs": 59272.893885,
+      "activeIntervalRateHz": 7.845069972493381,
+      "lastInterval": {
+        "intervalMs": 51.644919,
+        "grabMs": 24.942695,
+        "postGrabMs": 0.310208,
+        "pacingActualMs": 26.292183,
+        "otherMs": 0.099833,
+        "minIntervalMs": 50.0,
+        "pacingRequestedMs": 24.747097,
+        "pacingExcessMs": 1.545086,
+        "publishLockWaitMs": 0.002237,
+        "publishCriticalMs": 0.00644
+      },
+      "maxInterval": {
+        "intervalMs": 203.441173,
+        "grabMs": 23.288152,
+        "postGrabMs": 0.319371,
+        "pacingActualMs": 179.739265,
+        "otherMs": 0.094385,
+        "minIntervalMs": 50.0,
+        "pacingRequestedMs": 26.392477,
+        "pacingExcessMs": 153.346788,
+        "publishLockWaitMs": 0.00217,
+        "publishCriticalMs": 0.011776
+      },
+      "stages": {
+        "interval": {
+          "count": 465,
+          "sumMs": 59272.893885,
+          "meanMs": 127.468589,
+          "maxMs": 203.441173
+        },
+        "grab": {
+          "count": 465,
+          "sumMs": 11557.44854,
+          "meanMs": 24.854728043010752,
+          "maxMs": 36.323209
+        },
+        "postGrab": {
+          "count": 465,
+          "sumMs": 162.253261,
+          "meanMs": 0.3489317440860215,
+          "maxMs": 2.823782
+        },
+        "pacingActual": {
+          "count": 465,
+          "sumMs": 47490.616489,
+          "meanMs": 102.13035804086022,
+          "maxMs": 179.739265
+        },
+        "other": {
+          "count": 465,
+          "sumMs": 62.575595,
+          "meanMs": 0.13457117204301078,
+          "maxMs": 1.831967
+        },
+        "minInterval": {
+          "count": 465,
+          "sumMs": 23250.0,
+          "meanMs": 50.0,
+          "maxMs": 50.0
+        },
+        "pacingRequested": {
+          "count": 465,
+          "sumMs": 11530.298199,
+          "meanMs": 24.796340212903228,
+          "maxMs": 29.154893
+        },
+        "pacingExcess": {
+          "count": 465,
+          "sumMs": 35960.31829,
+          "meanMs": 77.33401782795698,
+          "maxMs": 153.346788
+        },
+        "publishLockWait": {
+          "count": 465,
+          "sumMs": 0.933189,
+          "meanMs": 0.002006858064516129,
+          "maxMs": 0.026873
+        },
+        "publishCritical": {
+          "count": 465,
+          "sumMs": 10.898439,
+          "meanMs": 0.023437503225806452,
+          "maxMs": 2.511061
+        }
+      },
+      "published": 465,
+      "discarded": 0,
+      "error": 0,
+      "discontinuous": 0,
+      "invalidTiming": 0,
+      "clipped": false
+    },
+    "lastCaptureOperationSnapshot": {
+      "scope": "track-lifetime",
+      "state": "idle",
+      "attempted": 11289,
+      "completed": 11289,
+      "failed": 0,
+      "currentGrabAgeMs": null,
+      "lastCompletionAgeMs": 52.381,
+      "lastDurationMs": 24.253,
+      "maxDurationMs": 277.909,
+      "lastThreadCpuMs": 6.981,
+      "lastNonCpuMs": 17.272,
+      "maxDurationThreadCpuMs": 15.144,
+      "maxDurationNonCpuMs": 262.764,
+      "clipped": false
+    },
+    "lastRollingEventLoopSnapshot": {
+      "at": "2026-10-24T23:41:55.695000+08:00",
+      "scope": "rolling 60 seconds sampled at 1-second deadlines",
+      "count": 60,
+      "last": 2.095371,
+      "max": 8.567064,
+      "p50": 1.281019,
+      "p95": 4.44555,
+      "p99": 8.567064,
+      "missedSampleCount": 0
+    },
+    "rollingEventLoopP95SnapshotRangeMs": {
+      "count": 10,
+      "min": 4.44555,
+      "max": 8.567064,
+      "median": 4.805337
+    },
+    "rollingEventLoopMaxSnapshotRangeMs": {
+      "count": 10,
+      "min": 8.567064,
+      "max": 13.313321,
+      "median": 13.313321
+    },
+    "queueSnapshotsLast": {
+      "inputReliable": {
+        "pendingCount": 0,
+        "pendingBytes": 0,
+        "inFlightCount": 0,
+        "droppedCount": 0,
+        "frozen": false
+      },
+      "inputUnordered": {
+        "pendingCount": 0,
+        "pendingBytes": 0,
+        "inFlightCount": 0,
+        "droppedCount": 18701,
+        "frozen": false
+      },
+      "relayFrames": null
+    },
+    "recvCompleteWindows": {
+      "firstIntervalStart": "2026-10-24T23:41:01.524000+08:00",
+      "lastIntervalEnd": "2026-10-24T23:41:56.734000+08:00",
+      "windowCount": 11,
+      "coveredSeconds": 55.21,
+      "frames": 1079,
+      "outputRateHz": 19.543560949103423,
+      "reusedOutputs": 652,
+      "reusedFraction": 0.6042632066728453,
+      "nonReusedOutputs": 427,
+      "nonReusedOutputRateHz": 7.734106140191994,
+      "convertWeightedMeanMs": 1.6999073215940685,
+      "recvTotalWeightedMeanMs": 45.000092678405935,
+      "outputRateWindowRangeHz": {
+        "count": 11,
+        "min": 19.4,
+        "max": 19.6,
+        "median": 19.6
+      },
+      "dimensions": [
+        [
+          1152,
+          720
+        ]
+      ]
+    },
+    "encoderPublishedWindows": {
+      "firstEnd": "2026-10-24T23:41:03.218000+08:00",
+      "lastEnd": "2026-10-24T23:41:58.429000+08:00",
+      "windowCount": 12,
+      "frameCount": 1177,
+      "weightedMeanMs": 3.84697536108751,
+      "maxAcrossWindowsMs": 50.559,
+      "perWindowP95RangeMs": {
+        "count": 12,
+        "min": 5.591,
+        "max": 8.089,
+        "median": 6.808
+      },
+      "codecs": [
+        "h264_videotoolbox"
+      ],
+      "allFramesCombinedP95Ms": null,
+      "note": "Window means/counts can be weighted; a quantile of window p95s is not a combined per-frame p95."
+    },
+    "viewerStats": {
+      "summaryCount": 60,
+      "fps": {
+        "count": 60,
+        "min": 17.9,
+        "max": 21.2,
+        "median": 20.0
+      },
+      "candidateRttMs": {
+        "count": 60,
+        "min": 35.0,
+        "max": 200.0,
+        "median": 54.0
+      },
+      "jitterBufferMs": {
+        "count": 60,
+        "min": 11.0,
+        "max": 49.1,
+        "median": 25.85
+      },
+      "reportedLostSum": 0,
+      "reportedDroppedSum": 0,
+      "reportedFreezeSum": 0,
+      "candidateTypes": [
+        "relay"
+      ],
+      "note": "Host log stats snapshots may overlap in reporting; sums are reported counters, not independently proven unique events."
+    },
+    "captureStageMeanSummaryMs": {
+      "grab": 24.854728043010752,
+      "pacingRequested": 24.796340212903228,
+      "pacingActual": 102.13035804086022,
+      "pacingExcess": 77.33401782795698,
+      "postGrab": 0.3489317440860215,
+      "other": 0.13457117204301078
+    }
+  },
+  "limitations": [
+    "Different Host process ages, times, desktop contents and system loads; not a controlled same-load A/B.",
+    "Rolling cadence/eventLoop windows overlap. Snapshot p95 values are not a distribution of individual frame delays.",
+    "No inputs sent, no input-to-visible or physical display qualification.",
+    "No profiler, Viewer, service or power-policy action was performed by this analysis.",
+    "Early rolling snapshots can contain startup outliers; capture lifetime and encoder windows have separately scoped maxima.",
+    "Host CPU intervals and recv/encoder windows have distinct actual endpoints, recorded separately; no invented common denominator or combined p95."
+  ],
+  "runCutoff": {
+    "source": "summary.json filesystem modification time at completed run",
+    "end": "2026-10-25T00:39:40.018364+08:00",
+    "note": "Host records after this completed-run cutoff are excluded, including later cleanup/manual session activity."
+  },
+  "strictSessionResult": {
+    "phase": "terminal",
+    "continuity": {
+      "status": "INCOMPLETE",
+      "kind": "passive-session-continuity-only",
+      "requestedSeconds": 300,
+      "elapsedSeconds": 300.294286302058,
+      "samples": 301,
+      "missingSamples": 0,
+      "lateSamples": 0,
+      "failedObservations": 0,
+      "identityChangeObservations": 0,
+      "pathChangeObservations": 0,
+      "pathConvergenceObservations": 0,
+      "maxObservedNoProgressMs": 983.2999999999884,
+      "progressAfterBaseline": true,
+      "frameStallThresholdMs": 5000,
+      "frameEvidence": "requestVideoFrameCallback",
+      "threeHourContinuityMet": false,
+      "visibleEffect": "NOT_RUN",
+      "activeControl": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN",
+      "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+      "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+    },
+    "ordinaryRecovery": {
+      "status": "PASS",
+      "classification": "within-grace-rebind",
+      "requestedScenario": "within-grace",
+      "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+      "recoverySeconds": 7.01589024416171,
+      "recoveredStableSeconds": 30.013926374958828,
+      "serverCoverage": "complete",
+      "reason": "none"
+    },
+    "lifecycle": {
+      "captureStatus": "ok",
+      "cleanupStatus": "api-finished-exit-unknown",
+      "writeStatus": "ok",
+      "ownedProcessExitEvidence": "not-observed"
+    },
+    "startup": {
+      "status": "verified",
+      "freshPage": true,
+      "authVerified": true,
+      "selector": "vacant-only-v1",
+      "startClickMarksBefore": 0,
+      "startClickMarksAfter": 1,
+      "guardedApiRequests": 1
+    },
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physical": "NOT_RUN",
+    "continuityExplanation": "INCOMPLETE is intentional for a run interrupted by the planned injected fault. Baseline had 301 observations across 300.294286302058 seconds, missing=0, failed=0; this does not override the final continuity status.",
+    "lastObservation": {
+      "elapsedSeconds": 350.35503580700606,
+      "phase": "recovered-stability",
+      "scopeStable": true,
+      "socketConnected": true,
+      "pcState": "connected",
+      "mediaPhase": "active",
+      "inputAllowed": true,
+      "frameAgeMs": 2.099999856960494,
+      "maxFrameGapMs": 983.2999999999884,
+      "callbacks": 6155,
+      "buildId": "3fb4a1fd0774bdcc"
+    }
+  },
+  "interactiveSessionHostWindow": {
+    "requestedWindow": {
+      "start": "2026-10-25T00:34:00+08:00",
+      "end": "2026-10-25T00:39:40.018364+08:00"
+    },
+    "runtimeSummaryCount": 61,
+    "runtimeObservedWindow": {
+      "first": "2026-10-25T00:34:02.901000+08:00",
+      "last": "2026-10-25T00:39:35.891000+08:00",
+      "elapsedSeconds": 332.99
+    },
+    "processCpu": {
+      "deltaSeconds": 141.461,
+      "meanOneCorePercent": 42.48205651821376,
+      "method": "difference of same Host process cumulative user+system CPU seconds at logged window endpoints"
+    },
+    "rssMiBObservedSnapshots": {
+      "count": 61,
+      "min": 231.56640625,
+      "max": 440.17578125,
+      "median": 426.8125,
+      "first": 231.56640625,
+      "last": 440.17578125
+    },
+    "peakRssMiBLast": 447.8203125,
+    "resourceSnapshotAgeMs": {
+      "count": 61,
+      "min": 911.053272,
+      "max": 4984.904576,
+      "median": 2988.616411
+    },
+    "systemLoad1ObservedSnapshots": {
+      "count": 61,
+      "min": 3.756,
+      "max": 6.598,
+      "median": 5.344
+    },
+    "captureCompletedDelta": 6096,
+    "captureDeltaRateHz": 18.306856061743595,
+    "rollingCadenceHzObservedSnapshots": {
+      "count": 61,
+      "min": 17.020135119876173,
+      "max": 18.446499887605047,
+      "median": 18.284358488582644
+    },
+    "lastRollingCadenceSnapshot": {
+      "at": "2026-10-25T00:39:35.891000+08:00",
+      "scope": "rolling-60s-completion-buckets",
+      "state": "active",
+      "phase": "pacing",
+      "phaseAgeMs": 4.291028,
+      "intervalCount": 1085,
+      "activeIntervalCoveredMs": 59522.935297,
+      "activeIntervalRateHz": 18.22826771875756,
+      "lastInterval": {
+        "intervalMs": 60.138506,
+        "grabMs": 25.062495,
+        "postGrabMs": 0.323138,
+        "pacingActualMs": 34.644182,
+        "otherMs": 0.108691,
+        "minIntervalMs": 50.0,
+        "pacingRequestedMs": 24.614367,
+        "pacingExcessMs": 10.029815,
+        "publishLockWaitMs": 0.003216,
+        "publishCriticalMs": 0.005937
+      },
+      "maxInterval": {
+        "intervalMs": 75.318506,
+        "grabMs": 74.419102,
+        "postGrabMs": 0.776096,
+        "pacingActualMs": 0.0,
+        "otherMs": 0.123308,
+        "minIntervalMs": 50.0,
+        "pacingRequestedMs": 0.0,
+        "pacingExcessMs": 0.0,
+        "publishLockWaitMs": 0.003809,
+        "publishCriticalMs": 0.016874
+      },
+      "stages": {
+        "interval": {
+          "count": 1085,
+          "sumMs": 59522.935297,
+          "meanMs": 54.8598482,
+          "maxMs": 75.318506
+        },
+        "grab": {
+          "count": 1085,
+          "sumMs": 29679.806614,
+          "meanMs": 27.354660473732718,
+          "maxMs": 74.419102
+        },
+        "postGrab": {
+          "count": 1085,
+          "sumMs": 424.1696,
+          "meanMs": 0.39093972350230416,
+          "maxMs": 2.786426
+        },
+        "pacingActual": {
+          "count": 1085,
+          "sumMs": 29258.817399,
+          "meanMs": 26.96665198064516,
+          "maxMs": 35.523414
+        },
+        "other": {
+          "count": 1085,
+          "sumMs": 160.141684,
+          "meanMs": 0.14759602211981568,
+          "maxMs": 10.095084
+        },
+        "minInterval": {
+          "count": 1085,
+          "sumMs": 54250.0,
+          "meanMs": 50.0,
+          "maxMs": 50.0
+        },
+        "pacingRequested": {
+          "count": 1085,
+          "sumMs": 24182.269676,
+          "meanMs": 22.287806152995394,
+          "maxMs": 27.236292
+        },
+        "pacingExcess": {
+          "count": 1085,
+          "sumMs": 5076.547723,
+          "meanMs": 4.678845827649769,
+          "maxMs": 12.184779
+        },
+        "publishLockWait": {
+          "count": 1085,
+          "sumMs": 3.734158,
+          "meanMs": 0.003441620276497696,
+          "maxMs": 0.289258
+        },
+        "publishCritical": {
+          "count": 1085,
+          "sumMs": 40.713823,
+          "meanMs": 0.03752426082949309,
+          "maxMs": 2.347631
+        }
+      },
+      "published": 1085,
+      "discarded": 0,
+      "error": 0,
+      "discontinuous": 0,
+      "invalidTiming": 0,
+      "clipped": false
+    },
+    "lastCaptureOperationSnapshot": {
+      "scope": "track-lifetime",
+      "state": "idle",
+      "attempted": 6183,
+      "completed": 6183,
+      "failed": 0,
+      "currentGrabAgeMs": null,
+      "lastCompletionAgeMs": 4.599,
+      "lastDurationMs": 24.509,
+      "maxDurationMs": 117.608,
+      "lastThreadCpuMs": 6.789,
+      "lastNonCpuMs": 17.721,
+      "maxDurationThreadCpuMs": 7.679,
+      "maxDurationNonCpuMs": 109.929,
+      "clipped": false
+    },
+    "lastRollingEventLoopSnapshot": {
+      "at": "2026-10-25T00:39:35.891000+08:00",
+      "scope": "rolling 60 seconds sampled at 1-second deadlines",
+      "count": 61,
+      "last": 0.416725,
+      "max": 6.16305,
+      "p50": 1.001833,
+      "p95": 4.57909,
+      "p99": 6.16305,
+      "missedSampleCount": 0
+    },
+    "rollingEventLoopP95SnapshotRangeMs": {
+      "count": 61,
+      "min": 2.164787,
+      "max": 5.95621,
+      "median": 4.881437
+    },
+    "rollingEventLoopMaxSnapshotRangeMs": {
+      "count": 61,
+      "min": 5.007619,
+      "max": 97.375906,
+      "median": 6.671502
+    },
+    "queueSnapshotsLast": {
+      "inputReliable": {
+        "pendingCount": 0,
+        "pendingBytes": 0,
+        "inFlightCount": 0,
+        "droppedCount": 0,
+        "frozen": false
+      },
+      "inputUnordered": {
+        "pendingCount": 0,
+        "pendingBytes": 0,
+        "inFlightCount": 0,
+        "droppedCount": 0,
+        "frozen": false
+      },
+      "relayFrames": null
+    },
+    "recvCompleteWindows": {
+      "firstIntervalStart": "2026-10-25T00:34:02.803000+08:00",
+      "lastIntervalEnd": "2026-10-25T00:39:39.439000+08:00",
+      "windowCount": 67,
+      "coveredSeconds": 336.63599999999997,
+      "frames": 6514,
+      "outputRateHz": 19.35027745101534,
+      "reusedOutputs": 541,
+      "reusedFraction": 0.08305188824071232,
+      "nonReusedOutputs": 5973,
+      "nonReusedOutputRateHz": 17.74320037072684,
+      "convertWeightedMeanMs": 1.9654283082591348,
+      "recvTotalWeightedMeanMs": 44.36120663186982,
+      "outputRateWindowRangeHz": {
+        "count": 67,
+        "min": 19.0,
+        "max": 19.5,
+        "median": 19.4
+      },
+      "dimensions": [
+        [
+          1152,
+          720
+        ]
+      ]
+    },
+    "encoderPublishedWindows": {
+      "firstEnd": "2026-10-25T00:34:06.050000+08:00",
+      "lastEnd": "2026-10-25T00:39:37.597000+08:00",
+      "windowCount": 67,
+      "frameCount": 6515,
+      "weightedMeanMs": 4.309025172678434,
+      "maxAcrossWindowsMs": 240.414,
+      "perWindowP95RangeMs": {
+        "count": 67,
+        "min": 5.126,
+        "max": 10.857,
+        "median": 7.812
+      },
+      "codecs": [
+        "h264_videotoolbox"
+      ],
+      "allFramesCombinedP95Ms": null,
+      "note": "Window means/counts can be weighted; a quantile of window p95s is not a combined per-frame p95."
+    },
+    "viewerStats": {
+      "summaryCount": 332,
+      "fps": {
+        "count": 332,
+        "min": 14.9,
+        "max": 25.2,
+        "median": 19.0
+      },
+      "candidateRttMs": {
+        "count": 332,
+        "min": 31.0,
+        "max": 701.0,
+        "median": 226.0
+      },
+      "jitterBufferMs": {
+        "count": 332,
+        "min": 16.6,
+        "max": 231.8,
+        "median": 121.8
+      },
+      "reportedLostSum": 16,
+      "reportedDroppedSum": 0,
+      "reportedFreezeSum": 51,
+      "candidateTypes": [
+        "relay"
+      ],
+      "note": "Host log stats snapshots may overlap in reporting; sums are reported counters, not independently proven unique events."
+    },
+    "strictSessionSamples": {
+      "samplingScope": "All currently available strict-session rows, separate from requested Host window; only elapsedSeconds is available.",
+      "totalRows": 353,
+      "baselineRows": 300,
+      "phaseCounts": {
+        "startup": 15,
+        "baseline": 300,
+        "recovering": 7,
+        "recovered-stability": 31
+      },
+      "lastBaseline": {
+        "scopeStable": true,
+        "socketConnected": true,
+        "pcState": "connected",
+        "transport": {
+          "status": "observed",
+          "pathIdentity": "path-1",
+          "localType": "relay",
+          "remoteType": "relay",
+          "protocol": "udp",
+          "remoteProtocol": "udp",
+          "relayProtocol": "udp",
+          "rttMs": 128,
+          "bytesReceived": 6103408,
+          "framesDecoded": 5833,
+          "framesDropped": 0,
+          "codec": "video/h264"
+        },
+        "mediaPhase": "active",
+        "inputAllowed": true,
+        "frameAgeMs": 3.8000000476604328,
+        "maxFrameGapMs": 983.2999999999884,
+        "callbacks": 5515,
+        "buildId": "3fb4a1fd0774bdcc",
+        "elapsedSeconds": 313.29494730196893
+      },
+      "inputVisibleMetricsAvailable": {
+        "inputAckRttMs": false,
+        "inputToPostApplyFrameMs": false,
+        "inputToVisibleEffectMs": false
+      },
+      "countingNote": "Rows retain their phase label from before model.observe(). The final startup row transitions into baseline inside observe() and is counted as baseline sample zero by continuity, so 300 literal baseline rows correspond to 301 continuity observations (ordinary_session_recovery.py:799-812)."
+    },
+    "windowName": "Post-restart active capture window, includes planned within-grace disconnect/recovery; excludes subsequent manual Viewer",
+    "captureStageMeanSummaryMs": {
+      "grab": 27.354660473732718,
+      "pacingRequested": 22.287806152995394,
+      "pacingActual": 26.96665198064516,
+      "pacingExcess": 4.678845827649769,
+      "postGrab": 0.39093972350230416,
+      "other": 0.14759602211981568
+    },
+    "postFirstMinuteRssObservation": {
+      "first": "2026-10-25 00:35:01,898",
+      "last": "2026-10-25 00:39:35,891",
+      "firstMiB": 415.328125,
+      "lastMiB": 440.17578125,
+      "deltaMiB": 24.84765625,
+      "note": "RSS still rises in this short new-process window. This does not establish a leak or prove a stable memory plateau."
+    }
+  }
+}
