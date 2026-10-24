@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "scenario": "within-grace",
+  "mode": "relay",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "nativeAfterGraceQualification": "NOT_RUN",
+  "ordinaryRecovery": {
+    "status": "INCOMPLETE",
+    "classification": "within-grace-rebind",
+    "requestedScenario": "within-grace",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "recoverySeconds": 5.024382661795244,
+    "recoveredStableSeconds": 20.570970572065562,
+    "serverCoverage": "complete",
+    "reason": "host-observation-unavailable"
+  },
+  "failure": {
+    "phase": "recovered-stability",
+    "reason": "host-observation-unavailable"
+  },
+  "lifecycle": {
+    "captureStatus": "unavailable",
+    "cleanupStatus": "incomplete",
+    "writeStatus": "ok",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "fault": {
+    "capability": "available",
+    "status": "disarmed",
+    "instrumentation": "native-direct",
+    "triggerCount": 1,
+    "blockedHttp": 0,
+    "blockedWebSocket": 0,
+    "blockSeconds": 0
+  },
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physical": "NOT_RUN",
+  "hostObservation": {
+    "status": "unavailable",
+    "coverage": "incomplete",
+    "samples": 336,
+    "hostDisconnectObserved": false
+  },
+  "continuity": {
+    "requestedSeconds": 300,
+    "elapsedSeconds": 300.3221262579318,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathChangeObservations": 0,
+    "maxObservedNoProgressMs": 1016.7000000000116,
+    "progressAfterBaseline": true
+  },
+  "sourceCommit": "09d5c2493b4d29a882cbd11c2f7d8fabf63d3aee",
+  "buildId": "544814d637669668",
+  "note": "INCOMPLETE: recovery observed but only 20.57 seconds of qualified post-recovery stability; local status observation and browser cleanup failed. No proof of Host disconnect."
+}

@@ -1,0 +1,37 @@
+{
+  "status": "PASS",
+  "kind": "passive-session-continuity-only",
+  "requestedSeconds": 120,
+  "elapsedSeconds": 120.28173207398504,
+  "samples": 121,
+  "missingSamples": 0,
+  "lateSamples": 0,
+  "failedObservations": 0,
+  "identityChangeObservations": 0,
+  "pathChangeObservations": 0,
+  "maxObservedNoProgressMs": 933.4000000000015,
+  "progressAfterBaseline": true,
+  "frameEvidence": "requestVideoFrameCallback",
+  "threeHourContinuityMet": false,
+  "visibleEffect": "NOT_RUN",
+  "activeControl": "NOT_RUN",
+  "physicalDisplay": "NOT_RUN",
+  "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile.",
+  "mode": "relay",
+  "failure": null,
+  "lifecycle": {
+    "file": "lifecycle.json",
+    "captureStatus": "ok",
+    "cleanupStatus": "api-finished-exit-unknown",
+    "writeStatus": "ok",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "startupMilliseconds": {
+    "bootstrap-ready": 523.0,
+    "signal-connected": 1399.199999999999,
+    "first-frame": 3667.3999999999996,
+    "active": 3667.3999999999996
+  },
+  "sourceCommit": "09d5c2493b4d29a882cbd11c2f7d8fabf63d3aee",
+  "buildId": "544814d637669668"
+}

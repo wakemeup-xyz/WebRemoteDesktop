@@ -115,6 +115,16 @@ Signal admin receipt 和 Host diagnostic summary 统一输出：
 
 这三个缺口均先用离线反例验证；capture 进程隔离和全机资源调优不纳入本次最小修复。
 
+### 原生采样后的 capture 方案约束
+
+22:43 原生采样把主要等待定位到 CoreGraphics 图像数据 IPC，另有 bytearray 复制与 GIL 等待。实验需要同时比较原生异步 source 和进程隔离，不能只把同一 MSS 调用搬入进程后宣布抓帧已优化。
+
+现机 Quartz/PyObjC 暴露 `CGDisplayStreamCreate/Start/Stop/GetRunLoopSource` 及 IOSurface→CVPixelBuffer 的 CoreVideo 入口，可评估专用 CFRunLoop 线程的 `DisplayStreamCaptureSource`。ScreenCaptureKit framework 虽存在，Python bridge/完整 metadata 未安装；不得据 framework 存在宣称已可用。上述仅为接口预检，未创建 stream，尚未证明完整帧/权限/桥接兼容。
+
+异步 source 的 callback 只校验状态和 generation、记录时钟、替换 latest native 引用，不执行全屏复制/resize/日志 I/O，不等待 asyncio。最多保留 latest 和处理中各一个 buffer。FrameSnapshot 显式携带 stride、pixel format、owner/release 与 generation；不能沿用 `.raw.reshape(height,width,4)` 的紧密排列假设。转换 worker 负责按 bytesPerRow 读取和必要的独立副本。idle 不计新鲜帧，静态恢复须等待真实 complete 帧；停止先封 publication，再 native stop，并等 runloop callbacks 排空后释放 owner。资源未回收时保持 pending，不能用 stop 请求代替回收证据。
+
+上线以 source→publish/paint age、fresh cadence、输入效果、资源回收改善为门槛；异步模式不再有同步 grab wall 指标，不能以指标消失冒充性能改善。另记录整机运行队列和 CPU idle，避免将不同系统压力下的样本误当同负载 A/B。
+
 Signal 的 media/relay 拒绝回复必须携带验证后的请求 state/generation/attempt；不得回显 lease。Viewer 只处理当前请求的 scoped rejection。Host 的失败 ACK reason 仅允许固定业务枚举，禁止自由文本透传。必须通过真实注册的 Signal handler 验证重复 generation 在到达 Host 前被拒绝的路径，不能仅用直接调用 Viewer ACK 的 fixture 代替。
 
 诊断回归在模块导入前配置唯一临时目录，所有清理须验证目录归属；默认生产目录只能做纯路径推导断言。通过继承模拟生产目录的子进程 canary 证明测试无生产文件副作用。历史证据被删除必须报告来源和缺失，不能重建摘要后称原件已恢复。

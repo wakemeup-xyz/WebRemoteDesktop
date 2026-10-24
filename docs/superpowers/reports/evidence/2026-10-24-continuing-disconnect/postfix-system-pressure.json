@@ -1,0 +1,27 @@
+{
+  "atLocal": "2026-10-24T22:55:36+08:00",
+  "source": "macOS top one snapshot; sysctl hw.logicalcpu",
+  "logicalCpuCount": 12,
+  "loadAverage": [
+    301.57,
+    195.93,
+    126.61
+  ],
+  "processCount": 769,
+  "runningProcessCount": 158,
+  "cpuUserPercent": 41.6,
+  "cpuSystemPercent": 42.86,
+  "cpuIdlePercent": 15.53,
+  "memoryUsed": "32G",
+  "compressorMiB": 8966,
+  "unusedMemoryMiB": 495,
+  "swapInOutInstantDelta": 0,
+  "followupAtLocal": "2026-10-24T22:57:16+08:00",
+  "followupRunningProcessCount": 19,
+  "limitations": [
+    "Point-in-time observations; not a full system utilization distribution.",
+    "Load includes runnable and uninterruptible work; it is not CPU percent.",
+    "Compressed memory is not a proof of swapping at the failure instant.",
+    "No unrelated workload was modified or terminated."
+  ]
+}

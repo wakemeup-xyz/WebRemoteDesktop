@@ -1,0 +1,850 @@
+{
+  "schemaVersion": 1,
+  "timezone": "Asia/Shanghai",
+  "requestedWindow": {
+    "from": "2026-10-24T22:38:20.000",
+    "to": "2026-10-24T22:47:40.000"
+  },
+  "sourceCoverage": {
+    "firstLogAt": "2026-10-24T22:38:20.850",
+    "lastLogAt": "2026-10-24T22:47:37.547",
+    "selectedLineCount": 1551
+  },
+  "unavailableCaptureRuntimeSamples": 18,
+  "segments": [
+    {
+      "label": "connected-track-1",
+      "from": "2026-10-24T22:39:16.731",
+      "to": "2026-10-24T22:41:29.499",
+      "durationSeconds": 132.768,
+      "runtimeSampleCount": 24,
+      "runtimeFirstAt": "2026-10-24T22:39:19.685",
+      "runtimeLastAt": "2026-10-24T22:41:23.698",
+      "capturePeriodicLastGrab": {
+        "semantics": "last completed grab sampled every 5-6 seconds, not all-frame percentiles",
+        "wallMs": {
+          "count": 24,
+          "min": 42.908,
+          "p50": 130.668,
+          "p95": 291.62,
+          "max": 302.571,
+          "mean": 138.254
+        },
+        "threadCpuMs": {
+          "count": 24,
+          "min": 7.504,
+          "p50": 24.223,
+          "p95": 33.359,
+          "max": 39.896,
+          "mean": 22.829
+        },
+        "nonCpuMs": {
+          "count": 24,
+          "min": 35.404,
+          "p50": 105.179,
+          "p95": 267.397,
+          "max": 275.343,
+          "mean": 115.425
+        },
+        "sampledNonCpuToWallPct": 83.487
+      },
+      "rolling60sCaptureCadence": {
+        "snapshotHz": {
+          "count": 24,
+          "min": 6.339,
+          "p50": 10.339,
+          "p95": 17.149,
+          "max": 17.179,
+          "mean": 11.243
+        },
+        "firstHz": 15.769,
+        "latest": {
+          "scope": "rolling-60s-completion-buckets",
+          "state": "active",
+          "phase": "grab",
+          "intervalCount": 436,
+          "activeIntervalCoveredMs": 59149.009,
+          "activeIntervalRateHz": 7.371,
+          "stages": {
+            "interval": {
+              "count": 436,
+              "sumMs": 59149.009,
+              "meanMs": 135.663,
+              "maxMs": 401.493
+            },
+            "grab": {
+              "count": 436,
+              "sumMs": 58295.989,
+              "meanMs": 133.706,
+              "maxMs": 395.746
+            },
+            "postGrab": {
+              "count": 436,
+              "sumMs": 684.717,
+              "meanMs": 1.57,
+              "maxMs": 54.799
+            },
+            "pacingActual": {
+              "count": 436,
+              "sumMs": 0.0,
+              "meanMs": 0.0,
+              "maxMs": 0.0
+            },
+            "other": {
+              "count": 436,
+              "sumMs": 168.303,
+              "meanMs": 0.386,
+              "maxMs": 21.787
+            },
+            "minInterval": {
+              "count": 436,
+              "sumMs": 21800.0,
+              "meanMs": 50.0,
+              "maxMs": 50.0
+            },
+            "pacingRequested": {
+              "count": 436,
+              "sumMs": 0.0,
+              "meanMs": 0.0,
+              "maxMs": 0.0
+            },
+            "pacingExcess": {
+              "count": 436,
+              "sumMs": 0.0,
+              "meanMs": 0.0,
+              "maxMs": 0.0
+            },
+            "publishLockWait": {
+              "count": 436,
+              "sumMs": 3.613,
+              "meanMs": 0.008,
+              "maxMs": 0.513
+            },
+            "publishCritical": {
+              "count": 436,
+              "sumMs": 8.987,
+              "meanMs": 0.021,
+              "maxMs": 3.709
+            }
+          },
+          "counters": {
+            "published": 437,
+            "discarded": 0,
+            "error": 0,
+            "discontinuous": 0,
+            "invalidTiming": 0,
+            "clipped": false
+          }
+        }
+      },
+      "output5sWindows": {
+        "count": 26,
+        "frames": 1971,
+        "fps": {
+          "count": 26,
+          "min": 5.5,
+          "p50": 16.1,
+          "p95": 19.3,
+          "max": 19.5,
+          "mean": 15.004
+        },
+        "weightedMeanConvertMs": 8.208,
+        "weightedMeanRecvTotalMs": 38.106,
+        "weightedMeanPacingSleepMs": 13.364,
+        "reuseFrames": 792,
+        "reusePct": 40.183
+      },
+      "encode5sWindows": {
+        "count": 26,
+        "encodedFrames": 1977,
+        "weightedMeanMs": 18.979,
+        "windowP95Ms": {
+          "count": 26,
+          "min": 10.911,
+          "p50": 40.126,
+          "p95": 173.242,
+          "max": 186.986,
+          "mean": 57.155
+        },
+        "windowMaxMs": {
+          "count": 26,
+          "min": 16.353,
+          "p50": 89.331,
+          "p95": 270.21,
+          "max": 492.624,
+          "mean": 121.401
+        },
+        "pooledFrameP95Ms": null
+      },
+      "eventLoop": {
+        "emittedLastLagMs": {
+          "count": 24,
+          "min": 0.153,
+          "p50": 7.364,
+          "p95": 43.273,
+          "max": 95.161,
+          "mean": 14.212
+        },
+        "latestRolling60s": {
+          "count": 60,
+          "last": 13.423,
+          "max": 111.935,
+          "p50": 5.545,
+          "p95": 43.273,
+          "p99": 111.935,
+          "missedSampleCount": 0
+        },
+        "latestWindowFullyInsideSegment": true
+      },
+      "resources": {
+        "currentRssMiB": {
+          "count": 24,
+          "min": 59.266,
+          "p50": 335.84,
+          "p95": 368.82,
+          "max": 374.426,
+          "mean": 324.424
+        },
+        "firstCurrentRssMiB": 59.266,
+        "latestCurrentRssMiB": 341.0,
+        "rssCacheAgeMs": {
+          "count": 24,
+          "min": 666.41,
+          "p50": 2798.052,
+          "p95": 4943.933,
+          "max": 4975.662,
+          "mean": 2693.685
+        },
+        "processCpu": {
+          "deltaSeconds": 94.922,
+          "elapsedSeconds": 124.013,
+          "averagePctOfOneCore": 76.542
+        },
+        "systemLoad1": {
+          "count": 24,
+          "min": 6.897,
+          "p50": 25.787,
+          "p95": 32.912,
+          "max": 33.399,
+          "mean": 22.339
+        },
+        "latestSwapInBytesPerSec": 0.0,
+        "latestSwapOutBytesPerSec": 0.0,
+        "memoryPressure": "unknown",
+        "historicalPeakRssExcluded": true
+      },
+      "viewer": {
+        "sampleCount": 121,
+        "samplesAfterFirst5s": 117,
+        "fpsAfterFirst5s": {
+          "count": 117,
+          "min": 1.0,
+          "p50": 16.0,
+          "p95": 20.0,
+          "max": 21.1,
+          "mean": 14.649
+        },
+        "rttMsAfterFirst5s": {
+          "count": 117,
+          "min": 33.0,
+          "p50": 75.0,
+          "p95": 223.0,
+          "max": 362.0,
+          "mean": 92.171
+        },
+        "jitterBufferMsAfterFirst5s": {
+          "count": 117,
+          "min": 0.1,
+          "p50": 152.9,
+          "p95": 226.5,
+          "max": 247.1,
+          "mean": 125.543
+        },
+        "zeroFpsAfterFirst5s": 0,
+        "reportedIntervalDeltaTotals": {
+          "decoded": 1752.0,
+          "received": 1754.0,
+          "lost": 1.0,
+          "dropped": 0.0,
+          "packets": 2069.0,
+          "nack": 8.0,
+          "pli": 0.0,
+          "fir": 0.0,
+          "freeze": 16.0
+        },
+        "counterSemantics": "Verified in current Viewer source: Host pre-canonical aliases carry per-stats-interval deltas, not cumulative counters. Values are summed across received interval reports, with no interpolated missing intervals."
+      }
+    },
+    {
+      "label": "connected-track-2",
+      "from": "2026-10-24T22:42:11.253",
+      "to": "2026-10-24T22:47:40.000",
+      "durationSeconds": 328.747,
+      "runtimeSampleCount": 59,
+      "runtimeFirstAt": "2026-10-24T22:42:13.681",
+      "runtimeLastAt": "2026-10-24T22:47:34.818",
+      "capturePeriodicLastGrab": {
+        "semantics": "last completed grab sampled every 5-6 seconds, not all-frame percentiles",
+        "wallMs": {
+          "count": 59,
+          "min": 44.343,
+          "p50": 93.5,
+          "p95": 666.68,
+          "max": 866.49,
+          "mean": 207.519
+        },
+        "threadCpuMs": {
+          "count": 59,
+          "min": 8.53,
+          "p50": 19.191,
+          "p95": 40.478,
+          "max": 43.111,
+          "mean": 21.752
+        },
+        "nonCpuMs": {
+          "count": 59,
+          "min": 35.761,
+          "p50": 74.969,
+          "p95": 633.621,
+          "max": 833.537,
+          "mean": 185.767
+        },
+        "sampledNonCpuToWallPct": 89.518
+      },
+      "rolling60sCaptureCadence": {
+        "snapshotHz": {
+          "count": 59,
+          "min": 1.932,
+          "p50": 11.029,
+          "p95": 16.456,
+          "max": 17.143,
+          "mean": 10.339
+        },
+        "firstHz": 17.143,
+        "latest": {
+          "scope": "rolling-60s-completion-buckets",
+          "state": "active",
+          "phase": "grab",
+          "intervalCount": 114,
+          "activeIntervalCoveredMs": 58997.326,
+          "activeIntervalRateHz": 1.932,
+          "stages": {
+            "interval": {
+              "count": 114,
+              "sumMs": 58997.326,
+              "meanMs": 517.52,
+              "maxMs": 1012.968
+            },
+            "grab": {
+              "count": 114,
+              "sumMs": 58366.671,
+              "meanMs": 511.988,
+              "maxMs": 1011.081
+            },
+            "postGrab": {
+              "count": 114,
+              "sumMs": 571.98,
+              "meanMs": 5.017,
+              "maxMs": 34.573
+            },
+            "pacingActual": {
+              "count": 114,
+              "sumMs": 0.0,
+              "meanMs": 0.0,
+              "maxMs": 0.0
+            },
+            "other": {
+              "count": 114,
+              "sumMs": 58.676,
+              "meanMs": 0.515,
+              "maxMs": 4.133
+            },
+            "minInterval": {
+              "count": 114,
+              "sumMs": 5700.0,
+              "meanMs": 50.0,
+              "maxMs": 50.0
+            },
+            "pacingRequested": {
+              "count": 114,
+              "sumMs": 0.0,
+              "meanMs": 0.0,
+              "maxMs": 0.0
+            },
+            "pacingExcess": {
+              "count": 114,
+              "sumMs": 0.0,
+              "meanMs": 0.0,
+              "maxMs": 0.0
+            },
+            "publishLockWait": {
+              "count": 114,
+              "sumMs": 1.288,
+              "meanMs": 0.011,
+              "maxMs": 0.163
+            },
+            "publishCritical": {
+              "count": 114,
+              "sumMs": 8.049,
+              "meanMs": 0.071,
+              "maxMs": 4.582
+            }
+          },
+          "counters": {
+            "published": 115,
+            "discarded": 0,
+            "error": 0,
+            "discontinuous": 0,
+            "invalidTiming": 0,
+            "clipped": false
+          }
+        }
+      },
+      "output5sWindows": {
+        "count": 64,
+        "frames": 4771,
+        "fps": {
+          "count": 64,
+          "min": 3.7,
+          "p50": 17.7,
+          "p95": 19.0,
+          "max": 19.5,
+          "mean": 14.791
+        },
+        "weightedMeanConvertMs": 8.584,
+        "weightedMeanRecvTotalMs": 40.887,
+        "weightedMeanPacingSleepMs": 14.384,
+        "reuseFrames": 1872,
+        "reusePct": 39.237
+      },
+      "encode5sWindows": {
+        "count": 64,
+        "encodedFrames": 4778,
+        "weightedMeanMs": 17.688,
+        "windowP95Ms": {
+          "count": 64,
+          "min": 12.576,
+          "p50": 32.352,
+          "p95": 210.478,
+          "max": 254.37,
+          "mean": 67.037
+        },
+        "windowMaxMs": {
+          "count": 64,
+          "min": 19.435,
+          "p50": 56.757,
+          "p95": 414.385,
+          "max": 576.791,
+          "mean": 121.851
+        },
+        "pooledFrameP95Ms": null
+      },
+      "eventLoop": {
+        "emittedLastLagMs": {
+          "count": 59,
+          "min": 0.096,
+          "p50": 3.676,
+          "p95": 164.892,
+          "max": 291.109,
+          "mean": 21.435
+        },
+        "latestRolling60s": {
+          "count": 61,
+          "last": 77.815,
+          "max": 291.109,
+          "p50": 23.541,
+          "p95": 172.43,
+          "p99": 291.109,
+          "missedSampleCount": 0
+        },
+        "latestWindowFullyInsideSegment": true
+      },
+      "resources": {
+        "currentRssMiB": {
+          "count": 59,
+          "min": 282.93,
+          "p50": 365.133,
+          "p95": 434.66,
+          "max": 443.426,
+          "mean": 376.738
+        },
+        "firstCurrentRssMiB": 344.035,
+        "latestCurrentRssMiB": 366.402,
+        "rssCacheAgeMs": {
+          "count": 59,
+          "min": 496.04,
+          "p50": 2918.138,
+          "p95": 4941.938,
+          "max": 5701.549,
+          "mean": 3061.902
+        },
+        "processCpu": {
+          "deltaSeconds": 222.645,
+          "elapsedSeconds": 321.137,
+          "averagePctOfOneCore": 69.33
+        },
+        "systemLoad1": {
+          "count": 59,
+          "min": 8.818,
+          "p50": 10.556,
+          "p95": 64.756,
+          "max": 67.258,
+          "mean": 20.988
+        },
+        "latestSwapInBytesPerSec": 0.0,
+        "latestSwapOutBytesPerSec": 0.0,
+        "memoryPressure": "unknown",
+        "historicalPeakRssExcluded": true
+      },
+      "viewer": {
+        "sampleCount": 323,
+        "samplesAfterFirst5s": 318,
+        "fpsAfterFirst5s": {
+          "count": 318,
+          "min": 1.0,
+          "p50": 17.9,
+          "p95": 20.0,
+          "max": 22.0,
+          "mean": 14.689
+        },
+        "rttMsAfterFirst5s": {
+          "count": 318,
+          "min": 31.0,
+          "p50": 69.0,
+          "p95": 322.0,
+          "max": 548.0,
+          "mean": 113.896
+        },
+        "jitterBufferMsAfterFirst5s": {
+          "count": 318,
+          "min": 0.2,
+          "p50": 56.2,
+          "p95": 127.0,
+          "max": 252.3,
+          "mean": 59.5
+        },
+        "zeroFpsAfterFirst5s": 0,
+        "reportedIntervalDeltaTotals": {
+          "decoded": 4728.0,
+          "received": 4729.0,
+          "lost": 1.0,
+          "dropped": 0.0,
+          "packets": 5837.0,
+          "nack": 48.0,
+          "pli": 0.0,
+          "fir": 0.0,
+          "freeze": 46.0
+        },
+        "counterSemantics": "Verified in current Viewer source: Host pre-canonical aliases carry per-stats-interval deltas, not cumulative counters. Values are summed across received interval reports, with no interpolated missing intervals."
+      }
+    }
+  ],
+  "observerFailureVicinity": {
+    "from": "2026-10-24T22:47:10",
+    "to": "2026-10-24T22:47:40.000",
+    "samples": [
+      {
+        "at": "2026-10-24T22:47:12.769",
+        "pcState": "connected",
+        "iceState": "completed",
+        "captureState": "grabbing",
+        "captureSeq": 2891,
+        "captureWallMs": 563.777,
+        "captureThreadCpuMs": 43.111,
+        "captureNonCpuMs": 520.666,
+        "currentGrabAgeMs": 445.412,
+        "lastCompletionAgeMs": 448.441,
+        "cadenceHz": 2.479,
+        "loop": {
+          "count": 60,
+          "last": 25.17,
+          "max": 376.011,
+          "p50": 25.839,
+          "p95": 172.43,
+          "p99": 376.011,
+          "missedSampleCount": 0
+        },
+        "currentRssMiB": 351.578,
+        "queues": {
+          "inputReliable": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "inputUnordered": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "relayFrames": null
+        }
+      },
+      {
+        "at": "2026-10-24T22:47:17.915",
+        "pcState": "connected",
+        "iceState": "completed",
+        "captureState": "grabbing",
+        "captureSeq": 2901,
+        "captureWallMs": 666.357,
+        "captureThreadCpuMs": 39.385,
+        "captureNonCpuMs": 626.972,
+        "currentGrabAgeMs": 626.102,
+        "lastCompletionAgeMs": 633.492,
+        "cadenceHz": 2.138,
+        "loop": {
+          "count": 60,
+          "last": 164.892,
+          "max": 376.011,
+          "p50": 26.326,
+          "p95": 172.43,
+          "p99": 376.011,
+          "missedSampleCount": 0
+        },
+        "currentRssMiB": 356.203,
+        "queues": {
+          "inputReliable": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "inputUnordered": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "relayFrames": null
+        }
+      },
+      {
+        "at": "2026-10-24T22:47:23.962",
+        "pcState": "connected",
+        "iceState": "completed",
+        "captureState": "grabbing",
+        "captureSeq": 2911,
+        "captureWallMs": 477.975,
+        "captureThreadCpuMs": 40.478,
+        "captureNonCpuMs": 437.497,
+        "currentGrabAgeMs": 784.141,
+        "lastCompletionAgeMs": 785.661,
+        "cadenceHz": 2.019,
+        "loop": {
+          "count": 60,
+          "last": 225.507,
+          "max": 291.109,
+          "p50": 25.595,
+          "p95": 172.43,
+          "p99": 291.109,
+          "missedSampleCount": 0
+        },
+        "currentRssMiB": 356.406,
+        "queues": {
+          "inputReliable": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "inputUnordered": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "relayFrames": null
+        }
+      },
+      {
+        "at": "2026-10-24T22:47:29.741",
+        "pcState": "connected",
+        "iceState": "completed",
+        "captureState": "grabbing",
+        "captureSeq": 2920,
+        "captureWallMs": 820.163,
+        "captureThreadCpuMs": 38.129,
+        "captureNonCpuMs": 782.035,
+        "currentGrabAgeMs": 245.254,
+        "lastCompletionAgeMs": 246.821,
+        "cadenceHz": 1.938,
+        "loop": {
+          "count": 60,
+          "last": 5.831,
+          "max": 291.109,
+          "p50": 25.155,
+          "p95": 172.43,
+          "p99": 291.109,
+          "missedSampleCount": 0
+        },
+        "currentRssMiB": 365.133,
+        "queues": {
+          "inputReliable": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "inputUnordered": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "relayFrames": null
+        }
+      },
+      {
+        "at": "2026-10-24T22:47:34.818",
+        "pcState": "connected",
+        "iceState": "completed",
+        "captureState": "grabbing",
+        "captureSeq": 2931,
+        "captureWallMs": 366.548,
+        "captureThreadCpuMs": 32.906,
+        "captureNonCpuMs": 333.642,
+        "currentGrabAgeMs": 185.989,
+        "lastCompletionAgeMs": 188.092,
+        "cadenceHz": 1.932,
+        "loop": {
+          "count": 61,
+          "last": 77.815,
+          "max": 291.109,
+          "p50": 23.541,
+          "p95": 172.43,
+          "p99": 291.109,
+          "missedSampleCount": 0
+        },
+        "currentRssMiB": 366.402,
+        "queues": {
+          "inputReliable": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "inputUnordered": {
+            "pendingCount": 0,
+            "pendingBytes": 0,
+            "inFlightCount": 0,
+            "frozen": false
+          },
+          "relayFrames": null
+        }
+      }
+    ],
+    "processCpu": {
+      "deltaSeconds": 9.627,
+      "elapsedSeconds": 22.049,
+      "averagePctOfOneCore": 43.662
+    },
+    "interpretation": "Observer pair unavailable is an acceptance instrumentation failure; connected Host snapshots do not establish a Host disconnect.",
+    "viewer": {
+      "sampleCount": 25,
+      "fps": {
+        "count": 25,
+        "min": 2.0,
+        "p50": 6.0,
+        "p95": 13.0,
+        "max": 13.1,
+        "mean": 6.644
+      },
+      "rttMs": {
+        "count": 25,
+        "min": 40.0,
+        "p50": 73.0,
+        "p95": 375.0,
+        "max": 375.0,
+        "mean": 131.4
+      },
+      "intervalDeltaTotals": {
+        "decoded": 166.0,
+        "received": 167.0,
+        "lost": 0.0,
+        "dropped": 0.0,
+        "packets": 361.0,
+        "nack": 3.0,
+        "pli": 0.0,
+        "fir": 0.0,
+        "freeze": 3.0
+      }
+    },
+    "queueDroppedCounterDeltas": {
+      "inputReliable": 0,
+      "inputUnordered": 0,
+      "relayFrames": null
+    },
+    "queueDroppedCounterMethod": "First-to-last runtime snapshot counter difference in this vicinity; historical absolute counters omitted.",
+    "output5sWindows": {
+      "count": 5,
+      "frames": 186.0,
+      "weightedMeanConvertMs": 24.655,
+      "weightedMeanRecvTotalMs": 66.958
+    },
+    "encode5sWindows": {
+      "count": 5,
+      "encodedFrames": 188,
+      "weightedMeanEncodeMs": 50.061,
+      "windowP95MinMs": 119.033,
+      "windowP95MaxMs": 204.77
+    }
+  },
+  "nativeProfile": {
+    "atLocal": "2026-10-24T22:43:29",
+    "requestedDurationSeconds": 5,
+    "requestedIntervalMs": 10,
+    "tool": "macOS native sample",
+    "captureWorkerIdentification": "Python ctypes calling capture-image/provider APIs plus bytearray copying; consistent with repository capture worker resource.grab and installed MSS Darwin implementation",
+    "captureWorker": {
+      "threadSamples": 420,
+      "dataProviderCopy": {
+        "samples": 287,
+        "pctOfThreadSamples": 68.333
+      },
+      "dataProviderMachMessageWait": {
+        "samples": 286,
+        "pctOfThreadSamples": 68.095
+      },
+      "windowListCreateImage": {
+        "samples": 12,
+        "pctOfThreadSamples": 2.857
+      },
+      "bytearrayMemmove": {
+        "samples": 74,
+        "pctOfThreadSamples": 17.619
+      },
+      "takeGil": {
+        "samples": 25,
+        "pctOfThreadSamples": 5.952
+      }
+    },
+    "mainEventLoop": {
+      "threadSamples": 420,
+      "kevent": {
+        "samples": 245,
+        "pctOfThreadSamples": 58.333
+      },
+      "selectRestoreTakeGil": {
+        "samples": 71,
+        "pctOfThreadSamples": 16.905
+      },
+      "allTakeGilBranches": {
+        "samples": 92,
+        "pctOfThreadSamples": 21.905
+      }
+    },
+    "interpretation": "System capture data/IPC wait and independent GIL contention coexist. kevent also represents ordinary I/O sleep. These are sampled stack occupancies, not per-frame latency percentages, p95 values or proof of a sole cause."
+  },
+  "limitations": [
+    "Short maintenance observation only; not a complete long-session or real-input visible-effect acceptance.",
+    "Capture last-grab quantiles summarize periodic 5-6 second samples, not the per-frame population. Capture wall/nonCPU values include waiting; nonCPU does not identify a unique cause.",
+    "Rolling 60-second cadence snapshots overlap; active interval rate is not fresh-content FPS. Output FPS can include reused captured frames.",
+    "Encoder p95 values summarize independent five-second windows; an all-frame pooled p95 is unavailable.",
+    "Excluded track-lifetime capture maxima, process historical peak RSS, and unavailable or intentional pause samples. RSS is cached asynchronously; startup readings may predate live capture.",
+    "CPU percentages use differences of cumulative process CPU seconds across observed timestamps. 100 percent means one logical core. Raw cumulative CPU values are not retained.",
+    "Viewer aliases are per-interval deltas verified against current source; their totals remain within each connected segment. Missing measurements stay null. Transport RTT does not measure input-to-visible latency.",
+    "Native profile covers one five-second snapshot and may perturb the process. No raw PID, thread identifier, memory address, binary path, lease, Viewer or attempt identity is saved.",
+    "Reported observer failure and browser-close timeout do not imply Host offline; only measured Host states and bounded runtime summaries are included."
+  ]
+}

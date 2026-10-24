@@ -1541,3 +1541,91 @@ class NativeStartupBoundaryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotEqual(summary['continuity']['status'],'PASS')
                     self.assertIsNotNone(rows[-1]['sample'])
                     self.assertIsNone(rows[-1]['sample']['attemptHash'])
+
+
+class StatusFailureDiagnosticTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connect_failure_has_fixed_message_and_private_bounded_metadata(self):
+        async def connect(*_): raise OSError('https://private-canary/?token=secret-canary host-id-canary')
+        with patch.object(runner.asyncio,'open_connection',connect):
+            with self.assertRaises(ValueError) as caught: await runner.read_local_host_status()
+        self.assertIsInstance(caught.exception,runner.StatusObservationError)
+        self.assertEqual(str(caught.exception),'host-observation-unavailable')
+        meta=caught.exception.metadata()
+        self.assertEqual(set(meta),{'stage','errorCategory','elapsedMs'})
+        self.assertEqual(meta['stage'],'connect');self.assertEqual(meta['errorCategory'],'io')
+        self.assertGreaterEqual(meta['elapsedMs'],0);self.assertLess(meta['elapsedMs'],900)
+        self.assertNotIn('canary',json.dumps(meta));self.assertNotIn('secret',json.dumps(meta))
+
+    async def test_response_and_close_failures_keep_their_actual_stage(self):
+        async def close_failure(): raise OSError('close-secret-canary')
+        for data,writer,stage,category in (
+            (response(status=b'HTTP/1.1 503 canary'),Writer(),'headers','response-invalid'),
+            (response(body=b'private-body-canary'),Writer(),'body','response-invalid'),
+            (response(),Writer(close_wait=close_failure),'close','io')):
+            with self.subTest(stage=stage):
+                with self.assertRaises(ValueError) as caught: await HttpTests.call(self,data,writer)
+                self.assertIsInstance(caught.exception,runner.StatusObservationError)
+                meta=caught.exception.metadata()
+                self.assertEqual(meta['stage'],stage);self.assertEqual(meta['errorCategory'],category)
+                self.assertNotIn('canary',json.dumps(meta));self.assertTrue(writer.closed)
+
+    async def test_750ms_deadline_stays_bounded_and_owned_with_explicit_timeout_metadata(self):
+        reader=asyncio.StreamReader();writer=Writer()
+        async def connect(*_):return reader,writer
+        started=runner.time.monotonic()
+        with patch.object(runner.asyncio,'open_connection',connect):
+            with self.assertRaises(ValueError) as caught:await runner.read_local_host_status()
+        elapsed=runner.time.monotonic()-started
+        self.assertIsInstance(caught.exception,runner.StatusObservationError)
+        self.assertEqual(caught.exception.metadata()['stage'],'deadline')
+        self.assertEqual(caught.exception.metadata()['errorCategory'],'timeout')
+        self.assertGreaterEqual(elapsed,.6);self.assertLess(elapsed,.9)
+        self.assertTrue(writer.closed);self.assertTrue(writer.waited);self.assertIsNone(runner._status_owner)
+
+
+class StatusFailureSidecarTests(unittest.IsolatedAsyncioTestCase):
+    setUp=RuntimeRunTests.setUp
+    summary=RuntimeRunTests.summary
+    status=RuntimeRunTests.status
+
+    async def test_typed_status_failure_writes_private_sidecar_without_changing_summary_schema(self):
+        calls=0
+        async def status():
+            nonlocal calls
+            calls+=1
+            if calls==1:raise runner.StatusObservationError('connect','io',3)
+            return await self.status()
+        result=await runner.run(self.args,manager_factory=lambda:RuntimeManager(RuntimePage()),status_reader=status)
+        sidecar=Path(self.args.output_dir)/'status-observation-failure.json'
+        value=json.loads(sidecar.read_text())
+        self.assertEqual(result,1);self.assertEqual(self.summary()['failure']['reason'],'host-observation-unavailable')
+        self.assertEqual(value,dict(schemaVersion=1,observation='tick',phase='startup',runFailureAlreadySet=False,
+            stage='connect',errorCategory='io',elapsedMs=3))
+        self.assertEqual(sidecar.stat().st_mode&0o777,0o600)
+        self.assertLessEqual(sidecar.stat().st_size,runner.MAX_STATUS_FAILURE_BYTES)
+        for private in ('host-canary','password-canary','session-canary',str(self.log)):
+            self.assertNotIn(private,sidecar.read_text())
+        runner.validate_summary(self.summary())
+
+    async def test_page_failure_does_not_create_status_failure_evidence(self):
+        page=RuntimePage();original=page.evaluate
+        async def evaluate(script):
+            if 'window.__wrdPassiveSampler.sample()' in script:raise RuntimeError('page-secret-canary')
+            return await original(script)
+        page.evaluate=evaluate
+        result=await runner.run(self.args,manager_factory=lambda:RuntimeManager(page),status_reader=self.status)
+        self.assertEqual(result,1);self.assertEqual(self.summary()['failure']['reason'],'internal-error')
+        self.assertFalse((Path(self.args.output_dir)/'status-observation-failure.json').exists())
+        self.assertEqual(self.summary()['hostObservation']['status'],'unavailable')
+
+    async def test_sidecar_write_failure_cannot_replace_original_failure_or_create_pass(self):
+        async def status():raise runner.StatusObservationError('body','response-invalid',4)
+        original=runner.passive.atomic_evidence
+        def write(path,value,**kwargs):
+            if path.name=='status-observation-failure.json':raise OSError('write-secret-canary')
+            return original(path,value,**kwargs)
+        with patch.object(runner.passive,'atomic_evidence',write):
+            result=await runner.run(self.args,manager_factory=lambda:RuntimeManager(RuntimePage()),status_reader=status)
+        self.assertEqual(result,1);self.assertEqual(self.summary()['failure']['reason'],'host-observation-unavailable')
+        self.assertEqual(self.summary()['lifecycle']['writeStatus'],'error')
+        self.assertNotEqual(self.summary()['ordinaryRecovery']['status'],'PASS')

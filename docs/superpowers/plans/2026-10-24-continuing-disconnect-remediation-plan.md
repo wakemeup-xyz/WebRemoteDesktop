@@ -104,3 +104,12 @@
 - [ ] 分别记录离线通过、生产已加载、passive/短断线和真实可见效果状态；未运行的不勾选。
 
 离线最终结果：Viewer 1,507/1,507，Signal 432/432；独立媒体审查未发现必修问题；隔离构建 buildId `544814d637669668`。本轮回归触发旧诊断测试清理生产目录的隔离缺陷，历史 raw 丢失；现已修复并新增生产 canary 回归。事故及证据边界见 `../reports/2026-10-24-control-recovery-fix-execution.md`。
+
+### 原生等待与压力的下一步实验
+
+- [x] 原生采样核对 CoreGraphics data-provider IPC、bytearray 复制及主线程 GIL 等待，记录采样比例的适用范围。
+- [x] 只读预检现机 Quartz 的 CGDisplayStream/CoreVideo 接口和现有 capture 生命周期，不把符号存在当作 backend 已验证。
+- [ ] 在独立实验中验证 IOSurface→CVPixelBuffer/stride、屏幕权限、静态首帧及 complete/idle/stopped；不接生产默认、不同时改 relay JPEG 路径。
+- [ ] 实现有界 native-buffer source 与 CFRunLoop owner，覆盖 generation fencing、暂停/恢复、resize、晚 callback、stop 排空和 owner 回收；callback 不做全屏 copy/resize。
+- [ ] 同分辨率/20 FPS/编码器/OpenCV 单线程下，对 MSS、独立进程、异步 source 运行同负载轮换；记录系统 load/running/CPU idle，单列 source delivery age、fresh paint 与输入效果。系统压力差异过大的轮次不得相互宣称性能提升。
+- [ ] 通过真实可见效果和 30 分钟资源/帧连续性门槛后，才评估修改默认 backend。本轮接口预检和短测不能勾选此项。

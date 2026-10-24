@@ -1,0 +1,33 @@
+{
+  "diagnostics": {
+    "logCount": {
+      "total": null,
+      "reportsWithLogs": 0,
+      "zeroLogReports": 0,
+      "unknownReports": 0
+    },
+    "retainedLogCount": null,
+    "redactedLogCount": null,
+    "inputTraceEventCount": null,
+    "metadataOnlyReports": 0,
+    "summaryGapCount": 0,
+    "summaryGaps": [],
+    "ringDropCount": 1
+  },
+  "coverage": {
+    "complete": false,
+    "missing": [
+      "diagnostics",
+      "logCount",
+      "fps",
+      "droppedFrames",
+      "inputToVisibleEffectMs"
+    ]
+  },
+  "window": {
+    "startedAt": 1792852878530,
+    "endedAt": null,
+    "reportCount": 0
+  },
+  "note": "New runtime has no Viewer diagnostic report samples yet; unknown counts remain null. Ring drop is bounded diagnostic/heartbeat retention, not media loss."
+}

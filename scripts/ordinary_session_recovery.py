@@ -29,6 +29,7 @@ validate_delta, validate_gate_fields = passive.validate_delta, passive.validate_
 empty_diagnostic = passive.empty_diagnostic
 
 MAX_ROW_BYTES = 32768
+MAX_STATUS_FAILURE_BYTES = 1024
 SCOPES = {'baseline': 'native-passive-continuity', 'continuity': 'native-passive-continuity',
           'within-grace': 'ordinary-functional-native-direct-close',
           'after-grace': 'ordinary-functional-playwright-routed-stimulus'}
@@ -327,17 +328,44 @@ class ServerRecoveryEvidence:
 _status_owner = None
 
 
+class StatusObservationError(ValueError):
+    """Compatible public failure with content-free loopback observer metadata."""
+    STAGES = frozenset(('connect','headers','body','close','busy','deadline','unknown'))
+    CATEGORIES = frozenset(('io','response-invalid','response-incomplete','timeout','busy','internal-error'))
+
+    def __init__(self,stage,category,elapsed_ms):
+        super().__init__('host-observation-unavailable')
+        self.stage,self.error_category,self.elapsed_ms=stage,category,elapsed_ms
+
+    def metadata(self):
+        elapsed=self.elapsed_ms
+        return dict(stage=self.stage if self.stage in self.STAGES else 'unknown',
+            errorCategory=self.error_category if self.error_category in self.CATEGORIES else 'internal-error',
+            elapsedMs=round(min(999999999,max(0,elapsed)),3)
+                if type(elapsed) in (int,float) and math.isfinite(elapsed) else None)
+
+
+def _status_error_category(exc):
+    if isinstance(exc,TimeoutError):return 'timeout'
+    if isinstance(exc,asyncio.IncompleteReadError):return 'response-incomplete'
+    if isinstance(exc,OSError):return 'io'
+    if isinstance(exc,(ValueError,UnicodeError)):return 'response-invalid'
+    return 'internal-error'
+
+
 async def read_local_host_status():
     """One fixed loopback request, including owned cancellation and writer close."""
     global _status_owner
+    started=time.monotonic(); progress=dict(stage='connect',failureStage=None)
     if _status_owner is not None:
-        raise ValueError('host-observation-unavailable')
+        raise StatusObservationError('busy','busy',0)
 
     async def request():
-        writer = None
+        writer = None; primary = None
         deadline = time.monotonic()+.75
         try:
             reader, writer = await asyncio.open_connection('127.0.0.1', 8080)
+            progress['stage']='headers'
             writer.write(b'GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nConnection: close\r\nCache-Control: no-store\r\nAccept: application/json\r\n\r\n')
             await writer.drain()
             total = 0
@@ -365,16 +393,26 @@ async def read_local_host_status():
             if headers.get(b'content-type', b'').split(b';', 1)[0].strip().lower() != b'application/json': raise ValueError()
             length = headers.get(b'content-length', b'')
             if re.fullmatch(rb'[0-9]{1,5}', length) is None or int(length) > 16384: raise ValueError()
+            progress['stage']='body'
             value = _json(await reader.readexactly(int(length)))
             if type(value) is not dict or 'hostId' not in value or type(value.get('hostOnline')) is not bool: raise ValueError()
             host_id = value.get('hostId')
             if not _id(host_id) and not (value['hostOnline'] is False and host_id is None): raise ValueError()
             return {'hostOnline': value['hostOnline'], 'hostId': host_id}
+        except BaseException as exc:
+            primary=exc; progress['failureStage']=progress['stage']
+            raise
         finally:
             if writer is not None:
-                writer.close()
-                # wait_closed is owned directly, never detached from this stage.
-                await asyncio.wait_for(writer.wait_closed(), max(0, deadline-time.monotonic()))
+                progress['stage']='close'
+                try:
+                    writer.close()
+                    # wait_closed is owned directly, never detached from this stage.
+                    await asyncio.wait_for(writer.wait_closed(), max(0, deadline-time.monotonic()))
+                except BaseException:
+                    if primary is None:
+                        progress['failureStage']='close'
+                        raise
     # Reserve the slot through wrapper settlement, including the interval after
     # the child finishes but before lifecycle_stage returns to this caller.
     owned_task = asyncio.create_task(request())
@@ -382,7 +420,10 @@ async def read_local_host_status():
     try:
         return await lifecycle_stage(owned_task, .75, settlement=.075)
     except (asyncio.CancelledError, CancellationCooperationError): raise
-    except Exception: raise ValueError('host-observation-unavailable') from None
+    except Exception as exc:
+        stage=progress['failureStage'] or progress['stage']
+        if isinstance(exc,TimeoutError) and owned_task.cancelled():stage='deadline'
+        raise StatusObservationError(stage,_status_error_category(exc),(time.monotonic()-started)*1000) from None
     finally:
         if owned_task.done() and _status_owner is owned_task: _status_owner = None
 
@@ -1012,15 +1053,22 @@ async def start_guarded_via_ui(page,*,timeout_s=30,monotonic=time.monotonic,slee
         if owned: observer.detach()
 
 
-async def _observation_pair(page_once,status_reader):
+async def _observation_pair(page_once,status_reader,*,on_status_failure=None):
     """Concurrent page/status work with one owner and cancellation settlement."""
     # The production status function owns its 750ms budget itself; injected
     # readers receive the identical budget without importing runtime packages.
     async def status():
+        started=time.monotonic()
         try:
             if status_reader is read_local_host_status: return await status_reader()
             return await lifecycle_stage(status_reader(),.75,settlement=.075)
-        except TimeoutError: raise ValueError('host-observation-unavailable') from None
+        except Exception as exc:
+            failure=StatusObservationError('deadline','timeout',(time.monotonic()-started)*1000) if isinstance(exc,TimeoutError) else exc
+            if isinstance(failure,StatusObservationError) and on_status_failure is not None:
+                try:on_status_failure(failure.metadata())
+                except Exception:pass # Diagnostic instrumentation cannot replace the original failure.
+            if failure is exc:raise
+            raise failure from None
     tasks=[asyncio.create_task(page_once()),asyncio.create_task(status())]
     try:
         await asyncio.wait(tasks,return_when=asyncio.FIRST_EXCEPTION)
@@ -1154,7 +1202,7 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
     current_ids=dict(sessionId=None,socketId=None,previousSocketId=None)
     last_socket=None; began=time.monotonic(); output=Path(args.output_dir)
     status_reader=status_reader or read_local_host_status
-    writer=None
+    writer=None; status_observation_failure=None
 
     def fail(exc):
         model.fail(_reason(exc))
@@ -1208,10 +1256,15 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
                   return {sample,state,diagnostic};
                 }''')
             return await life.page.evaluate(OBSERVE_SAMPLE)
+        def observe_status_failure(metadata):
+            nonlocal status_observation_failure
+            if status_observation_failure is None:
+                status_observation_failure=dict(schemaVersion=1,observation='final-export' if final else 'tick',
+                    phase=model.phase,runFailureAlreadySet=model.failure is not None,**metadata)
         try:
             if final: manifest.recheck(round(time.time()*1000))
             # Cleanup supplies the 1s outer deadline; ordinary ticks own 2s.
-            operation=_observation_pair(page_once,status_reader)
+            operation=_observation_pair(page_once,status_reader,on_status_failure=observe_status_failure)
             result,status = await operation if final else await lifecycle_stage(operation,2,settlement=.1)
             host.observe_status(status,time.monotonic()*1000)
             _keys(result,('state','sample','diagnostic') if final else ('state','sample'))
@@ -1306,7 +1359,7 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
         try:
             output.mkdir(parents=True,exist_ok=False,mode=0o700)
             fd=os.open(output/'samples.jsonl',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-            stream=os.fdopen(fd,'w'); writer=passive.EvidenceWriter(stream,max_bytes=passive.MAX_RUN_BYTES-3*MAX_ROW_BYTES)
+            stream=os.fdopen(fd,'w'); writer=passive.EvidenceWriter(stream,max_bytes=passive.MAX_RUN_BYTES-3*MAX_ROW_BYTES-MAX_STATUS_FAILURE_BYTES)
         except OSError:
             life.write_status='error'; return 1
         if not persist(initial=True) or model.failure is not None: return 1
@@ -1395,6 +1448,12 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
         if life.python['cleanupStatus']!='api-finished-exit-unknown' and model.failure is None: fail(ValueError('cleanup-incomplete'))
         if model.phase!='terminal': model.transition('terminal')
         if stream is not None:
+            if status_observation_failure is not None:
+                try:
+                    if len(compact(status_observation_failure))>MAX_STATUS_FAILURE_BYTES:raise ValueError('evidence-budget-exceeded')
+                    passive.atomic_evidence(output/'status-observation-failure.json',status_observation_failure,initial=True)
+                except (OSError,ValueError,TypeError):
+                    life.write_status='error';fail(ValueError('evidence-write-failed'))
             persist()
             try: stream.close()
             except OSError:

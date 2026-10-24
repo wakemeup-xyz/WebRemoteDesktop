@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "scenario": "within-grace",
+  "mode": "relay",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "nativeAfterGraceQualification": "NOT_RUN",
+  "ordinaryRecovery": {
+    "status": "INCOMPLETE",
+    "classification": "within-grace-rebind",
+    "requestedScenario": "within-grace",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "recoverySeconds": null,
+    "recoveredStableSeconds": 0,
+    "serverCoverage": "complete",
+    "reason": "recovery-deadline"
+  },
+  "failure": {
+    "phase": "recovering",
+    "reason": "recovery-deadline"
+  },
+  "lifecycle": {
+    "captureStatus": "ok",
+    "cleanupStatus": "api-finished-exit-unknown",
+    "writeStatus": "ok",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "fault": {
+    "capability": "available",
+    "status": "disarmed",
+    "instrumentation": "native-direct",
+    "triggerCount": 1,
+    "blockedHttp": 0,
+    "blockedWebSocket": 0,
+    "blockSeconds": 0
+  },
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physical": "NOT_RUN",
+  "hostObservation": {
+    "status": "stable",
+    "coverage": "complete",
+    "samples": 375,
+    "hostDisconnectObserved": false
+  },
+  "continuity": {
+    "requestedSeconds": 300,
+    "elapsedSeconds": 300.65904569113627,
+    "samples": 301,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathChangeObservations": 0,
+    "maxObservedNoProgressMs": 2300,
+    "progressAfterBaseline": true
+  },
+  "finalProductState": {
+    "socketConnected": true,
+    "pcState": "connected",
+    "mediaPhase": "active",
+    "inputAllowed": true
+  },
+  "originalLeasePreserved": false,
+  "note": "Strict original-lease recovery not qualified; actual final Viewer gates ready on a new lease. No Host disconnect. No threshold changed to force a pass."
+}
