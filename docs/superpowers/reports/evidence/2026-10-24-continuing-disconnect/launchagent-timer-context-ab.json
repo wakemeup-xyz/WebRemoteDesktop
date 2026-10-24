@@ -1,0 +1,81 @@
+{
+  "kind": "own-temporary-LaunchAgent-timer-context-ab-incremental",
+  "productionHostChanged": false,
+  "results": [
+    {
+      "variant": "default",
+      "bootstrapReturnCode": 0,
+      "launchState": [
+        "state = running",
+        "spawn type = daemon (3)",
+        "jetsamproperties category = daemon"
+      ],
+      "measurements": [
+        {
+          "name": "main-default",
+          "context": {
+            "threadInfos": [
+              {
+                "curpri": 20,
+                "priority": 20,
+                "maxpriority": 20,
+                "flags": 0,
+                "run_state": 1
+              }
+            ],
+            "currentThreadQoS": 0,
+            "currentThreadRelativePriority": 17
+          },
+          "count": 20,
+          "excessP50Ms": 17.633843,
+          "excessP95Ms": 134.307917,
+          "excessMaxMs": 155.981146,
+          "elapsedMs": 1250.168014,
+          "processCpuMs": 1.366
+        }
+      ],
+      "cleanupReturnCode": 0,
+      "absentAfterCleanup": true
+    },
+    {
+      "variant": "Interactive",
+      "bootstrapReturnCode": 0,
+      "launchState": [
+        "state = running",
+        "spawn type = interactive (4)",
+        "jetsamproperties category = daemon"
+      ],
+      "measurements": [
+        {
+          "name": "main-default",
+          "context": {
+            "threadInfos": [
+              {
+                "curpri": 22,
+                "priority": 31,
+                "maxpriority": 63,
+                "flags": 0,
+                "run_state": 1
+              }
+            ],
+            "currentThreadQoS": 0,
+            "currentThreadRelativePriority": 21
+          },
+          "count": 20,
+          "excessP50Ms": 2.0384579999999985,
+          "excessP95Ms": 7.395296999999999,
+          "excessMaxMs": 9.767828000000002,
+          "elapsedMs": 458.552125,
+          "processCpuMs": 1.259
+        }
+      ],
+      "cleanupReturnCode": 0,
+      "absentAfterCleanup": true
+    }
+  ],
+  "limitations": [
+    "20 samples per main-thread variant only; later thread stages did not complete within 35-second parent budget.",
+    "Independent probe, not production Host capture or input latency A/B.",
+    "No busywait, no production process changes, no global timer/power changes."
+  ]
+}

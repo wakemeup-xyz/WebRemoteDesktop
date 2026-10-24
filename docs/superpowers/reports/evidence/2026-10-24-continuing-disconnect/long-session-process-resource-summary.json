@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "coverage": {
+    "startEpochMs": 1792855986742,
+    "endEpochMs": 1792857187968,
+    "sampleIntervalSeconds": 5,
+    "sampleCount": 241,
+    "coversEntire30Minutes": false
+  },
+  "processes": {
+    "signal": {
+      "rssMiB": {
+        "count": 241,
+        "min": 48.668,
+        "p50": 61.227,
+        "p95": 63.957,
+        "max": 63.969,
+        "mean": 58.169
+      },
+      "firstRssMiB": 63.406,
+      "lastRssMiB": 50.543,
+      "cpuPercentOneCore": {
+        "count": 240,
+        "min": 0.046,
+        "p50": 0.064,
+        "p95": 0.114,
+        "max": 0.325,
+        "mean": 0.073
+      },
+      "osThreadCountMin": 12,
+      "osThreadCountMax": 12,
+      "unavailableSamples": 0
+    },
+    "host": {
+      "rssMiB": {
+        "count": 241,
+        "min": 296.23,
+        "p50": 438.57,
+        "p95": 468.898,
+        "max": 470.41,
+        "mean": 406.656
+      },
+      "firstRssMiB": 448.668,
+      "lastRssMiB": 324.723,
+      "cpuPercentOneCore": {
+        "count": 240,
+        "min": 27.327,
+        "p50": 32.14,
+        "p95": 37.236,
+        "max": 47.113,
+        "mean": 32.587
+      },
+      "osThreadCountMin": 13,
+      "osThreadCountMax": 15,
+      "unavailableSamples": 0
+    }
+  },
+  "systemLoad1": {
+    "count": 241,
+    "min": 2.946,
+    "p50": 3.945,
+    "p95": 4.913,
+    "max": 5.353,
+    "mean": 4.012
+  },
+  "limitations": [
+    "Late-window process observations cover about the final 20 minutes; Host runtime summaries separately cover the whole session.",
+    "CPU is cumulative process CPU delta divided by monotonic wall interval; 100 percent means one logical core.",
+    "OS native thread count differs from Python threading.active_count in Host runtime summaries.",
+    "RSS is process resident memory, not an allocation/leak proof; no business input or visible-effect trial."
+  ]
+}

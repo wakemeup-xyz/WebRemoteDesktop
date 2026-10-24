@@ -1,0 +1,90 @@
+{
+  "kind": "own-temporary-LaunchAgent-main-timer-replication",
+  "productionHostChanged": false,
+  "limitations": [
+    "The 80-sample replication retained the second largest sample, not the exact 95th-percentile rank. Exact p95 is unknown; excessP95UpperBoundMs is a valid upper bound.",
+    "No production Host or Signal changes. Main-thread-only timer probe, no capture/encode/input/visible effect."
+  ],
+  "results": [
+    {
+      "variant": "default",
+      "bootstrapReturnCode": 0,
+      "launchState": [
+        "state = running",
+        "spawn type = daemon (3)",
+        "jetsamproperties category = daemon"
+      ],
+      "measurements": [
+        {
+          "name": "main-default",
+          "context": {
+            "threadInfos": [
+              {
+                "curpri": 18,
+                "priority": 20,
+                "maxpriority": 20,
+                "flags": 0,
+                "run_state": 1
+              }
+            ],
+            "currentThreadQoS": 0,
+            "currentThreadRelativePriority": 17
+          },
+          "count": 80,
+          "excessP50Ms": 22.578713,
+          "excessMaxMs": 173.261108,
+          "elapsedMs": 5890.452885,
+          "processCpuMs": 6.152,
+          "excessSecondLargestMs": 171.876535,
+          "excessP95Ms": null,
+          "excessP95UpperBoundMs": 171.876535
+        }
+      ],
+      "completed": true,
+      "cleanupReturnCode": 0,
+      "absentAfterCleanup": true
+    },
+    {
+      "variant": "Interactive",
+      "bootstrapReturnCode": 0,
+      "launchState": [
+        "state = running",
+        "spawn type = interactive (4)",
+        "jetsamproperties category = daemon"
+      ],
+      "measurements": [
+        {
+          "name": "main-default",
+          "context": {
+            "threadInfos": [
+              {
+                "curpri": 17,
+                "priority": 31,
+                "maxpriority": 63,
+                "flags": 0,
+                "run_state": 1
+              }
+            ],
+            "currentThreadQoS": 0,
+            "currentThreadRelativePriority": 21
+          },
+          "count": 80,
+          "excessP50Ms": 2.5770240000000015,
+          "excessMaxMs": 25.965977000000002,
+          "elapsedMs": 1893.876775,
+          "processCpuMs": 5.395,
+          "excessSecondLargestMs": 12.408895000000001,
+          "excessP95Ms": null,
+          "excessP95UpperBoundMs": 12.408895000000001
+        }
+      ],
+      "completed": true,
+      "cleanupReturnCode": 0,
+      "absentAfterCleanup": true
+    }
+  ],
+  "macOS": {
+    "productVersion": "13.7.6",
+    "build": "22H625"
+  }
+}

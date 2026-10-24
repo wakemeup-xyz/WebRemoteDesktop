@@ -6,7 +6,7 @@
 
 ## 执行边界
 
-本计划基于 2026-10-24 日志，当前只完成诊断和计划落盘。本轮没有修改代码、没有重启本地 Signal/Host、没有重建或重启 tunnel。实施时沿用 `webremote-service` 规则：先读启动文档，重启只允许本地 Signal/Host，结束前必须核对 health、Host online、Viewer 范围和当前密码。
+本计划基于 2026-10-24 日志。初版只完成诊断；后续已在 main 提交三个确定恢复缺口及诊断增强，并在维护授权下仅重启本地 Signal 加载。Host 原进程及 tunnel 均未重启。实施继续沿用 `webremote-service` 规则：先读启动文档，重启只允许本地 Signal/Host，结束前必须核对 health、Host online、Viewer 范围和当前密码。
 
 ## 阶段 0：建立可重复基线
 
@@ -100,10 +100,10 @@
 - [x] 修复同步 DC send 失败的 Socket fallback，验证成功 DC 不双发、Socket 离线 fail-closed、序列化错误不被吞掉。
 - [x] 贯通 reported/retained/redacted/trace 计数，验证原文不落盘、raw 淘汰后日汇总仍保留计数、历史未知不伪装为 0。
 - [x] 运行初次最小修复的 Signal/Viewer 回归和隔离前端构建；review 实现及文档，提交到 main（09d5c24）。
-- [ ] 按现有维护授权在无 Viewer 时加载本地修复并验收；若用户 Viewer 恢复在线则保护其会话，保持待加载状态。tunnel 不操作。
-- [ ] 分别记录离线通过、生产已加载、passive/短断线和真实可见效果状态；未运行的不勾选。
+- [x] 按现有维护授权在无 Viewer 时加载本地修复；初次09d5c24及最新4826f72均只重启Signal，Host/tunnel未变。验收结果分别记录，不以加载替代通过。
+- [x] 分别记录离线通过、生产已加载、passive/短断线和真实可见效果状态；真实业务输入及可见效果仍为NOT RUN，前两次短断线保留INCOMPLETE。
 
-离线最终结果：Viewer 1,507/1,507，Signal 432/432；独立媒体审查未发现必修问题；隔离构建 buildId `544814d637669668`。本轮回归触发旧诊断测试清理生产目录的隔离缺陷，历史 raw 丢失；现已修复并新增生产 canary 回归。事故及证据边界见 `../reports/2026-10-24-control-recovery-fix-execution.md`。
+初次最小修复离线结果：Viewer 1,507/1,507，Signal 432/432；独立媒体审查未发现必修问题；隔离构建 buildId `544814d637669668`。本轮回归触发旧诊断测试清理生产目录的隔离缺陷，历史 raw 丢失；现已修复并新增生产 canary 回归。事故及证据边界见 `../reports/2026-10-24-control-recovery-fix-execution.md`。
 
 ### 原生等待与压力的下一步实验
 
@@ -121,5 +121,26 @@
 - [x] status-reader按固定stage/error类别保留失败侧文件，所有期限不变；91项主套及取消/清理focused通过。
 - [x] reset恢复失败在原scope释放前进入既有诊断，使用recovery-failed避免把发送失败/ACK拒绝误报为超时；补齐真实双reset定时器重入，Viewer最终全套1,517项通过。
 - [x] Signal仅针对已转发reset关联ACK目标、校验、租约/类型匹配、转发及本地耗时，保持32项/10秒上限，验证失败日志不改变控制结果。扩展后的全部Signal目录回归537/537通过。
-- [ ] 加载新日志补丁，运行独立第三轮维护验收；前两轮结果保留INCOMPLETE，不通过放宽原lease/期限要求来改判。
+- [x] 23:54:27加载新日志补丁4826f72/build3fb4a1fd0774bdcc，第三轮在baseline观察缺口停止、未注入故障；三轮结果保留INCOMPLETE，不通过放宽原lease/期限要求来改判。
 - [ ] 更新生产reported/retained/redacted/trace receipt；真实样本尚未到达时保持null和coverage missing。
+
+### 低负载 pacing 追加实验
+
+23:41 的低负载长会话中，抓帧rolling均值约25ms，pacing requested约25ms、actual约100–105ms、excess约76–80ms，fresh cadence仅约8Hz；原生栈主要处于nanosleep，GIL等待占比很小。必须将这一路径与此前高压力下的CoreGraphics IPC等待分开。
+
+- [x] 独立进程轮换测试sleep/Event.wait/Mach deadline各90次；未复现Host约75–80ms超睡，没有证明换原语有收益。
+- [x] 独立子进程原始→进程活动声明→恢复原始，各80次20ms等待；没有明显改善，token已释放，生产/全局策略未变。
+- [ ] 在Host等进程年龄、同pacing目标/负载/电源状态下做受控A/B，记录kernel sleep、唤醒、GIL恢复和系统performance limits，证明候选后再改默认；不能从独立短进程推断Host已经修复，也不能直接认定App Nap。
+
+### 长会话与资源状态补充
+
+旧已加载09d5c24/build544814d637669668的30分钟TURN passive连续性通过：1800.215秒、1801样本、missing/failed/身份变化/路径变化均0，最大观测无画面进展1266.6ms。Host覆盖23:23:06–23:53:02，fresh均值9.33Hz、输出19.56fps、复用53.11%，因此尚未达到fresh≥15Hz门槛。RSS有回收且该窗口未持续单调增长，不能外推长期无泄漏。另有晚20分钟OS级CPU/RSS采样，不能混成全30分钟相同覆盖。真实业务输入、marker可见效果及三小时连续性未验收。详见执行报告和各自JSON。
+
+### 10月25日确定的调度配置与验收记时修复
+
+- [x] 同LaunchAgent上下文复现默认daemon的timer超睡，并与Interactive独立候选比较；生产未改时明确来源。
+- [x] 修复验收Host状态记时（94/94回归）：采用status分支实际完成的单调时间，不用慢页面完成时刻；真实gap仍失败，失败后保留同owner且schema有效的最终诊断。
+- [x] 修复Host helper先覆盖配置再比较的加载缺口；22/22测试覆盖私有日志canary、预检、安装、部分注册及回滚失败。
+- [x] Host plist显式Interactive；Signal helper使用私有参数数组plist和预检/失败恢复，18/18测试通过；实际启动路径无效时在停旧服务前拒绝。
+- [ ] focused回归/独立review、main提交后，在无Viewer维护窗口加载；核实实际调度类型和健康，不操作tunnel。
+- [ ] 重跑短断线及活动capture/资源对照；只在实际指标改善后记录收益，不把独立timer分布替代逐帧/输入延迟。

@@ -66,3 +66,11 @@
 4. **验收新鲜画面与控制。** decoded FPS 正常而 fresh capture 低仍不能通过；分别报告 Host 执行、ACK RTT 和 marker→rVFC，不互相替代。
 
 诊断、spec 和 plan 已同步修正。本轮业务代码与服务运行配置均未变，不能宣布断连已修复。
+
+## 10月25日追加：launchd上下文可复现timer长尾
+
+后续quiet会话中，grab rolling约25ms，但pacing请求约25ms、实际约100–105ms；原生采样主要在nanosleep，sleep恢复GIL仅1/441。普通shell的20ms短进程探针未复现该幅度，不能据此排除Host启动上下文。只读核对Host与Signal均spawn daemon(3)，线程priority/maxpriority20/20；shell短进程为31/63。
+
+独立唯一LaunchAgent默认/Interactive对照（主线程各20次20ms）：默认excess p50/p95/max=17.634/134.308/155.981ms，Interactive=2.038/7.395/9.768ms，进程CPU约1.37/1.26ms。两个临时label均已bootout且不存在；后续thread阶段未在35秒预算完成，不纳入结果。该反例证明默认启动上下文可产生明显timer长尾，支持Interactive作为候选；不能单凭探针宣称真实capture或ACK已改善。
+
+这也解释为何此前只看Host CPU利用率或普通shell timer阴性仍未定位：进程服务类型不同，且高压力时另有CoreGraphics IPC、调度和内存压力。当前调度候选仅作用于本地Host/Signal，不改nice/全局电源/LegacyTimers，不采用忙等；部署后仍需核实实际spawn/priority与真实会话fresh cadence、loop、资源、短断线和可见输入。对应证据：`evidence/2026-10-24-continuing-disconnect/launchagent-timer-context-ab.json`。

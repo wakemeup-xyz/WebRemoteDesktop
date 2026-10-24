@@ -66,6 +66,8 @@
 
 `trycloudflare.com` 是短生命周期 quick tunnel，地址可能过期或变化；它只用于临时调试、故障定位和固定域名不可用时的辅助验证。`/tmp/wrd-safe-current-url.txt` 只记录当前临时调试地址，不会覆盖或替代 `link.stockhub.wiki`。除非正在执行已授权的排障验证，否则不要把该地址发给手机用户，也不要把它写入书签、二维码或长期文档。
 
+本地维护统一使用 `python3 skills/webremote-service/scripts/wrd_service.py restart-local`（或 `restart-signal` / `restart-host`）。Host plist及该helper启动的Signal显式使用launchd `Interactive` 调度；修改Host plist时先比较旧配置并验证bootstrap能力，失败保留或恢复旧服务。此流程不操作tunnel，详见[安全启动手册](docs/runbook-safe-startup.md)。
+
 ### Viewer 构建与缓存
 
 - `node server.js`（包括 `npm start` 和仓库 LaunchAgent/启动脚本）会先构建 `web-client/dist/`，构建失败时不监听 8080。

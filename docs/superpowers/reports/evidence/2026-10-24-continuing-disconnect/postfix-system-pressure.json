@@ -23,5 +23,15 @@
     "Load includes runnable and uninterruptible work; it is not CPU percent.",
     "Compressed memory is not a proof of swapping at the failure instant.",
     "No unrelated workload was modified or terminated."
-  ]
+  ],
+  "laterPowerNotify": {
+    "atLocal": "2026-10-24T23:49:22+08:00",
+    "source": "pmset -g therm",
+    "cpuSchedulerLimit": 100,
+    "cpuAvailableCpus": 12,
+    "cpuSpeedLimit": 73,
+    "thermalWarningRecorded": false,
+    "performanceWarningRecorded": false,
+    "interpretation": "OS-reported limits only; actual CPU frequency and causal contribution were not measured."
+  }
 }

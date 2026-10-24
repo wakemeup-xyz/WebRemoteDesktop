@@ -10,9 +10,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
+import shlex
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from pathlib import Path
 
 
@@ -24,6 +28,7 @@ SIGNAL_LOG = Path("/tmp/signal-server.log")
 HOST_LOG = DEFAULT_PROJECT_DIR / "back-debug.log"
 ENTRY_HEALTH_SCRIPT = DEFAULT_PROJECT_DIR / "scripts" / "wrd_entry_health.py"
 NODE_BIN = os.environ.get("NODE_BIN") or "/Users/macstudio1/AI/trae/node-v24.15.0-darwin-x64/bin/node"
+SIGNAL_LABEL = "com.webremotedesktop.signal"
 
 
 def run(cmd, cwd=None, check=True):
@@ -62,17 +67,22 @@ def url_is_reachable(url: str) -> bool:
 
 
 def launchctl_submit_signal(project_dir: Path) -> str:
+    """Legacy recovery path; this does not apply Interactive scheduling."""
     cmd = [
         "launchctl",
         "submit",
         "-l",
-        "com.webremotedesktop.signal",
+        SIGNAL_LABEL,
         "--",
         "/bin/bash",
         "-lc",
-        f"cd {project_dir / 'signal-server'} && exec {NODE_BIN!r} server.js >> /tmp/signal-server.log 2>&1",
+        f"cd {shlex.quote(str(project_dir / 'signal-server'))} && exec {shlex.quote(NODE_BIN)} server.js >> {shlex.quote(str(SIGNAL_LOG))} 2>&1",
     ]
     run(cmd, cwd=project_dir)
+    return wait_signal_pid(project_dir)
+
+
+def wait_signal_pid(project_dir: Path) -> str:
     for _ in range(20):
         pid = find_signal_pid(project_dir)
         if pid_alive(pid):
@@ -80,6 +90,65 @@ def launchctl_submit_signal(project_dir: Path) -> str:
             return pid
         time.sleep(1)
     raise RuntimeError("signal-server did not become healthy")
+
+
+def launchctl_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
+def write_private_plist(path: Path, configuration: dict) -> None:
+    with path.open("xb") as stream:
+        os.chmod(path, 0o600)
+        plistlib.dump(configuration, stream)
+
+
+def probe_signal_bootstrap(directory: Path) -> None:
+    """Prove registration works before removing a healthy production service."""
+    label = f"{SIGNAL_LABEL}.bootstrap-probe.{uuid.uuid4().hex}"
+    path = directory / "bootstrap-probe.plist"
+    write_private_plist(path, {
+        "Label": label,
+        "ProgramArguments": ["/usr/bin/true"],
+        "RunAtLoad": True,
+        "ProcessType": "Interactive",
+    })
+    registered = False
+    try:
+        result = run(["launchctl", "bootstrap", launchctl_domain(), str(path)], check=False)
+        if result.returncode != 0:
+            raise RuntimeError("Signal bootstrap probe failed; existing service was left running")
+        registered = True
+    finally:
+        cleanup = run(["launchctl", "bootout", f"{launchctl_domain()}/{label}"], check=False)
+        if cleanup.returncode != 0:
+            cleanup = run(["launchctl", "remove", label], check=False)
+            if registered and cleanup.returncode != 0:
+                raise RuntimeError("Signal bootstrap probe cleanup failed; existing service was left running")
+
+
+def signal_launch_configuration(project_dir: Path) -> dict:
+    return {
+        "Label": SIGNAL_LABEL,
+        "ProgramArguments": [NODE_BIN, "server.js"],
+        "WorkingDirectory": str(project_dir / "signal-server"),
+        "RunAtLoad": True,
+        "ProcessType": "Interactive",
+        "StandardOutPath": str(SIGNAL_LOG),
+        "StandardErrorPath": str(SIGNAL_LOG),
+    }
+
+
+def validate_signal_launch_inputs(project_dir: Path) -> None:
+    """Reject unusable executable/entry paths while the old service is healthy."""
+    node = Path(NODE_BIN)
+    if not node.is_absolute() or not node.is_file() or not os.access(node, os.X_OK):
+        raise RuntimeError("Signal NODE_BIN must be an absolute executable file; existing service was left running")
+    signal_dir = project_dir / "signal-server"
+    if not signal_dir.is_absolute() or not signal_dir.is_dir() or not os.access(signal_dir, os.X_OK):
+        raise RuntimeError("Signal working directory must exist and be accessible; existing service was left running")
+    entry = signal_dir / "server.js"
+    if not entry.is_file() or not os.access(entry, os.R_OK):
+        raise RuntimeError("Signal server.js must be a readable file; existing service was left running")
 
 
 def pid_matches_project(pid: str, project_dir: Path) -> bool:
@@ -177,13 +246,40 @@ def wait_host_online() -> None:
 
 def restart_signal(project_dir: Path) -> str:
     safe_url_before = current_safe_url()
-    stop_existing_signal(project_dir)
-    pid = launchctl_submit_signal(project_dir)
-    wait_health()
+    validate_signal_launch_inputs(project_dir)
+    # Both the private configuration and registration preflight exist before
+    # stopping the old service. launchd retains its loaded plist after cleanup.
+    with tempfile.TemporaryDirectory(prefix="wrd-signal-launch-") as directory:
+        directory = Path(directory)
+        path = directory / "signal.plist"
+        write_private_plist(path, signal_launch_configuration(project_dir))
+        probe_signal_bootstrap(directory)
+        stop_existing_signal(project_dir)
+        try:
+            run(["launchctl", "bootstrap", launchctl_domain(), str(path)])
+            pid = wait_signal_pid(project_dir)
+            wait_health()
+        except Exception as startup_error:
+            # A failed startup must not strand the user. Remove only this
+            # Signal registration, then restore the previous launch mechanism.
+            stop_existing_signal(project_dir)
+            try:
+                recovered_pid = launchctl_submit_signal(project_dir)
+                wait_health()
+            except Exception as recovery_error:
+                raise RuntimeError("Interactive Signal startup and legacy recovery both failed") from recovery_error
+            print(json.dumps({
+                "signal_pid": recovered_pid,
+                "process_type": "legacy-fallback",
+                "interactive_applied": False,
+                "health_ok": True,
+            }), file=sys.stderr)
+            raise RuntimeError("Interactive Signal startup failed; legacy fallback restored service without Interactive scheduling") from startup_error
     safe_url_after = current_safe_url()
     if safe_url_before and safe_url_after and safe_url_before != safe_url_after:
         raise RuntimeError(f"safe URL changed during local restart: {safe_url_before} -> {safe_url_after}")
-    print(json.dumps({"signal_pid": pid, "safe_url": safe_url_after or safe_url_before}, ensure_ascii=False))
+    print(json.dumps({"signal_pid": pid, "safe_url": safe_url_after or safe_url_before,
+                      "process_type": "Interactive", "interactive_applied": True}, ensure_ascii=False))
     return pid
 
 

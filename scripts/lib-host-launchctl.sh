@@ -8,7 +8,7 @@ WRD_HOST_DOMAIN="gui/$(id -u)"
 WRD_HOST_PREFLIGHT_LABEL="com.webremotedesktop.host.bootstrap-probe"
 
 wrd_host_launchctl_install() {
-  mkdir -p "$HOME/Library/LaunchAgents"
+  mkdir -p "$(dirname "$WRD_HOST_PLIST_DST")" || return 1
   cp "$WRD_HOST_PLIST_SRC" "$WRD_HOST_PLIST_DST"
 }
 
@@ -53,38 +53,82 @@ PLIST
   return 0
 }
 
-# Reuse the loaded agent whenever the installed plist still matches the repo
-# copy. Only swap it out when a reload is genuinely required, and never leave
-# the environment without a loaded agent if that swap cannot succeed.
-wrd_host_launchctl_start() {
-  wrd_host_launchctl_install
+# Restore a prior registration after a replacement failed. A successful probe
+# cannot guarantee that the actual plist will bootstrap; keep the backup if
+# restoration also fails so the original configuration remains recoverable.
+wrd_host_launchctl_restore() {
+  local previous_plist="$1" restore_output=""
+  # A failing bootstrap may still have partially registered its replacement.
+  wrd_host_launchctl_bootout
+  if ! cp "$previous_plist" "$WRD_HOST_PLIST_DST"; then
+    echo "failed to restore previous plist for $WRD_HOST_LABEL; backup kept at $previous_plist" >&2
+    return 1
+  fi
+  if ! restore_output=$(launchctl bootstrap "$WRD_HOST_DOMAIN" "$WRD_HOST_PLIST_DST" 2>&1); then
+    echo "failed to restore previous agent for $WRD_HOST_LABEL; backup kept at $previous_plist" >&2
+    [ -n "$restore_output" ] && echo "  $restore_output" >&2
+    return 1
+  fi
+  rm -f "$previous_plist"
+  launchctl enable "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1 || true
+  if ! launchctl kickstart -k "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1; then
+    echo "warning: kickstart failed for restored $WRD_HOST_LABEL" >&2
+  fi
+  echo "previous $WRD_HOST_LABEL agent and plist restored" >&2
+  return 0
+}
 
-  if wrd_host_launchctl_loaded && cmp -s "$WRD_HOST_PLIST_SRC" "$WRD_HOST_PLIST_DST" 2>/dev/null; then
-    launchctl enable "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1 || true
-    if launchctl kickstart -k "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1; then
-      return 0
-    fi
-    echo "warning: kickstart failed for $WRD_HOST_LABEL; falling back to re-bootstrap" >&2
+# Compare before copying: kickstart reuses the job's loaded configuration, not
+# changes subsequently copied to its plist. Probe and preserve a rollback copy
+# before removing a loaded agent; a replacement failure remains a failed start.
+wrd_host_launchctl_start() {
+  local previous_plist="" bootstrap_output=""
+  if [ ! -f "$WRD_HOST_PLIST_SRC" ] || [ ! -r "$WRD_HOST_PLIST_SRC" ]; then
+    echo "cannot read host plist: $WRD_HOST_PLIST_SRC" >&2
+    return 1
   fi
 
   if wrd_host_launchctl_loaded; then
+    if cmp -s "$WRD_HOST_PLIST_SRC" "$WRD_HOST_PLIST_DST" 2>/dev/null; then
+      launchctl enable "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1 || true
+      if launchctl kickstart -k "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1; then
+        return 0
+      fi
+      echo "warning: kickstart failed for $WRD_HOST_LABEL; falling back to re-bootstrap" >&2
+    fi
+    if [ ! -f "$WRD_HOST_PLIST_DST" ] || [ ! -r "$WRD_HOST_PLIST_DST" ]; then
+      echo "refusing to reload $WRD_HOST_LABEL: installed plist is unavailable for rollback" >&2
+      return 1
+    fi
     if ! wrd_host_launchctl_can_bootstrap; then
       echo "refusing to reload $WRD_HOST_LABEL: this shell cannot bootstrap LaunchAgents" >&2
       echo "  the currently loaded agent was left loaded and untouched" >&2
       echo "  hint: run ./scripts/start-safe-wrd.sh from a GUI Terminal session (Terminal.app)" >&2
       return 1
     fi
+    previous_plist="$(mktemp -t wrd-host-plist-backup)" || return 1
+    if ! cp "$WRD_HOST_PLIST_DST" "$previous_plist"; then
+      rm -f "$previous_plist"
+      echo "refusing to reload $WRD_HOST_LABEL: could not back up installed plist" >&2
+      return 1
+    fi
     wrd_host_launchctl_bootout
   fi
 
-  local bootstrap_output=""
+  if ! wrd_host_launchctl_install; then
+    echo "failed to install plist for $WRD_HOST_LABEL" >&2
+    if [ -n "$previous_plist" ]; then wrd_host_launchctl_restore "$previous_plist" || true; fi
+    return 1
+  fi
   if ! bootstrap_output=$(launchctl bootstrap "$WRD_HOST_DOMAIN" "$WRD_HOST_PLIST_DST" 2>&1); then
     echo "failed to bootstrap $WRD_HOST_LABEL" >&2
     [ -n "$bootstrap_output" ] && echo "  $bootstrap_output" >&2
     echo "  hint: LaunchAgent registration needs a GUI Terminal session; sandboxed or agent shells fail with 'Bootstrap failed: 5: Input/output error'" >&2
+    if [ -n "$previous_plist" ]; then wrd_host_launchctl_restore "$previous_plist" || true; fi
     return 1
   fi
 
+  if [ -n "$previous_plist" ]; then rm -f "$previous_plist"; fi
   launchctl enable "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1 || true
   if ! launchctl kickstart -k "$WRD_HOST_DOMAIN/$WRD_HOST_LABEL" >/dev/null 2>&1; then
     echo "warning: kickstart failed for $WRD_HOST_LABEL after bootstrap" >&2

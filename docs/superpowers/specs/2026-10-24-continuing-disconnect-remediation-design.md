@@ -1,7 +1,7 @@
 # 持续断连与控制中断整改设计
 
 日期：2026-10-24
-状态：诊断完成，待实施
+状态：三个确定恢复缺口及诊断增强已实施并加载；整体性能、控制及断线验收未完成
 关联报告：[2026-10-24 持续断连专项诊断](../reports/2026-10-24-continuing-disconnect-diagnosis.md)
 
 ## 问题定义
@@ -119,7 +119,7 @@ Signal admin receipt 和 Host diagnostic summary 统一输出：
 
 22:43 原生采样把主要等待定位到 CoreGraphics 图像数据 IPC，另有 bytearray 复制与 GIL 等待。实验需要同时比较原生异步 source 和进程隔离，不能只把同一 MSS 调用搬入进程后宣布抓帧已优化。
 
-现机 Quartz/PyObjC 暴露 `CGDisplayStreamCreate/Start/Stop/GetRunLoopSource` 及 IOSurface→CVPixelBuffer 的 CoreVideo 入口，可评估专用 CFRunLoop 线程的 `DisplayStreamCaptureSource`。ScreenCaptureKit framework 虽存在，Python bridge/完整 metadata 未安装；不得据 framework 存在宣称已可用。上述仅为接口预检，未创建 stream，尚未证明完整帧/权限/桥接兼容。
+现机 Quartz/PyObjC 暴露 `CGDisplayStreamCreate/Start/Stop/GetRunLoopSource` 及 IOSurface→CVPixelBuffer 的 CoreVideo 入口，可评估专用 CFRunLoop 线程的 `DisplayStreamCaptureSource`。ScreenCaptureKit framework 虽存在，Python bridge/完整 metadata 未安装；不得据 framework 存在宣称已可用。最初仅为接口预检；后续独立子进程已验证权限 preflight、73 次 complete/1 次 stopped、start/stop 返回0及 IOSurface→CVPixelBuffer 元数据桥接。没有读取像素或接入生产，完整像素归属、静态恢复、资源回收及性能 A/B 尚未验证。
 
 异步 source 的 callback 只校验状态和 generation、记录时钟、替换 latest native 引用，不执行全屏复制/resize/日志 I/O，不等待 asyncio。最多保留 latest 和处理中各一个 buffer。FrameSnapshot 显式携带 stride、pixel format、owner/release 与 generation；不能沿用 `.raw.reshape(height,width,4)` 的紧密排列假设。转换 worker 负责按 bytesPerRow 读取和必要的独立副本。idle 不计新鲜帧，静态恢复须等待真实 complete 帧；停止先封 publication，再 native stop，并等 runloop callbacks 排空后释放 owner。资源未回收时保持 pending，不能用 stop 请求代替回收证据。
 
@@ -138,3 +138,15 @@ Signal 仅对已验证且向 Host 转发的 v2 mouse/keyboard reset 关联后续
 采集失败快照时，UI/真实diagnostic builder读取keyboard snapshot可能同步触发另一条reset超时。为防止快照完成前嵌套释放，使用仅覆盖同cycle同步采集调用栈的门闩；finally清除并执行一次既有控制恢复。不得跨await持有、不得延长期限、不得忽略正常ACK。测试必须用真实双reset定时器及真实builder，直接手工调用失败函数不能替代这条反例。
 
 验收脚本的 status-reader 失败另记有界 stage/errorCategory/elapsed 的私有 sidecar，保留原 summary/lifecycle schema 与所有期限。无 sidecar 只能是来源未知，不能倒推为浏览器或 Host 故障。
+
+### 低负载 pacing 的独立约束
+
+23:41 低负载窗口中 grab rolling 约25ms，但请求约25ms的 pacing sleep 实际约100–105ms；原生栈主要在 nanosleep，不能继续以 GIL 或 CoreGraphics IPC 统称这一路径。独立短进程的 timer 原语轮换和进程活动声明均未复现 Host 超睡或证明改善，因此不直接替换 Host timer、不引入忙等，也不把 App Nap 当作已确认根因。下一步须在 Host 等进程年龄、负载及电源上下文下区分 sleep、唤醒调度和 GIL 恢复，再比较候选；异步 source 同样必须通过 fresh cadence、真实输入效果和资源门槛。
+
+### 10月25日 launchd 调度候选及加载契约
+
+Host及Signal当前launchd spawn type均为daemon、线程priority/maxpriority均20；普通shell短进程为31/63。仅独立LaunchAgent的首轮20次20ms timer对照，默认excess p95约134.31ms，Interactive约7.40ms，CPU耗时仅约1.3ms。这支持启动上下文可导致额外等待，但不是Host抓帧/ACK性能A/B。
+
+候选为两个本地实时交互服务显式ProcessType=Interactive，不设置全局电源、nice、实时优先级、LegacyTimers或忙等。Host继续使用现有plist及restart-host脚本；必须先比较已安装与源配置，再决定kickstart复用或预检后re-bootstrap，预检失败不能覆盖旧配置或停止健康job。Signal helper将submit改为参数数组和plistlib生成的私有plist，经唯一label预检gui bootstrap后再停旧服务；真实bootstrap失败须尝试恢复原submit路径并明确失败，不能宣称Interactive已加载。不得操作任何tunnel label或进程。
+
+上线前审查配置加载/回滚与纯临时mock测试；无Viewer维护窗口只重启本地服务。核实实际spawn type/线程priority及本地、公网健康，再重复strict短断线和真实会话capture/CPU/RSS/fresh cadence。仅timer探针改善不能勾选整体验收。

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "isolated-timer-primitives-not-Host-AB",
+  "requestedSleepMs": 20,
+  "samplesPerMethod": 90,
+  "results": {
+    "python-nanosleep": {
+      "excessP50Ms": 5.638,
+      "excessP95Ms": 9.376,
+      "excessMaxMs": 9.864
+    },
+    "event-wait": {
+      "excessP50Ms": 5.704,
+      "excessP95Ms": 10.04,
+      "excessMaxMs": 10.11
+    },
+    "mach-deadline": {
+      "excessP50Ms": 4.528,
+      "excessP95Ms": 9.084,
+      "excessMaxMs": 10.023
+    }
+  },
+  "limitations": [
+    "New process context differs from long-running Host; no Host timer/QoS/energy-policy changes.",
+    "No capture or encoding; cannot infer production performance improvement."
+  ]
+}

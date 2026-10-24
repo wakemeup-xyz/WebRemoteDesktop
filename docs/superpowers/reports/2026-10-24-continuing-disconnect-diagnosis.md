@@ -153,3 +153,7 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 - 19:34 Host 对 reset544/reset128 已执行并入队 ACK；故障快照采集时 Viewer 未出现对应 ACK trace。`ackAccepted=true` 仅证明 Host 入队，不能据此认定 Viewer 接收校验错误。复用 reset 继承原 3 秒 deadline 也符合现有安全契约，不延长预算掩盖链路延迟。
 
 实施与实际加载结果见 [控制恢复修复记录](2026-10-24-control-recovery-fix-execution.md)。
+
+## 10月25日追加定位
+
+低负载长会话中，抓帧rolling约25ms，但pacing请求约25ms、实际约100–105ms，原生栈主要在nanosleep。只读核对发现Host和Signal都是launchd默认daemon3、线程priority/max20/20；同LaunchAgent独立Interactive候选为31/63且两轮timer长尾显著更小。这是已复现的启动上下文问题，不能继续简单归因为Host CPU计算满载；全机压力、CoreGraphics等待仍各自存在。默认类型与Interactive的probe来源、未完成的逐帧/输入验收及维护加载结果，见[CPU归因复核](2026-10-24-capture-cpu-attribution.md)和[实施记录](2026-10-24-control-recovery-fix-execution.md)。

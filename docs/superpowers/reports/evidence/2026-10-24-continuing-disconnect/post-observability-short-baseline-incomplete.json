@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "scenario": "within-grace",
+  "mode": "relay",
+  "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+  "ordinaryRecovery": {
+    "status": "NOT_RUN",
+    "classification": "not-attempted",
+    "requestedScenario": "within-grace",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "recoverySeconds": null,
+    "recoveredStableSeconds": 0,
+    "serverCoverage": "complete",
+    "reason": "host-observation-gap"
+  },
+  "failure": {
+    "phase": "baseline",
+    "reason": "host-observation-gap"
+  },
+  "lifecycle": {
+    "captureStatus": "unavailable",
+    "cleanupStatus": "incomplete",
+    "writeStatus": "ok",
+    "ownedProcessExitEvidence": "not-observed"
+  },
+  "fault": {
+    "capability": "available",
+    "status": "disarmed",
+    "instrumentation": "native-direct",
+    "triggerCount": 0,
+    "blockedHttp": 0,
+    "blockedWebSocket": 0,
+    "blockSeconds": 0
+  },
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN",
+  "physical": "NOT_RUN",
+  "hostObservation": {
+    "status": "unavailable",
+    "coverage": "incomplete",
+    "samples": 36,
+    "hostDisconnectObserved": false
+  },
+  "continuity": {
+    "status": "INCOMPLETE",
+    "kind": "passive-session-continuity-only",
+    "requestedSeconds": 300,
+    "elapsedSeconds": 22.080008373130113,
+    "samples": 23,
+    "missingSamples": 0,
+    "lateSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathChangeObservations": 0,
+    "pathConvergenceObservations": 0,
+    "maxObservedNoProgressMs": 350.09999999999854,
+    "progressAfterBaseline": true,
+    "frameStallThresholdMs": 5000,
+    "frameEvidence": "requestVideoFrameCallback",
+    "threeHourContinuityMet": false,
+    "visibleEffect": "NOT_RUN",
+    "activeControl": "NOT_RUN",
+    "physicalDisplay": "NOT_RUN",
+    "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+    "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+  },
+  "sourceCommit": "4826f724dcf5e59ecbacc4a08b0808cc2d128224",
+  "buildId": "3fb4a1fd0774bdcc",
+  "note": "Baseline aborted before fault injection after post-pair Host timestamp exceeded 1500ms; no status-reader exception sidecar. Later inspection found timestamp-attribution defect; this original run remains INCOMPLETE, no retroactive PASS."
+}

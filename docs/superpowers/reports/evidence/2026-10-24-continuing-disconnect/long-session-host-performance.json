@@ -1,0 +1,968 @@
+{
+  "schemaVersion": 1,
+  "kind": "completed-passive-session-resource-observation",
+  "generatedAtLocal": "2026-10-24T23:56:17",
+  "loadedCode": {
+    "commit": "09d5c24",
+    "observerPatchLoaded": false,
+    "reportedBuildAlias": "build5448"
+  },
+  "coverage": {
+    "requestedFromLocal": "2026-10-24T23:23:00.000",
+    "connectedFromLocal": "2026-10-24T23:23:02.747",
+    "runtimeFromLocal": "2026-10-24T23:23:06.694",
+    "runtimeToLocal": "2026-10-24T23:53:02.688",
+    "runtimeCoveredSeconds": 1795.994,
+    "runtimeSamples": 324,
+    "trackStartCount": 1,
+    "followingTrackStartsExcluded": 0,
+    "trackBoundary": null,
+    "captureSequenceResetCount": 0,
+    "sourceFilesRead": 4,
+    "parseErrors": 0,
+    "passiveEndUpperBoundLocalFromSampleFileMtime": "2026-10-24T23:53:04.073",
+    "runtimeTailUnobservedSeconds": 1.386,
+    "laterLogEventsExcluded": 91,
+    "rollingWindowsMayOverlap": true
+  },
+  "hostConnection": {
+    "lifecycleCounts": {
+      "ice-completed": 1,
+      "connected": 1
+    },
+    "allRuntimeStateCountsInsideWindow": {
+      "connected": 324
+    },
+    "maxRuntimeObservationGapSeconds": 6.021,
+    "allIncludedRuntimeConnected": true,
+    "allIncludedIceCompleted": true
+  },
+  "capturePeriodicLastGrab": {
+    "semantics": "Periodic last-completed-grab samples, not all-frame latency percentiles",
+    "wallMs": {
+      "count": 324,
+      "min": 20.144,
+      "p50": 25.069,
+      "p95": 35.38,
+      "max": 280.827,
+      "mean": 27.971
+    },
+    "threadCpuMs": {
+      "count": 324,
+      "min": 4.782,
+      "p50": 7.095,
+      "p95": 10.364,
+      "max": 12.133,
+      "mean": 7.461
+    },
+    "nonCpuMs": {
+      "count": 324,
+      "min": 14.654,
+      "p50": 17.471,
+      "p95": 27.354,
+      "max": 272.253,
+      "mean": 20.51
+    },
+    "completedDelta": 16749,
+    "completionRateHzAcrossObservedWindow": 9.326,
+    "failedCounterDelta": 0
+  },
+  "freshCaptureCadence": {
+    "semantics": "Actual capture-completion intervals; does not prove changed screen content or input-to-visible latency",
+    "pacingStageSemantics": "pacingActual brackets Python time.sleep entry through subsequent monotonic clock read; pacingRequested is the sleep argument; pacingExcess is actual minus requested. It cannot separate OS sleep, wake scheduling and possible GIL reacquisition, and is not active-pause Condition.wait.",
+    "fullRollingWindowSamples": 312,
+    "fullRollingSnapshotHz": {
+      "count": 312,
+      "min": 7.304,
+      "p50": 8.747,
+      "p95": 11.745,
+      "max": 12.358,
+      "mean": 9.282
+    },
+    "latest": {
+      "scope": "rolling-60s-completion-buckets",
+      "intervalCount": 502,
+      "activeIntervalCoveredMs": 59185.742,
+      "activeIntervalRateHz": 8.482,
+      "stageMeanMs": {
+        "interval": 117.9,
+        "grab": 49.322,
+        "postGrab": 0.384,
+        "pacingActual": 68.075,
+        "pacingRequested": 17.151,
+        "pacingExcess": 50.924,
+        "publishLockWait": 0.002,
+        "publishCritical": 0.026,
+        "other": 0.119
+      },
+      "currentWindowCounters": {
+        "published": 503,
+        "discarded": 0,
+        "error": 0,
+        "discontinuous": 0,
+        "invalidTiming": 0,
+        "clipped": false
+      }
+    }
+  },
+  "output5sWindows": {
+    "count": 357,
+    "fromLocal": "2026-10-24T23:23:10.866",
+    "toLocal": "2026-10-24T23:52:59.650",
+    "frames": 35082,
+    "fps": {
+      "count": 357,
+      "min": 15.6,
+      "p50": 19.6,
+      "p95": 19.7,
+      "max": 19.8,
+      "mean": 19.556
+    },
+    "weightedMeanConvertMs": 1.928,
+    "weightedMeanRecvTotalMs": 44.514,
+    "reuseFrames": 18631,
+    "semantics": "Output can reuse a prior capture; output FPS is not fresh-capture cadence"
+  },
+  "encode5sWindows": {
+    "count": 358,
+    "fromLocal": "2026-10-24T23:23:07.950",
+    "toLocal": "2026-10-24T23:53:01.646",
+    "frames": 35180,
+    "weightedMeanMs": 4.164,
+    "windowP95Ms": {
+      "count": 358,
+      "min": 4.475,
+      "p50": 7.428,
+      "p95": 12.544,
+      "max": 25.854,
+      "mean": 7.996
+    },
+    "windowMaximumMs": {
+      "count": 358,
+      "min": 5.748,
+      "p50": 12.46,
+      "p95": 39.094,
+      "max": 261.616,
+      "mean": 16.991
+    },
+    "allFrameP95Ms": null
+  },
+  "eventLoop": {
+    "periodicLastLagMs": {
+      "count": 324,
+      "min": 0.094,
+      "p50": 1.105,
+      "p95": 6.263,
+      "max": 24.02,
+      "mean": 2.062
+    },
+    "fullyInsideSessionRollingP95Ms": {
+      "count": 313,
+      "min": 2.515,
+      "p50": 4.629,
+      "p95": 8.378,
+      "max": 9.896,
+      "mean": 5.04
+    },
+    "latestRolling60s": {
+      "count": 60,
+      "last": 0.154,
+      "max": 84.623,
+      "p50": 1.1,
+      "p95": 4.809,
+      "p99": 84.623,
+      "missedSampleCount": 0
+    }
+  },
+  "resources": {
+    "currentRssMiB": {
+      "count": 323,
+      "min": 281.867,
+      "p50": 436.777,
+      "p95": 468.898,
+      "max": 471.867,
+      "mean": 404.659
+    },
+    "firstCurrentRssMiB": 286.367,
+    "latestCurrentRssMiB": 321.035,
+    "steadyCurrentRssAfterFirst60sMiB": {
+      "count": 313,
+      "min": 281.867,
+      "p50": 437.93,
+      "p95": 468.898,
+      "max": 471.867,
+      "mean": 407.66
+    },
+    "preConnectionCachedRssSnapshotsExcluded": 1,
+    "steadyNetRssChangeMiB": -2.691,
+    "firstSteadyCurrentRssMiB": 323.727,
+    "systemSwapInBytesPerSec": {
+      "count": 324,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 783060.641,
+      "max": 20892451.672,
+      "mean": 304228.706
+    },
+    "systemSwapOutBytesPerSec": {
+      "count": 324,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "max": 247070364.083,
+      "mean": 2118527.314
+    },
+    "rssCacheAgeMs": {
+      "count": 324,
+      "min": 937.027,
+      "p50": 2970.117,
+      "p95": 4983.666,
+      "max": 5007.486,
+      "mean": 2935.334
+    },
+    "netRssChangeMiB": 34.668,
+    "rssStrictlyMonotonicGrowth": false,
+    "rssDecreasingSteps": 84,
+    "rssSlopeMiBPerMinuteAfterFirst60s": -1.998,
+    "processCpu": {
+      "deltaSeconds": 618.437,
+      "elapsedSeconds": 1795.994,
+      "averagePctOfOneCore": 34.434
+    },
+    "processCpuAfterFirst60s": {
+      "deltaSeconds": 591.093,
+      "elapsedSeconds": 1736.999,
+      "averagePctOfOneCore": 34.03
+    },
+    "systemLoad1": {
+      "count": 324,
+      "min": 3.103,
+      "p50": 4.178,
+      "p95": 6.024,
+      "max": 9.116,
+      "mean": 4.399
+    },
+    "taskCount": {
+      "count": 324,
+      "min": 43.0,
+      "p50": 43.0,
+      "p95": 44.0,
+      "max": 45.0,
+      "mean": 43.111
+    },
+    "threadCount": {
+      "count": 324,
+      "min": 10.0,
+      "p50": 10.0,
+      "p95": 10.0,
+      "max": 11.0,
+      "mean": 10.003
+    },
+    "historicalPeakRssExcluded": true
+  },
+  "queues": {
+    "inputReliable": {
+      "pendingCountMax": 0,
+      "pendingBytesMax": 0,
+      "inFlightCountMax": 0,
+      "frozenSnapshots": 0,
+      "droppedCounterDelta": 0
+    },
+    "inputUnordered": {
+      "pendingCountMax": 0,
+      "pendingBytesMax": 0,
+      "inFlightCountMax": 0,
+      "frozenSnapshots": 0,
+      "droppedCounterDelta": 0
+    },
+    "relayFrames": null,
+    "semantics": "Dropped counters are first-to-last differences in this session window, not historical totals"
+  },
+  "viewerHostReports": {
+    "sampleCount": 1795,
+    "fromLocal": "2026-10-24T23:23:07.919",
+    "toLocal": "2026-10-24T23:53:01.971",
+    "fps": {
+      "count": 1795,
+      "min": 8.0,
+      "p50": 20.0,
+      "p95": 20.38,
+      "max": 26.0,
+      "mean": 19.559
+    },
+    "rttMs": {
+      "count": 1795,
+      "min": 30.0,
+      "p50": 54.0,
+      "p95": 161.0,
+      "max": 523.0,
+      "mean": 69.209
+    },
+    "jitterBufferMs": {
+      "count": 1795,
+      "min": 4.2,
+      "p50": 29.7,
+      "p95": 53.33,
+      "max": 195.2,
+      "mean": 31.417
+    },
+    "zeroFpsSamples": 0,
+    "allSelectedRelay": true,
+    "intervalDeltaTotals": {
+      "decoded": 35106.0,
+      "received": 35104.0,
+      "lost": 20.0,
+      "dropped": 0,
+      "packets": 38190.0,
+      "nack": 97.0,
+      "pli": 0,
+      "fir": 0,
+      "freeze": 78.0
+    },
+    "semantics": "Viewer aliases are per-stats-interval deltas verified in current source; totals sum observed intervals only. FPS may include reused captured frames."
+  },
+  "passiveObserver": {
+    "sampleCount": 1801,
+    "observedSamples": 1801,
+    "unobservedSamples": 0,
+    "parseErrors": 0,
+    "elapsedFromSeconds": 0.0,
+    "elapsedToSeconds": 1800.0,
+    "identityStable": {
+      "pcIdentity": true,
+      "attemptHash": true,
+      "leaseEpoch": true,
+      "generation": true,
+      "buildId": true
+    },
+    "allSocketConnected": true,
+    "allPcConnected": true,
+    "allMediaActive": true,
+    "allInputAllowed": true,
+    "allScopeStable": true,
+    "missingTicks": 0,
+    "sameScopeIntervalCount": 1800,
+    "decodedFrameDelta": 35204,
+    "browserDroppedFrameDelta": 0,
+    "decodedFpsFromCounterDifferences": {
+      "count": 1800,
+      "min": 6.016,
+      "p50": 19.982,
+      "p95": 20.042,
+      "max": 31.012,
+      "mean": 19.558
+    },
+    "callbackHzFromCounterDifferences": {
+      "count": 1800,
+      "min": 4.005,
+      "p50": 19.008,
+      "p95": 20.018,
+      "max": 21.053,
+      "mean": 18.793
+    },
+    "zeroDecodeProgressIntervals": 0,
+    "zeroCallbackProgressIntervals": 0,
+    "freezeCount": null,
+    "scopeMaxCallbackGapMsAtBaseline": 133.3,
+    "scopeMaxCallbackGapMsLatest": 1266.6,
+    "frameCallbackDelta": 33827,
+    "frameAgeMs": {
+      "count": 1801,
+      "min": 0.9,
+      "p50": 29.4,
+      "p95": 66.6,
+      "max": 651.2,
+      "mean": 32.756
+    },
+    "ringDroppedEventsAreMediaDrops": false
+  },
+  "minuteBuckets": [
+    {
+      "minuteFromConnection": 0,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 310.729,
+      "currentRssMinMiB": 286.367,
+      "currentRssMaxMiB": 324.723,
+      "processCpu": {
+        "deltaSeconds": 24.855,
+        "elapsedSeconds": 52.997,
+        "averagePctOfOneCore": 46.899
+      },
+      "cadenceHzMean": 12.798,
+      "eventLoopRollingP95MaxMs": 9.301
+    },
+    {
+      "minuteFromConnection": 1,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 340.706,
+      "currentRssMinMiB": 323.727,
+      "currentRssMaxMiB": 370.773,
+      "processCpu": {
+        "deltaSeconds": 20.924,
+        "elapsedSeconds": 57.007,
+        "averagePctOfOneCore": 36.704
+      },
+      "cadenceHzMean": 11.355,
+      "eventLoopRollingP95MaxMs": 9.301
+    },
+    {
+      "minuteFromConnection": 2,
+      "sampleCount": 10,
+      "currentRssMeanMiB": 374.003,
+      "currentRssMinMiB": 370.789,
+      "currentRssMaxMiB": 377.523,
+      "processCpu": {
+        "deltaSeconds": 17.275,
+        "elapsedSeconds": 50.0,
+        "averagePctOfOneCore": 34.55
+      },
+      "cadenceHzMean": 11.058,
+      "eventLoopRollingP95MaxMs": 6.601
+    },
+    {
+      "minuteFromConnection": 3,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 377.577,
+      "currentRssMinMiB": 377.535,
+      "currentRssMaxMiB": 377.637,
+      "processCpu": {
+        "deltaSeconds": 19.3,
+        "elapsedSeconds": 54.005,
+        "averagePctOfOneCore": 35.737
+      },
+      "cadenceHzMean": 11.01,
+      "eventLoopRollingP95MaxMs": 5.559
+    },
+    {
+      "minuteFromConnection": 4,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 383.869,
+      "currentRssMinMiB": 377.664,
+      "currentRssMaxMiB": 388.285,
+      "processCpu": {
+        "deltaSeconds": 20.401,
+        "elapsedSeconds": 56.0,
+        "averagePctOfOneCore": 36.43
+      },
+      "cadenceHzMean": 11.306,
+      "eventLoopRollingP95MaxMs": 8.185
+    },
+    {
+      "minuteFromConnection": 5,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 426.786,
+      "currentRssMinMiB": 385.52,
+      "currentRssMaxMiB": 437.941,
+      "processCpu": {
+        "deltaSeconds": 21.201,
+        "elapsedSeconds": 53.997,
+        "averagePctOfOneCore": 39.263
+      },
+      "cadenceHzMean": 11.677,
+      "eventLoopRollingP95MaxMs": 6.255
+    },
+    {
+      "minuteFromConnection": 6,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 438.208,
+      "currentRssMinMiB": 437.93,
+      "currentRssMaxMiB": 439.949,
+      "processCpu": {
+        "deltaSeconds": 21.423,
+        "elapsedSeconds": 56.002,
+        "averagePctOfOneCore": 38.254
+      },
+      "cadenceHzMean": 11.256,
+      "eventLoopRollingP95MaxMs": 5.134
+    },
+    {
+      "minuteFromConnection": 7,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 439.349,
+      "currentRssMinMiB": 438.086,
+      "currentRssMaxMiB": 439.84,
+      "processCpu": {
+        "deltaSeconds": 22.342,
+        "elapsedSeconds": 56.008,
+        "averagePctOfOneCore": 39.891
+      },
+      "cadenceHzMean": 11.786,
+      "eventLoopRollingP95MaxMs": 9.042
+    },
+    {
+      "minuteFromConnection": 8,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 442.243,
+      "currentRssMinMiB": 439.828,
+      "currentRssMaxMiB": 448.68,
+      "processCpu": {
+        "deltaSeconds": 20.886,
+        "elapsedSeconds": 55.013,
+        "averagePctOfOneCore": 37.966
+      },
+      "cadenceHzMean": 11.59,
+      "eventLoopRollingP95MaxMs": 5.579
+    },
+    {
+      "minuteFromConnection": 9,
+      "sampleCount": 10,
+      "currentRssMeanMiB": 449.021,
+      "currentRssMinMiB": 448.66,
+      "currentRssMaxMiB": 452.148,
+      "processCpu": {
+        "deltaSeconds": 19.077,
+        "elapsedSeconds": 50.996,
+        "averagePctOfOneCore": 37.409
+      },
+      "cadenceHzMean": 10.419,
+      "eventLoopRollingP95MaxMs": 6.298
+    },
+    {
+      "minuteFromConnection": 10,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 448.844,
+      "currentRssMinMiB": 448.668,
+      "currentRssMaxMiB": 450.562,
+      "processCpu": {
+        "deltaSeconds": 17.13,
+        "elapsedSeconds": 54.999,
+        "averagePctOfOneCore": 31.146
+      },
+      "cadenceHzMean": 8.398,
+      "eventLoopRollingP95MaxMs": 5.84
+    },
+    {
+      "minuteFromConnection": 11,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 442.844,
+      "currentRssMinMiB": 377.695,
+      "currentRssMaxMiB": 450.453,
+      "processCpu": {
+        "deltaSeconds": 20.031,
+        "elapsedSeconds": 56.995,
+        "averagePctOfOneCore": 35.145
+      },
+      "cadenceHzMean": 8.21,
+      "eventLoopRollingP95MaxMs": 6.621
+    },
+    {
+      "minuteFromConnection": 12,
+      "sampleCount": 10,
+      "currentRssMeanMiB": 404.648,
+      "currentRssMinMiB": 395.043,
+      "currentRssMaxMiB": 414.676,
+      "processCpu": {
+        "deltaSeconds": 16.943,
+        "elapsedSeconds": 52.001,
+        "averagePctOfOneCore": 32.582
+      },
+      "cadenceHzMean": 9.096,
+      "eventLoopRollingP95MaxMs": 6.545
+    },
+    {
+      "minuteFromConnection": 13,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 432.214,
+      "currentRssMinMiB": 425.184,
+      "currentRssMaxMiB": 437.059,
+      "processCpu": {
+        "deltaSeconds": 18.938,
+        "elapsedSeconds": 55.001,
+        "averagePctOfOneCore": 34.432
+      },
+      "cadenceHzMean": 9.059,
+      "eventLoopRollingP95MaxMs": 9.896
+    },
+    {
+      "minuteFromConnection": 14,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 438.087,
+      "currentRssMinMiB": 435.777,
+      "currentRssMaxMiB": 438.609,
+      "processCpu": {
+        "deltaSeconds": 18.245,
+        "elapsedSeconds": 55.994,
+        "averagePctOfOneCore": 32.584
+      },
+      "cadenceHzMean": 8.691,
+      "eventLoopRollingP95MaxMs": 4.501
+    },
+    {
+      "minuteFromConnection": 15,
+      "sampleCount": 10,
+      "currentRssMeanMiB": 441.874,
+      "currentRssMinMiB": 438.609,
+      "currentRssMaxMiB": 443.074,
+      "processCpu": {
+        "deltaSeconds": 16.186,
+        "elapsedSeconds": 49.003,
+        "averagePctOfOneCore": 33.031
+      },
+      "cadenceHzMean": 8.586,
+      "eventLoopRollingP95MaxMs": 4.396
+    },
+    {
+      "minuteFromConnection": 16,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 457.566,
+      "currentRssMinMiB": 443.086,
+      "currentRssMaxMiB": 468.824,
+      "processCpu": {
+        "deltaSeconds": 18.746,
+        "elapsedSeconds": 56.001,
+        "averagePctOfOneCore": 33.474
+      },
+      "cadenceHzMean": 8.857,
+      "eventLoopRollingP95MaxMs": 5.244
+    },
+    {
+      "minuteFromConnection": 17,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 468.815,
+      "currentRssMinMiB": 468.793,
+      "currentRssMaxMiB": 468.844,
+      "processCpu": {
+        "deltaSeconds": 18.141,
+        "elapsedSeconds": 55.004,
+        "averagePctOfOneCore": 32.981
+      },
+      "cadenceHzMean": 8.13,
+      "eventLoopRollingP95MaxMs": 8.252
+    },
+    {
+      "minuteFromConnection": 18,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 468.867,
+      "currentRssMinMiB": 468.824,
+      "currentRssMaxMiB": 468.91,
+      "processCpu": {
+        "deltaSeconds": 17.967,
+        "elapsedSeconds": 56.009,
+        "averagePctOfOneCore": 32.079
+      },
+      "cadenceHzMean": 7.9,
+      "eventLoopRollingP95MaxMs": 8.567
+    },
+    {
+      "minuteFromConnection": 19,
+      "sampleCount": 10,
+      "currentRssMeanMiB": 469.268,
+      "currentRssMinMiB": 468.898,
+      "currentRssMaxMiB": 471.867,
+      "processCpu": {
+        "deltaSeconds": 16.068,
+        "elapsedSeconds": 49.996,
+        "averagePctOfOneCore": 32.139
+      },
+      "cadenceHzMean": 8.018,
+      "eventLoopRollingP95MaxMs": 4.446
+    },
+    {
+      "minuteFromConnection": 20,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 467.834,
+      "currentRssMinMiB": 467.207,
+      "currentRssMaxMiB": 468.957,
+      "processCpu": {
+        "deltaSeconds": 18.051,
+        "elapsedSeconds": 56.001,
+        "averagePctOfOneCore": 32.233
+      },
+      "cadenceHzMean": 7.828,
+      "eventLoopRollingP95MaxMs": 4.674
+    },
+    {
+      "minuteFromConnection": 21,
+      "sampleCount": 12,
+      "currentRssMeanMiB": 467.41,
+      "currentRssMinMiB": 467.207,
+      "currentRssMaxMiB": 469.602,
+      "processCpu": {
+        "deltaSeconds": 19.361,
+        "elapsedSeconds": 58.001,
+        "averagePctOfOneCore": 33.38
+      },
+      "cadenceHzMean": 7.725,
+      "eventLoopRollingP95MaxMs": 5.016
+    },
+    {
+      "minuteFromConnection": 22,
+      "sampleCount": 10,
+      "currentRssMeanMiB": 400.62,
+      "currentRssMinMiB": 297.098,
+      "currentRssMaxMiB": 451.133,
+      "processCpu": {
+        "deltaSeconds": 15.888,
+        "elapsedSeconds": 51.001,
+        "averagePctOfOneCore": 31.152
+      },
+      "cadenceHzMean": 8.296,
+      "eventLoopRollingP95MaxMs": 4.227
+    },
+    {
+      "minuteFromConnection": 23,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 332.875,
+      "currentRssMinMiB": 302.105,
+      "currentRssMaxMiB": 354.184,
+      "processCpu": {
+        "deltaSeconds": 19.336,
+        "elapsedSeconds": 56.997,
+        "averagePctOfOneCore": 33.925
+      },
+      "cadenceHzMean": 9.292,
+      "eventLoopRollingP95MaxMs": 6.265
+    },
+    {
+      "minuteFromConnection": 24,
+      "sampleCount": 10,
+      "currentRssMeanMiB": 337.886,
+      "currentRssMinMiB": 316.801,
+      "currentRssMaxMiB": 356.953,
+      "processCpu": {
+        "deltaSeconds": 15.571,
+        "elapsedSeconds": 51.998,
+        "averagePctOfOneCore": 29.945
+      },
+      "cadenceHzMean": 8.757,
+      "eventLoopRollingP95MaxMs": 4.905
+    },
+    {
+      "minuteFromConnection": 25,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 324.261,
+      "currentRssMinMiB": 308.004,
+      "currentRssMaxMiB": 363.484,
+      "processCpu": {
+        "deltaSeconds": 17.136,
+        "elapsedSeconds": 54.003,
+        "averagePctOfOneCore": 31.732
+      },
+      "cadenceHzMean": 8.597,
+      "eventLoopRollingP95MaxMs": 4.143
+    },
+    {
+      "minuteFromConnection": 26,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 324.991,
+      "currentRssMinMiB": 313.484,
+      "currentRssMaxMiB": 338.656,
+      "processCpu": {
+        "deltaSeconds": 18.923,
+        "elapsedSeconds": 56.002,
+        "averagePctOfOneCore": 33.79
+      },
+      "cadenceHzMean": 8.405,
+      "eventLoopRollingP95MaxMs": 4.629
+    },
+    {
+      "minuteFromConnection": 27,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 339.615,
+      "currentRssMinMiB": 337.973,
+      "currentRssMaxMiB": 341.609,
+      "processCpu": {
+        "deltaSeconds": 18.568,
+        "elapsedSeconds": 56.999,
+        "averagePctOfOneCore": 32.576
+      },
+      "cadenceHzMean": 8.547,
+      "eventLoopRollingP95MaxMs": 5.098
+    },
+    {
+      "minuteFromConnection": 28,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 341.872,
+      "currentRssMinMiB": 341.609,
+      "currentRssMaxMiB": 342.965,
+      "processCpu": {
+        "deltaSeconds": 15.376,
+        "elapsedSeconds": 52.995,
+        "averagePctOfOneCore": 29.014
+      },
+      "cadenceHzMean": 7.57,
+      "eventLoopRollingP95MaxMs": 3.932
+    },
+    {
+      "minuteFromConnection": 29,
+      "sampleCount": 11,
+      "currentRssMeanMiB": 336.699,
+      "currentRssMinMiB": 281.867,
+      "currentRssMaxMiB": 349.684,
+      "processCpu": {
+        "deltaSeconds": 18.942,
+        "elapsedSeconds": 56.999,
+        "averagePctOfOneCore": 33.232
+      },
+      "cadenceHzMean": 7.719,
+      "eventLoopRollingP95MaxMs": 5.545
+    }
+  ],
+  "limitations": [
+    "Thirty-minute passive continuity only; this does not establish three-hour continuity, real-input visible effect or strict same-lease fault recovery.",
+    "No native input, browser, capture probe, process sampling or service operations were performed.",
+    "Capture last-grab and event-loop rolling quantiles are periodic snapshots; no pooled per-frame or per-loop sample distribution is available.",
+    "Early rolling windows can include pre-session time; cadence and event-loop steady statistics exclude the first sixty seconds.",
+    "RSS is asynchronously cached current RSS. Samples whose cache timestamp predates connection are excluded; startup allocation is separated from the post-first-minute baseline. Historical peak RSS and lifetime capture maxima are excluded.",
+    "CPU is a difference of cumulative process CPU seconds; 100 percent means one logical core. Swap rates come from system-wide vm_stat and are not Host-specific swap attribution.",
+    "Passive samples omit freezeCount; Host VIEWER_STATS supplies observed freeze interval deltas separately. Viewer freezes are reported interval deltas; they do not by themselves establish a session interruption, zero FPS, or capture failure.",
+    "Passive diagnostic ring dropped events describe bounded evidence retention, not media loss.",
+    "No raw Viewer, attempt, lease identity, payload, PID, thread ID, coordinates, binary path or cumulative historical CPU/peak is retained."
+  ],
+  "formalPassiveAcceptance": {
+    "status": "PASS",
+    "elapsedSeconds": 1800.214822008973,
+    "samples": 1801,
+    "missingSamples": 0,
+    "failedObservations": 0,
+    "identityChangeObservations": 0,
+    "pathChangeObservations": 0,
+    "maxObservedNoProgressMs": 1266.5999999998603,
+    "threeHourContinuityMet": false,
+    "cleanupStatus": "api-finished-exit-unknown"
+  },
+  "nativeProfile": {
+    "atLocal": "2026-10-24T23:41:23.774",
+    "requestedDurationSeconds": 5,
+    "requestedIntervalMs": 10,
+    "tool": "macOS native sample",
+    "captureWorkerIdentification": "Unique capture-provider-copy ctypes branch, consistent with current capture worker",
+    "captureWorker": {
+      "threadSamples": 441,
+      "timeSleepAllBranches": {
+        "samples": 348,
+        "pctOfThreadSamples": 78.912
+      },
+      "nativeNanosleepAllBranches": {
+        "samples": 347,
+        "pctOfThreadSamples": 78.685
+      },
+      "dataProviderCopy": {
+        "samples": 55,
+        "pctOfThreadSamples": 12.472
+      },
+      "dataProviderMachMessage": {
+        "samples": 55,
+        "pctOfThreadSamples": 12.472
+      },
+      "takeGilAllBranches": {
+        "samples": 3,
+        "pctOfThreadSamples": 0.68
+      },
+      "sleepRestoreTakeGil": {
+        "samples": 1,
+        "pctOfThreadSamples": 0.227
+      }
+    },
+    "mainEventLoop": {
+      "threadSamples": 441,
+      "kevent": {
+        "samples": 371,
+        "pctOfThreadSamples": 84.127
+      },
+      "selectRestoreTakeGil": {
+        "samples": 18,
+        "pctOfThreadSamples": 4.082
+      },
+      "takeGilAllBranches": {
+        "samples": 21,
+        "pctOfThreadSamples": 4.762
+      }
+    },
+    "cadenceVicinity": [
+      {
+        "atLocal": "2026-10-24T23:41:22.694",
+        "cadenceHz": 7.685,
+        "systemLoad1": 3.682,
+        "rollingEventLoopP95Ms": 8.567,
+        "lastIntervalMs": {
+          "intervalMs": 50.12,
+          "grabMs": 25.211,
+          "pacingRequestedMs": 24.37,
+          "pacingActualMs": 24.387,
+          "pacingExcessMs": 0.016
+        },
+        "rollingStageMeanMs": {
+          "interval": 130.126,
+          "grab": 24.85,
+          "pacingRequested": 24.798,
+          "pacingActual": 104.789,
+          "pacingExcess": 79.992
+        }
+      },
+      {
+        "atLocal": "2026-10-24T23:41:28.693",
+        "cadenceHz": 7.69,
+        "systemLoad1": 3.627,
+        "rollingEventLoopP95Ms": 4.805,
+        "lastIntervalMs": {
+          "intervalMs": 141.368,
+          "grabMs": 23.892,
+          "pacingRequestedMs": 25.795,
+          "pacingActualMs": 117.031,
+          "pacingExcessMs": 91.235
+        },
+        "rollingStageMeanMs": {
+          "interval": 130.047,
+          "grab": 24.899,
+          "pacingRequested": 24.752,
+          "pacingActual": 104.663,
+          "pacingExcess": 79.911
+        }
+      },
+      {
+        "atLocal": "2026-10-24T23:41:33.694",
+        "cadenceHz": 7.854,
+        "systemLoad1": 3.577,
+        "rollingEventLoopP95Ms": 4.805,
+        "lastIntervalMs": {
+          "intervalMs": 193.728,
+          "grabMs": 24.655,
+          "pacingRequestedMs": 25.03,
+          "pacingActualMs": 168.583,
+          "pacingExcessMs": 143.553
+        },
+        "rollingStageMeanMs": {
+          "interval": 127.319,
+          "grab": 24.903,
+          "pacingRequested": 24.749,
+          "pacingActual": 101.93,
+          "pacingExcess": 77.181
+        }
+      },
+      {
+        "atLocal": "2026-10-24T23:41:38.694",
+        "cadenceHz": 7.957,
+        "systemLoad1": 3.53,
+        "rollingEventLoopP95Ms": 4.58,
+        "lastIntervalMs": {
+          "intervalMs": 50.127,
+          "grabMs": 23.417,
+          "pacingRequestedMs": 26.279,
+          "pacingActualMs": 26.296,
+          "pacingExcessMs": 0.016
+        },
+        "rollingStageMeanMs": {
+          "interval": 125.674,
+          "grab": 24.953,
+          "pacingRequested": 24.698,
+          "pacingActual": 100.234,
+          "pacingExcess": 75.536
+        }
+      }
+    ],
+    "processCpuInCadenceVicinity": {
+      "deltaSeconds": 5.362,
+      "elapsedSeconds": 16.0,
+      "averagePctOfOneCore": 33.513
+    },
+    "interpretation": "In this quiet sampled window capture-worker occupancy is dominated by native nanosleep in pacing, while post-sleep GIL reacquisition is sampled rarely. Together with requested sleep around 25ms and rolling actual sleep bracket around 100-105ms, evidence supports native sleep/wake-path overshoot as the main local pacing wait rather than GIL-dominated waiting in this window. It does not identify timer coalescing, App Nap, OS scheduling policy or a unique cause.",
+    "limitations": [
+      "Stack occupancy is not a per-frame latency share or p95.",
+      "time_sleep has two disjoint branches: 347 samples on the native-sleep branch, including 346 and 1 nanosleep stacks, and 1 sample restoring the GIL.",
+      "Main select-return GIL wait coexists, but kevent is ordinary I/O sleep.",
+      "Sampling can perturb execution; this window is an observation, not an A/B experiment.",
+      "OS timer expiry, wake scheduling and Python resume have no separate timestamp; no App Nap inference is established."
+    ]
+  }
+}

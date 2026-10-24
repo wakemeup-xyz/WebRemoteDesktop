@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "isolated-process-activity-timer-probe",
+  "activityAcquired": true,
+  "activityEnded": true,
+  "requestedSleepMs": 20,
+  "results": {
+    "baseline-before": {
+      "count": 80,
+      "excessP50Ms": 4.56,
+      "excessP95Ms": 9.262,
+      "excessMaxMs": 10.058,
+      "elapsedMs": 1933.501,
+      "processCpuMs": 1.502
+    },
+    "owned-process-latency-activity": {
+      "count": 80,
+      "excessP50Ms": 4.63,
+      "excessP95Ms": 9.442,
+      "excessMaxMs": 10.02,
+      "elapsedMs": 1954.249,
+      "processCpuMs": 1.577
+    },
+    "baseline-after": {
+      "count": 80,
+      "excessP50Ms": 3.435,
+      "excessP95Ms": 8.887,
+      "excessMaxMs": 10.016,
+      "elapsedMs": 1909.598,
+      "processCpuMs": 1.482
+    }
+  },
+  "productionProcessChanged": false,
+  "limitations": [
+    "New short-lived process; not an A/B on the running Host.",
+    "No capture, encoding, input or visible-effect measurement.",
+    "No global power policy changed."
+  ]
+}
