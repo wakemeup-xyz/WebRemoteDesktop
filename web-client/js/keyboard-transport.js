@@ -5,6 +5,15 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createKeyboardTransportApi() {
   const MAX_PENDING = 32;
 
+  function isResetAckMirror(ack, inputType, inputId) {
+    return Boolean(['mouse', 'keyboard'].includes(inputType)
+      && typeof inputId === 'string' && inputId.length > 0
+      && ack?.resetAckMirrorVersion === 1 && ack.schemaVersion === 2
+      && ack.inputType === inputType && ['applied', 'duplicate'].includes(ack.status)
+      && Array.isArray(ack.inputIds) && ack.inputIds.length === 1
+      && ack.inputIds[0] === inputId);
+  }
+
   function localBudget() {
     const entries = new Map(); let total = 0;
     return {
@@ -46,6 +55,7 @@
     const clearTimer = config.clearTimeoutFn || clearTimeout;
     const getSocket = config.getSocket || (() => null);
     const getDataChannel = config.getDataChannel || (() => null);
+    const getResetAckDataChannel = config.getResetAckDataChannel || (() => null);
     const onTimeout = config.onReliableAckTimeout || (() => {});
     const unavailable = new Set();
     const pending = new Map();
@@ -60,6 +70,11 @@
     let reacquireRequired = false;
     let frozen = false;
     let deadlineTimer = null;
+
+    function currentResetAckDataChannel() {
+      try { return getResetAckDataChannel() || null; }
+      catch (_) { return null; }
+    }
 
     function cancelDeadline() {
       if (deadlineTimer !== null) clearTimer(deadlineTimer);
@@ -252,6 +267,8 @@
         socket: getSocket(),
         socketId: getSocket()?.id || null,
         dataChannel: adapterName === 'dataChannel' ? getDataChannel() : null,
+        ...(isReset && adapterName === 'socket'
+          ? { resetAckDataChannel: currentResetAckDataChannel() } : {}),
         sentAt: now(),
       };
       lastSent = seq;
@@ -487,7 +504,16 @@
         && (source.transport === 'socket'
           ? record.adapter === 'socket' && record.socket === source.socket
             && record.socketId === (source.socket?.id || null)
-          : record.adapter === 'dataChannel' && record.dataChannel === source.dataChannel));
+          : (record.adapter === 'dataChannel' && record.dataChannel === source.dataChannel)
+            || (source.transport === 'datachannel' && record.reset && record.adapter === 'socket'
+              && isResetAckMirror(ack, 'keyboard', record.inputId)
+              && ack.leaseEpoch === record.leaseEpoch && ack.appliedSeq === record.seq
+              && record.leaseId === leaseId && record.leaseEpoch === leaseEpoch
+              && record.socket != null && typeof record.socketId === 'string' && record.socketId.length > 0
+              && record.socket === getSocket() && record.socketId === (getSocket()?.id || null)
+              && record.resetAckDataChannel != null
+              && record.resetAckDataChannel === source.dataChannel
+              && currentResetAckDataChannel() === source.dataChannel)));
     }
 
     // Observation only: no deadline expiry, ACK acceptance or pending mutation.
@@ -546,5 +572,5 @@
     };
   }
 
-  return { create };
+  return { create, isResetAckMirror };
 }));

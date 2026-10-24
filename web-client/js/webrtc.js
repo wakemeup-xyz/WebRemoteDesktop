@@ -1424,7 +1424,9 @@ const WebRTC = {
       }
       if (typeof LatencyMonitor !== 'undefined') {
         this.syncLatencyScope();
-        LatencyMonitor.onInputAck(data, { scope: this.latencyScope() });
+        const arrivalAtMs = results.some(result => result?.status === 'applied' || result?.status === 'duplicate')
+          ? controlledArrival?.viewerClockMs : undefined;
+        LatencyMonitor.onInputAck(data, { scope: this.latencyScope(), arrivalAtMs });
       }
       try {
         if (controlledArrival && results.some(result => result?.status === 'applied')

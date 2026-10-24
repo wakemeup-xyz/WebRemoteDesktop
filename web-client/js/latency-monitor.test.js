@@ -186,6 +186,100 @@ test('frame notice is not ACK; snapshot expires without another input', () => {
 });
 
 const testScope = { connectionAttemptId: 'scope-a', generation: 1, leaseEpoch: 2 };
+
+for (const syncAtProcessing of [false, true]) test(`ACK arrival timing separates entry from validation after scope sync=${syncAtProcessing}`, () => {
+  let now = 0;
+  const m = createLatencyMonitor({ now: () => now });
+  m.setScope(testScope);
+  assert.equal(m.recordInputSend('arrival', { scope: testScope }), true);
+  now = 140;
+  if (syncAtProcessing) m.setScope(testScope);
+  m.onInputAck({ inputIds: ['arrival'], status: 'applied' }, { scope: testScope, arrivalAtMs: 100 });
+  const snapshot = m.snapshot();
+  assert.equal(snapshot.metrics.inputAckRttMs.last, 140);
+  assert.equal(snapshot.metrics.inputAckArrivalRttMs.last, 100);
+  assert.equal(snapshot.metrics.inputAckValidationMs.last, 40);
+  assert.equal(snapshot.metrics.inputAckArrivalRttMs.count, 1);
+  assert.equal(snapshot.metrics.inputAckValidationMs.count, 1);
+  assert.equal(m.recordInputSend('later', { scope: testScope, submittedAtMs: 139 }), false,
+    'arrival data must never roll back the global collector clock');
+});
+
+for (const arrivalAtMs of [undefined, null, '', NaN, Infinity, -1, 49, 141]) {
+  test(`ACK arrival timing leaves invalid entry ${String(arrivalAtMs)} unavailable`, () => {
+    let now = 50;
+    const m = createLatencyMonitor({ now: () => now });
+    m.setScope(testScope); m.recordInputSend('arrival', { scope: testScope });
+    now = 140;
+    m.onInputAck({ inputIds: ['arrival'], status: 'applied' }, { scope: testScope, arrivalAtMs });
+    const snapshot = m.snapshot();
+    assert.equal(snapshot.metrics.inputAckRttMs.last, 90);
+    for (const name of ['inputAckArrivalRttMs', 'inputAckValidationMs']) {
+      assert.equal(snapshot.metrics[name].last, null);
+      assert.equal(snapshot.metrics[name].count, 0);
+      assert.equal(snapshot.metrics[name].available, false);
+    }
+  });
+}
+
+test('ACK arrival timing accepts actual zero intervals at send and processing boundaries', () => {
+  let now = 0;
+  const m = createLatencyMonitor({ now: () => now });
+  m.setScope(testScope); m.recordInputSend('send-boundary'); m.recordInputSend('processing-boundary');
+  now = 140;
+  m.onInputAck({ inputIds: ['send-boundary'], status: 'applied' }, { scope: testScope, arrivalAtMs: 0 });
+  let snapshot = m.snapshot();
+  assert.equal(snapshot.metrics.inputAckArrivalRttMs.last, 0);
+  assert.equal(snapshot.metrics.inputAckValidationMs.last, 140);
+  m.onInputAck({ inputIds: ['processing-boundary'], status: 'duplicate' }, { scope: testScope, arrivalAtMs: 140 });
+  snapshot = m.snapshot();
+  assert.equal(snapshot.metrics.inputAckArrivalRttMs.last, 140);
+  assert.equal(snapshot.metrics.inputAckValidationMs.last, 0);
+  assert.equal(snapshot.metrics.inputAckValidationMs.available, true);
+});
+
+for (const status of ['execution-failed', 'stale-lease', 'sequence-gap', undefined]) {
+  test(`ACK arrival timing requires a positive pending match: ${String(status)}`, () => {
+    let now = 0;
+    const m = createLatencyMonitor({ now: () => now });
+    m.setScope(testScope); m.recordInputSend('arrival'); now = 140;
+    m.onInputAck({ inputIds: ['arrival'], status }, { scope: testScope, arrivalAtMs: 100 });
+    const snapshot = m.snapshot();
+    assert.equal(snapshot.metrics.inputAckArrivalRttMs.available, false);
+    assert.equal(snapshot.metrics.inputAckValidationMs.available, false);
+  });
+}
+
+test('ACK arrival timing cannot settle an old scope, unknown ID or enrich a consumed ACK', () => {
+  let now = 0;
+  const m = createLatencyMonitor({ now: () => now });
+  m.setScope(testScope); m.recordInputSend('arrival'); now = 140;
+  const ack = { inputIds: ['arrival'], status: 'applied' };
+  m.onInputAck(ack, { scope: { ...testScope, generation: 0 }, arrivalAtMs: 100 });
+  m.onInputAck({ ...ack, inputIds: ['unknown'] }, { scope: testScope, arrivalAtMs: 100 });
+  assert.equal(m.snapshot().metrics.inputAckArrivalRttMs.available, false);
+  assert.equal(m.snapshot().outcomes.acked, 0);
+  m.onInputAck(ack, { scope: testScope });
+  m.onInputAck(ack, { scope: testScope, arrivalAtMs: 100 });
+  const snapshot = m.snapshot();
+  assert.equal(snapshot.metrics.inputAckRttMs.count, 1);
+  assert.equal(snapshot.metrics.inputAckArrivalRttMs.available, false);
+  assert.equal(snapshot.metrics.inputAckValidationMs.available, false);
+});
+
+test('ACK arrival timing does not add samples for a timed out pending or its duplicate', () => {
+  let now = 0;
+  const m = createLatencyMonitor({ now: () => now });
+  m.setScope(testScope); m.recordInputSend('arrival'); now = 10000;
+  m.onInputAck({ inputIds: ['arrival'], status: 'applied' }, { scope: testScope, arrivalAtMs: 100 });
+  m.onInputAck({ inputIds: ['arrival'], status: 'applied' }, { scope: testScope, arrivalAtMs: 100 });
+  const snapshot = m.snapshot();
+  assert.equal(snapshot.outcomes.timedOut, 1);
+  assert.equal(snapshot.outcomes.late, 1);
+  assert.equal(snapshot.metrics.inputAckArrivalRttMs.available, false);
+  assert.equal(snapshot.metrics.inputAckValidationMs.available, false);
+});
+
 function fixture() {
   let t = 1000;
   const timers = new Map(); let timerId = 0;

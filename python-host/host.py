@@ -90,6 +90,9 @@ logger = logging.getLogger(__name__)
 async def _noop_async():
     return None
 
+RESET_ACK_MIRROR_MAX_BUFFER_BYTES = 32 * 1024
+RESET_ACK_MIRROR_MAX_PACKET_BYTES = 4 * 1024
+
 V2_INPUT_ACK_STATUSES = frozenset({
     "applied",
     "duplicate",
@@ -2382,6 +2385,7 @@ class WebRemoteHost:
             stop_overlay=self.overlay.stop,
         )
         self._input_datachannel = None
+        self._input_datachannel_owner = None
         self._input_move_datachannel = None
         self._active_input_binding = None
         self._connection_generation = 0
@@ -2904,6 +2908,63 @@ class WebRemoteHost:
                 )
             logger.error("Input handling error: %s", type(exc).__name__)
 
+    def _mirror_socket_reset_ack(self, data, ack, authority):
+        """Best-effort return path for one already-applied Socket reset only."""
+        try:
+            ids = data.get("inputIds")
+            if (type(data.get("schemaVersion")) is not int or data["schemaVersion"] != 2
+                    or data.get("transport") != "socket" or data.get("action") != "reset"
+                    or data.get("type") not in {"mouse", "keyboard"}
+                    or not isinstance(ids, list) or len(ids) != 1
+                    or not isinstance(ids[0], str) or not 1 <= len(ids[0]) <= 128
+                    or ack.get("inputIds") != ids or ack.get("inputType") != data["type"]
+                    or ack.get("schemaVersion") != 2 or ack.get("leaseEpoch") != data.get("leaseEpoch")
+                    or ack.get("transport") != "socket"
+                    or ack.get("status") not in {"applied", "duplicate"}
+                    or type(data.get("seq")) is not int or data["seq"] < 1
+                    or type(ack.get("appliedSeq")) is not int or ack["appliedSeq"] < data["seq"]):
+                return False
+            binding = getattr(self, "_active_input_binding", None)
+            pc = getattr(self, "pc", None)
+            channel = getattr(self, "_input_datachannel", None)
+            owner = getattr(self, "_input_datachannel_owner", None)
+            if (not isinstance(binding, dict) or pc is None or channel is None
+                    or type(owner) is not tuple or len(owner) != 5
+                    or owner[0] is not pc or owner[1] is not channel
+                    or not getattr(self, "_signal_ready", False)
+                    or not self._authority_matches(authority)
+                    or any(data.get(key) != binding.get(key) for key in ("viewerId", "leaseId", "leaseEpoch"))
+                    or getattr(pc, "_wrd_owner", None) != tuple(binding.get(key) for key in ("viewerId", "leaseId", "leaseEpoch"))
+                    or owner[2:] != tuple(binding.get(key) for key in (
+                        "connectionAttemptId", "connectionAttemptSequence", "connectionGeneration"))
+                    or not isinstance(owner[2], str) or not owner[2]
+                    or type(owner[3]) is not int or owner[3] < 1
+                    or type(owner[4]) is not int or owner[4] < 1
+                    or getattr(pc, "connectionState", None) != "connected"
+                    or getattr(channel, "readyState", None) != "open"):
+                return False
+            mirror = {key: ack[key] for key in (
+                "type", "schemaVersion", "inputType", "leaseEpoch", "appliedSeq", "status",
+                "pressedKeyCount", "modifierMask", "inputIds", "hostExecuteMs", "transport",
+                "timingSchemaVersion", "hostAdapterAwaitMs", "hostQueueMs", "hostApplyMs",
+            ) if key in ack}
+            serialized = json.dumps({**mirror, "resetAckMirrorVersion": 1})
+            buffered = getattr(channel, "bufferedAmount", None)
+            if (len(serialized) > RESET_ACK_MIRROR_MAX_PACKET_BYTES
+                    or type(buffered) is not int or buffered < 0
+                    or buffered + len(serialized) > RESET_ACK_MIRROR_MAX_BUFFER_BYTES
+                    or not self._authority_matches(authority)
+                    or self.pc is not pc or self._input_datachannel is not channel
+                    or self._input_datachannel_owner is not owner):
+                return False
+            # No await between ownership checks and this enqueue. Never retry
+            # after Socket emit, when a successor peer may already be current.
+            channel.send(serialized)
+            return True
+        except Exception:
+            # A bad/missing DC cannot suppress the original Socket ACK.
+            return False
+
     async def _send_input_ack(self, data, result, local_execute_ms):
         input_ids = result.get("inputIds", []) if isinstance(result, dict) else []
         if not input_ids:
@@ -2912,6 +2973,14 @@ class WebRemoteHost:
         transport = raw_transport if isinstance(raw_transport, str) and raw_transport in {
             "datachannel", "socket", "none",
         } else "socket"
+        # _execute_input already fenced the completed native result. Capture
+        # its current authority before constructing the ACK, without yielding.
+        mirror_authority = None
+        if transport == "socket":
+            try:
+                mirror_authority = self._capture_authority()
+            except Exception:
+                pass
         if data.get("schemaVersion") == 2 and data.get("type") == "mouse":
             # Mouse actions use the v2 envelope but intentionally do not share
             # the ordered keyboard sequence/state contract. Keep their ACK
@@ -2966,6 +3035,11 @@ class WebRemoteHost:
             **{name: result.get(name) if relay_ack_duration_ms(0, result.get(name)) is not None else None
                for name in ("hostQueueMs", "hostApplyMs")},
         })
+        if transport == "socket" and result.get("status") in {"applied", "duplicate"}:
+            try:
+                self._mirror_socket_reset_ack(data, ack, mirror_authority)
+            except Exception:
+                pass  # Preserve Socket delivery even for partial/older adapters.
         accepted = False
         try:
             if transport == "datachannel":
@@ -3362,6 +3436,7 @@ class WebRemoteHost:
         if channel is not getattr(self, "_input_datachannel", None):
             return
         self._input_datachannel = None
+        self._input_datachannel_owner = None
         # The channel callback captures the binding that existed at open time,
         # but a control grant can update the live lease without rebuilding the
         # peer connection.  Always reset using the current active binding while
@@ -3655,6 +3730,7 @@ class WebRemoteHost:
             self.pc = None
             if getattr(self, "_input_datachannel", None) is closing_channel:
                 self._input_datachannel = None
+                self._input_datachannel_owner = None
             if getattr(self, "_input_move_datachannel", None) is closing_move_channel:
                 self._input_move_datachannel = None
             if getattr(self, "screen_track", None) is closing_track:
@@ -3953,6 +4029,8 @@ class WebRemoteHost:
                     binding = dict(self._active_input_binding or {})
                     if channel.label == "input":
                         self._input_datachannel = channel
+                        self._input_datachannel_owner = (offer_pc, channel, *(binding.get(key) for key in (
+                            "connectionAttemptId", "connectionAttemptSequence", "connectionGeneration")))
                     elif channel.label == "input-move":
                         self._input_move_datachannel = channel
 

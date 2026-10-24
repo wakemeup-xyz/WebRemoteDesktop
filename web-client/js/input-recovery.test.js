@@ -298,6 +298,216 @@ globalThis.__Input = Input;`, context);
   };
 }
 
+function resetAckMirrorFixture({ socketId = 'reset-mirror-socket' } = {}) {
+  const h = loadRecoveryFixture({ latency: true });
+  h.WebRTC.socket.id = socketId;
+  h.WebRTC.pc = { connectionState: 'connected' };
+  h.WebRTC.bindInputChannelCallbacks();
+  const channel = h.WebRTC.inputChannel;
+  h.Input._markMobileSurfaceUncertain('reset-mirror-test');
+  assert.equal(h.Input.requestInputRecovery({ source: 'user' }), true);
+  const resets = h.inputs().filter(p => p.action === 'reset');
+  assert.equal(resets.length, 2);
+  assert.equal(h.sent.filter(e => e.event === 'dc' && e.payload?.action === 'reset').length, 0);
+  return { ...h, channel, resets };
+}
+
+function mirrorResetPacket(payload, overrides = {}) {
+  return { type: 'input_ack', resetAckMirrorVersion: 1, schemaVersion: 2,
+    inputType: payload.type, inputIds: [...payload.inputIds], leaseEpoch: payload.leaseEpoch,
+    appliedSeq: payload.seq, status: 'applied', transport: 'socket',
+    ...(payload.type === 'keyboard' ? { pressedKeyCount: 0, modifierMask: 0 } : {}), ...overrides };
+}
+
+test('real Input and WebRTC finish both Socket reset barriers from current DC mirrors once', () => {
+  const h = resetAckMirrorFixture();
+  const before = h.LatencyMonitor.snapshot();
+  assert.equal(before.outcomes.sent, 2);
+  h.advance(100);
+  for (const reset of h.resets) {
+    h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(reset)) });
+  }
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  assert.equal(h.Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  assert.equal(h.Input._desktopWritePending.size, 0);
+  const after = h.LatencyMonitor.snapshot();
+  assert.equal(after.outcomes.acked, 2);
+  assert.equal(after.metrics.inputAckRttMs.count, 2);
+  assert.equal(after.metrics.inputAckRttMs.last, 100);
+  assert.equal(after.metrics.inputToVisibleEffectMs.count, 0);
+  const ledger = moveReliableLedger(h);
+  for (const reset of h.resets) {
+    const original = mirrorResetPacket(reset); delete original.resetAckMirrorVersion;
+    h.WebRTC.acceptObservedInputAck(original, { transport: 'socket', socket: h.WebRTC.socket });
+    h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(reset)) });
+  }
+  assert.deepEqual(moveReliableLedger(h), ledger);
+  assert.deepEqual(h.LatencyMonitor.snapshot(), after);
+  assert.equal(h.inputs().length, 2);
+});
+
+test('mouse reset first success consumes both ACK sources while its dual barrier record stays pending', () => {
+  for (const winner of ['socket', 'datachannel']) {
+    const h = resetAckMirrorFixture();
+    const mouse = h.resets.find(p => p.type === 'mouse');
+    const keyboard = h.resets.find(p => p.type === 'keyboard');
+    const ack = mirrorResetPacket(mouse);
+    h.advance(100);
+    h.WebRTC.acceptObservedInputAck(ack, winner === 'socket'
+      ? { transport: 'socket', socket: h.WebRTC.socket }
+      : { transport: 'datachannel', dataChannel: h.channel });
+    assert.equal(h.Input.getDiagnosticState().recovery.state, 'waiting');
+    assert.equal(h.Input._desktopWritePending.has(mouse.inputIds[0]), true);
+    assert.equal(h.LatencyMonitor.snapshot().outcomes.acked, 1);
+    const ledger = moveReliableLedger(h), latency = h.LatencyMonitor.snapshot();
+    h.WebRTC.acceptObservedInputAck(ack, { transport: 'socket', socket: h.WebRTC.socket });
+    h.channel.onmessage({ data: JSON.stringify(ack) });
+    assert.deepEqual(moveReliableLedger(h), ledger, winner);
+    assert.deepEqual(h.LatencyMonitor.snapshot(), latency, winner);
+    h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(keyboard, { status: 'duplicate' })) });
+    assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered');
+    assert.equal(h.LatencyMonitor.snapshot().outcomes.acked, 2);
+    assert.equal(h.inputs().length, 2);
+  }
+});
+
+test('keyboard DC reset ACK waits for mouse Socket fallback before dual recovery completes', () => {
+  const h = resetAckMirrorFixture();
+  const keyboard = h.resets.find(p => p.type === 'keyboard');
+  const mouse = h.resets.find(p => p.type === 'mouse');
+  h.advance(100);
+  h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(keyboard)) });
+  assert.equal(h.Input.keyboardTransport.getSnapshot().pendingCount, 0);
+  assert.equal(h.Input._desktopWritePending.has(mouse.inputIds[0]), true);
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'waiting');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  assert.equal(h.LatencyMonitor.snapshot().outcomes.acked, 1);
+  const waitingLedger = moveReliableLedger(h), waitingLatency = h.LatencyMonitor.snapshot();
+  const keyboardSocketAck = mirrorResetPacket(keyboard); delete keyboardSocketAck.resetAckMirrorVersion;
+  h.WebRTC.acceptObservedInputAck(keyboardSocketAck, { transport: 'socket', socket: h.WebRTC.socket });
+  h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(keyboard)) });
+  assert.deepEqual(moveReliableLedger(h), waitingLedger);
+  assert.deepEqual(h.LatencyMonitor.snapshot(), waitingLatency);
+  h.advance(40);
+  assert.equal(h.Input.getEffectiveInputGate().allowed, false);
+  const mouseSocketAck = mirrorResetPacket(mouse); delete mouseSocketAck.resetAckMirrorVersion;
+  h.WebRTC.acceptObservedInputAck(mouseSocketAck, { transport: 'socket', socket: h.WebRTC.socket });
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered');
+  assert.equal(h.Input.getEffectiveInputGate().allowed, true);
+  assert.equal(h.Input._desktopWritePending.size, 0);
+  const recoveredLedger = moveReliableLedger(h), recoveredLatency = h.LatencyMonitor.snapshot();
+  assert.equal(recoveredLatency.outcomes.acked, 2);
+  assert.equal(recoveredLatency.metrics.inputAckRttMs.last, 140);
+  h.WebRTC.acceptObservedInputAck(mouseSocketAck, { transport: 'socket', socket: h.WebRTC.socket });
+  h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(mouse)) });
+  h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(keyboard)) });
+  assert.deepEqual(moveReliableLedger(h), recoveredLedger);
+  assert.deepEqual(h.LatencyMonitor.snapshot(), recoveredLatency);
+  assert.equal(h.inputs().length, 2);
+});
+
+const resetAckMirrorVetoes = {
+  'missing marker': (_h, ack) => { delete ack.resetAckMirrorVersion; },
+  'wrong marker': (_h, ack) => { ack.resetAckMirrorVersion = '1'; },
+  'negative status': (_h, ack) => { ack.status = 'execution-failed'; },
+  'wrong type': (_h, ack) => { ack.inputType = ack.inputType === 'mouse' ? 'keyboard' : 'mouse'; },
+  'wrong ID': (_h, ack) => { ack.inputIds = ['different-input']; },
+  'multiple IDs': (_h, ack) => { ack.inputIds.push('different-input'); },
+  'wrong epoch': (_h, ack) => { ack.leaseEpoch += 1; },
+  'new active lease': (h) => {
+    h.Input.setControlLease({ leaseId: 'replacement-lease', leaseEpoch: 8 });
+  },
+  'older seq': (_h, ack) => { ack.appliedSeq -= 1; },
+  'future seq': (_h, ack) => { ack.appliedSeq += 1; },
+  'old attempt': (h) => { h.WebRTC.currentConnectionAttemptId = 'replacement-attempt'; },
+  'same Socket with new id': (h) => { h.WebRTC.socket.id = 'replacement-id'; },
+  'replacement Socket': (h) => { h.WebRTC.socket = { ...h.WebRTC.socket }; },
+  'retired DC': (h) => { h.WebRTC._inputChannelOwner.retired = true; },
+  'old DC after replacement': (h) => { h.WebRTC.inputChannel = { readyState: 'open' }; },
+  'new DC after replacement': (h) => { h.WebRTC.inputChannel = { readyState: 'open' }; return h.WebRTC.inputChannel; },
+  'closed DC': (h) => { h.channel.readyState = 'closed'; },
+  'quarantined DC': (h) => { h.WebRTC._quarantinedInputChannel = h.channel; },
+  'connecting PC': (h) => { h.WebRTC.pc.connectionState = 'connecting'; },
+  'replacement PC': (h) => { h.WebRTC.pc = { connectionState: 'connected' }; },
+  'throwing PC state getter': (h) => {
+    Object.defineProperty(h.WebRTC.pc, 'connectionState', { get() { throw new Error('optional observer'); } });
+  },
+};
+for (const type of ['mouse', 'keyboard']) {
+  for (const [reason, mutate] of Object.entries(resetAckMirrorVetoes)) {
+    test(`real Input ${type} reset mirror rejects ${reason} without advancing ledger or metrics`, () => {
+      const h = resetAckMirrorFixture();
+      const reset = h.resets.find(p => p.type === type), ack = mirrorResetPacket(reset);
+      const source = mutate(h, ack) || h.channel;
+      const ledger = moveReliableLedger(h), before = h.LatencyMonitor.snapshot();
+      h.WebRTC.acceptObservedInputAck(ack, { transport: 'datachannel', dataChannel: source });
+      assert.deepEqual(moveReliableLedger(h), ledger);
+      assert.deepEqual(h.LatencyMonitor.snapshot(), before);
+      assert.equal(h.inputs().length, 2);
+    });
+  }
+}
+
+test('Socket reset fallback still completes after optional DC source becomes unavailable', () => {
+  const h = resetAckMirrorFixture();
+  h.WebRTC.inputChannel = null;
+  h.advance(200);
+  for (const reset of h.resets) {
+    const ack = mirrorResetPacket(reset); delete ack.resetAckMirrorVersion;
+    h.WebRTC.acceptObservedInputAck(ack, { transport: 'socket', socket: h.WebRTC.socket });
+  }
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered');
+  assert.equal(h.LatencyMonitor.snapshot().outcomes.acked, 2);
+  assert.equal(h.inputs().length, 2);
+});
+
+test('reset DC mirrors require a known original Socket id but preserve Socket fallback', () => {
+  const h = resetAckMirrorFixture({ socketId: '' });
+  for (const reset of h.resets) {
+    h.channel.onmessage({ data: JSON.stringify(mirrorResetPacket(reset)) });
+  }
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'waiting');
+  assert.equal(h.LatencyMonitor.snapshot().outcomes.acked, 0);
+  h.resets.forEach(p => h.ack(p));
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered');
+});
+
+test('a channel becoming healthy only after Socket reset send cannot retroactively own its mirror', () => {
+  const h = loadRecoveryFixture({ latency: true, channels: 'socket' });
+  h.WebRTC.socket.id = 'reset-mirror-socket';
+  h.WebRTC.pc = { connectionState: 'connected' };
+  h.Input._markMobileSurfaceUncertain('late-channel');
+  assert.equal(h.Input.requestInputRecovery({ source: 'user' }), true);
+  const resets = h.inputs().filter(p => p.action === 'reset');
+  h.WebRTC.inputChannel = { readyState: 'open' };
+  h.WebRTC.inputMoveChannel = h.WebRTC.inputChannel;
+  h.WebRTC.bindInputChannelCallbacks();
+  for (const reset of resets) {
+    h.WebRTC.inputChannel.onmessage({ data: JSON.stringify(mirrorResetPacket(reset)) });
+  }
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'waiting');
+  assert.equal(h.LatencyMonitor.snapshot().outcomes.acked, 0);
+  resets.forEach(p => h.ack(p));
+  assert.equal(h.Input.getDiagnosticState().recovery.state, 'recovered');
+});
+
+test('ordinary Socket mouse write cannot borrow a reset mirror source', () => {
+  const h = loadRecoveryFixture({ latency: true });
+  h.WebRTC.socket.id = 'reset-mirror-socket';
+  h.WebRTC.pc = { connectionState: 'connected' };
+  h.WebRTC.bindInputChannelCallbacks();
+  h.WebRTC.sendInput = () => false;
+  const id = h.Input.sendInput('mouse', 'down', { button: 'left' });
+  const write = h.inputs().find(p => p.inputIds.includes(id));
+  assert.ok(write);
+  const before = moveReliableLedger(h), latency = h.LatencyMonitor.snapshot();
+  h.WebRTC.acceptObservedInputAck(mirrorResetPacket(write),
+    { transport: 'datachannel', dataChannel: h.WebRTC.inputChannel });
+  assert.deepEqual(moveReliableLedger(h), before);
+  assert.deepEqual(h.LatencyMonitor.snapshot(), latency);
+});
+
 test('recovery fixture records real gate, send, ACK-timeout, and lifecycle decisions', () => {
   const h = loadRecoveryFixture();
   h.pointer('pointerdown');

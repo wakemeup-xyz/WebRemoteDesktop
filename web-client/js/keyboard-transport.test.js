@@ -32,6 +32,9 @@ function createHarness(options = {}) {
     onReliableAckTimeout(record) { timeouts.push(record); },
     makeInputId: () => `input-${++nextId}`,
     getConnectionAttemptId: () => connectionAttemptId,
+    getSocket: options.getSocket,
+    getDataChannel: options.getDataChannel,
+    getResetAckDataChannel: options.getResetAckDataChannel,
     ackTimeoutMs: options.ackTimeoutMs || 3000,
   });
   transport.setLease({ leaseId: 'lease-for-test-0001', leaseEpoch: 7 });
@@ -63,6 +66,119 @@ test('late DataChannel key is invalidated by a higher Socket reset after DataCha
   assert.equal(h.transport.canSendNewInput(), true);
   assert.equal(h.transport.acceptAck({ schemaVersion: 2, leaseEpoch: 7, appliedSeq: 1, status: 'duplicate' }).status, 'stale');
   assert.equal(keyId, 'input-1');
+});
+
+function resetMirrorHarness() {
+  let socket = { id: 'reset-mirror-socket' };
+  let currentChannel = { readyState: 'open' };
+  let getterFails = false;
+  const h = createHarness({ getSocket: () => socket,
+    getDataChannel: () => currentChannel,
+    getResetAckDataChannel: () => {
+      if (getterFails) throw new Error('optional channel observation failed');
+      return currentChannel?.readyState === 'open' ? currentChannel : null;
+    } });
+  return { ...h, socketOwner: socket, channel: currentChannel,
+    replaceSocket(value) { socket = value; },
+    replaceChannel(value) { currentChannel = value; },
+    failGetter() { getterFails = true; } };
+}
+
+function resetMirrorAck(payload, overrides = {}) {
+  return { type: 'input_ack', schemaVersion: 2, resetAckMirrorVersion: 1,
+    inputType: 'keyboard', inputIds: payload.inputIds, leaseEpoch: payload.leaseEpoch,
+    appliedSeq: payload.seq, status: 'applied', transport: 'socket', ...overrides };
+}
+
+test('reset ACK mirror predicate requires the exact marker, successful type and single matching ID', () => {
+  const valid = resetMirrorAck({ inputIds: ['mirror-reset'], leaseEpoch: 7, seq: 1 });
+  assert.equal(KeyboardTransport.isResetAckMirror(valid, 'keyboard', 'mirror-reset'), true);
+  assert.equal(KeyboardTransport.isResetAckMirror({ ...valid, inputType: 'mouse' }, 'mouse', 'mirror-reset'), true);
+  for (const patch of [{ resetAckMirrorVersion: undefined }, { resetAckMirrorVersion: '1' },
+    { schemaVersion: 1 }, { status: 'execution-failed' }, { inputType: 'mouse' },
+    { inputIds: [] }, { inputIds: ['other'] }, { inputIds: ['mirror-reset', 'other'] }]) {
+    assert.equal(KeyboardTransport.isResetAckMirror({ ...valid, ...patch }, 'keyboard', 'mirror-reset'), false);
+  }
+  assert.equal(KeyboardTransport.isResetAckMirror(valid, 'command', 'mirror-reset'), false);
+});
+
+test('Socket keyboard reset accepts one captured current DC mirror without another request or renewed deadline', () => {
+  const h = resetMirrorHarness();
+  const id = h.transport.resetBarrier('manual');
+  const sent = h.socket[0], ack = resetMirrorAck(sent);
+  const source = { transport: 'datachannel', dataChannel: h.channel };
+  const deadline = [...h.timers.values()][0].due;
+  assert.equal(h.transport.ownsAckSource(ack, source), true);
+  assert.equal([...h.timers.values()][0].due, deadline);
+  assert.equal(h.transport.acceptAck(ack).status, 'applied');
+  assert.equal(h.transport.getSnapshot().state, 'ready');
+  assert.equal(h.transport.getSnapshot().lastApplied, sent.seq);
+  const after = h.transport.getSnapshot();
+  assert.equal(h.transport.ownsAckSource(ack, source), false);
+  assert.equal(h.transport.ownsAckSource(ack, { transport: 'socket', socket: h.socketOwner }), false);
+  assert.deepEqual(h.transport.getSnapshot(), after);
+  assert.equal(h.socket.length, 1);
+  assert.equal(h.dataChannel.length, 0);
+  assert.equal(h.transport.peekAckMetadata({ inputIds: [id] }), null);
+});
+
+const keyboardMirrorVetoes = {
+  'missing marker': (_h, ack) => { delete ack.resetAckMirrorVersion; },
+  'negative status': (_h, ack) => { ack.status = 'execution-failed'; },
+  'wrong ID': (_h, ack) => { ack.inputIds = ['not-the-reset']; },
+  'multiple IDs': (_h, ack) => { ack.inputIds.push('not-the-reset'); },
+  'wrong type': (_h, ack) => { ack.inputType = 'mouse'; },
+  'wrong epoch': (_h, ack) => { ack.leaseEpoch += 1; },
+  'older seq': (_h, ack) => { ack.appliedSeq -= 1; },
+  'future seq': (_h, ack) => { ack.appliedSeq += 1; },
+  'old attempt': (h) => h.setConnectionAttempt('replacement-attempt'),
+  'same Socket with new id': (h) => { h.socketOwner.id = 'replacement-id'; },
+  'replacement Socket': (h) => h.replaceSocket({ id: h.socketOwner.id }),
+  'replacement DC': (h) => h.replaceChannel({ readyState: 'open' }),
+  'closed DC': (h) => { h.channel.readyState = 'closed'; },
+  'throwing current getter': (h) => h.failGetter(),
+};
+for (const [reason, mutate] of Object.entries(keyboardMirrorVetoes)) {
+  test(`Socket keyboard reset mirror rejects ${reason} without consuming or extending pending`, () => {
+    const h = resetMirrorHarness();
+    h.transport.resetBarrier('manual');
+    const ack = resetMirrorAck(h.socket[0]);
+    mutate(h, ack);
+    const before = h.transport.getSnapshot(), timers = [...h.timers.entries()];
+    assert.equal(h.transport.ownsAckSource(ack, { transport: 'datachannel', dataChannel: h.channel }), false);
+    assert.deepEqual(h.transport.getSnapshot(), before);
+    assert.deepEqual([...h.timers.entries()], timers);
+    assert.equal(h.socket.length, 1);
+  });
+}
+
+test('throwing optional DC getter at reset send preserves the original Socket ACK fallback', () => {
+  const h = resetMirrorHarness(); h.failGetter();
+  h.transport.resetBarrier('manual');
+  const ack = resetMirrorAck(h.socket[0]);
+  assert.equal(h.transport.ownsAckSource(ack, { transport: 'datachannel', dataChannel: h.channel }), false);
+  assert.equal(h.transport.ownsAckSource(ack, { transport: 'socket', socket: h.socketOwner }), true);
+  assert.equal(h.transport.acceptAck(ack).status, 'applied');
+  assert.equal(h.socket.length, 1);
+});
+
+test('Socket keyboard reset mirror cannot use an unobserved Socket owner at send', () => {
+  const h = resetMirrorHarness(); h.replaceSocket(null);
+  h.transport.resetBarrier('manual');
+  assert.equal(h.transport.ownsAckSource(resetMirrorAck(h.socket[0]),
+    { transport: 'datachannel', dataChannel: h.channel }), false);
+  assert.equal(h.transport.getSnapshot().pendingCount, 1);
+});
+
+test('ordinary Socket keyboard write cannot borrow reset mirror source even with a valid marker', () => {
+  const h = resetMirrorHarness(); h.transport.markAdapterUnavailable('dataChannel');
+  const reset = h.socket[0]; h.transport.acceptAck(resetMirrorAck(reset));
+  h.transport.send({ type: 'keyboard', action: 'text', payload: { text: 'fixture' } });
+  const write = h.socket.at(-1), before = h.transport.getSnapshot();
+  assert.equal(write.action, 'text');
+  assert.equal(h.transport.ownsAckSource(resetMirrorAck(write),
+    { transport: 'datachannel', dataChannel: h.channel }), false);
+  assert.deepEqual(h.transport.getSnapshot(), before);
 });
 
 test('a DataChannel adapter can be re-enabled after an initial unavailable state', () => {

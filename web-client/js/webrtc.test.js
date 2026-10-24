@@ -314,6 +314,83 @@ function nativeLatencyFixture({ transport = 'datachannel', type = 'mouse', actio
     row: options => monitor.readControlledInputEvidence(reservation.inputId, current(), options) };
 }
 
+for (const inputType of ['mouse', 'keyboard']) for (const ackTransport of ['socket', 'datachannel']) {
+  test(`ACK arrival timing crosses real ${inputType} reset C and M1 over ${ackTransport}`, () => {
+    let now = 0;
+    const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+    const handlers = new Map(), channels = new Map(), writes = [], order = [];
+    const { WebRTC: w, context } = loadWebRTC({ realInput: true, LatencyMonitor: monitor,
+      performance: { now: () => now } });
+    const input = context.__Input;
+    w.currentConnectionAttemptId = 'arrival-attempt'; w.connectionAttemptSequence = 1;
+    w.pc = { connectionState: 'connected', createDataChannel(label) {
+      const channel = { label, readyState: 'open', bufferedAmount: 0, send() {} };
+      channels.set(label, channel); return channel;
+    } };
+    w.socket = { connected: true, id: 'arrival-socket', on(event, callback) { handlers.set(event, callback); },
+      emit(event, data) { if (event === 'input') writes.push(data); } };
+    w.createInputChannel(); w.setupSocketListeners();
+    input.setControlLease({ leaseId: 'arrival-lease', leaseEpoch: 4 });
+    const inputId = inputType === 'mouse' ? input._sendInput('mouse', 'reset', {})
+      : input.keyboardTransport.resetBarrier('arrival-test');
+    const write = writes.find(item => item.inputIds.includes(inputId));
+    assert.ok(write, 'the product reset request must use the actual Socket adapter');
+    const ack = { type: 'input_ack', schemaVersion: 2, inputType, status: 'applied',
+      leaseEpoch: 4, appliedSeq: write.seq, inputIds: [inputId], pressedKeyCount: 0, modifierMask: 0,
+      ...(ackTransport === 'datachannel' ? { resetAckMirrorVersion: 1 } : {}) };
+    const acceptName = inputType === 'mouse' ? '_acceptMouseAck' : '_acceptKeyboardAck';
+    const accept = input[acceptName];
+    input[acceptName] = function(...args) {
+      order.push('C'); const result = accept.apply(this, args); now = 140; return result;
+    };
+    const onAck = monitor.onInputAck;
+    monitor.onInputAck = function(data, current) {
+      order.push('M1');
+      assert.equal(current.nowMs, undefined, 'entry clock is only difference data');
+      assert.equal(current.arrivalAtMs, 100);
+      return onAck(data, current);
+    };
+    input.recordObservedInputAck = () => { order.push('trace'); };
+    const deliver = (payload = ack) => ackTransport === 'socket' ? handlers.get('input-ack')(payload)
+      : channels.get('input').onmessage({ data: JSON.stringify(payload) });
+    now = 100; deliver({ ...ack, leaseEpoch: 3 });
+    const rejected = monitor.snapshot();
+    assert.equal(rejected.outcomes.acked, 0);
+    assert.equal(rejected.metrics.inputAckArrivalRttMs.available, false);
+    assert.equal(rejected.metrics.inputAckValidationMs.available, false);
+    assert.equal(order.includes('M1'), false, 'entry timing cannot bypass rejected C ownership');
+    order.length = 0;
+    now = 100; deliver();
+    const snapshot = monitor.snapshot();
+    assert.equal(snapshot.outcomes.acked, 1);
+    assert.equal(snapshot.metrics.inputAckRttMs.last, 140);
+    assert.equal(snapshot.metrics.inputAckArrivalRttMs.last, 100);
+    assert.equal(snapshot.metrics.inputAckValidationMs.last, 40);
+    assert.deepEqual(order, ['C', 'M1', 'trace']);
+    now = 150; deliver();
+    const afterDuplicate = monitor.snapshot();
+    assert.equal(afterDuplicate.metrics.inputAckRttMs.count, 1);
+    assert.equal(afterDuplicate.metrics.inputAckArrivalRttMs.count, 1);
+    assert.equal(afterDuplicate.metrics.inputAckValidationMs.count, 1);
+  });
+}
+
+test('ACK arrival timing requires successful C validation while preserving legacy M1 routing', () => {
+  let now = 0;
+  const monitor = require('./latency-monitor.js').createLatencyMonitor({ now: () => now });
+  const { WebRTC: w } = loadWebRTC({ LatencyMonitor: monitor, performance: { now: () => now },
+    Input: { activeControlLease: { leaseEpoch: 4 },
+      acceptMouseAck() { return { status: 'stale' }; },
+      acceptKeyboardAck() { return { status: 'stale' }; } } });
+  w.currentConnectionAttemptId = 'legacy-arrival-attempt'; w.connectionAttemptSequence = 1;
+  monitor.setScope(w.latencyScope()); monitor.recordInputSend('legacy'); now = 100;
+  w.acceptObservedInputAck({ inputIds: ['legacy'], status: 'applied' });
+  const snapshot = monitor.snapshot();
+  assert.equal(snapshot.metrics.inputAckRttMs.last, 100, 'existing legacy M1 behavior is preserved');
+  assert.equal(snapshot.metrics.inputAckArrivalRttMs.available, false);
+  assert.equal(snapshot.metrics.inputAckValidationMs.available, false);
+});
+
 for (const traceUnavailable of [false, true]) for (const wallStep of [-60000, 0, 60000]) {
   for (const variant of ['accepted', 'wrong-source', 'unknown-id', 'buffered']) {
     test(`native latency: trace independent move ${traceUnavailable}/${wallStep}/${variant}`, () => {

@@ -21,9 +21,9 @@
 
 **Files:** 私有`/tmp`探针；现有scripts/ordinary_session_recovery.py helper只读复用；新报告evidence。
 
-- [ ] 只读复核10个历史reset的Viewer/Signal/Host口径和计时盲区。
-- [ ] 审查私有owned reset-only探针：正常UI Start、scope冻结、20对/≥1.5秒、Socket prependAny入口与后置监听分段、有界cleanup。
-- [ ] 在无Viewer时采改前基线，保留当前build/source、实际通道、逐样本hash及缺测，不从窗口max补造单输入值。
+- [x] 只读复核10个历史reset的Viewer/Signal/Host口径和计时盲区。
+- [x] 审查私有owned reset-only探针：正常UI Start、scope冻结、20对/≥1.5秒、Socket prependAny入口与后置监听分段、有界cleanup。
+- [x] 在无Viewer时采改前基线，保留当前build/source、实际通道、逐样本hash及缺测，不从窗口max补造单输入值。
 
 ### Task 2: Host成功ACK镜像
 
@@ -31,9 +31,9 @@
 
 **Interfaces:** 消费`_send_input_ack(data,result,local_execute_ms)`既有成功结果；生成含固定marker的同结果DC ACK，原Socket ACK保持。
 
-- [ ] 先写失败反例：成功reset镜像且Socket仍emit；DC发送throw/非open/拥塞只走Socket；非reset/negative/旧绑定不镜像。
-- [ ] 在无await区间验证authority、PC/DC实际归属及绑定，best-effort发送镜像，异常不越过Socket兜底。
-- [ ] focused测试红绿并独立复核，不创建或重启服务。
+- [x] 先写失败反例：成功reset镜像且Socket仍emit；DC发送throw/非open/拥塞只走Socket；非reset/negative/旧绑定不镜像。
+- [x] 在无await区间验证authority、PC/DC实际归属及绑定，best-effort发送镜像，异常不越过Socket兜底。
+- [x] focused测试红绿并独立复核，不创建或重启服务。
 
 ### Task 3: Viewer精确第二ACK source
 
@@ -41,9 +41,9 @@
 
 **Interfaces:** pending只增加内存中的reset镜像ACK source；原`acceptMouseAck`/`ownsAckSource`和seq/barrier验证仍为权威。
 
-- [ ] 先写反例：Socket reset经匹配DC成功、普通输入拒跨源、无marker/negative/wrong ID/type/epoch/attempt/socket/DC拒绝、首ACK后迟到副本无副作用。
-- [ ] 发送时捕获健康当前DC；到达时重新核对实际当前source，例外只限成功reset单ID。
-- [ ] focused真实Input/WebRTC/keyboard集成及Host测试通过，独立审查scope和故障回退。
+- [x] 先写反例：Socket reset经匹配DC成功、普通输入拒跨源、无marker/negative/wrong ID/type/epoch/attempt/socket/DC拒绝、首ACK后迟到副本无副作用。
+- [x] 发送时捕获健康当前DC；到达时重新核对实际当前source，例外只限成功reset单ID。
+- [x] focused真实Input/WebRTC/keyboard集成及Host测试通过，独立审查scope和故障回退。
 
 ### Task 3b: 分离ACK原始到达与验权阶段
 
@@ -51,9 +51,9 @@
 
 **Interfaces:** `onInputAck(data,{scope,arrivalAtMs})`消费既有入口时钟，在原匹配成功后新增有界`inputAckArrivalRttMs`/`inputAckValidationMs`；原RTT及全局clock不变。
 
-- [ ] fake clock复现入口100、验权/UI后140；分别应记100/40，原RTT140。覆盖scope sync已推进clock、非法/缺失arrival、旧scope/negative/duplicate缺测。
-- [ ] WebRTC仅在既有C验权后提交已捕获入口时间，不传为nowMs或绕过C；两个指标只记已匹配正向pending，不做clock回退。
-- [ ] 定向回归与真实WebRTC→Input→M1及私有Signal redactor持久化验证；独立复核。私有未连接DC listener顺序反例保留，不称production到达。
+- [x] fake clock复现入口100、验权/UI后140；分别应记100/40，原RTT140。覆盖scope sync已推进clock、非法/缺失arrival、旧scope/negative/duplicate缺测。
+- [x] WebRTC仅在既有C验权后提交已捕获入口时间，不传为nowMs或绕过C；两个指标只记已匹配正向pending，不做clock回退。
+- [x] 定向回归与真实WebRTC→Input→M1及私有Signal redactor持久化验证；独立复核。私有未连接DC listener顺序反例保留，不称production到达。
 
 ### Task 4: 维护加载与收益验收
 

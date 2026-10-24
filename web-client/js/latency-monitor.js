@@ -1,6 +1,7 @@
 // A passive, bounded observer. Control delivery never depends on this collector.
 const LATENCY_METRIC_NAMES = Object.freeze([
-  'frontendDispatchMs', 'inputAckRttMs', 'hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs',
+  'frontendDispatchMs', 'inputAckRttMs', 'inputAckArrivalRttMs', 'inputAckValidationMs',
+  'hostAdapterAwaitMs', 'hostQueueMs', 'hostApplyMs',
   'signalForwardMs', 'signalAckForwardMs', 'inputToFrameNoticeMs',
   'inputToPostApplyFrameMs', 'inputToVisibleEffectMs', 'relayFrameAckRttMs',
   'paintIntervalMs', 'freshFrameAgeMs', 'candidateRttMs', 'jitterBufferMs', 'decodeMs',
@@ -348,6 +349,14 @@ const createLatencyMonitor = (options = {}) => {
         const rejected = data.status && data.status !== 'applied' && data.status !== 'unordered' && data.status !== 'duplicate';
         inc(rejected ? 'rejected' : 'acked');
         if (!rejected) push('inputAckRttMs', t - record.sent, t, id);
+        // Entry time is difference data, never an input to the global clock.
+        // Missing/invalid arrival or a non-positive ACK cannot manufacture a
+        // zero sample, nor can a later copy enrich an already consumed pending.
+        if (['applied', 'unordered', 'duplicate'].includes(data.status)
+            && valid(context.arrivalAtMs) && context.arrivalAtMs >= record.sent && context.arrivalAtMs <= t) {
+          push('inputAckArrivalRttMs', context.arrivalAtMs - record.sent, t, id);
+          push('inputAckValidationMs', t - context.arrivalAtMs, t, id);
+        }
         // A marker can be presented before the ACK callback reaches Viewer.
         // Settle that bounded candidate only after the ACK proves the input
         // was applied; keep the original rVFC clock as the sample timestamp.

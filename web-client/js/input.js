@@ -261,6 +261,7 @@ const Input = {
       getConnectionAttemptId: () => this._currentConnectionAttemptId(),
       getSocket: () => this._currentInputSocket(),
       getDataChannel: () => typeof WebRTC !== 'undefined' ? WebRTC.inputChannel : null,
+      getResetAckDataChannel: () => this._getResetAckDataChannel(),
       onReliableAckTimeout: (record) => this._onReliableAckTimeout(record),
     });
     this.keyboardController = RemoteKeyboardController.create({
@@ -1385,6 +1386,33 @@ const Input = {
     return (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket || null;
   },
 
+  _getResetAckDataChannel() {
+    // Optional ACK source only: requests keep their existing Socket path.
+    try {
+      if (typeof WebRTC === 'undefined' || WebRTC.pc?.connectionState !== 'connected') return null;
+      const channel = WebRTC.inputChannel;
+      if (channel?.readyState !== 'open' || channel === WebRTC._quarantinedInputChannel
+        || !WebRTC.ownsDataChannelOwner?.(WebRTC._inputChannelOwner, channel)) return null;
+      return channel;
+    } catch (_) { return null; }
+  },
+
+  _ownsResetAckMirrorSource(ack, record, source) {
+    return Boolean(source?.transport === 'datachannel' && record?.transport === 'socket'
+      && record.type === 'mouse' && record.action === 'reset'
+      && typeof KeyboardTransport !== 'undefined'
+      && KeyboardTransport.isResetAckMirror?.(ack, 'mouse', record.inputId)
+      && ack.leaseEpoch === record.leaseEpoch && ack.appliedSeq === record.seq
+      && record.leaseId === this.activeControlLease?.leaseId
+      && record.leaseEpoch === this.activeControlLease?.leaseEpoch
+      && record.connectionAttemptId === this._currentConnectionAttemptId()
+      && record.socket != null && typeof record.socketId === 'string' && record.socketId.length > 0
+      && this._recordSocketIsCurrent(record)
+      && record.resetAckDataChannel != null
+      && record.resetAckDataChannel === source.dataChannel
+      && this._getResetAckDataChannel() === source.dataChannel);
+  },
+
   _recordSocketIsCurrent(record) {
     const socket = this._currentInputSocket();
     return record?.socket === socket && record?.socketId === (socket?.id || null);
@@ -1744,11 +1772,13 @@ const Input = {
       const ids = ack?.inputIds || (ack?.inputId ? [ack.inputId] : []);
       const owned = ids.some(id => {
         const record = this._desktopWritePending.get(id);
-        return record && record.connectionAttemptId === this._currentConnectionAttemptId()
+        return record && record.resetAckConsumed !== true
+          && record.connectionAttemptId === this._currentConnectionAttemptId()
           && (source.transport === 'socket'
             ? record.transport === 'socket' && record.socket === source.socket
               && record.socketId === (source.socket?.id || null)
-            : record.transport === 'datachannel' && record.dataChannel === source.dataChannel);
+            : (record.transport === 'datachannel' && record.dataChannel === source.dataChannel)
+              || this._ownsResetAckMirrorSource(ack, record, source));
       });
       if (!owned) {
         const result = { status: 'stale' };
@@ -1765,6 +1795,19 @@ const Input = {
         if (!options.deferTrace) this._recordInputAck('mouse', ack, { status: 'stale' }, metadata);
       }
       throw error;
+    }
+    if ((result?.status === 'applied' || result?.status === 'duplicate')
+      && ack?.inputType === 'mouse' && Array.isArray(ack.inputIds) && ack.inputIds.length === 1) {
+      const record = this._desktopWritePending.get(ack.inputIds[0]);
+      // Dual recovery retains this record until the keyboard barrier settles.
+      // Consume its optional second source only after C accepted the ACK, so
+      // either later copy cannot reschedule or advance that retained record.
+      if (record?.type === 'mouse' && record.action === 'reset' && record.transport === 'socket'
+        && record.resetAckDataChannel != null
+        && record.leaseId === this.activeControlLease?.leaseId
+        && record.leaseEpoch === this.activeControlLease?.leaseEpoch
+        && record.connectionAttemptId === this._currentConnectionAttemptId()
+        && this._recordSocketIsCurrent(record)) record.resetAckConsumed = true;
     }
     if (!Object.prototype.hasOwnProperty.call(ack || {}, 'inputType')
       || ack.inputType === 'mouse' || ack.inputType === 'command') {
@@ -2553,7 +2596,7 @@ const Input = {
       data.seq = nextSequence;
     }
     const dataChannel = typeof WebRTC !== 'undefined' ? WebRTC.inputChannel : null;
-    const commitSequence = (transport) => {
+    const commitSequence = (transport, resetAckDataChannel = null) => {
       if (!reliableWrite) return;
       this._desktopWriteSequence = nextSequence;
       this._desktopWritePending.set(data.inputIds[0], {
@@ -2563,6 +2606,8 @@ const Input = {
         action,
         transport,
         dataChannel: transport === 'datachannel' ? dataChannel : null,
+        ...(transport === 'socket' && type === 'mouse' && action === 'reset'
+          ? { resetAckDataChannel } : {}),
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
         connectionAttemptId: this._currentConnectionAttemptId(),
@@ -2611,6 +2656,8 @@ const Input = {
     }
     const socket = (typeof WebRTC !== 'undefined' && WebRTC.socket) || this.socket;
     if (socket?.connected) {
+      const resetAckDataChannel = type === 'mouse' && action === 'reset'
+        ? this._getResetAckDataChannel() : null;
       try {
         socket.emit('input', data);
       } catch (error) {
@@ -2655,7 +2702,7 @@ const Input = {
         connectionAttemptId,
         reliable: reliableWrite,
       });
-      commitSequence('socket');
+      commitSequence('socket', resetAckDataChannel);
       this.recordLatency(data, 'socket');
       return data.inputIds[0];
     }
