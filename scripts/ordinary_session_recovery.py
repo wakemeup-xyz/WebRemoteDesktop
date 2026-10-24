@@ -1053,15 +1053,19 @@ async def start_guarded_via_ui(page,*,timeout_s=30,monotonic=time.monotonic,slee
         if owned: observer.detach()
 
 
-async def _observation_pair(page_once,status_reader,*,on_status_failure=None):
+async def _observation_pair(page_once,status_reader,*,on_status_failure=None,on_status_complete=None):
     """Concurrent page/status work with one owner and cancellation settlement."""
     # The production status function owns its 750ms budget itself; injected
     # readers receive the identical budget without importing runtime packages.
     async def status():
         started=time.monotonic()
         try:
-            if status_reader is read_local_host_status: return await status_reader()
-            return await lifecycle_stage(status_reader(),.75,settlement=.075)
+            value = await status_reader() if status_reader is read_local_host_status else await lifecycle_stage(status_reader(),.75,settlement=.075)
+            # Stamp the status child's completion, before waiting for page work.
+            # A slow page result is not a gap between successful Host samples.
+            completed_ms=time.monotonic()*1000
+            if on_status_complete is not None:on_status_complete(completed_ms)
+            return value
         except Exception as exc:
             failure=StatusObservationError('deadline','timeout',(time.monotonic()-started)*1000) if isinstance(exc,TimeoutError) else exc
             if isinstance(failure,StatusObservationError) and on_status_failure is not None:
@@ -1247,6 +1251,7 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
         nonlocal observation_poisoned
         if observation_poisoned: raise CancellationCooperationError('cancellation-noncooperative')
         sample=None; identity=dict.fromkeys(('sessionHash','socketHash','admissionHash')); events=[]; diagnostic=None; log_read=False
+        status_completed_ms=None
         async def page_once():
             if final:
                 return await life.page.evaluate('''async () => {
@@ -1261,12 +1266,17 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
             if status_observation_failure is None:
                 status_observation_failure=dict(schemaVersion=1,observation='final-export' if final else 'tick',
                     phase=model.phase,runFailureAlreadySet=model.failure is not None,**metadata)
+        def observe_status_complete(completed_ms):
+            nonlocal status_completed_ms
+            status_completed_ms=completed_ms
         try:
             if final: manifest.recheck(round(time.time()*1000))
             # Cleanup supplies the 1s outer deadline; ordinary ticks own 2s.
-            operation=_observation_pair(page_once,status_reader,on_status_failure=observe_status_failure)
+            operation=_observation_pair(page_once,status_reader,on_status_failure=observe_status_failure,
+                on_status_complete=observe_status_complete)
             result,status = await operation if final else await lifecycle_stage(operation,2,settlement=.1)
-            host.observe_status(status,time.monotonic()*1000)
+            if status_completed_ms is None:raise ValueError('host-observation-unavailable')
+            host.observe_status(status,status_completed_ms)
             _keys(result,('state','sample','diagnostic') if final else ('state','sample'))
             identity=check_state(result['state'])
             if fault is not None:
@@ -1293,7 +1303,9 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
             log_read=True
             events=log.read_tick(current_ids); model.server_coverage=log.snapshot()['coverage']
             if any(e['event']=='host-disconnected' for e in events): host.observe_host_disconnect()
-            if host.reason!='none': raise ValueError(host.reason)
+            # A prior failed Host interval stays failed. It must not discard a
+            # final diagnostic from the same validated Viewer during cleanup.
+            if host.reason!='none' and not (final and model.failure is not None): raise ValueError(host.reason)
             if log.reason!='none': raise ValueError(log.reason)
             if final:
                 diagnostic=passive.validate_diagnostic(result['diagnostic'])

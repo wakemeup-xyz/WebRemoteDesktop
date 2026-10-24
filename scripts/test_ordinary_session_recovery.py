@@ -1139,6 +1139,69 @@ class RuntimeRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls,[]); self.assertEqual(self.summary()['failure']['reason'],'runtime-dependency-unavailable')
 
 
+class StatusCompletionTimingTests(unittest.IsolatedAsyncioTestCase):
+    setUp=RuntimeRunTests.setUp
+    summary=RuntimeRunTests.summary
+
+    async def run_timed(self, *, status_gap=False):
+        page=RuntimePage(); original=page.evaluate
+        completed=asyncio.Queue(); clock=[0.0]; status_calls=0
+        async def status():
+            nonlocal status_calls
+            index=status_calls; status_calls+=1
+            at=index+(1 if status_gap and index>=1 else 0)
+            clock[0]=at
+            completed.put_nowait((index,at))
+            return dict(hostOnline=True,hostId='host-canary')
+        async def evaluate(script):
+            if 'window.__wrdPassiveSampler.sample()' not in script:
+                return await original(script)
+            index,at=await completed.get()
+            # The status child has already returned. Only the second page
+            # result takes another 600ms, still inside the existing 2s tick.
+            clock[0]=at+(0.6 if index==1 and not status_gap else 0)
+            result=await original(script)
+            if 'finalize' in script:
+                result['diagnostic']['coverage']['observedFromMs']=123
+            return result
+        page.evaluate=evaluate
+        # Replace this module's clock reference only; asyncio's real deadline
+        # clock and the 750ms status / 2s tick budgets remain untouched.
+        local_time=SimpleNamespace(monotonic=lambda:clock[0],time=runner.time.time)
+        # Model the production reader's already-owned completion: its own
+        # request budget has settled before page delivery advances the clock.
+        with patch.object(runner,'time',local_time), patch.object(runner,'read_local_host_status',status):
+            result=await runner.run(self.args,manager_factory=lambda:RuntimeManager(page),status_reader=status)
+        return result
+
+    async def test_slow_page_does_not_turn_continuous_status_completions_into_host_gap(self):
+        self.assertEqual(await self.run_timed(),1)
+        summary=self.summary()
+        # The late page still fails its own sampling cadence. It must not turn
+        # the independently continuous Host observations into a Host gap.
+        self.assertEqual(summary['failure']['reason'],'sampling-gap')
+        self.assertEqual(summary['hostObservation']['status'],'stable')
+        self.assertEqual(summary['hostObservation']['coverage'],'complete')
+
+    async def test_real_status_completion_gap_stays_failed_but_final_diagnostic_is_retained(self):
+        self.assertEqual(await self.run_timed(status_gap=True),1)
+        summary=self.summary()
+        self.assertEqual(summary['failure']['reason'],'host-observation-gap')
+        self.assertEqual(summary['hostObservation']['coverage'],'incomplete')
+        self.assertNotEqual(summary['ordinaryRecovery']['status'],'PASS')
+        lifecycle=json.loads((Path(self.args.output_dir)/'lifecycle.json').read_text())
+        self.assertEqual(lifecycle['captureStatus'],'ok')
+        self.assertEqual(lifecycle['diagnostics']['coverage']['observedFromMs'],123)
+
+    async def test_failed_status_never_publishes_a_completion_timestamp(self):
+        completed=[]
+        async def page():return {}
+        async def status():raise runner.StatusObservationError('headers','io',1)
+        with self.assertRaisesRegex(ValueError,'host-observation-unavailable'):
+            await runner._observation_pair(page,status,on_status_complete=completed.append)
+        self.assertEqual(completed,[])
+
+
 class TerminalSafetyTests(unittest.IsolatedAsyncioTestCase):
     async def test_first_close_retained_when_export_mutates_last_delta(self):
         life=runner.OwnedBrowserLifecycle(); await life.start(lambda:FakeManager())
