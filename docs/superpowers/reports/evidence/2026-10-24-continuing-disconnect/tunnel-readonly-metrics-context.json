@@ -1,0 +1,20 @@
+{
+  "scope": "read-only-cloudflared-current-counter-snapshot",
+  "observedAtEpochMs": 1792864631109,
+  "pid": 6438,
+  "countersSummedAcrossLabels": {
+    "cloudflared_config_local_config_pushes_errors": 0.0,
+    "cloudflared_proxy_connect_streams_errors": 0.0,
+    "cloudflared_tunnel_ha_connections": 4.0,
+    "cloudflared_tunnel_request_errors": 21.0,
+    "cloudflared_tunnel_total_requests": 1891.0,
+    "process_cpu_seconds_total": 62.257934,
+    "process_resident_memory_bytes": 29798400.0
+  },
+  "limitations": [
+    "Single cumulative snapshot; no incident-time rate, per-request latency or causal proof.",
+    "Endpoint did not expose an RTT metric in this snapshot.",
+    "Zero/low request error counters cannot rule out delivery delay on an established stream.",
+    "No tunnel configuration, lifecycle or scheduling change was performed."
+  ]
+}

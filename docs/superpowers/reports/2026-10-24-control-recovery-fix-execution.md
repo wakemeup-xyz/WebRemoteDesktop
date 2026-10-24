@@ -2,6 +2,8 @@
 
 ## 最新状态（2026-10-25，维护验收继续）
 
+本段为当前结论：main的0a0bc6d/build6fd0已加载，v3媒体/心跳/唯一计数生产闭环通过；但单次ACK watchdog在约66秒自然baseline触发，严格恢复验收仍未通过。当前正在改为同scope连续两次失确认触发，不能宣布控制稳定已解决。下列更早的两次PASS和30分钟窗口保留各自版本归属。
+
 - 三个确定恢复/诊断缺口已提交并加载；Host和Signal已实际切换launchd Interactive，修复了Host配置比较、无.plist后缀预检、失败PID和诊断输出缺口，tunnel未操作。
 - 新调度首轮fresh18.307Hz、重用8.305%，旧quiet分别7.800Hz/60.426%；grab仍约25ms，而pacing超睡从约77ms降到约5ms。不同负载/进程年龄不作严格因果量化。
 - 首次严格原租约短断线PASS：7.016秒恢复、30.014秒稳定；第二次也PASS（7.001秒恢复、30.033秒稳定），第三次在无注入的baseline发生真实lease-expired，尚未解决，见下方；不能据前两PASS宣布稳定。此前30分钟PASS属于旧09d5c24/build5448，仅证明该窗口passive连续性。
@@ -185,3 +187,13 @@ Browser visible/online/focused、lag最大9ms，Engine仍有周期tx/flush；但
 定向HB24/24、旧连续性兼容4/4通过；Viewer初次全套1527/1527。最终source freeze后，webrtc/diagnostic/HB相关文件495/495通过。Signal初轮572中571通过，唯一失败是connected消息精确期望未加入新能力字段；已明确补该字段，保留原精确断言，完整复跑中。最终隔离build6fd0dc72ca413149；源码和文档尚待统一提交加载，生产自然lease expiry尚不能记解决。
 
 Signal最终完整复跑572/572通过，0skip；新能力字段仍用精确值1断言。离线验证及日志SHA见heartbeat-media-offline-validation.json，隔离build6fd0dc72ca413149。接下来仅在无Viewer时提交并加载本地Signal，Host与tunnel保持原进程；所有实测结果随后另记，不能把离线通过当自然失效已经修好。
+
+## 0a0bc6d加载后的真实验证及单次ACK误触发
+
+01:38仅重启Signal为2513，Host64981不变；local/public新build6fd0dc72ca413149一致，两服务仍Interactive，tunnel6438启动时间未变。公网health200、Host online、Terminal admin bootstrap enabled=true。正常UI报告已确认保存，raw/receipt均1报告/81log/0保留/81脱敏/9trace，gap0/ring0，FPS19.9及真实interval drop0均available，仅inputToVisibleEffectMs仍缺测。生产新观测链验收已完成，不代表控制稳定已通过。
+
+首次strict仍失败：无注入（trigger0），约66秒Viewer因heartbeat ACK timeout主动关闭engine。Signal收到21次HB、均续租/ACK enqueue成功，检测disconnect前247ms刚接受一条，最大接收gap6.4秒。浏览器visible、lag max10ms，媒体此前持续进展。247ms是相对Server检测关闭；浏览器更早已发起engine.close，不能混用两端时点。原记录缺seq关联，尚不能唯一分解上下行。strict立即cleanup使自动resume没有完成观测机会，故不能把这次终态当正式rebind失败；清理后的12秒lease expiry也不是另一条独立自然故障。
+
+同一加载版本随后loopback正常UI20秒、7个唯一ACK的RTT为0.8–12.5ms（median0.9ms）；先前公网20秒8ACK为429–1134ms（median505.75ms）。这是顺序窗口，不同负载不作严格A/B；但公网信令路径有显著额外耗时，不能再全部归Host抓帧/CPU。单次2.5秒即关闭对这条慢路径过于激进，正改为同scope连续两次miss后恢复，同时保留单次deadline/单pending/3秒周期及12秒TTL。真实失败与新方案分别记录，不回改PASS。
+
+连续两次修正的最终离线验证：Viewer相关471/471、Signal完整test/websocket576/576，0skip，独立review无遗留必修；隔离build79d27719867d5814。新增seq摘要的跨grant反例先红9!=null后绿，sendGrant仅epoch变化清scopeAttemptSequence/acceptedSeq/ACK-enqueuedSeq，同epoch重复grant不重置。received/accepted总计及lastAcceptedAge仍为socket生命周期口径，不能结合新epoch误称该epoch已续租；必须同时查看当前scope的seq是否已知。源码即将提交加载，实际重复/长会话未验收。

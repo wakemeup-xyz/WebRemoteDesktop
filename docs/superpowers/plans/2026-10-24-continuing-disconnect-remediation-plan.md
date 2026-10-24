@@ -173,3 +173,11 @@
 - [ ] 与心跳闭环统一完整回归、最终隔离build、main提交后加载；正常UI上报核对真实 receipt。旧报告不能补造为新协议覆盖。
 
 只读附记：现有tunnel进程6438的线程base/max仍为20/20。这只是调度上下文线索，尚无该进程的阶段耗时或控制失效因果证据；本轮未操作tunnel，不将Host/Signal的收益外推到tunnel。
+
+### 单次ACK误触发后的追加闭环
+
+- [x] 0a0bc6d/build6fd0加载与正常UI v3生产闭环已验证：raw/receipt81log/9trace、19.9FPS、真实interval drop0、gap0/ring0；可见效果仍缺测。
+- [x] 首次新strict无fault baseline约66秒失败，保留forced-close证据；测试随即cleanup，不把它误称自动rebind失败。
+- [x] 顺序正常UI对比同版本公网与loopback ACK，保留原样本和顺序/负载限制，不把差值叫纯网络。
+- [x] 连续2个current-scope ACK miss触发恢复，deadline/TTL/reset期限不变；28项HB及1项真实诊断链通过，有效ACK清零、旧晚ACK、隐藏、重复grant、真实non-drain、新epoch seq清空均覆盖。
+- [ ] 完成定向回归/独立复审/隔离build并提交，仅无Viewer维护窗口加载；重新运行五次strict≤10秒和新配置30分钟资源/连续性，失败继续保留。

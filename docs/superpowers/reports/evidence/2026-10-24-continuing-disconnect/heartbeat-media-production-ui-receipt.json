@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "scope": "normal-owned-UI-v3-persistence-and-runtime-receipt",
+  "sourceCommit": "0a0bc6d",
+  "buildId": "6fd0dc72ca413149",
+  "signalPid": 2513,
+  "hostPid": 64981,
+  "serverConfirmedSaved": true,
+  "raw": {
+    "receivedAt": "2026-10-24T17:40:09.949Z",
+    "sha256": "39079f8e8903840e9c21f7e45fd38d4bb529d3fa66e15b8ce11bbbb5ae4d3e55",
+    "reportedLogCount": 81,
+    "retainedLogCount": 0,
+    "redactedLogCount": 81,
+    "inputTraceEventCount": 9,
+    "mediaInterval": {
+      "schemaVersion": 1,
+      "kind": "webrtc-inbound-interval",
+      "elapsedMs": 1004.7999999523163,
+      "sampleAgeMs": 601.2999999523163,
+      "fpsObserved": true,
+      "droppedFramesObserved": true
+    },
+    "derivedFps": 19.9,
+    "framesDroppedDelta": 0,
+    "controlHeartbeat": {
+      "supported": true,
+      "ackBudgetMs": 2500,
+      "pending": true,
+      "pendingAgeMs": 29.300000190734863,
+      "lastAckAgeMs": 2598.5,
+      "lastAckRttMs": 434,
+      "maxAckRttMs": 1134,
+      "sent": 9,
+      "acknowledged": 8,
+      "timeouts": 0,
+      "rejected": 0,
+      "reason": "sent"
+    }
+  },
+  "receipt": {
+    "schemaVersion": 1,
+    "window": {
+      "startedAt": 1792863610255,
+      "endedAt": null,
+      "reportCount": 1
+    },
+    "diagnostics": {
+      "logCount": {
+        "total": 81,
+        "reportsWithLogs": 1,
+        "zeroLogReports": 0,
+        "unknownReports": 0
+      },
+      "retainedLogCount": 0,
+      "redactedLogCount": 81,
+      "inputTraceEventCount": 9,
+      "metadataOnlyReports": 1,
+      "summaryGapCount": 0,
+      "summaryGaps": [],
+      "ringDropCount": 0
+    },
+    "resources": {
+      "rssMiB": {
+        "available": true,
+        "count": 1,
+        "last": 98.06640625,
+        "p50": 98.06640625,
+        "p95": 98.06640625,
+        "max": 98.06640625
+      },
+      "cpuPercent": {
+        "available": true,
+        "count": 1,
+        "last": 0.08599948577467861,
+        "p50": 0.08599948577467861,
+        "p95": 0.08599948577467861,
+        "max": 0.08599948577467861
+      }
+    },
+    "media": {
+      "fps": {
+        "available": true,
+        "count": 1,
+        "last": 19.9,
+        "p50": 19.9,
+        "p95": 19.9,
+        "max": 19.9
+      },
+      "droppedFrames": {
+        "available": false,
+        "count": 0,
+        "last": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "droppedFramesScope": "legacy-event-counter-unspecified",
+      "droppedFramesIntervalDelta": {
+        "available": true,
+        "count": 1,
+        "last": 0,
+        "p50": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "droppedFramesIntervalDeltaScope": "webrtc-inbound-interval"
+    },
+    "visibleEffect": {
+      "sent": null,
+      "samples": null,
+      "coverage": null
+    },
+    "coverage": {
+      "complete": false,
+      "missing": [
+        "inputToVisibleEffectMs"
+      ]
+    }
+  },
+  "heartbeatReadonlySnapshots": {
+    "sampleCount": 20,
+    "uniqueAcknowledgedSampleCount": 8,
+    "last": {
+      "supported": true,
+      "ackBudgetMs": 2500,
+      "pending": false,
+      "pendingAgeMs": null,
+      "lastAckAgeMs": 1242.6999998092651,
+      "lastAckRttMs": 434,
+      "maxAckRttMs": 1134,
+      "sent": 8,
+      "acknowledged": 8,
+      "timeouts": 0,
+      "rejected": 0,
+      "reason": "acknowledged"
+    },
+    "ackRttMs": {
+      "min": 429,
+      "max": 1134,
+      "median": 505.75,
+      "allSamples": [
+        429,
+        434,
+        474.39999985694885,
+        483,
+        528.5,
+        723.9000000953674,
+        816.7999999523163,
+        1134
+      ]
+    },
+    "scope": "Viewer same-clock send to accepted Signal ACK; includes scheduling/transport/Signal, no pure-network attribution"
+  },
+  "terminalBootstrapEnabled": true,
+  "cleanupStatus": "api-finished-exit-unknown",
+  "businessInput": "NOT_RUN",
+  "visibleEffect": "NOT_RUN"
+}

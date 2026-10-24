@@ -159,7 +159,7 @@ Host及Signal当前launchd spawn type均为daemon、线程priority/maxpriority�
 
 自然baseline已复现Socket/PC短时仍connected而lease12秒过期。缺少逐次成功接收历史，不能唯一归因某跳；确定缺口是Viewer无法确认续租是否成功。新增显式controlHeartbeatAckV1能力协商，未支持的旧Server/Viewer保持原行为。新请求和ACK用seq/epoch/attempt及attemptSequence关联，内存进一步绑定当前socket对象/id、lease对象和连接scope；ACK只证明既有authorize+heartbeat成功，不授予控制。
 
-每3秒心跳最多一个pending，ACK预算2500ms，使用Socket.IO timeout释放ACK表。有效ACK清除pending；旧scope/乱序/晚ACK无效；明确拒绝保持原freeze，不自动争抢。能力确认、可见、仍持有当前控制且非手动断开时超时，单次关闭当前engine，走现有自动重连和正式resume/rebind。Engine.IO的close会等待writeBuffer排空；若捕获的同一engine仍closing，关闭该engine自己的transport，避免polling挂起POST使恢复永久停在closing。不得再读取successor engine或关闭后来连接。不得调用manual disconnect取消用户intent，不延长12秒TTL、不重放输入、不把其它消息当续租。2500ms预算不是网络SLO保证；公共链路慢ACK可能触发恢复，必须测量误触发及原租约恢复结果。初始grant先完成当前attempt绑定，再启动带scope心跳；保留legacy兼容。已有legacy scope不能阻止晚到的ACK capability升级，复用只允许同一已启ACK的scope。
+每3秒心跳最多一个pending，ACK预算2500ms，使用Socket.IO timeout释放ACK表。有效ACK清除pending；旧scope/乱序/晚ACK无效；明确拒绝保持原freeze，不自动争抢。能力确认、可见、仍持有当前控制且非手动断开、同scope连续2次超时，单次关闭当前engine，走现有自动重连和正式resume/rebind。Engine.IO的close会等待writeBuffer排空；若捕获的同一engine仍closing，关闭该engine自己的transport，避免polling挂起POST使恢复永久停在closing。不得再读取successor engine或关闭后来连接。不得调用manual disconnect取消用户intent，不延长12秒TTL、不重放输入、不把其它消息当续租。2500ms预算不是网络SLO保证；公共链路慢ACK可能触发恢复，必须测量误触发及原租约恢复结果。初始grant先完成当前attempt绑定，再启动带scope心跳；保留legacy兼容。已有legacy scope不能阻止晚到的ACK capability升级，复用只允许同一已启ACK的scope。
 
 观测只记录固定原因、seq/epoch、计数和单调age的有界摘要，禁止leaseId/token/输入内容。测试需覆盖正常2400ms确认不恢复、2500ms后晚ACK无效、明确拒绝、隐藏/手动关闭、旧能力、并发/重复定时器和当前owner边界。
 
@@ -170,3 +170,11 @@ v3 事件正文按设计丢弃，runtime receipt 因只读取 events 而缺失�
 原始 owner、track/id/SSRC 仅在有界内存中保留；诊断只输出 schema1 interval kind、elapsed/sampleAge 和 FPS/drop 已观测布尔值。同 performance 时钟下 sampleAge 必须在0–5000ms。Signal 白名单继续验证边界后，v3 receipt 才提取 FPS 和独立的 droppedFramesIntervalDelta（webrtc-inbound-interval）；legacy 事件counter（累计/区间口径未知）独立保留，不能混称累计丢帧或唯一去重的长会话总数。多个诊断可能覆盖重叠区间，不能将这些 delta 相加当整段掉帧。
 
 统计 last 取实际输入顺序中的最后有效值，max/分位数使用排序副本；runtime 和 diagnostic 的资源样本共享有界 FIFO，不能先按来源分组再拼接而改变最后值。
+
+### 公网单次慢ACK后的触发修正
+
+0a0bc6d首次strict在无fault baseline约66秒触发单次ACK watchdog，原结果保留失败。Signal检测disconnect前247ms刚成功续租，最大HB接收gap6.4秒；这不是浏览器发起close前247ms，两端关闭观测有网络传播时间，且旧版未保留请求seq，不能唯一认定上/下行哪段。普通UI短测同版本公网8ACK为429–1134ms、median505.75ms；随后loopback7ACK为0.8–12.5ms、median0.9ms。不同顺序负载不作严格A/B，但显示公网信令往返存在明显额外耗时，不应继续全归Host CPU。
+
+比较方案：只延长每次ACK期限会使单pending跳过更多续租周期；改走DC续租需要新的Host授权协议与独立验收。因此本轮保留2500ms单次deadline、3秒发送与单pending，第1次timeout仅保留计数/最后失败快照，只有同current scope连续2次timeout才关闭transport。有效且deadline内的当前ACK清零streak；旧/晚ACK、重复grant不能替新scope清零或回避失效。hidden/manual/superseded保持守卫，隐藏窗口失败不带入前台累计。
+
+连续blackhole理想情况下从首次未确认send至close约5.5秒，从上次成功send后故障至close可约8.5秒；12秒TTL不会延长，剩余时间不保证任意慢rebind保留原lease。增加当前scope安全整数seq和Server最后accepted/ACK-enqueued seq摘要以关联后续现场，不输出身份/token或逐HB日志。strict baseline仍在自然disconnect后停止，不能用其清理行为判断自动recovery是否完成；需另行观察完整恢复。

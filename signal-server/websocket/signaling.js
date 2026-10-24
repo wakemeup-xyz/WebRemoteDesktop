@@ -181,9 +181,10 @@ function setupSignaling(io, options = {}) {
     return socket._wrdControlHeartbeatObservation ||= {
       received: 0, accepted: 0, rejected: 0, ackRequested: 0, ackEnqueued: 0,
       lastReceivedAt: null, lastAcceptedAt: null, lastGrantAt: null, maxReceiveGapMs: 0, leaseEpoch: null,
+      scopeAttemptSequence: null, lastAcceptedHeartbeatSeq: null, lastAckEnqueuedHeartbeatSeq: null,
     };
   }
-  function observeControlHeartbeat(socket, data, result) {
+  function observeControlHeartbeat(socket, data, result, ackScopeMatches = false) {
     const now = heartbeatNow();
     const observation = controlHeartbeatObservation(socket);
     if (observation.lastReceivedAt !== null) {
@@ -196,8 +197,15 @@ function setupSignaling(io, options = {}) {
     observation[counter] = heartbeatCount(observation[counter] + 1);
     if (data.heartbeatAckVersion === 1) observation.ackRequested = heartbeatCount(observation.ackRequested + 1);
     if (result.ok) {
+      const attemptSequence = ackScopeMatches ? data.connectionAttemptSequence : null;
+      if (observation.leaseEpoch !== data.leaseEpoch || observation.scopeAttemptSequence !== attemptSequence) {
+        observation.lastAcceptedHeartbeatSeq = null;
+        observation.lastAckEnqueuedHeartbeatSeq = null;
+      }
       observation.lastAcceptedAt = now;
       observation.leaseEpoch = data.leaseEpoch;
+      observation.scopeAttemptSequence = attemptSequence;
+      observation.lastAcceptedHeartbeatSeq = ackScopeMatches ? data.heartbeatSeq : null;
     }
     return observation;
   }
@@ -210,6 +218,9 @@ function setupSignaling(io, options = {}) {
         reason, received: observation.received, accepted: observation.accepted, rejected: observation.rejected,
         ackRequested: observation.ackRequested, ackEnqueued: observation.ackEnqueued,
         leaseEpoch: Number.isSafeInteger(observation.leaseEpoch) ? observation.leaseEpoch : null,
+        scopeAttemptSequence: observation.scopeAttemptSequence,
+        lastAcceptedHeartbeatSeq: observation.lastAcceptedHeartbeatSeq,
+        lastAckEnqueuedHeartbeatSeq: observation.lastAckEnqueuedHeartbeatSeq,
         lastReceivedAgeMs: observation.lastReceivedAt === null ? null : heartbeatCount(now - observation.lastReceivedAt),
         lastAcceptedAgeMs: observation.lastAcceptedAt === null ? null : heartbeatCount(now - observation.lastAcceptedAt),
         lastGrantAgeMs: observation.lastGrantAt === null ? null : heartbeatCount(now - observation.lastGrantAt),
@@ -831,6 +842,11 @@ function setupSignaling(io, options = {}) {
     const viewerSocket = connections.viewers.get(viewerId);
     if (!viewerSocket || !lease) return;
     const observation = controlHeartbeatObservation(viewerSocket);
+    if (observation.leaseEpoch !== lease.leaseEpoch) {
+      observation.scopeAttemptSequence = null;
+      observation.lastAcceptedHeartbeatSeq = null;
+      observation.lastAckEnqueuedHeartbeatSeq = null;
+    }
     observation.leaseEpoch = lease.leaseEpoch;
     observation.lastGrantAt = heartbeatNow();
     viewerSocket.emit('control-grant', { controller: true, ...lease });
@@ -1386,24 +1402,26 @@ function setupSignaling(io, options = {}) {
     socket.on('control-heartbeat', (data = {}, acknowledge) => {
       if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
       if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+      const progress = mediaActivityProgress.get(socket.id);
+      const ackScopeMatches = Boolean(progress && data.heartbeatAckVersion === 1
+        && Number.isSafeInteger(data.heartbeatSeq) && data.heartbeatSeq >= 1
+        && progress?.connectionAttemptId === data.connectionAttemptId
+        && progress?.connectionAttemptSequence === data.connectionAttemptSequence);
       const result = withLeaseExpiry(() => desktopLease.heartbeat({
         viewerId: socket.id,
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
       }));
-      const observation = observeControlHeartbeat(socket, data, result);
+      const observation = observeControlHeartbeat(socket, data, result, ackScopeMatches);
       if (!result.ok && observation.rejected === 1) summarizeControlHeartbeat(socket, 'rejected');
       if (!result.ok) socket.emit('control-heartbeat-rejected', { reason: result.reason });
-      const progress = mediaActivityProgress.get(socket.id);
-      if (result.ok && data.heartbeatAckVersion === 1 && typeof acknowledge === 'function'
-        && Number.isSafeInteger(data.heartbeatSeq) && data.heartbeatSeq >= 1
-        && progress?.connectionAttemptId === data.connectionAttemptId
-        && progress?.connectionAttemptSequence === data.connectionAttemptSequence) {
+      if (result.ok && ackScopeMatches && typeof acknowledge === 'function') {
         try {
           acknowledge({ schemaVersion: 1, status: 'accepted', heartbeatSeq: data.heartbeatSeq,
             leaseEpoch: data.leaseEpoch, connectionAttemptId: progress.connectionAttemptId,
             connectionAttemptSequence: progress.connectionAttemptSequence });
           observation.ackEnqueued = heartbeatCount(observation.ackEnqueued + 1);
+          observation.lastAckEnqueuedHeartbeatSeq = data.heartbeatSeq;
         } catch (_error) { /* Renewal is already committed; ACK enqueue is best effort. */ }
       }
     });

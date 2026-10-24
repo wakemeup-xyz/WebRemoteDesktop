@@ -225,9 +225,10 @@ test('control heartbeat failure snapshot survives core, deferred, replay and pri
     const { context } = createDiagnosticContext();
     const heartbeat = { supported: true, ackBudgetMs: 2500, pending: false, pendingAgeMs: null,
       lastAckAgeMs: 3000, lastAckRttMs: 2400, maxAckRttMs: 2400,
-      sent: 4, acknowledged: 3, timeouts: 1, rejected: 0, reason: 'acknowledged' };
+      sent: 4, acknowledged: 3, timeouts: 1, rejected: 0, reason: 'acknowledged',
+      consecutiveTimeouts: 0, reconnectThreshold: 2, currentScopeSequence: 4, lastAcknowledgedSequence: 3 };
     context.WebRTC.getControlHeartbeatSnapshot = () => ({ ...heartbeat, lastFailureAgeMs: 500,
-      lastFailure: { ...heartbeat, reason: 'ack-timeout', leaseId: 'HEARTBEAT_PRIVATE_CANARY',
+      lastFailure: { ...heartbeat, reason: 'ack-timeout', consecutiveTimeouts: 2, leaseId: 'HEARTBEAT_PRIVATE_CANARY',
         lastFailure: { reason: 'HEARTBEAT_PRIVATE_CANARY' } }, socket: 'HEARTBEAT_PRIVATE_CANARY' });
     const Diagnostic = loadScript('diagnostic.js', context, 'Diagnostic');
     const critical = Diagnostic.buildRuntimeDiagnostic({ reason: 'manual' });
@@ -238,6 +239,10 @@ test('control heartbeat failure snapshot survives core, deferred, replay and pri
       assert.equal(payload.traceSummary.controlHeartbeat.timeouts, 1);
       assert.equal(payload.traceSummary.controlHeartbeat.lastAckRttMs, 2400);
       assert.equal(payload.traceSummary.controlHeartbeat.lastFailure.reason, 'ack-timeout');
+      assert.equal(payload.traceSummary.controlHeartbeat.lastFailure.consecutiveTimeouts, 2);
+      assert.equal(payload.traceSummary.controlHeartbeat.reconnectThreshold, 2);
+      assert.equal(payload.traceSummary.controlHeartbeat.currentScopeSequence, 4);
+      assert.equal(payload.traceSummary.controlHeartbeat.lastAcknowledgedSequence, 3);
       assert.equal(payload.traceSummary.controlHeartbeat.lastFailure.lastFailure, undefined);
       assert.equal(JSON.stringify(payload).includes('HEARTBEAT_PRIVATE_CANARY'), false);
     }
@@ -254,6 +259,11 @@ test('control heartbeat failure snapshot survives core, deferred, replay and pri
       assert.equal(observed.supported, true);
       assert.equal(observed.acknowledged, 3);
       assert.equal(observed.lastFailure.reason, 'ack-timeout');
+      assert.equal(observed.consecutiveTimeouts, 0);
+      assert.equal(observed.lastFailure.consecutiveTimeouts, 2);
+      assert.equal(observed.reconnectThreshold, 2);
+      assert.equal(observed.currentScopeSequence, 4);
+      assert.equal(observed.lastAcknowledgedSequence, 3);
       assert.equal(observed.maxAckRttMs, 2400);
       assert.equal(observed.lastFailureAgeMs, 500);
       assert.equal(JSON.stringify(report).includes('HEARTBEAT_PRIVATE_CANARY'), false);

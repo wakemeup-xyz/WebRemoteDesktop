@@ -59,7 +59,8 @@ function fixture({ capability = true, dropHeartbeat = false, ackDelay = 0,
   const deliver = (event, payload) => (handlers.get(event) || []).forEach(handler => handler(payload));
   const route = (event, payload, ack) => {
     emitted.push({ event, payload });
-    if (event === 'control-heartbeat' && dropHeartbeat) return;
+    if (event === 'control-heartbeat'
+      && (typeof dropHeartbeat === 'function' ? dropHeartbeat(payload) : dropHeartbeat)) return;
     serverViewer.listeners(event).forEach(handler => handler(payload, ack));
   };
   const client = {
@@ -73,7 +74,7 @@ function fixture({ capability = true, dropHeartbeat = false, ackDelay = 0,
       route(event, payload, data => setTimer(() => {
         if (!ackTable.has(id)) return;
         timers.delete(timer); ackTable.delete(id); callback(null, ackTransform(data));
-      }, ackDelay));
+      }, typeof ackDelay === 'function' ? ackDelay(payload) : ackDelay));
     } }; },
     io: { engine: { close() {
       engineCloses += 1; client.connected = false;
@@ -147,7 +148,7 @@ function fixture({ capability = true, dropHeartbeat = false, ackDelay = 0,
   const transition = host.sent.find(value => value.event === 'control-transition').data;
   host.trigger('control-transition-ack', { leaseEpoch: transition.leaseEpoch, status: 'applied' });
   const grant = serverViewer.sent.find(value => value.event === 'control-grant').data;
-  return { viewer, client, input, context, lease, emitted, events, callbacks, timers, ackTable, grant, deliver,
+  return { viewer, client, input, context, host, lease, emitted, events, callbacks, timers, ackTable, grant, deliver,
     advance, now: () => now, engineCloses: () => engineCloses, serverViewer: () => serverViewer,
     reconnect() {
       connectServer('heartbeat-viewer-2', true);
@@ -163,6 +164,9 @@ test('confirmed heartbeat capability repairs an open but stalled uplink before l
   const h = fixture({ dropHeartbeat: true });
   assert.equal(h.viewer.hasActiveControl(), true);
   h.advance(2499); assert.equal(h.engineCloses(), 0);
+  h.advance(1); assert.equal(h.engineCloses(), 0);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+  h.advance(2999); assert.equal(h.engineCloses(), 0);
   h.advance(1); assert.equal(h.engineCloses(), 1);
   assert.equal(h.lease.snapshot().state, 'ACTIVE', 'recovery must start before the unchanged 12s TTL');
   assert.equal(h.input.isActive, false);
@@ -174,7 +178,7 @@ test('confirmed heartbeat capability repairs an open but stalled uplink before l
 
 test('non-draining Engine.IO write buffer cannot trap heartbeat recovery in graceful closing', () => {
   const h = fixture({ dropHeartbeat: true, bufferedEngine: true });
-  h.advance(2500);
+  h.advance(5500);
   assert.equal(h.client.io.engine.readyState, 'closed');
   assert.equal(h.engineCloses(), 1);
   assert.equal(h.viewer._signalRecoveryPending, true);
@@ -199,14 +203,43 @@ test('valid heartbeat ACK at 2400ms keeps one pending request and never reconnec
   assert.equal(h.viewer.getControlHeartbeatSnapshot().timeouts, 0);
 });
 
+test('one missed heartbeat followed by a valid ACK records the miss without reconnecting', () => {
+  const h = fixture({ ackDelay: payload => payload.heartbeatSeq === 1 ? 2600 : 0 });
+  h.advance(2500);
+  assert.equal(h.engineCloses(), 0);
+  assert.equal(h.ackTable.size, 0);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+  h.advance(500);
+  const snapshot = h.viewer.getControlHeartbeatSnapshot();
+  assert.equal(snapshot.consecutiveTimeouts, 0);
+  assert.equal(snapshot.timeouts, 1);
+  assert.equal(snapshot.lastFailure.consecutiveTimeouts, 1);
+  assert.equal(snapshot.reconnectThreshold, 2);
+  assert.equal(h.serverViewer()._wrdControlHeartbeatObservation.accepted, 2,
+    'the first missed ACK still renewed the real Server lease');
+  h.advance(12000);
+  assert.equal(h.engineCloses(), 0);
+  assert.equal(h.lease.snapshot().state, 'ACTIVE');
+});
+
 test('deadline and late ACK can close the engine only once and cannot revive retired scope', () => {
   const h = fixture({ ackDelay: 2600 });
   const callback = h.callbacks[0];
-  h.advance(2500); assert.equal(h.engineCloses(), 1); assert.equal(h.ackTable.size, 0);
+  h.advance(2500); assert.equal(h.engineCloses(), 0); assert.equal(h.ackTable.size, 0);
+  h.advance(500); assert.equal(h.ackTable.size, 1);
   callback(null, { schemaVersion: 1, status: 'accepted', heartbeatSeq: 1, leaseEpoch: h.grant.leaseEpoch,
     connectionAttemptId: 'heartbeat-attempt', connectionAttemptSequence: 1 });
-  h.advance(3000);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+  assert.equal(h.ackTable.size, 1, 'late ACK cannot retire the next heartbeat');
+  h.advance(2500);
   assert.equal(h.engineCloses(), 1); assert.equal(h.viewer.hasActiveControl(), false);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().lastFailure.consecutiveTimeouts, 2);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().lastFailure.currentScopeSequence, 2);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().lastFailure.lastAcknowledgedSequence, null);
+  const serverSummary = h.events.filter(event => event.event === 'control_heartbeat_observed').at(-1).meta;
+  assert.equal(serverSummary.lastAcceptedHeartbeatSeq, 2);
+  assert.equal(serverSummary.lastAckEnqueuedHeartbeatSeq, 2);
+  assert.equal(serverSummary.scopeAttemptSequence, 1);
 });
 
 for (const change of ['socket-id', 'socket-object', 'attempt', 'attempt-sequence', 'lease-object']) {
@@ -226,6 +259,9 @@ for (const change of ['socket-id', 'socket-object', 'attempt', 'attempt-sequence
 test('mismatched ACK does not cancel the original deadline or extend its 2500ms budget', () => {
   const h = fixture({ ackDelay: 100, ackTransform: ack => ({ ...ack, heartbeatSeq: ack.heartbeatSeq + 1 }) });
   h.advance(2499); assert.equal(h.engineCloses(), 0);
+  h.advance(1); assert.equal(h.engineCloses(), 0);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+  h.advance(2999); assert.equal(h.engineCloses(), 0);
   h.advance(1); assert.equal(h.engineCloses(), 1);
 });
 
@@ -244,6 +280,7 @@ for (const inactive of ['hidden', 'manual-disconnect', 'superseded', 'pagehide']
     if (inactive === 'superseded') h.viewer._superseded = true;
     if (inactive === 'pagehide') h.viewer._pageLifecycleHidden = true;
     h.advance(9000); assert.equal(h.engineCloses(), 0); assert.ok(h.ackTable.size <= 1);
+    assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 0);
   });
 }
 
@@ -294,17 +331,80 @@ test('server withholds positive ACK for wrong attempt metadata and ignores malfo
   assert.equal(acknowledgements, 0);
 });
 
+test('a new grant cannot attribute an older lease ACK sequence when the new ACK enqueue throws', () => {
+  const h = fixture({ dropHeartbeat: true });
+  const socket = h.serverViewer();
+  const handler = socket.listeners('control-heartbeat')[0];
+  const heartbeat = lease => ({ ...lease, heartbeatAckVersion: 1, heartbeatSeq: 9,
+    connectionAttemptId: 'heartbeat-attempt', connectionAttemptSequence: 1 });
+  handler(heartbeat(h.grant), () => {});
+  const observation = socket._wrdControlHeartbeatObservation;
+  assert.equal(observation.lastAckEnqueuedHeartbeatSeq, 9);
+  socket.emit = FakeSocket.prototype.emit.bind(socket);
+  h.client.emit('control-release', { reason: 'test-new-grant' });
+  h.host.trigger('control-transition-ack', {
+    leaseEpoch: h.host.sent.filter(row => row.event === 'control-transition').at(-1).data.leaseEpoch,
+    status: 'applied',
+  });
+  h.client.emit('control-acquire', { requestId: 'same-attempt-new-grant' });
+  h.host.trigger('control-transition-ack', {
+    leaseEpoch: h.host.sent.filter(row => row.event === 'control-transition').at(-1).data.leaseEpoch,
+    status: 'applied',
+  });
+  const grant = socket.sent.filter(row => row.event === 'control-grant').at(-1).data;
+  assert.notEqual(grant.leaseEpoch, h.grant.leaseEpoch);
+  assert.doesNotThrow(() => handler({ ...heartbeat(grant), heartbeatSeq: 1 }, () => {
+    throw new Error('new-lease-ack-enqueue-failed');
+  }));
+  assert.equal(observation.leaseEpoch, grant.leaseEpoch);
+  assert.equal(observation.scopeAttemptSequence, 1);
+  assert.equal(observation.lastAcceptedHeartbeatSeq, 1);
+  assert.equal(observation.lastAckEnqueuedHeartbeatSeq, null);
+  assert.equal(observation.ackEnqueued, 1);
+});
+
 test('duplicate malformed callbacks retain one remainder timer and the original deadline', () => {
   const h = fixture({ ackDelay: 100, ackTransform: ack => ({ ...ack, leaseEpoch: ack.leaseEpoch + 1 }) });
   h.advance(100);
   const count = h.timers.size;
   for (let index = 0; index < 100; index++) h.callbacks[0](null, { status: 'invalid' });
   assert.equal(h.timers.size, count);
-  h.advance(2400); assert.equal(h.engineCloses(), 1);
+  h.advance(2400); assert.equal(h.engineCloses(), 0);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+  h.advance(3000); assert.equal(h.engineCloses(), 1);
   const snapshot = h.viewer.getControlHeartbeatSnapshot();
   assert.equal(snapshot.lastFailure.reason, 'ack-timeout');
-  assert.equal(snapshot.lastFailure.timeouts, 1);
+  assert.equal(snapshot.lastFailure.timeouts, 2);
+  assert.equal(snapshot.lastFailure.consecutiveTimeouts, 2);
   assert.equal(snapshot.lastFailureAgeMs, 0);
+});
+
+test('a new heartbeat scope resets its streak while a retired ACK cannot clear the new streak', () => {
+  const h = fixture({ dropHeartbeat: true });
+  const oldCallback = h.callbacks[0];
+  h.advance(2500);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+  h.viewer.controlState.lease = { ...h.viewer.controlState.lease };
+  h.viewer.startControlHeartbeat();
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 0);
+  oldCallback(null, { schemaVersion: 1, status: 'accepted', heartbeatSeq: 1, leaseEpoch: h.grant.leaseEpoch,
+    connectionAttemptId: 'heartbeat-attempt', connectionAttemptSequence: 1 });
+  h.advance(2500);
+  assert.equal(h.engineCloses(), 0);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+});
+
+test('a hidden timeout breaks the visible timeout streak before the page returns', () => {
+  const h = fixture({ dropHeartbeat: true });
+  h.advance(2500);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
+  h.context.document.hidden = true;
+  h.advance(3000);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 0);
+  h.context.document.hidden = false;
+  h.advance(3000);
+  assert.equal(h.engineCloses(), 0);
+  assert.equal(h.viewer.getControlHeartbeatSnapshot().consecutiveTimeouts, 1);
 });
 
 test('control heartbeat summary sink errors cannot interrupt lease expiry or normal cleanup', () => {

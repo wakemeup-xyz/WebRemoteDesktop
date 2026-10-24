@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "0a0bc6d",
+  "scope": "two-consecutive-current-scope-timeouts",
+  "results": [
+    {
+      "logBasename": "wrd-20261025-two-miss-viewer-related.tap",
+      "sha256": "eb0e5453a1d261c1fe10852ef46169bc4e850b5500c7323862fc7c853ca51fc8",
+      "scope": "All changed Viewer runtime and diagnostic files",
+      "pass": 471,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "logBasename": "wrd-20261025-two-miss-signal-final.tap",
+      "sha256": "4af0f4407fc549e487a620e3163f4f984da6a9308360e76ba75d96ad291ddcec",
+      "scope": "Complete Signal test and websocket directories",
+      "pass": 576,
+      "fail": 0,
+      "skipped": 0
+    }
+  ],
+  "focusedHeartbeatPass": 28,
+  "diagnosticPersistenceChainPass": 1,
+  "previewBuildId": "79d27719867d5814",
+  "independentReviewRemainingRequiredFindings": 0,
+  "productionLoaded": false,
+  "limits": [
+    "Does not change first single-timeout production baseline failure.",
+    "Real public repeated recovery and 30-minute resources remain pending."
+  ]
+}

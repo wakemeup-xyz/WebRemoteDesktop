@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "scope": "natural-heartbeat-watchdog-baseline-failure",
+  "sourceCommit": "0a0bc6d",
+  "buildId": "6fd0dc72ca413149",
+  "summary": {
+    "schemaVersion": 1,
+    "scenario": "within-grace",
+    "mode": "relay",
+    "phase": "terminal",
+    "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+    "nativeAfterGraceQualification": "NOT_RUN",
+    "hostObservation": {
+      "status": "stable",
+      "hostHash": "9f07a32815c10953",
+      "coverage": "complete",
+      "samples": 70,
+      "hostDisconnectObserved": false
+    },
+    "continuity": {
+      "status": "INCOMPLETE",
+      "kind": "passive-session-continuity-only",
+      "requestedSeconds": 300,
+      "elapsedSeconds": 59.0953290569596,
+      "samples": 60,
+      "missingSamples": 0,
+      "lateSamples": 0,
+      "failedObservations": 0,
+      "identityChangeObservations": 0,
+      "pathChangeObservations": 0,
+      "pathConvergenceObservations": 0,
+      "maxObservedNoProgressMs": 183.40000000000146,
+      "progressAfterBaseline": true,
+      "frameStallThresholdMs": 5000,
+      "frameEvidence": "requestVideoFrameCallback",
+      "threeHourContinuityMet": false,
+      "visibleEffect": "NOT_RUN",
+      "activeControl": "NOT_RUN",
+      "physicalDisplay": "NOT_RUN",
+      "connectionNote": "Passive after normal guarded connection; required grant/reset lifecycle messages are permitted.",
+      "metricNote": "Metric p95 values are five-second application windows, not a whole-run percentile."
+    },
+    "ordinaryRecovery": {
+      "status": "NOT_RUN",
+      "classification": "not-attempted",
+      "requestedScenario": "within-grace",
+      "qualificationEvidenceScope": "ordinary-functional-native-direct-close",
+      "recoverySeconds": null,
+      "recoveredStableSeconds": 0,
+      "serverCoverage": "complete",
+      "reason": "baseline-failed"
+    },
+    "failure": {
+      "phase": "baseline",
+      "reason": "baseline-failed"
+    },
+    "startup": {
+      "status": "verified",
+      "freshPage": true,
+      "authVerified": true,
+      "selector": "vacant-only-v1",
+      "startClickMarksBefore": 0,
+      "startClickMarksAfter": 1,
+      "guardedApiRequests": 1
+    },
+    "manifest": {
+      "sha256": "20597f32f7bff42ecf02179a9b6eaacb79b99f843399c57938bf556d5744c47c",
+      "runNonce": "8bb7e7f2d772006653d47a0c5f38835d",
+      "originSource": "formal-configured",
+      "originEvidenceSha256": "340afe6b17e7bdcf5c68e62befab36dc917c92959b0a3f34aff0c966501a04fa",
+      "signalSourceCommit": "0a0bc6d7318b564e396f86840918b08772506f2d",
+      "hostSourceCommit": "9e352fc8d3abb315d69194ff45f82fa76bc8c22c",
+      "viewerSourceCommit": "0a0bc6d7318b564e396f86840918b08772506f2d",
+      "viewerBuildId": "6fd0dc72ca413149",
+      "sourceEvidence": "root-attested"
+    },
+    "lifecycle": {
+      "captureStatus": "ok",
+      "cleanupStatus": "api-finished-exit-unknown",
+      "writeStatus": "ok",
+      "ownedProcessExitEvidence": "not-observed"
+    },
+    "fault": {
+      "capability": "available",
+      "status": "disarmed",
+      "instrumentation": "native-direct",
+      "triggerCount": 0,
+      "blockedHttp": 0,
+      "blockedWebSocket": 0,
+      "blockSeconds": 0
+    },
+    "businessInput": "NOT_RUN",
+    "visibleEffect": "NOT_RUN",
+    "physical": "NOT_RUN"
+  },
+  "browserFirstDisconnectWallEpochMs": 1792863801952,
+  "pythonFailureWallEpochMs": 1792863802761,
+  "browser": {
+    "firstDisconnect": {
+      "t": 65635,
+      "n": 228,
+      "k": "ec",
+      "o": "e1",
+      "c": true,
+      "r": "forced"
+    },
+    "state": {
+      "visibility": "visible",
+      "online": true,
+      "focus": true,
+      "socketState": "state-observed-disconnected",
+      "pingReceivedAtMs": 52585,
+      "pongCreatedAtMs": 52585,
+      "flushAtMs": 65364,
+      "lag": {
+        "lastMs": 2,
+        "maxMs": 10,
+        "count": 66,
+        "missedIntervals": 0,
+        "buckets": [
+          66,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "transport": "websocket"
+  },
+  "serverEvents": [
+    {
+      "ts": "2026-10-24T17:43:23.285Z",
+      "event": "control_heartbeat_observed",
+      "meta": {
+        "reason": "socket-disconnected",
+        "received": 21,
+        "accepted": 21,
+        "rejected": 0,
+        "ackRequested": 21,
+        "ackEnqueued": 21,
+        "leaseEpoch": 3,
+        "lastReceivedAgeMs": 247,
+        "lastAcceptedAgeMs": 247,
+        "maxReceiveGapMs": 6400
+      }
+    },
+    {
+      "ts": "2026-10-24T17:43:23.287Z",
+      "event": "signal_socket_disconnected",
+      "meta": {
+        "reason": "transport close"
+      }
+    },
+    {
+      "ts": "2026-10-24T17:43:23.289Z",
+      "event": "viewer_disconnect_grace_started",
+      "meta": {}
+    },
+    {
+      "ts": "2026-10-24T17:43:35.525Z",
+      "event": "control_heartbeat_observed",
+      "meta": {
+        "reason": "lease-expired",
+        "received": 21,
+        "accepted": 21,
+        "rejected": 0,
+        "ackRequested": 21,
+        "ackEnqueued": 21,
+        "leaseEpoch": 3,
+        "lastReceivedAgeMs": 12486,
+        "lastAcceptedAgeMs": 12486,
+        "maxReceiveGapMs": 6400
+      }
+    },
+    {
+      "ts": "2026-10-24T17:43:35.527Z",
+      "event": "control_transition_failed_closed",
+      "meta": {
+        "reason": "lease-expired",
+        "leaseEpoch": 4
+      }
+    },
+    {
+      "ts": "2026-10-24T17:43:35.726Z",
+      "event": "control_reset_completed",
+      "meta": {
+        "leaseEpoch": 4,
+        "state": "FREE",
+        "status": "applied"
+      }
+    },
+    {
+      "ts": "2026-10-24T17:43:35.728Z",
+      "event": "control_heartbeat_observed",
+      "meta": {
+        "reason": "lease-expired",
+        "received": 21,
+        "accepted": 21,
+        "rejected": 0,
+        "ackRequested": 21,
+        "ackEnqueued": 21,
+        "leaseEpoch": 3,
+        "lastReceivedAgeMs": 12689,
+        "lastAcceptedAgeMs": 12689,
+        "maxReceiveGapMs": 6400
+      }
+    }
+  ],
+  "limitations": [
+    "No injected fault. Strict baseline observer stops and closes the owned browser immediately after a natural disconnect; automatic reconnect/rebind was not allowed to finish, so its outcome is NOT_RUN.",
+    "Last accepted heartbeat was 247ms before Signal observed socket close, not 247ms before the browser initiated engine close.",
+    "No per-heartbeat sequence was retained in this version, so accepted and timed-out request cannot be uniquely joined.",
+    "After-run lease expiry followed the test browser cleanup and is not a second independent product failure."
+  ],
+  "decision": "Keep per-request 2500ms deadline, single pending and 3s cadence; require two consecutive current-scope timeouts before transport recovery, reset streak only on valid current ACK."
+}

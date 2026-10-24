@@ -4435,7 +4435,7 @@ const WebRTC = {
     const scope = this._controlHeartbeatScope = {
       socket: this.socket, socketId: this.socket.id, lease: this.controlState.lease,
       attempt: this.currentConnectionAttemptId, attemptSequence: this.connectionAttemptSequence,
-      acknowledged, sequence: 0,
+      acknowledged, sequence: 0, lastAcknowledgedSequence: null, consecutiveTimeouts: 0,
     };
     const heartbeat = () => {
       if (!this.isCurrentControlHeartbeatScope(scope)) return;
@@ -4467,6 +4467,8 @@ const WebRTC = {
             && ack.heartbeatSeq === sequence && ack.leaseEpoch === scope.lease.leaseEpoch
             && ack.connectionAttemptId === scope.attempt && ack.connectionAttemptSequence === scope.attemptSequence
             && performance.now() < pending.deadline) {
+            scope.consecutiveTimeouts = 0;
+            scope.lastAcknowledgedSequence = sequence;
             this.clearPendingControlHeartbeat();
             this.observeControlHeartbeat('acknowledged', performance.now() - pending.startedAt);
             return;
@@ -4522,6 +4524,9 @@ const WebRTC = {
       supported: this._controlHeartbeatCapability?.socket === this.socket
         && this._controlHeartbeatCapability?.socketId === this.socket?.id,
       ackBudgetMs: 2500, pending: Boolean(pending),
+      consecutiveTimeouts: this._controlHeartbeatScope?.consecutiveTimeouts || 0, reconnectThreshold: 2,
+      currentScopeSequence: this._controlHeartbeatScope?.sequence || null,
+      lastAcknowledgedSequence: this._controlHeartbeatScope?.lastAcknowledgedSequence ?? null,
       pendingAgeMs: pending ? Math.max(0, performance.now() - pending.startedAt) : null,
       lastAckAgeMs: observation?.lastAckAt == null ? null : Math.max(0, performance.now() - observation.lastAckAt),
       lastAckRttMs: observation?.lastAckRttMs ?? null, maxAckRttMs: observation?.maxAckRttMs ?? null,
@@ -4540,10 +4545,12 @@ const WebRTC = {
     const current = this.isCurrentControlHeartbeatScope(pending.scope);
     this.clearPendingControlHeartbeat();
     if (!current) return false;
+    const visible = !document.hidden && !this._pageLifecycleHidden && !this.manualDisconnect && !this._superseded;
+    pending.scope.consecutiveTimeouts = visible ? Math.min(2, pending.scope.consecutiveTimeouts + 1) : 0;
     this.observeControlHeartbeat('ack-timeout');
     const { lastFailure, lastFailureAgeMs, ...snapshot } = this.getControlHeartbeatSnapshot();
     this._controlHeartbeatLastFailure = { at: performance.now(), snapshot };
-    if (document.hidden || this._pageLifecycleHidden || this.manualDisconnect || this._superseded) return false;
+    if (!visible || pending.scope.consecutiveTimeouts < 2) return false;
     const engine = pending.scope.socket.io?.engine;
     this.stopControlHeartbeat();
     console.warn('[RECOVERY] control-heartbeat-ack-timeout; reconnecting signaling transport');

@@ -56,7 +56,8 @@
   function sanitizeControlHeartbeat(value, includeFailure = true) {
     if (!value || typeof value !== 'object') return null;
     const fields = ['supported', 'ackBudgetMs', 'pending', 'pendingAgeMs', 'lastAckAgeMs', 'lastAckRttMs',
-      'maxAckRttMs', 'sent', 'acknowledged', 'timeouts', 'rejected', 'reason', 'lastFailureAgeMs', 'lastFailure'];
+      'maxAckRttMs', 'sent', 'acknowledged', 'timeouts', 'rejected', 'reason', 'lastFailureAgeMs', 'lastFailure',
+      'consecutiveTimeouts', 'reconnectThreshold', 'currentScopeSequence', 'lastAcknowledgedSequence'];
     const values = {};
     for (const key of fields) { try { values[key] = value[key]; } catch (_) { values[key] = null; } }
     const duration = (key, max = 999999999) => typeof values[key] === 'number' && Number.isFinite(values[key])
@@ -65,6 +66,13 @@
       && values[key] <= 999999999 ? values[key] : null;
     const result = { supported: typeof values.supported === 'boolean' ? values.supported : null,
       ackBudgetMs: values.ackBudgetMs === 2500 ? 2500 : null,
+      consecutiveTimeouts: Number.isInteger(values.consecutiveTimeouts) && values.consecutiveTimeouts >= 0
+        && values.consecutiveTimeouts <= 2 ? values.consecutiveTimeouts : null,
+      reconnectThreshold: values.reconnectThreshold === 2 ? 2 : null,
+      currentScopeSequence: Number.isSafeInteger(values.currentScopeSequence) && values.currentScopeSequence >= 1
+        ? values.currentScopeSequence : null,
+      lastAcknowledgedSequence: Number.isSafeInteger(values.lastAcknowledgedSequence) && values.lastAcknowledgedSequence >= 1
+        ? values.lastAcknowledgedSequence : null,
       pending: typeof values.pending === 'boolean' ? values.pending : null,
       pendingAgeMs: duration('pendingAgeMs'), lastAckAgeMs: duration('lastAckAgeMs'),
       // ACK RTT includes scheduling, transport and Signal processing, not only network transit.
