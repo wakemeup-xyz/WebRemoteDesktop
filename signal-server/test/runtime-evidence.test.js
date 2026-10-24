@@ -70,3 +70,45 @@ test('bounded recorder evicts old reports and never retains untrusted event obje
   assert.equal(receipt.diagnostics.logCount.total, 3);
   assert.equal(JSON.stringify(receipt).includes('private-canary'), false);
 });
+
+test('schema3 receipt separates reported console logs from redaction and structured input evidence', () => {
+  const evidence = createRuntimeEvidenceRecorder();
+  evidence.observeDiagnostic({ schemaVersion: 3, logCount: 0, logs: [], logContentPolicy: 'metadata-only',
+    reportedLogCount: 2, retainedLogCount: 0, redactedLogCount: 2,
+    inputTrace: { events: [{ stage: 'ack', secret: 'PRIVATE_TRACE_CANARY' }] } });
+  const receipt = evidence.receipt();
+  assert.equal(receipt.diagnostics.logCount.total, 2);
+  assert.equal(receipt.diagnostics.logCount.zeroLogReports, 0);
+  assert.equal(receipt.diagnostics.logCount.unknownReports, 0);
+  assert.equal(receipt.diagnostics.retainedLogCount, 0);
+  assert.equal(receipt.diagnostics.redactedLogCount, 2);
+  assert.equal(receipt.diagnostics.inputTraceEventCount, 1);
+  assert.equal(receipt.diagnostics.metadataOnlyReports, 1);
+  assert.equal(receipt.coverage.missing.includes('logCount'), false);
+  assert.equal(JSON.stringify(receipt).includes('PRIVATE_TRACE_CANARY'), false);
+});
+
+test('historical schema3 redacted zero cannot prove zero client logs or erase structured evidence', () => {
+  const evidence = createRuntimeEvidenceRecorder();
+  evidence.observeDiagnostic({ schemaVersion: 3, logCount: 0, logs: [], inputTrace: { events: [{ stage: 'ack' }] } });
+  const receipt = evidence.receipt();
+  assert.equal(receipt.diagnostics.logCount.total, null);
+  assert.equal(receipt.diagnostics.logCount.zeroLogReports, 0);
+  assert.equal(receipt.diagnostics.logCount.unknownReports, 1);
+  assert.equal(receipt.diagnostics.redactedLogCount, null);
+  assert.equal(receipt.diagnostics.retainedLogCount, 0);
+  assert.equal(receipt.diagnostics.inputTraceEventCount, 1);
+  assert.equal(receipt.coverage.missing.includes('logCount'), true);
+  const unknown = createRuntimeEvidenceRecorder();
+  unknown.observeDiagnostic({ schemaVersion: 3, logCount: 0 });
+  assert.equal(unknown.receipt().diagnostics.logCount.total, null);
+  assert.ok(unknown.receipt().coverage.missing.includes('logCount'));
+});
+
+test('durable summary policy projects console and trace counts without raw event arrays', () => {
+  const row=projectDiagnostic({logContentPolicy:'metadata-only',reportedLogCount:2,
+    retainedLogCount:0,redactedLogCount:2,inputTraceEventCount:1});
+  assert.equal(row.logCount,2);assert.equal(row.retainedLogCount,0);
+  assert.equal(row.redactedLogCount,2);assert.equal(row.inputTraceEventCount,1);
+  assert.equal(row.metadataOnly,true);
+});

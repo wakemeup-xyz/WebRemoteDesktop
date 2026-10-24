@@ -462,6 +462,7 @@ const WebRTC = {
   _mediaRequestRetryUsed: false,
   _mediaResumeRefreshFallbackUsed: false,
   _mediaFailureHandledKey: null,
+  _mediaActivityAckScope: null,
   _mediaReadyConnectionAttemptId: null,
   _lastInboundFramesDecoded: 0,
   _lastInboundFramesDecodedAt: null,
@@ -813,13 +814,19 @@ const WebRTC = {
     if (!this.activeLeaseEnvelope() || !this.socket?.connected) return false;
 
     const runtime = this.mediaActivityRuntime;
+    // Replaying an already-applied request does not create a new resume. Keep
+    // its rendered-frame proof and deadline while Host rejects the duplicate
+    // generation; the original applied ACK still owns this exact media scope.
+    const retainResumeProof = this.getMediaAppliedPhase() === 'resuming'
+      && Boolean(this.currentAppliedMediaAck())
+      && this.mediaResumeScopeMatches(this._mediaResumeBaseline);
     if (runtime) {
       runtime.beginDesired(snapshot.state, {
         generation: snapshot.generation,
         connectionAttemptId: this.currentConnectionAttemptId || null,
       });
     }
-    if (snapshot.state === 'active') {
+    if (snapshot.state === 'active' && !retainResumeProof) {
       this.captureMediaResumeBaseline(snapshot.generation);
     }
     const sent = this.sendMediaActivityRequest(snapshot.state, snapshot);
@@ -980,6 +987,7 @@ const WebRTC = {
   clearMediaResumeProof() {
     this._mediaResumeFramePending = false;
     this._mediaResumeBaseline = null;
+    this._mediaActivityAckScope = null;
     this._mediaResumeEarlyFrame = null;
     this._lastRenderedRelayFrame = null;
     this._mediaResumeArmPending = false;
@@ -1010,6 +1018,17 @@ const WebRTC = {
       ...this.mediaResumeScope(generation),
       videoFrameSeq: Number(this._videoFrameSeq) || 0,
     };
+  },
+
+  currentAppliedMediaAck() {
+    const ack = this.mediaActivityRuntime?.snapshot?.().lastAck;
+    if (!this.hasActiveControl() || this.manualDisconnect || this._superseded
+      || ack?.applied !== true || ack.state !== this._mediaIntent?.state
+      || ack.state !== this.getMediaActivitySnapshot().state
+      || ack.generation !== this._mediaIntent?.generation
+      || ack.connectionAttemptId !== this.currentConnectionAttemptId
+      || !this.mediaResumeScopeMatches(this._mediaActivityAckScope)) return null;
+    return ack;
   },
 
   sendMediaActivityRequest(desired, snapshot) {
@@ -1062,6 +1081,19 @@ const WebRTC = {
     return true;
   },
 
+  handleMediaActivityRejected(data = {}) {
+    // Signal can reject a replay before Host sees it. Treat only a correlated
+    // rejection as this request's failure; an older/unscoped rejection cannot
+    // spend the current intent's recovery budget or clear its frame deadline.
+    if (data?.schemaVersion !== 1 || data.state !== this._mediaIntent?.state
+      || !Number.isSafeInteger(data.generation) || data.generation < 1
+      || data.generation !== this._mediaIntent?.generation
+      || data.connectionAttemptId !== this.currentConnectionAttemptId) return false;
+    this.handleMediaActivityAck({ state: data.state, generation: data.generation,
+      connectionAttemptId: data.connectionAttemptId, applied: false, reason: data.reason });
+    return true;
+  },
+
   handleMediaActivityAck(data = {}) {
     if (data.relayControlKind === 'start') return this.handleRelayStartAck(data);
     if (this.tunnelRelayActive && data.state === 'active' && data.applied === true
@@ -1074,6 +1106,19 @@ const WebRTC = {
     if (!this.mediaActivityRuntime) return;
     if (!this.mediaResumeScopeMatches(this._mediaResumeBaseline)
       && data.state === 'active') return;
+    const appliedAck = this.currentAppliedMediaAck();
+    if (appliedAck && data.state === appliedAck.state
+      && data.generation === appliedAck.generation
+      && data.connectionAttemptId === appliedAck.connectionAttemptId
+      && ((data.applied !== true && data.reason === 'stale-generation')
+        || (data.applied === true
+          && (!this.tunnelRelayActive || this.relayScopeMatches(data.relayScope))))) {
+      // Host records applied progress and rejects identical replays. That
+      // rejection cannot revoke a successful ACK from this same owner, or
+      // cancel its remaining fresh-frame recovery budget. Repeated successful
+      // ACKs for the same producer cannot purchase a new deadline either.
+      return;
+    }
     const result = this.mediaActivityRuntime.applyAck({
       state: data.state,
       generation: data.generation,
@@ -1100,6 +1145,7 @@ const WebRTC = {
     if (!result.accepted) return;
     if (this.tunnelRelayActive && result.phase === 'resuming'
       && !this.acceptRelayScope(data.relayScope)) return;
+    this._mediaActivityAckScope = this.mediaResumeScope(data.generation);
     this._mediaFailureHandledKey = null;
     if (result.phase === 'resuming') {
       this._mediaResumeFramePending = true;
@@ -4027,12 +4073,8 @@ const WebRTC = {
     onCurrentSocket('control-heartbeat-rejected', () => this.freezeControl('control-heartbeat-rejected'));
     onCurrentSocket('media-activity-ack', (data) => this.handleMediaActivityAck(data));
     onCurrentSocket('relay-stream-control-ack', (data) => this.handleMediaActivityAck(data));
-    onCurrentSocket('relay-stream-control-rejected', (data) => {
-      this.handleMediaRequestFailure(data?.reason || 'relay-stream-control-rejected');
-    });
-    onCurrentSocket('media-activity-rejected', (data) => {
-      this.handleMediaRequestFailure(data?.reason || 'media-activity-rejected');
-    });
+    onCurrentSocket('relay-stream-control-rejected', (data) => this.handleMediaActivityRejected(data));
+    onCurrentSocket('media-activity-rejected', (data) => this.handleMediaActivityRejected(data));
   },
 
   hasActiveControl() {
@@ -4318,6 +4360,7 @@ const WebRTC = {
   },
 
   freezeControl(reason, reset = true) {
+    this._mediaActivityAckScope = null;
     this.clearRelayOrigin();
     if (['signal-disconnect', 'host-offline', 'viewer-superseded', 'control-revoked'].includes(reason)) {
       this._cancelControlAcquireIntent();
@@ -5173,10 +5216,17 @@ const WebRTC = {
       return false;
     }
 
-    channel.send(JSON.stringify({
+    const serialized = JSON.stringify({
       ...data,
       transport: 'datachannel'
-    }));
+    });
+    try {
+      channel.send(serialized);
+    } catch (_) {
+      // A synchronous enqueue failure leaves the existing Socket fallback in
+      // charge. Serialization errors above still propagate to the caller.
+      return false;
+    }
     try {
       const viewerClockMs = performance.now();
       if (typeof LatencyMonitor !== 'undefined' && typeof Input !== 'undefined'

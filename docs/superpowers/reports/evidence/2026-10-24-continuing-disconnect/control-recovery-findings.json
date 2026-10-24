@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "source": "Deidentified summary of root inspection before the test-isolation incident; NOT restored raw reports",
+  "coverage": {"ordinaryReportsInspectedToday":7,"scopeEndedRecordsExcluded":true,"completeDayCoverage":false,"historicalRawCurrentlyAvailable":false},
+  "evidenceLoss": {
+    "date": "2026-10-24",
+    "directory": "/tmp/wrd-diag",
+    "cause": "Existing diagnostic.test.js recursively cleared the default production directory during this agent's regression execution",
+    "affected": "Contents of that diagnostic directory, including retained raw and daily summaries",
+    "remaining": ["Host runtime logs", "Signal text and structured runtime logs", "Previously extracted repository evidence"],
+    "repair": "Unique WRD_DIAG_DIR before imports, cleanup ownership checks, subprocess production-canary regression",
+    "recovery": "No historical raw files reconstructed or represented as recovered"
+  },
+  "reports": [
+    {"receivedAtUtc":"2026-10-24T04:04:25.715Z","reason":"negotiation-timeout","reportedLogCount":null,"retainedLogCount":0,"inputTraceEventCount":256,"recoveryState":"idle","droppedTraceObservations":1852,"expiredPendingAckObservations":0},
+    {"receivedAtUtc":"2026-10-24T04:14:21.884Z","reason":null,"reportedLogCount":null,"retainedLogCount":0,"inputTraceEventCount":256,"recoveryState":"idle"},
+    {"receivedAtUtc":"2026-10-24T04:14:23.285Z","reason":null,"reportedLogCount":null,"retainedLogCount":0,"inputTraceEventCount":256,"recoveryState":"idle"},
+    {"receivedAtUtc":"2026-10-24T04:14:29.787Z","reason":null,"reportedLogCount":null,"retainedLogCount":0,"inputTraceEventCount":256,"recoveryState":"idle"},
+    {"receivedAtUtc":"2026-10-24T10:12:22.928Z","reason":"dc-stuck","reportedLogCount":null,"retainedLogCount":0,"inputTraceEventCount":256,"recoveryState":"idle","droppedTraceObservations":471,"expiredPendingAckObservations":1},
+    {"receivedAtUtc":"2026-10-24T11:34:15.298Z","reason":"input-ack-timeout","reportedLogCount":null,"retainedLogCount":0,"inputTraceEventCount":256,"recoveryState":"waiting","droppedTraceObservations":3034,"expiredPendingAckObservations":1},
+    {"receivedAtUtc":"2026-10-24T13:09:14.890Z","reason":"signal-connect-error","reportedLogCount":null,"retainedLogCount":0,"inputTraceEventCount":256,"recoveryState":"idle"}
+  ],
+  "limitations": [
+    "Rows summarize inspection before deletion; original raw files are no longer available for independent replay.",
+    "Inspected retained files covered only a subset of today's reports.",
+    "Trace evictions and ACK observation expiration are not counts of lost desktop inputs.",
+    "Historical reported console log count is unknown after redaction.",
+    "Host ACK enqueue does not prove Viewer receipt; Host and Viewer wall clocks are not calibrated."
+  ],
+  "implementationProof": [
+    "Real Host validator, registered Signal rejection route and Viewer runtime/fake timers reproduce applied ACK overwritten by duplicate rejection.",
+    "Actual Input/WebRTC fixture reproduces synchronous DataChannel enqueue failure bypassing Socket fallback.",
+    "Lifecycle-only bounded trace fixture reproduces false input-loss alert without submitting any desktop input."
+  ]
+}

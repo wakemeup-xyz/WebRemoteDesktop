@@ -52,6 +52,35 @@ test('same diagnostic ID uses shared durable receipts even after raw removal', t
   assert.equal(reloaded.write({diagnosticId:'same', receivedAt:new Date(f.tick(0)).toISOString()}).duplicate,true);
 });
 
+test('durable summaries retain only console counts and input trace counts after raw eviction and reload', t => {
+  const f=fixture(t,{maxPerViewer:1});
+  f.write('counted','fixture-viewer',{logContentPolicy:'metadata-only',reportedLogCount:2,
+    retainedLogCount:0,redactedLogCount:2,inputTraceEventCount:1,logs:[],inputTrace:{events:[{stage:'ack'}]}});
+  f.tick();f.write('newest');
+  assert.deepEqual(raws(f.dir).map(r=>r.diagnosticId),['newest']);
+  const reloaded=createDiagnosticStore({dir:f.dir,now:()=>f.tick(0)});
+  const row=reloaded.listSummary({from:0,to:Infinity}).records.find(r=>!r.rawAvailable);
+  assert.equal(row.logContentPolicy,'metadata-only');
+  assert.equal(row.reportedLogCount,2);assert.equal(row.retainedLogCount,0);
+  assert.equal(row.redactedLogCount,2);assert.equal(row.inputTraceEventCount,1);
+  for(const key of ['logs','inputTrace','events','keyboardDebug'])assert.equal(Object.hasOwn(row,key),false);
+});
+
+test('summary console counters preserve unknown and reject malformed counter metadata', t => {
+  const f=fixture(t);
+  f.write('historical','viewer-old',{logCount:0,logs:[],inputTrace:{events:[{stage:'ack'}]}});
+  f.tick();f.write('malformed','viewer-bad',{schemaVersion:2,logContentPolicy:'PRIVATE_POLICY_CANARY',
+    reportedLogCount:-1,retainedLogCount:'PRIVATE_COUNT_CANARY',redactedLogCount:Infinity,inputTraceEventCount:{count:1}});
+  const rows=f.store.listSummary({from:0,to:Infinity}).records;
+  const old=rows.find(row=>row.logContentPolicy==='metadata-only');
+  assert.equal(old.reportedLogCount,null);assert.equal(old.retainedLogCount,0);
+  assert.equal(old.redactedLogCount,null);assert.equal(old.inputTraceEventCount,1);
+  const bad=rows.find(row=>row.logContentPolicy===null);
+  for(const key of ['reportedLogCount','retainedLogCount','redactedLogCount','inputTraceEventCount'])assert.equal(bad[key],null);
+  const summary=fs.readdirSync(path.join(f.dir,'summary')).map(name=>fs.readFileSync(path.join(f.dir,'summary',name),'utf8')).join('');
+  assert.equal(summary.includes('CANARY'),false);
+});
+
 test('UTC seven-day retention and daily row eviction expose gaps and bounded dedupe horizon', t => {
   const f = fixture(t,{maxSummaryRows:2,maxPerViewer:1});
   f.write('a'); f.tick(); f.write('b'); f.tick(); f.write('c');

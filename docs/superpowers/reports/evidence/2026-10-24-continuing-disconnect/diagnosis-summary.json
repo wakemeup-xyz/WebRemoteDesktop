@@ -29,7 +29,6 @@
     "viewerReconnected": 1,
     "viewerRebindConfirmed": 1,
     "diagnosticUploaded": 17,
-    "diagnosticLogCountZero": 17,
     "controlTransitionFailedClosed": 16,
     "controlResetCompleted": 15,
     "controlResetRetry": 7,
@@ -41,7 +40,8 @@
       "collectionFailures": 0,
       "loggerFailures": 0,
       "storeFailures": 0
-    }
+    },
+    "retainedConsoleLogCountZeroReports": 17
   },
   "host": {
     "structuredLagWindows": 7295,
@@ -100,7 +100,9 @@
     "Capture last/max values are sampled snapshots, include repeated suspended values, and are not a per-operation latency distribution.",
     "Input total is Host processing time, not input ACK RTT or input-to-visible-effect.",
     "Viewer FPS statistic includes zero samples and cached-frame reuse; it is not a fresh-frame rate.",
-    "CPU attribution was reviewed separately with a later 12:26–21:35 log window."
+    "CPU attribution was reviewed separately with a later 12:26–21:35 log window.",
+    "Historical logCount=0 is retained-console content count after schema-3 redaction, not proof of no client logs.",
+    "inputTrace.droppedEvents counts bounded diagnostic history eviction/redaction, not lost desktop input delivery."
   ],
   "cpuAttributionReview": "capture-cpu-attribution.json"
 }

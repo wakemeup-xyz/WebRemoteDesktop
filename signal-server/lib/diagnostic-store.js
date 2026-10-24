@@ -12,6 +12,7 @@ const identity = value => hash(value).slice(0,32);
 const time = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value) && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
 const enumValue = (value, allowed) => allowed.includes(value) ? value : null;
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+const knownCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 function getDiagDir() { return process.env.WRD_DIAG_DIR?.trim() ? path.resolve(process.env.WRD_DIAG_DIR.trim()) : '/tmp/wrd-diag'; }
 function ensureDirectory(dir) {
   fs.mkdirSync(dir,{recursive:true});
@@ -192,6 +193,13 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
       reason:enumValue(r.reason || r.traceSummary?.reason,['manual','input-ack-timeout','pc-failed','pc-disconnected','ice-disconnected','dc-error','dc-stuck','direct-failed-suggest-relay','relay-failed-suggest-tunnel']),
       state:enumValue(r.inputState?.gate?.runtimePhase,['active','suspending','suspended','resuming']),
       mode:enumValue(r.mode,['auto','direct','relay','tunnel','stun','turn']),
+      // The durable daily summary outlives raw eviction. Keep only measured
+      // counts, and never reconstruct a client log count from redacted zero.
+      logContentPolicy:r.schemaVersion===3?'metadata-only':enumValue(r.logContentPolicy,['metadata-only']),
+      reportedLogCount:knownCount(r.reportedLogCount),
+      retainedLogCount:knownCount(r.retainedLogCount)??(Array.isArray(r.logs)?r.logs.length:knownCount(r.logCount)),
+      redactedLogCount:knownCount(r.redactedLogCount),
+      inputTraceEventCount:Array.isArray(r.inputTrace?.events)?r.inputTrace.events.length:knownCount(r.inputTraceEventCount),
       sampleCount:metrics && typeof metrics==='object'?Object.values(metrics).reduce((n,item)=>Math.min(Number.MAX_SAFE_INTEGER,n+count(item?.count)),0):0};
   }
   const dayStart=at=>Math.floor(at/DAY)*DAY;

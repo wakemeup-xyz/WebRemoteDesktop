@@ -67,11 +67,11 @@
 ## 阶段 3：输入 fallback 和可见效果
 
 1. 复核现有可靠输入 ACK timeout/DC quarantine/Socket fallback，先复现今天仍失败的路径，只修实际缺口；Socket fallback 只保留可靠控制，不重放旧 move。
-2. Host/Signal 为每个受控 marker 输出 bounded scalar trace：send、relay、received、result、ack、frame、rVFC；客户端诊断保留最近有限条日志，使 `logCount` 不再稳定为 0。
+2. Host/Signal 为每个受控 marker 输出 bounded scalar trace：send、relay、received、result、ack、frame、rVFC；客户端保留有界结构化 trace，日志计数区分上送/保留/脱敏。诊断 ring 淘汰不解释为键鼠投递丢失。
 3. UI 明确区分 `page-hidden`、`transport-lost`、`negotiating`、`media-stalled`，并在 page visibility 恢复时只提交一个 generation 新的 resume。
 4. `/api/admin/observability/summary` 显示 Host receipt 的缺测原因，不把 heartbeat ring drop 当成 RTP drop。
 
-通过门槛：真实 marker 会话 ACK p95≤200ms、max≤1,000ms；expired ACK=0；`inputToVisibleEffectMs` 覆盖率≥95%；自动诊断 `logCount>0`、summary gap=0。
+通过门槛：真实 marker 会话 ACK p95≤200ms、max≤1,000ms；expired ACK=0；`inputToVisibleEffectMs` 覆盖率≥95%；reported/retained/redacted/trace 计数各自准确，未知保持 null，summary gap=0。
 
 ## 阶段 4：维护窗口发布和验收
 
@@ -90,4 +90,17 @@
 ## 当前状态
 
 - 阶段 0：已完成今天日志基线和诊断文档；Host 00:00–08:18 的证据缺失已标注。CPU 归因复核已纠正 GIL/2x/分位数口径；全机压力与 native 等待的受控 A/B 仍未运行。
-- 阶段 1–4：未实施，不能把当前“本地 health 正常、偶尔可见 19 FPS”宣布为持续可用。
+- 阶段 1：未实施受控采集隔离 A/B。阶段 2–3：下方三个确定缺口已完成代码和离线验证；其余广泛整改仍待独立证据。阶段 4：本次最小修复正在加载和验收，不能把 health 正常或单次短测宣布为持续可用。
+
+## 本次最小修复清单（22 点补充）
+
+- [x] 用真实 Host validator + Viewer runtime + fake timers 复现同 generation soft replay 后永久 resuming；用真实 Input/WebRTC 复现同步 DC send 异常未进入 Socket fallback。
+- [x] 用 v3 持久化反例证明旧 logCount 统计的是清空后数组，并确认普通 report 仍有结构化 input trace。
+- [x] 修复 media ACK 幂等/证明保留/有界时限，验证旧 PC、socket、lease、attempt/generation 和主动暂停不能被激活；覆盖真实 Signal 拒绝/Host reason 转发，而非仅前端模拟。
+- [x] 修复同步 DC send 失败的 Socket fallback，验证成功 DC 不双发、Socket 离线 fail-closed、序列化错误不被吞掉。
+- [x] 贯通 reported/retained/redacted/trace 计数，验证原文不落盘、raw 淘汰后日汇总仍保留计数、历史未知不伪装为 0。
+- [ ] 运行相关 Signal/Viewer 回归和隔离前端构建；review 实现及文档，提交到 main。
+- [ ] 按现有维护授权在无 Viewer 时加载本地修复并验收；若用户 Viewer 恢复在线则保护其会话，保持待加载状态。tunnel 不操作。
+- [ ] 分别记录离线通过、生产已加载、passive/短断线和真实可见效果状态；未运行的不勾选。
+
+离线最终结果：Viewer 1,507/1,507，Signal 432/432；独立媒体审查未发现必修问题；隔离构建 buildId `544814d637669668`。本轮回归触发旧诊断测试清理生产目录的隔离缺陷，历史 raw 丢失；现已修复并新增生产 canary 回归。事故及证据边界见 `../reports/2026-10-24-control-recovery-fix-execution.md`。

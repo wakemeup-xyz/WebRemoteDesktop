@@ -41,12 +41,12 @@ Signal 结构化日志今天截至 19:42 的计数如下：
 
 关键时刻：
 
-- 11:39：`signal-connect-error`，客户端快照已有 4,042 个 dropped input events 和 9 个过期 ACK。
+- 11:39：`signal-connect-error`，客户端快照已有 4,042 条被淘汰的诊断 trace 和 9 条到期的 ACK 观察记录；这不是 4,042 次键鼠投递丢失。
 - 12:03–12:05：`input-ack-timeout`、`negotiation-timeout`，随后 Socket transport close；30 秒宽限到期。
 - 13:54：第二次 transport close，约 3 秒后 `viewer_reconnected` + `viewer_rebind_confirmed`，这是今天唯一明确成功的原会话恢复。
 - 14:37：transport close，宽限到期；14:46 是客户端 namespace disconnect，随后也到期。
 - 18:12：`dc-stuck` 与 `input-reset-ack-expired` 后 transport close，宽限到期。
-- 19:34：最新一轮仍在发生 `input-ack-timeout`，客户端 dropped events=3,034；服务端经历 `transition-timeout` 和两次 retry，最终完成 reset。这个事件证明问题今天仍未闭合，不是历史残留。
+- 19:34：最新一轮仍在发生 `input-ack-timeout`，客户端诊断 trace 淘汰数=3,034；服务端经历 `transition-timeout` 和两次 retry，最终完成 reset。ACK 超时和恢复失败是真实症状，但 trace 淘汰数不能充当输入丢失数。
 
 心跳关闭快照的 `node.status` 均为 `ok`，但各会话状态不同：有的在关闭前 ping/pong 计数完整、WebSocket buffer 为 0；有的在 20 秒 ping 窗口没有收到 pong；还有一例明确是客户端 namespace 主动断开。因此 Signal 的进程健康和 Viewer 的 transport 稳定性是两个不同指标。
 
@@ -83,7 +83,7 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 
 - Signal 的 124 次 `signal_input_relayed` 都表示信令层接受，不等于 Host 已执行或画面已可见；Host 的 `host_input_result/ack` 才是执行证据。
 - Host 有 2 次明确 `stale-lease/unbound-channel` 拒绝；这属于旧 DataChannel 输入迟到，说明 fail-closed 生效，但用户体验仍是“按键没反应”。
-- 自动诊断快照中的 `logCount` 今天仍反复为 0，且 `inputTrace.droppedEvents` 从几百到 5,000 级。当前证据能证明失败发生，却不能从 Viewer 日志恢复完整的客户端状态转移。
+- 自动诊断快照的旧 `logCount=0` 是 schema 3 原文脱敏策略的结果。`inputTrace.droppedEvents` 从几百到 5,000 级，指有界诊断 ring 淘汰/脱敏丢弃条目，不是键鼠输入未投递。实际 ACK timeout 和恢复状态应看独立事件；当前仍保留有限的结构化状态转移，不能还原全天完整历史。
 - `DC_DIAGNOSTIC_ADMISSION` 的 drop 是诊断通道拥塞/不可用（某些会话出现 `congested` 或 `unavailable`），不是媒体 RTP 丢帧；`capture_stats` 的 drop 仍为 0。报告不把两者混为一谈。
 
 ## 根因排序
@@ -106,9 +106,9 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 
 7 次 `page-hidden` 暂停会让 FPS 正常变成 0。若浏览器把页面放后台、设备锁屏或切换工作区，Viewer 可能看到黑屏/停帧；这是浏览器生命周期策略，应该显式呈现为“页面隐藏，媒体暂停”，并在重新可见时走一次受控 resume。
 
-### P1：输入诊断闭环不完整
+### P1：输入诊断计数语义错误与覆盖缺口
 
-`logCount=0`、ACK 过期、unordered drop 与可见效果没有在同一份 bounded receipt 中闭环，导致故障时只能看到“输入发送/信令接受”，无法快速回答“Host 是否执行、是否产生后帧、用户是否看见”。
+22 点源码复核确认：schema 3 主动清空控制台原文后，旧 ingest 用清空后的数组长度生成 `logCount=0`。这只能说明原文未保留，不能证明客户端未采日志。当前仍保留的 7 份普通 v3 report 各有 256 条结构化 input trace；scope-ended 独立记录不应混算。新计数必须区分上送、保留、脱敏和结构化 trace。ACK RTT、Host 执行与可见效果仍需分开，不得互相代替。
 
 ## 解决方案
 
@@ -130,7 +130,7 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 
 1. 键盘、鼠标 down/up、reset 走可靠通道；鼠标 move/wheel 继续 latest-only，但对 `droppedCount` 设置告警和采样窗口，避免无限累积。
 2. DataChannel 卡住或 ACK 连续超时后，可靠输入立即切到 Socket.IO fallback；恢复后再切回 DataChannel。fallback 期间不重放旧鼠标 move，不阻塞键盘和按钮释放。
-3. Viewer 自动诊断必须携带有界 `logCount`、transport/PC 状态、ACK 过期和输入 gate；Host receipt 关联 `input_received → input_result → frame_timing → marker/rVFC`。缺测保持 `null/NOT RUN`。
+3. Viewer 自动诊断分别统计上送/保留/脱敏日志和结构化 trace，同时保留 transport/PC 状态、ACK timeout 和输入 gate；Host receipt 关联 `input_received → input_result → frame_timing → marker/rVFC`。缺测保持 `null/NOT RUN`。
 4. 页面隐藏单独显示媒体状态，恢复时只触发一次受控 resume；不把 `page-hidden` 计入网络断线率。
 
 ### 第四阶段：验收和上线门槛
@@ -138,9 +138,18 @@ Host 今天有 7 次明确的 `media_activity_requested(state=suspended, reasons
 - 30 分钟正式域名长会话：event-loop p95≤20ms、max≤100ms；capture p95≤100ms、max≤250ms；活动期 decoded FPS p50≥18、新鲜抓帧 cadence≥15 FPS；暂停期单列，缓存复用不计新鲜帧；RSS 无持续单调增长。RTP dropped/freezes 单列，不与诊断 drop 混算。
 - 五次不超过 20 秒的短断线：每次在 grace 内完成 rebind 或一次 fresh attempt，恢复≤10 秒；不得出现旧 lease 输入执行。
 - 真实输入验收：ACK p95≤200ms、max≤1,000ms；控制 reset ACK 过期为 0；marker→rVFC 的 `inputToVisibleEffectMs` 覆盖率≥95%。
-- 诊断验收：自动失败快照 `logCount>0`，`summaryGapCount=0`，ring drop 单独标注为诊断环覆盖计数，`coverage.missing` 只列出真正未采集字段。
+- 诊断验收：分别报告 `reportedLogCount`、`retainedLogCount`、`redactedLogCount` 与 `inputTraceEventCount`；原文禁止保留时，保留条数为 0 是正常策略。未知上送计数保持 null/缺测，不要求伪造 `logCount>0`。`summaryGapCount=0`，ring drop 单独标注为诊断环覆盖计数。
 - 维护窗口结束时保持本地 Signal/Host 可用；不以停止服务或重建 tunnel 作为通过条件。
 
 ## 当前建议
 
 本地服务和正式网页入口在原检查时健康，但持续控制仍有失败。下一步先完成资源归因和最小恢复缺陷复现，再决定是否需要进程隔离；不得把 snapshot p95 当作逐次抓帧 p95、unordered drop 当作可靠输入丢失，或把所有超时归因 CPU。当前仍不能宣布持续控制验收完成。
+
+## 22 点复核发现的可复现代码缺口
+
+- 真实 Host validator、Viewer runtime 和虚拟时钟联合反例复现：active 已成功 ACK、尚未收到新鲜帧时 soft replay 同 generation；Host 拒绝 `stale-generation`，Viewer 抹掉原成功 ACK，又清掉 fresh-frame fallback。重复失败被去重后，request/fresh-frame 计时器同时缺失，后续真实新帧也因 `no-active-ack` 被拒，永久停在 resuming。该反例证明代码存在缺口，不证明今天每一例断控都经过该时序。
+- 真实 WebRTC/Input 联合反例复现：`channel.send()` 同步抛出 OperationError/InvalidStateError 会越过 Socket fallback。应仅在实际发送处返回 false，让现有安全 fallback 接管，序列化错误仍保持可见。
+- schema 3 `logCount` 来源为脱敏后的空数组，属于确定的计数语义错误；7 份普通 report 的结构化 trace 均有 256 条，不能叫作“空诊断”。
+- 19:34 Host 对 reset544/reset128 已执行并入队 ACK；故障快照采集时 Viewer 未出现对应 ACK trace。`ackAccepted=true` 仅证明 Host 入队，不能据此认定 Viewer 接收校验错误。复用 reset 继承原 3 秒 deadline 也符合现有安全契约，不延长预算掩盖链路延迟。
+
+实施与实际加载结果见 [控制恢复修复记录](2026-10-24-control-recovery-fix-execution.md)。

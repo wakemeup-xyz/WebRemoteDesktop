@@ -387,7 +387,7 @@ for (const failure of ['channel-throw', 'socket-throw', 'disconnected', 'quarant
       if (failure === 'socket-throw') f.socket.emit = () => { throw error; };
       if (failure === 'disconnected') { f.reliable.readyState = 'closed'; f.socket.connected = false; }
       if (failure === 'quarantined-selected-move') f.w._quarantinedInputChannel = f.move;
-      if (failure.endsWith('throw')) assert.throws(f.dispatch, actual => actual === error);
+      if (failure === 'socket-throw') assert.throws(f.dispatch, actual => actual === error);
       else assert.equal(f.dispatch(), null);
       assert.equal(f.observedSends.length, 0);
       assert.equal(f.row().send, null);
@@ -4955,6 +4955,332 @@ test('closed media failure replays intent and never refreshes', () => {
   const replays = emitted.filter(([event]) => event === 'media-activity-change');
   assert.equal(replays.length, 1);
   assert.equal(refreshes, 0);
+});
+
+function appliedMediaReplayFixture() {
+  let now = 0;
+  const timers = new Set();
+  const setTimer = (fn, ms) => {
+    const timer = { fn, ms, due: now + ms };
+    timers.add(timer);
+    return timer;
+  };
+  const { WebRTC, context } = loadWebRTC({
+    performance: { now: () => now },
+    setTimeout: setTimer,
+    clearTimeout: (timer) => timers.delete(timer),
+  });
+  for (const file of ['media-activity-controller.js', 'media-activity-runtime.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, file), 'utf8'), context);
+  }
+  context.MediaActivityController = context.window.MediaActivityController;
+  const requests = [];
+  WebRTC.socket = { connected: true, emit(event, data) {
+    if (event === 'media-activity-change') requests.push(data);
+  }, on() {} };
+  WebRTC.controlState = { state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 3 } };
+  WebRTC.currentConnectionAttemptId = 'attempt-applied-replay';
+  WebRTC.connectionAttemptSequence = 1;
+  WebRTC.networkMode = 'relay';
+  WebRTC.pc = { connectionState: 'connected', iceConnectionState: 'connected', restartIce() {} };
+  context.Input = { setActive() {}, resetKeyboard() {}, setControlLease() {} };
+  // Create the active generation through the actual desired-state controller.
+  WebRTC.setMediaActivityReason('manual-pause', true);
+  WebRTC.setMediaActivityReason('manual-pause', false);
+  const request = { ...requests.at(-1), viewerId: 'viewer-1' };
+  const ack = { state: 'active', generation: request.generation,
+    connectionAttemptId: request.connectionAttemptId, applied: true };
+  WebRTC.handleMediaActivityAck(ack);
+  let refreshes = 0;
+  WebRTC.refresh = () => { refreshes += 1; };
+  return { WebRTC, requests, request, ack, timers,
+    refreshes: () => refreshes,
+    advance(ms) {
+      const target = now + ms;
+      while (true) {
+        const timer = [...timers].filter(item => item.due <= target)
+          .sort((a, b) => a.due - b.due)[0];
+        if (!timer) break;
+        now = timer.due;
+        timers.delete(timer);
+        timer.fn();
+      }
+      now = target;
+    },
+    frame(overrides = {}) {
+      return WebRTC.observeFreshResumeFrame({ source: 'video-callback', frameSeq: 1,
+        connectionAttemptId: WebRTC.currentConnectionAttemptId, pc: WebRTC.pc, ...overrides });
+    },
+  };
+}
+
+function rejectAppliedMediaReplayOnRealHost(request) {
+  // Load only the real Host's pure validation/rejection methods: no Quartz,
+  // encoder, service process or network is needed for this cross-runtime case.
+  const bridge = require('node:child_process').spawnSync('python3', ['-B', '-c', `
+import ast, asyncio, json, sys
+from types import SimpleNamespace
+source = ast.parse(open(sys.argv[1]).read())
+names = {'valid_relay_nonce', 'valid_relay_integer'}
+nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in names]
+host = next(n for n in source.body if isinstance(n, ast.ClassDef) and n.name == 'WebRemoteHost')
+methods = {'_validate_media_activity_request', 'on_media_activity_change', '_emit_media_activity_ack'}
+nodes.append(ast.ClassDef(name='Host', bases=[], keywords=[], decorator_list=[],
+    body=[n for n in host.body if getattr(n, 'name', None) in methods]))
+env = {'asyncio': asyncio, 'RELAY_SAFE_INTEGER': 9007199254740991}
+exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), 'real-host-media', 'exec'), env)
+request = json.load(sys.stdin)
+host = env['Host']()
+host._active_input_binding = dict(request)
+host._media_activity_binding = dict(request)
+events = []
+async def emit(event, payload): events.append(payload)
+host.sio = SimpleNamespace(emit=emit)
+asyncio.run(host.on_media_activity_change(request))
+print(json.dumps(events[-1]))
+`, path.join(__dirname, '../../python-host/host.py')], {
+    input: JSON.stringify(request), encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(bridge.status, 0, bridge.stderr);
+  const ack = JSON.parse(bridge.stdout.trim());
+  assert.equal(ack.applied, false);
+  assert.equal(ack.reason, 'stale-generation');
+  return ack;
+}
+
+function signalMediaReplayFixture({ acknowledge = true } = {}) {
+  process.env.ACCESS_PASSWORD ||= 'test-viewer-password';
+  process.env.JWT_SECRET ||= '12345678';
+  process.env.HOST_PASSWORD ||= 'test-host-password';
+  const { setupSignaling } = require('../../signal-server/websocket/signaling');
+  const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('../../signal-server/websocket/signaling-test-fixture');
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001', now: () => 0 });
+  const host = new FakeSocket('host-media-replay', 'host');
+  const viewer = new FakeSocket('viewer-media-replay', 'viewer');
+  host.handshake.auth.inputProtocolVersion = viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const lease = grantActiveLease(io, host, viewer);
+  const f = appliedMediaReplayFixture();
+  const w = f.WebRTC;
+  const listeners = new Map();
+  w.socket = { connected: true, on(event, handler) { listeners.set(event, handler); },
+    emit(event, data) {
+      if (event === 'media-activity-change') f.requests.push(data);
+      viewer.trigger(event, data);
+    } };
+  w.controlState.lease = { leaseId: lease.leaseId, leaseEpoch: lease.leaseEpoch };
+  w.setupSocketListeners();
+  const originalEmit = viewer.emit.bind(viewer);
+  viewer.emit = (event, data, ack) => {
+    const result = originalEmit(event, data, ack);
+    listeners.get(event)?.(data);
+    return result;
+  };
+  viewer.trigger('connection-attempt-bind', { schemaVersion: 1,
+    connectionAttemptId: w.currentConnectionAttemptId, connectionAttemptSequence: 1,
+    ...w.controlState.lease });
+  w.mediaActivityRuntime.reset();
+  w.applyMediaActivity(w._mediaIntent);
+  const request = host.sent.filter(row => row.event === 'media-activity-change').at(-1).data;
+  const ack = { schemaVersion: 1, viewerId: viewer.id, state: request.state,
+    generation: request.generation, connectionAttemptId: request.connectionAttemptId, applied: true };
+  if (acknowledge) host.trigger('media-activity-ack', ack);
+  return { ...f, host, viewer, request, ack, listeners };
+}
+
+test('registered Signal stale rejection preserves the applied Viewer resume and frame deadline', () => {
+  const f = signalMediaReplayFixture();
+  const before = f.requests.length;
+  f.advance(12000);
+  const rejected = f.viewer.sent.filter(row => row.event === 'media-activity-rejected').at(-1).data;
+  assert.equal(rejected.reason, 'stale-generation');
+  assert.equal(f.WebRTC.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(f.requests.length, before + 1);
+  assert.equal(f.refreshes(), 0);
+  assert.equal([...f.timers].filter(timer => timer.ms === 12000).length, 1);
+  assert.equal(f.frame(), true);
+  assert.equal(f.WebRTC.canEnableDesktopInput(), true);
+});
+
+test('registered Signal duplicate rejection preserves one hard fallback when no frame arrives', () => {
+  const f = signalMediaReplayFixture();
+  f.advance(24000);
+  assert.equal(f.refreshes(), 1);
+  assert.equal(f.WebRTC.canEnableDesktopInput(), false);
+  f.advance(60000);
+  assert.equal(f.refreshes(), 1);
+});
+
+test('real Host stale rejection survives registered Signal ACK routing without losing its reason', () => {
+  const f = signalMediaReplayFixture();
+  const rejected = rejectAppliedMediaReplayOnRealHost(f.request);
+  f.host.trigger('media-activity-ack', rejected);
+  const forwarded = f.viewer.sent.filter(row => row.event === 'media-activity-ack').at(-1).data;
+  assert.equal(forwarded.reason, 'stale-generation');
+  assert.equal(f.WebRTC.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal([...f.timers].filter(timer => timer.ms === 12000).length, 1);
+  assert.equal(f.frame(), true);
+});
+
+test('registered Signal duplicate rejection stays bounded without a successful Host ACK', () => {
+  const f = signalMediaReplayFixture({ acknowledge: false });
+  const before = f.requests.length;
+  f.WebRTC.replayMediaActivityIntent('unacknowledged-replay');
+  for (let i = 0; i < 10; i++) {
+    f.listeners.get('media-activity-rejected')({ schemaVersion: 1, reason: 'stale-generation',
+      state: f.request.state, generation: f.request.generation,
+      connectionAttemptId: f.request.connectionAttemptId });
+  }
+  assert.ok(f.requests.length <= before + 2, 'only the explicit replay and one bounded retry may send');
+  f.advance(4000);
+  assert.equal(f.refreshes(), 1);
+  assert.equal(f.frame(), false);
+  assert.equal(f.WebRTC.canEnableDesktopInput(), false);
+  f.advance(60000);
+  assert.equal(f.refreshes(), 1);
+});
+
+test('registered Signal rejects older media requests without spending the current resume budget', () => {
+  const f = signalMediaReplayFixture();
+  const deadline = f.WebRTC._mediaResumeFrameTimer;
+  const before = f.requests.length;
+  const { viewerId, ...request } = f.request;
+  f.viewer.trigger('media-activity-change', { ...request, generation: request.generation - 1 });
+  f.viewer.trigger('media-activity-change', { ...request, connectionAttemptId: 'attempt-retired' });
+  f.listeners.get('media-activity-rejected')({ reason: 'stale-generation' });
+  f.listeners.get('relay-stream-control-rejected')({ reason: 'stale-generation' });
+  assert.equal(f.requests.length, before);
+  assert.equal(f.WebRTC._mediaResumeFrameTimer, deadline);
+  assert.equal(f.WebRTC.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(f.frame(), true);
+});
+
+test('registered Signal tunnel duplicate rejection shares the scoped resume guard', () => {
+  const f = signalMediaReplayFixture();
+  const { viewerId, ...request } = f.request;
+  const deadline = f.WebRTC._mediaResumeFrameTimer;
+  f.viewer.trigger('relay-stream-control', { ...request, schemaVersion: 2,
+    mediaControlSchemaVersion: 1, enabled: true });
+  const rejected = f.viewer.sent.filter(row => row.event === 'relay-stream-control-rejected').at(-1).data;
+  assert.equal(rejected.reason, 'stale-generation');
+  assert.equal(f.WebRTC._mediaResumeFrameTimer, deadline);
+  assert.equal(f.WebRTC.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(f.frame(), true);
+});
+
+test('applied media soft replay survives real Host stale-generation rejection and a fresh frame', () => {
+  const f = appliedMediaReplayFixture();
+  const rejected = rejectAppliedMediaReplayOnRealHost(f.request);
+  f.advance(12000);
+  assert.equal(f.WebRTC._mediaResumeSoftRecoverUsed, true);
+  f.WebRTC.handleMediaActivityAck(rejected);
+  f.WebRTC.handleMediaActivityAck(rejected);
+  assert.equal(f.WebRTC.mediaActivityRuntime.snapshot().lastAck.applied, true);
+  assert.equal(f.requests.length, 3, 'the duplicate rejection must not start another request');
+  assert.equal(f.refreshes(), 0);
+  assert.equal(f.frame(), true, 'a fresh rendered frame must still finish the acknowledged resume');
+  assert.equal(f.WebRTC.canEnableDesktopInput(), true);
+  // A queued duplicate after the frame must not regress the completed phase.
+  f.WebRTC.handleMediaActivityAck(rejected);
+  assert.equal(f.WebRTC.getMediaAppliedPhase(), 'active');
+  assert.equal(f.WebRTC.mediaActivityRuntime.snapshot().lastAck.applied, true);
+});
+
+test('applied media soft replay keeps the hard frame deadline after duplicate Host rejection', () => {
+  const f = appliedMediaReplayFixture();
+  const rejected = rejectAppliedMediaReplayOnRealHost(f.request);
+  f.advance(12000);
+  f.WebRTC.handleMediaActivityAck(rejected);
+  f.WebRTC.handleMediaActivityAck(rejected);
+  assert.equal([...f.timers].filter(timer => timer.ms === 12000).length, 1);
+  f.advance(12000);
+  assert.equal(f.refreshes(), 1);
+  assert.equal(f.WebRTC.canEnableDesktopInput(), false);
+  f.advance(60000);
+  assert.equal(f.refreshes(), 1);
+});
+
+test('applied media duplicate success ACKs cannot extend the fresh-frame deadline', () => {
+  const f = appliedMediaReplayFixture();
+  f.advance(6000);
+  f.WebRTC.handleMediaActivityAck(f.ack);
+  f.advance(6000);
+  assert.equal(f.WebRTC._mediaResumeSoftRecoverUsed, true);
+  f.advance(6000);
+  f.WebRTC.handleMediaActivityAck(f.ack);
+  f.advance(6000);
+  assert.equal(f.refreshes(), 1);
+});
+
+test('applied media ACK ownership releases peer references on frame completion, control loss and disconnect', () => {
+  const completed = appliedMediaReplayFixture();
+  assert.equal(completed.WebRTC._mediaActivityAckScope.pc, completed.WebRTC.pc);
+  assert.equal(completed.frame(), true);
+  assert.equal(completed.WebRTC._mediaActivityAckScope, null);
+
+  const revoked = appliedMediaReplayFixture();
+  revoked.WebRTC.freezeControl('control-revoked');
+  assert.equal(revoked.WebRTC._mediaActivityAckScope, null);
+  assert.equal(revoked.frame(), false);
+
+  const disconnected = appliedMediaReplayFixture();
+  disconnected.WebRTC.pc.close = () => {};
+  disconnected.WebRTC.socket.disconnect = () => {};
+  disconnected.WebRTC.disconnect();
+  assert.equal(disconnected.WebRTC._mediaActivityAckScope, null);
+  assert.equal(disconnected.WebRTC.pc, null);
+  assert.equal(disconnected.WebRTC.socket, null);
+});
+
+test('applied media replay cannot carry a prior ACK across attempt, lease, socket or peer changes', () => {
+  for (const change of [
+    w => { w.currentConnectionAttemptId = 'attempt-replaced'; },
+    w => { w.controlState.lease = { leaseId: 'lease-000000000002', leaseEpoch: 4 }; },
+    w => { w.socket = { ...w.socket }; },
+    w => { w.pc = { ...w.pc }; },
+  ]) {
+    const f = appliedMediaReplayFixture();
+    f.advance(12000);
+    change(f.WebRTC);
+    f.WebRTC.handleMediaActivityAck({ ...f.ack, applied: false, reason: 'stale-generation' });
+    assert.equal(f.frame(), false);
+    assert.equal(f.WebRTC.canEnableDesktopInput(), false);
+  }
+});
+
+test('media replay rejection needs a matching successful ACK and never ignores an execution failure', () => {
+  const unacknowledged = appliedMediaReplayFixture();
+  const w = unacknowledged.WebRTC;
+  w.mediaActivityRuntime.reset();
+  w.mediaActivityRuntime.beginDesired('active', { generation: unacknowledged.request.generation,
+    connectionAttemptId: w.currentConnectionAttemptId });
+  w.handleMediaActivityAck({ ...unacknowledged.ack, applied: false, reason: 'stale-generation' });
+  assert.equal(w.mediaActivityRuntime.snapshot().lastAck.applied, false);
+  assert.equal(unacknowledged.frame(), false);
+  assert.equal(w.canEnableDesktopInput(), false);
+
+  const failed = appliedMediaReplayFixture();
+  failed.WebRTC.handleMediaActivityAck({ ...failed.ack, state: 'suspended',
+    applied: false, reason: 'execution-failed' });
+  assert.equal(failed.WebRTC.mediaActivityRuntime.snapshot().lastAck.applied, false);
+  assert.equal(failed.frame(), false);
+  assert.equal(failed.WebRTC.canEnableDesktopInput(), false);
+});
+
+test('applied media replay keeps manual, hidden-page and Terminal pause reasons authoritative', () => {
+  for (const reason of ['manual-pause', 'page-hidden', 'terminal-active']) {
+    const f = appliedMediaReplayFixture();
+    f.advance(12000);
+    f.WebRTC.handleMediaActivityAck({ ...f.ack, applied: false, reason: 'stale-generation' });
+    f.WebRTC.setMediaActivityReason(reason, true);
+    f.WebRTC.handleMediaActivityAck(f.ack);
+    assert.equal(f.frame(), false);
+    assert.equal(f.WebRTC.canEnableDesktopInput(), false);
+    assert.equal(f.WebRTC.getMediaActivitySnapshot().reasons.includes(reason), true);
+  }
 });
 
 test('dual-routed applied:false ack triggers only one bounded replay', () => {

@@ -58,7 +58,14 @@ function projectDiagnostic(report = {}) {
   const metrics = latency.metrics && typeof latency.metrics === 'object' ? latency.metrics : {};
   const outcomes = latency.outcomes && typeof latency.outcomes === 'object' ? latency.outcomes : {};
   const logs = Array.isArray(report.logs) ? report.logs.length : null;
-  const logCount = firstCount(report.logCount, logs);
+  const metadataOnly = report.schemaVersion === 3 || report.logContentPolicy === 'metadata-only';
+  // Schema 3 has always discarded console content. Its historical logCount=0
+  // only describes retention, and cannot prove an empty client log buffer.
+  const logCount = metadataOnly ? boundedCount(report.reportedLogCount) : firstCount(report.logCount, logs);
+  const retainedLogCount = metadataOnly ? firstCount(report.retainedLogCount, logs, report.logCount) : logCount;
+  const redactedLogCount = metadataOnly ? boundedCount(report.redactedLogCount) : null;
+  const inputTraceEventCount = firstCount(Array.isArray(report.inputTrace?.events) ? report.inputTrace.events.length : null,
+    report.inputTraceEventCount);
   const summaryGapCount = firstCount(
     report.summaryGapCount,
     report.summaryGaps?.count,
@@ -90,6 +97,10 @@ function projectDiagnostic(report = {}) {
   const cpu = boundedNumber(resources.processCpuPercent ?? resources.cpuPercent, 1000);
   return {
     logCount,
+    retainedLogCount,
+    redactedLogCount,
+    inputTraceEventCount,
+    metadataOnly,
     summaryGapCount,
     ringDropCount,
     fps,
@@ -159,6 +170,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const missing = [];
     const projected = reports.slice();
     const sum = key => projected.reduce((total, row) => total + (row[key] ?? 0), 0);
+    const sumKnown = key => projected.some(row => row[key] !== null) ? sum(key) : null;
     const fps = projected.flatMap(row => row.fps);
     const dropped = projected.flatMap(row => row.dropped);
     const visibleRows = projected.map(row => row.visibleEffect).filter(row => row.metricAvailable);
@@ -180,8 +192,13 @@ function createRuntimeEvidenceRecorder(options = {}) {
       schemaVersion: 1,
       window: { startedAt, endedAt, reportCount: projected.length },
       diagnostics: {
-        logCount: { total: sum('logCount'), reportsWithLogs: projected.filter(row => (row.logCount ?? 0) > 0).length,
-          zeroLogReports: projected.filter(row => row.logCount === 0).length },
+        logCount: { total: sumKnown('logCount'), reportsWithLogs: projected.filter(row => (row.logCount ?? 0) > 0).length,
+          zeroLogReports: projected.filter(row => row.logCount === 0).length,
+          unknownReports: projected.filter(row => row.logCount === null).length },
+        retainedLogCount: sumKnown('retainedLogCount'),
+        redactedLogCount: sumKnown('redactedLogCount'),
+        inputTraceEventCount: sumKnown('inputTraceEventCount'),
+        metadataOnlyReports: projected.filter(row => row.metadataOnly).length,
         summaryGapCount: summaryCoverage.droppedSummaryCount + sum('summaryGapCount'),
         summaryGaps: summaryCoverage.gaps.slice(),
         ringDropCount: heartbeat.ringDropped + sum('ringDropCount'),

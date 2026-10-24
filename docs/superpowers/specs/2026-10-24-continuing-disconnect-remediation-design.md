@@ -12,7 +12,7 @@ WebRemoteDesktop 今天可以打开网页、建立 Signal 和 WebRTC 连接，�
 - PC 仍为 connected/completed 时，画面长时间为 0 FPS 或周期性停帧；
 - 输入 ACK 超时、DataChannel stuck、旧 lease 输入被拒绝，用户感知为按键/鼠标中断；
 - 页面隐藏导致的主动媒体暂停没有和网络断线清晰区分；
-- 自动诊断报告的 `logCount=0`，无法把 Viewer 状态、Host 执行和可见画面放进一条证据链。
+- 自动诊断报告旧 `logCount=0` 混淆了原文脱敏与未采集；有限结构化 trace、Host 执行和可见画面仍需分别对齐。
 
 今天已观测到抓帧长尾、全机资源压力、关闭 sender/PC 上的恢复重试和 transport 故障。21:33 的反例显示抓帧暂停时事件循环也会卡顿，故不能把全部失控归因抓帧 CPU/GIL。设计先做资源归因，再决定隔离架构；参见 [CPU 归因复核](../reports/2026-10-24-capture-cpu-attribution.md)。
 
@@ -82,7 +82,7 @@ Viewer 将媒体状态拆为 `active`、`page-hidden`、`negotiating`、`transpo
 
 Signal admin receipt 和 Host diagnostic summary 统一输出：
 
-- `logCount`、`summaryGapCount`、ring overwrite/drop（注明是诊断环覆盖）；
+- 上送、保留、脱敏日志数及结构化 trace 条数，`summaryGapCount`、ring overwrite/drop（注明是诊断环覆盖）；
 - Signal RSS/CPU、Host RSS/CPU、event-loop/capture/encode p95/max；
 - Viewer decoded FPS、RTP dropped/freezes；
 - input ACK expired/dropped/stale-lease；
@@ -101,8 +101,20 @@ Signal admin receipt 和 Host diagnostic summary 统一输出：
 | 控制 | ACK p95≤200ms、max≤1,000ms；过期 ACK=0 |
 | 可见效果 | marker→rVFC 覆盖率≥95%，缺测保留 `NOT RUN` |
 | 资源 | RSS 无持续单调增长；记录全机 swap 差分和 CPU idle，不能以累计 swap 或 Host RSS 代替全机压力；sender/PC 无重复恢复风暴 |
-| 诊断 | 自动失败 `logCount>0`、`summaryGapCount=0`；诊断 drop 与 RTP drop 分离 |
+| 诊断 | 日志计数区分 reported/retained/redacted，trace 独立统计，未知为 null；`summaryGapCount=0`，诊断 drop 与 RTP drop 分离 |
 
 ## 失败处理
 
 若 capture deadline 连续超限，标记 `media-stalled` 并上送原因；仅在现有资格允许时调整 FPS，不自动更改用户分辨率。若 fresh-offer 预算耗尽，断开旧媒体但保留 Signal/Terminal，要求 Viewer 建立新 attempt；若输入 fallback 也无法 ACK，立即释放按键/鼠标并显示控制不可用。任何失败都保留本地服务运行态，等待下一次受控验收。
+
+## 22 点实施收敛：先修复三个确定缺口
+
+1. active 请求已成功 ACK、仍等待新鲜帧时，同 scope 的 soft replay 保留原证明和硬恢复时限。只有此前已成功 ACK、PC/socket/lease/attempt/generation 均匹配的 `stale-generation` 回复可以被忽略；未确认、旧身份或其它失败仍 fail-closed。成功 ACK 的重复回复也不能无限延长等待期限。完成、换身份或断开时释放 scope 引用。
+2. 实际 DataChannel `send()` 同步失败返回 false，由现有 Socket fallback 处理。序列化保持在 try 之外；不重放被 DC 接受的输入、不新增 reset、不放宽 lease。
+3. v3 控制台原文继续丢弃，仅增加实测条数：reported/retained/redacted/inputTrace。未知计数保持 null，并贯通 raw、结构化摘要、日汇总与 runtime receipt。v3 缺必需身份/capture 不允许退回旧原文路径。
+
+这三个缺口均先用离线反例验证；capture 进程隔离和全机资源调优不纳入本次最小修复。
+
+Signal 的 media/relay 拒绝回复必须携带验证后的请求 state/generation/attempt；不得回显 lease。Viewer 只处理当前请求的 scoped rejection。Host 的失败 ACK reason 仅允许固定业务枚举，禁止自由文本透传。必须通过真实注册的 Signal handler 验证重复 generation 在到达 Host 前被拒绝的路径，不能仅用直接调用 Viewer ACK 的 fixture 代替。
+
+诊断回归在模块导入前配置唯一临时目录，所有清理须验证目录归属；默认生产目录只能做纯路径推导断言。通过继承模拟生产目录的子进程 canary 证明测试无生产文件副作用。历史证据被删除必须报告来源和缺失，不能重建摘要后称原件已恢复。

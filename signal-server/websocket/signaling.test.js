@@ -1672,7 +1672,7 @@ test('diagnostic relay redacts keyboard metadata by default', () => {
   assert.match(diagnostic.data.receivedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test('diagnostic relay preserves attempt metadata and recommendation context', () => {
+test('legacy diagnostic relay preserves attempt metadata and recommendation context', () => {
   resetConnections();
   const io = makeIo();
   setupSignaling(io);
@@ -1684,7 +1684,7 @@ test('diagnostic relay preserves attempt metadata and recommendation context', (
 
   viewer.trigger('diagnostic', {
     type: 'connection-diagnostic',
-    schemaVersion: 3,
+    schemaVersion: 2,
     connectionAttemptId: 'attempt-socket-1',
     mode: 'auto',
     entrypoint: 'https://link.stockhub.wiki',
@@ -1696,13 +1696,43 @@ test('diagnostic relay preserves attempt metadata and recommendation context', (
   const diagnostic = host.sent.filter((message) => message.event === 'diagnostic').at(-1);
 
   assert.equal(diagnostic.data.type, 'connection-diagnostic');
-  assert.equal(diagnostic.data.schemaVersion, 3);
+  assert.equal(diagnostic.data.schemaVersion, 2);
   assert.equal(diagnostic.data.connectionAttemptId, 'attempt-socket-1');
   assert.equal(diagnostic.data.mode, 'auto');
   assert.equal(diagnostic.data.entrypoint, 'https://link.stockhub.wiki');
   assert.equal(diagnostic.data.traceSummary.reason, 'direct-failed-suggest-relay');
   assert.equal(diagnostic.data.recommendation.nextSuggestedMode, 'relay');
   assert.deepEqual(diagnostic.data.events, [{ kind: 'ice-state', value: 'failed' }]);
+});
+
+test('runtime diagnostic relay preserves measured counts without console content', () => {
+  resetConnections();
+  const io = makeIo();
+  const observed = [];
+  setupSignaling(io, { observeDiagnostic: report => observed.push(report) });
+  const host = new FakeSocket('runtime-diagnostic-host', 'host');
+  const viewer = new FakeSocket('runtime-diagnostic-viewer', 'viewer');
+  io.connect(host);
+  io.connect(viewer);
+  viewer.trigger('diagnostic', {
+    type: 'connection-diagnostic', schemaVersion: 3,
+    diagnosticId: '0123456789abcdef0123456789abcdef',
+    captured: { wallTime: '2026-10-24T14:00:00.000Z', monotonicMs: 10 },
+    connectionAttemptId: 'runtime-diagnostic-attempt',
+    trigger: 'manual', logs: ['CONSOLE_CONTENT_CANARY', 'ANOTHER_CONTENT_CANARY'],
+    inputTrace: { events: [], counters: {} },
+  });
+  const report = host.sent.filter(message => message.event === 'diagnostic').at(-1)?.data;
+  assert.ok(report);
+  assert.equal(observed.length, 1);
+  assert.equal(report.schemaVersion, 3);
+  assert.equal(report.logContentPolicy, 'metadata-only');
+  assert.equal(report.reportedLogCount, 2);
+  assert.equal(report.retainedLogCount, 0);
+  assert.equal(report.redactedLogCount, 2);
+  assert.deepEqual(report.logs, []);
+  assert.match(report.connectionAttemptId, /^[0-9a-f]{32}$/);
+  assert.equal(JSON.stringify(report).includes('CONTENT_CANARY'), false);
 });
 
 test('viewer connection cannot claim host role metadata', () => {
@@ -3004,6 +3034,99 @@ test('media-activity-change requires active lease and monotonic generation', () 
   assert.equal(ack.applied, true);
   assert.equal(ack.generation, 1);
   assert.equal(Object.hasOwn(ack, 'leaseId'), false);
+});
+
+function mediaRejectionRouteFixture() {
+  resetConnections();
+  const io = makeIo();
+  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001' });
+  const host = new FakeSocket('host-media-rejection', 'host');
+  const viewer = new FakeSocket('viewer-media-rejection', 'viewer');
+  host.handshake.auth.inputProtocolVersion = viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer);
+  const request = { schemaVersion: 1, state: 'active', reasons: [], generation: 2,
+    connectionAttemptId: 'attempt-media-rejection', leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  viewer.trigger('connection-attempt-bind', { schemaVersion: 1,
+    connectionAttemptId: request.connectionAttemptId, connectionAttemptSequence: 1,
+    leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
+  return { io, host, viewer, request };
+}
+
+test('media stale rejection identifies the validated rejected request without lease secrets', () => {
+  const { host, viewer, request } = mediaRejectionRouteFixture();
+  viewer.trigger('media-activity-change', request);
+  viewer.trigger('media-activity-change', request);
+  const rejected = viewer.sent.filter(row => row.event === 'media-activity-rejected').at(-1).data;
+  assert.deepEqual(rejected, { schemaVersion: 1, reason: 'stale-generation', state: request.state,
+    generation: request.generation, connectionAttemptId: request.connectionAttemptId });
+  assert.equal(host.sent.filter(row => row.event === 'media-activity-change').length, 1);
+  viewer.trigger('media-activity-change', { ...request, generation: 1, state: 'suspended' });
+  const older = viewer.sent.filter(row => row.event === 'media-activity-rejected').at(-1).data;
+  assert.equal(older.generation, 1);
+  assert.equal(older.state, 'suspended');
+  assert.equal(Object.hasOwn(older, 'leaseId'), false);
+  viewer.trigger('media-activity-change', { ...request, connectionAttemptId: 'attempt-retired' });
+  const wrong = viewer.sent.filter(row => row.event === 'media-activity-rejected').at(-1).data;
+  assert.equal(wrong.reason, 'wrong-attempt');
+  assert.equal(wrong.connectionAttemptId, 'attempt-retired');
+  assert.equal(wrong.generation, request.generation);
+});
+
+test('media Host ACK routing retains only allowlisted failure reasons and existing lease-free fields', () => {
+  const { host, viewer, request } = mediaRejectionRouteFixture();
+  const known = ['stale-generation', 'closed', 'fresh-capture-timeout', 'execution-failed'];
+  for (const reason of [...known, 'SECRET_REASON_CANARY', 'stale-generation\nSECRET_REASON_CANARY',
+    { reason: 'stale-generation' }, null]) {
+    host.trigger('media-activity-ack', { schemaVersion: 1, viewerId: viewer.id,
+      state: 'suspended', generation: request.generation, connectionAttemptId: request.connectionAttemptId,
+      applied: false, keyframeRequested: false, reason, leaseId: request.leaseId, extra: 'SECRET_EXTRA_CANARY' });
+    const ack = viewer.sent.filter(row => row.event === 'media-activity-ack').at(-1).data;
+    assert.equal(ack.reason, known.includes(reason) ? reason : undefined);
+    assert.equal(ack.state, 'suspended', 'Host fail-closed state must survive an active request');
+    assert.equal(Object.hasOwn(ack, 'leaseId'), false);
+    assert.equal(Object.hasOwn(ack, 'extra'), false);
+    assert.equal(JSON.stringify(ack).includes('SECRET_'), false);
+  }
+  const before = viewer.sent.filter(row => row.event === 'media-activity-ack').length;
+  viewer.trigger('media-activity-ack', { viewerId: viewer.id, ...request, applied: false, reason: 'closed' });
+  assert.equal(viewer.sent.filter(row => row.event === 'media-activity-ack').length, before,
+    'Viewer cannot inject a Host failure reason');
+  host.trigger('media-activity-ack', { viewerId: 'viewer-other-identity', ...request,
+    applied: false, reason: 'closed' });
+  assert.equal(viewer.sent.filter(row => row.event === 'media-activity-ack').length, before,
+    'a different Viewer identity cannot receive the reason');
+  viewer.disconnect();
+  host.trigger('media-activity-ack', { viewerId: viewer.id, ...request, applied: false, reason: 'closed' });
+  assert.equal(viewer.sent.filter(row => row.event === 'media-activity-ack').length, before,
+    'a disconnected Viewer cannot receive the reason');
+});
+
+test('media failure reasons from a replaced Host never reach the active Viewer', () => {
+  const { io, host, viewer, request } = mediaRejectionRouteFixture();
+  io.connect(new FakeSocket('replacement-media-host', 'host'));
+  const before = viewer.sent.filter(row => row.event === 'media-activity-ack').length;
+  host.trigger('media-activity-ack', { viewerId: viewer.id, ...request, applied: false, reason: 'closed' });
+  assert.equal(viewer.sent.filter(row => row.event === 'media-activity-ack').length, before);
+});
+
+test('tunnel media rejection carries request scope while legacy generation-zero ACK reasons stay bounded', () => {
+  const { host, viewer, request } = mediaRejectionRouteFixture();
+  const control = { ...request, schemaVersion: 2, mediaControlSchemaVersion: 1, enabled: true };
+  viewer.trigger('relay-stream-control', control);
+  viewer.trigger('relay-stream-control', control);
+  assert.deepEqual(viewer.sent.filter(row => row.event === 'relay-stream-control-rejected').at(-1).data,
+    { schemaVersion: 1, reason: 'stale-generation', state: request.state,
+      generation: request.generation, connectionAttemptId: request.connectionAttemptId });
+  for (const reason of ['stale-generation', 'closed', 'SECRET_REASON_CANARY']) {
+    host.trigger('relay-stream-control-ack', { viewerId: viewer.id, state: 'suspended',
+      generation: 0, connectionAttemptId: request.connectionAttemptId, applied: false,
+      reason, leaseId: request.leaseId });
+    const ack = viewer.sent.filter(row => row.event === 'relay-stream-control-ack').at(-1).data;
+    assert.equal(ack.generation, 0, 'legacy ordinary relay starts remain compatible');
+    assert.equal(ack.reason, reason === 'SECRET_REASON_CANARY' ? undefined : reason);
+    assert.equal(Object.hasOwn(ack, 'leaseId'), false);
+  }
 });
 
 test('v2 offer forwards connectionAttemptId and binds media activity to that attempt', () => {

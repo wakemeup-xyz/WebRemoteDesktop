@@ -9,6 +9,7 @@ const hashIdentity = value => typeof value === 'string' && value.length > 0
 const finiteNonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const countValue = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const digestValue = value => typeof value === 'string' && /^[0-9a-f]{16,64}$/.test(value) ? value : null;
+const isRuntimeDiagnostic = value => Number.parseInt(value?.schemaVersion, 10) === 3;
 const OUTCOME_NAMES = ['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'];
 function redactLatency(snapshot) {
   if (!isRecord(snapshot) || snapshot.schemaVersion !== 3) return null;
@@ -44,6 +45,9 @@ function redactBuild(value) {
   return { id: digestValue(value?.id), builtAt };
 }
 function redactRuntimeDiagnostic(payload) {
+  // Console content is intentionally excluded from schema 3. Count the actual
+  // received array first; client-supplied counters cannot establish evidence.
+  const reportedLogCount = Array.isArray(payload.logs) ? payload.logs.length : null;
   const latency = redactLatency(payload.latency);
   const inputTrace = redactInputTrace(payload.inputTrace);
   if (inputTrace) {
@@ -77,6 +81,8 @@ function redactRuntimeDiagnostic(payload) {
     build: redactBuild(payload.build), latencyStatus: latency ? 'available' : 'collector-unavailable', latency,
     inputState, inputTrace, startup: redactStartup(payload.startup), resources: null,
     scopeEnded: { events, dropped }, logs: [], keyboardDebug: [], events: [], probeResults: [], inputChannelTimeline: [],
+    logContentPolicy: 'metadata-only', reportedLogCount, retainedLogCount: 0, redactedLogCount: reportedLogCount,
+    inputTraceEventCount: Array.isArray(inputTrace?.events) ? inputTrace.events.length : null,
     traceSummary: {},
   };
   for (const key of ['receivedDelta', 'decodedDelta', 'derivedFps', 'bytesDelta', 'framesDroppedDelta', 'packetsReceivedDelta',
@@ -92,6 +98,7 @@ function redactRuntimeDiagnostic(payload) {
   clean.truncation = { dropped: countValue(payload.truncation?.dropped) };
   while (Buffer.byteLength(JSON.stringify(clean)) > 128 * 1024 && clean.inputTrace?.events.length) {
     clean.inputTrace.events.shift(); clean.truncation.dropped++;
+    clean.inputTraceEventCount = clean.inputTrace.events.length;
   }
   return clean;
 }
@@ -418,7 +425,7 @@ function redactInputState(inputState) {
 }
 
 function redactDiagnosticPayload(payload) {
-  if (payload.schemaVersion === 3 && payload.captured && payload.diagnosticId) return redactRuntimeDiagnostic(payload);
+  if (isRuntimeDiagnostic(payload)) return redactRuntimeDiagnostic(payload);
   const recentLogs = Array.isArray(payload.logs) ? payload.logs.slice(-120) : [];
   const network = payload.network && typeof payload.network === 'object'
     ? {
@@ -518,6 +525,12 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     logCount: report.logCount || 0,
     persisted,
   };
+  if (report.logContentPolicy === 'metadata-only') {
+    meta.logContentPolicy = 'metadata-only';
+    for (const key of ['reportedLogCount', 'retainedLogCount', 'redactedLogCount', 'inputTraceEventCount']) {
+      meta[key] = safeInteger(report[key], Number.MAX_SAFE_INTEGER);
+    }
+  }
   if (safeInputState) {
     const gate = safeInputState.effectiveGate || {};
     const recovery = gate.recovery || safeInputState.recovery || {};
@@ -560,8 +573,10 @@ function deriveDiagnosticAlerts(report = {}, { safeInputState = null, safeInputT
   const transportReasons = new Set(['dc-error', 'dc-stuck', 'ice-disconnected', 'pc-failed', 'pc-disconnected']);
   if (transportReasons.has(reason)) alerts.push(`transport-${reason}`);
   const counters = safeInputTrace?.counters || {};
-  if (Number(counters.expiredPendingAcks) > 0) alerts.push('input-reset-ack-expired');
-  if (Number(counters.droppedEvents) >= 1000) alerts.push('input-events-dropped');
+  // These counters belong to the bounded observer, not desktop delivery. A
+  // lifecycle-only session can evict its trace ring without losing any input.
+  if (Number(counters.expiredPendingAcks) > 0) alerts.push('input-ack-observation-expired');
+  if (Number(counters.droppedEvents) >= 1000) alerts.push('input-trace-truncated');
   if (safeInputState?.pendingMouseReset === true) alerts.push('control-reset-pending');
   if (Array.isArray(report.events)) {
     const hasZeroFps = report.events.some((event) => (
@@ -587,7 +602,9 @@ function ingestDiagnosticPayload(options = {}) {
     return { accepted: false, error: 'viewer-only' };
   }
 
-  if (data?.schemaVersion === 3 && data.captured && !digestValue(data.diagnosticId)) return { accepted: false, error: 'invalid-runtime-diagnostic' };
+  if (isRuntimeDiagnostic(data) && (!isRecord(data.captured) || !digestValue(data.diagnosticId))) {
+    return { accepted: false, error: 'invalid-runtime-diagnostic' };
+  }
   const redacted = redactDiagnosticPayload(data || {});
   const receivedAt = new Date().toISOString();
   const connectionAttemptId = String(redacted.connectionAttemptId || '').trim() || `attempt-${Date.now()}`;
@@ -634,7 +651,8 @@ function ingestDiagnosticPayload(options = {}) {
   };
 
   if (redacted.diagnosticId && redacted.captured) {
-    for (const key of ['diagnosticId', 'captured', 'build', 'latencyStatus', 'latency', 'startup', 'resources', 'scopeEnded', 'truncation']) report[key] = redacted[key];
+    for (const key of ['diagnosticId', 'captured', 'build', 'latencyStatus', 'latency', 'startup', 'resources', 'scopeEnded', 'truncation',
+      'logContentPolicy', 'reportedLogCount', 'retainedLogCount', 'redactedLogCount', 'inputTraceEventCount']) report[key] = redacted[key];
   }
 
   if (redacted.failureCategory != null) {

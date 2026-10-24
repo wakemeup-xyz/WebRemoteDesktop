@@ -45,6 +45,14 @@ const V2_INPUT_ACK_STATUSES = new Set([
   'unsupported-code',
   'execution-failed',
 ]);
+const MEDIA_ACTIVITY_ACK_FAILURE_REASONS = new Set([
+  'stale-generation',
+  'closed',
+  'fresh-capture-timeout',
+  'execution-failed',
+  'invalid-relay-start',
+  'relay-start-failed',
+]);
 
 // The default context preserves the historical module exports. Each server
 // instance created by setupSignaling receives its own context.
@@ -996,6 +1004,19 @@ function setupSignaling(io, options = {}) {
     return true;
   }
 
+  function rejectMediaActivity(socket, event, reason, value) {
+    // Correlate only validated request fields. A delayed rejection must retain
+    // the rejected request's identity, and must never echo its lease token.
+    const scoped = value && ['active', 'suspended'].includes(value.state)
+      && Number.isSafeInteger(value.generation) && value.generation >= 1
+      && isValidConnectionAttemptId(value.connectionAttemptId);
+    socket.emit(event, {
+      reason,
+      ...(scoped ? { schemaVersion: 1, state: value.state, generation: value.generation,
+        connectionAttemptId: value.connectionAttemptId } : {}),
+    });
+  }
+
   function emitHostConnectionAttemptBind(viewerId, bindResult, lease = {}) {
     if (!connections.host || !bindResult?.ok) return;
     connections.host.emit('connection-attempt-bind', {
@@ -1747,7 +1768,7 @@ function setupSignaling(io, options = {}) {
       if (role !== 'viewer' || !isActiveViewerSocket(socket)) return;
       const validated = validateMediaActivityRequest(data);
       if (!validated.ok) {
-        socket.emit('media-activity-rejected', { reason: validated.code });
+        rejectMediaActivity(socket, 'media-activity-rejected', validated.code);
         return;
       }
       const value = validated.value;
@@ -1756,21 +1777,21 @@ function setupSignaling(io, options = {}) {
         leaseId: value.leaseId,
         leaseEpoch: value.leaseEpoch,
       }, { legacy: false })) {
-        socket.emit('media-activity-rejected', { reason: 'unauthorized' });
+        rejectMediaActivity(socket, 'media-activity-rejected', 'unauthorized', value);
         return;
       }
       const currentAttempt = currentViewerConnectionAttempt(socket.id);
       // Media control never establishes attempt authority. Only offer or explicit
       // connection-attempt-bind may bind; then only the active attempt may write.
       if (!currentAttempt || value.connectionAttemptId !== currentAttempt) {
-        socket.emit('media-activity-rejected', { reason: 'wrong-attempt' });
+        rejectMediaActivity(socket, 'media-activity-rejected', 'wrong-attempt', value);
         return;
       }
       const prior = mediaActivityProgress.get(socket.id);
       if (prior
         && prior.connectionAttemptId === value.connectionAttemptId
         && value.generation <= prior.generation) {
-        socket.emit('media-activity-rejected', { reason: 'stale-generation' });
+        rejectMediaActivity(socket, 'media-activity-rejected', 'stale-generation', value);
         return;
       }
       noteMediaGenerationProgress(socket.id, value.connectionAttemptId, value.generation);
@@ -1780,7 +1801,7 @@ function setupSignaling(io, options = {}) {
         viewerId: socket.id,
       });
       if (!connections.host) {
-        socket.emit('media-activity-rejected', { reason: 'host-offline' });
+        rejectMediaActivity(socket, 'media-activity-rejected', 'host-offline', value);
         return;
       }
       connections.host.emit('media-activity-change', {
@@ -1803,6 +1824,8 @@ function setupSignaling(io, options = {}) {
         connectionAttemptId: typeof data.connectionAttemptId === 'string' ? data.connectionAttemptId : null,
         applied: data.applied === true,
         keyframeRequested: data.keyframeRequested === true,
+        ...(data.applied !== true && MEDIA_ACTIVITY_ACK_FAILURE_REASONS.has(data.reason)
+          ? { reason: data.reason } : {}),
       });
     });
 
@@ -1820,26 +1843,26 @@ function setupSignaling(io, options = {}) {
           && Number.isSafeInteger(data.generation));
       if (role === 'viewer' && isMediaControl) {
         if (!authorizeViewer(socket, data, { legacy: false })) {
-          socket.emit('relay-stream-control-rejected', { reason: 'unauthorized' });
+          rejectMediaActivity(socket, 'relay-stream-control-rejected', 'unauthorized', data);
           return;
         }
         if (!isValidConnectionAttemptId(data.connectionAttemptId)
           || !Number.isSafeInteger(data.generation) || data.generation < 1) {
-          socket.emit('relay-stream-control-rejected', { reason: 'invalid-media-control' });
+          rejectMediaActivity(socket, 'relay-stream-control-rejected', 'invalid-media-control');
           return;
         }
         const currentAttempt = currentViewerConnectionAttempt(socket.id);
         // Tunnel media control must not invent attempt authority. Bind first via
         // connection-attempt-bind (or a WebRTC offer that shares the same record).
         if (!currentAttempt || data.connectionAttemptId !== currentAttempt) {
-          socket.emit('relay-stream-control-rejected', { reason: 'wrong-attempt' });
+          rejectMediaActivity(socket, 'relay-stream-control-rejected', 'wrong-attempt', data);
           return;
         }
         const prior = mediaActivityProgress.get(socket.id);
         if (prior
           && prior.connectionAttemptId === data.connectionAttemptId
           && data.generation <= prior.generation) {
-          socket.emit('relay-stream-control-rejected', { reason: 'stale-generation' });
+          rejectMediaActivity(socket, 'relay-stream-control-rejected', 'stale-generation', data);
           return;
         }
         noteMediaGenerationProgress(socket.id, data.connectionAttemptId, data.generation);
@@ -1908,8 +1931,8 @@ function setupSignaling(io, options = {}) {
         ack.relayControlKind = 'start';
         ack.relayStartRequestId = data.relayStartRequestId;
       }
-      if (typeof data.reason === 'string' && data.reason) {
-        ack.reason = data.reason.slice(0, 64);
+      if (data.applied !== true && MEDIA_ACTIVITY_ACK_FAILURE_REASONS.has(data.reason)) {
+        ack.reason = data.reason;
       }
       // Dual-route: media runtime listens on media-activity-ack; keep explicit tunnel event too.
       viewerSocket.emit('relay-stream-control-ack', ack);
