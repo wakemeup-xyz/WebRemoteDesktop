@@ -284,9 +284,11 @@ def restart_signal(project_dir: Path) -> str:
 
 
 def restart_host(project_dir: Path) -> str:
-    result = run([str(project_dir / "scripts" / "restart-host.sh")], cwd=project_dir)
+    result = run([str(project_dir / "scripts" / "restart-host.sh")], cwd=project_dir, check=False)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
+    if result.returncode != 0:
+        raise RuntimeError("Host restart failed; see the preserved restart-script output above")
     pid = read_text(SAFE_HOST_PID)
     return pid
 

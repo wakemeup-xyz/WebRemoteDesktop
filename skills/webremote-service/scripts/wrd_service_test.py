@@ -19,6 +19,19 @@ SPEC.loader.exec_module(MODULE)
 
 
 class WrdServiceTest(unittest.TestCase):
+    def test_failed_host_restart_preserves_script_diagnostics(self):
+        output, errors = io.StringIO(), io.StringIO()
+        failed = types.SimpleNamespace(returncode=1, stdout="preflight refused\n", stderr="registration rejected\n")
+        with mock.patch.object(MODULE, "run", return_value=failed) as run, \
+            mock.patch.object(MODULE, "read_text") as read_text, \
+            mock.patch("sys.stdout", output), mock.patch("sys.stderr", errors):
+            with self.assertRaisesRegex(RuntimeError, "Host restart failed"):
+                MODULE.restart_host(Path("/tmp/fixture"))
+        self.assertEqual(output.getvalue(), failed.stdout)
+        self.assertEqual(errors.getvalue(), failed.stderr)
+        self.assertFalse(run.call_args.kwargs["check"])
+        read_text.assert_not_called()
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="wrd-service-fixture-")
         self.addCleanup(temporary.cleanup)
