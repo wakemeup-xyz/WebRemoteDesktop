@@ -1,0 +1,69 @@
+{
+  "configurations": [
+    {
+      "label": "com.webremotedesktop.signal",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "label": "com.webremotedesktop.fixed-domain",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "label": "com.webremotedesktop.host",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "label": "com.webremotedesktop.awake",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "label": "com.webremotedesktop.fixed-watch",
+      "exists": true,
+      "matches": true
+    }
+  ],
+  "runtime": {
+    "jobs": [
+      {
+        "label": "com.webremotedesktop.awake",
+        "loaded": true,
+        "running": true,
+        "disabled": false
+      },
+      {
+        "label": "com.webremotedesktop.fixed-domain",
+        "loaded": true,
+        "running": true,
+        "disabled": false
+      },
+      {
+        "label": "com.webremotedesktop.fixed-watch",
+        "loaded": true,
+        "running": true,
+        "disabled": false
+      },
+      {
+        "label": "com.webremotedesktop.host",
+        "loaded": true,
+        "running": true,
+        "disabled": false
+      },
+      {
+        "label": "com.webremotedesktop.signal",
+        "loaded": true,
+        "running": true,
+        "disabled": false
+      }
+    ],
+    "health_ok": true,
+    "host_online": true
+  },
+  "ready": true,
+  "scope": "read-only configuration/local runtime; public entry and media not tested",
+  "exitCode": 0,
+  "quickUrlFileExists": false
+}

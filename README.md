@@ -46,6 +46,8 @@ python3 scripts/install-reboot-autostart.py --install
 
 Signal 与正式 connector 的进程退出由 launchd 按 10 秒节流恢复；存活 connector 的健康失败仍由既有 watcher 按 180 秒/每小时最多两次的预算处理。后续本地重启和正式 connector 重启都会保留持久配置，不再退回临时注册。普通本地维护不操作 tunnel，quick tunnel 不加入自启。实际激活与验收步骤见 [安全启动手册](docs/runbook-safe-startup.md#重启恢复安装与激活边界)。
 
+2026-10-26 已实际加载五个自启任务，正式域名真实登录、直连/TURN出画与临时 Terminal 冒烟通过；Host 本次冷启动约 142 秒，启动性能与真实电脑重启仍未全面验收。详见 [运行激活与接入记录](docs/superpowers/reports/2026-10-26-reboot-autostart-activation.md)。
+
 ### 启动前准备
 
 首次运行前，先确认以下依赖和权限已经就绪：

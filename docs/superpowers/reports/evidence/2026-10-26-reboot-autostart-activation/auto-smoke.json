@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-10-25T21:33:29.818390+00:00",
+  "origin": "https://link.stockhub.wiki",
+  "networkModeRequested": "auto",
+  "singleMachine": true,
+  "physicalRemoteNetwork": "NOT RUN",
+  "nativeKeyboardMouseVisibleEffect": "NOT RUN",
+  "longSessionAndReboot": "NOT RUN",
+  "gates": {
+    "/health": {
+      "httpStatus": 200,
+      "statusOk": true
+    },
+    "/api/status": {
+      "httpStatus": 200,
+      "statusOk": true
+    },
+    "passwordLogin": {
+      "httpStatus": 200,
+      "usedRealForm": true
+    },
+    "freshMedia": {
+      "pass": true,
+      "observationSeconds": 8
+    },
+    "controlLease": {
+      "pass": true
+    },
+    "resetAck": {
+      "sent": true,
+      "results": {
+        "mouse": {
+          "status": "applied",
+          "accepted": true,
+          "elapsedMs": 744,
+          "transport": "datachannel"
+        },
+        "keyboard": {
+          "status": "applied",
+          "accepted": true,
+          "elapsedMs": 769,
+          "transport": "datachannel"
+        }
+      },
+      "pass": true,
+      "meaning": "validated reset ACK; no real key/click/text or visible-effect claim"
+    },
+    "temporaryTerminal": {
+      "pass": true,
+      "result": {
+        "auth": true,
+        "bootstrap": true,
+        "created": true,
+        "marker": true,
+        "inputAck": true,
+        "exited": true,
+        "closed": true,
+        "authHttpStatus": 200,
+        "bootstrapHttpStatus": 200
+      }
+    }
+  },
+  "preflight": {
+    "hostOnline": true,
+    "viewerCount": 0,
+    "relayViewerCount": 0
+  },
+  "media": {
+    "before": {
+      "signalConnected": true,
+      "hostOnline": true,
+      "controlState": "ACTIVE",
+      "controller": true,
+      "hasLease": true,
+      "inputAllowed": true,
+      "keyboardPending": 0,
+      "pressedKeys": 0,
+      "pressedMouseButtons": 0,
+      "mediaPhase": "active",
+      "networkMode": "auto",
+      "transport": "webrtc",
+      "pcState": "connected",
+      "candidate": {
+        "localType": "host",
+        "remoteType": "host",
+        "protocol": "udp",
+        "relayProtocol": null
+      },
+      "videoWidth": 1152,
+      "videoHeight": 720,
+      "readyState": 4,
+      "paused": false,
+      "callbacks": 4,
+      "callbackAgeMs": 230,
+      "mediaTime": 0.534,
+      "presentedFrames": 4,
+      "productFrameSeq": 3,
+      "relayLoadedAtMs": null,
+      "relayStale": false,
+      "framesDecoded": 5,
+      "bytesReceived": 162434,
+      "nonBlackRatio": 1,
+      "startupMarks": [
+        {
+          "name": "html-shell",
+          "atMs": 1581.7
+        },
+        {
+          "name": "core-interactive",
+          "atMs": 2350.3
+        },
+        {
+          "name": "start-click",
+          "atMs": 4453.1
+        },
+        {
+          "name": "signal-connected",
+          "atMs": 7160.7
+        },
+        {
+          "name": "first-frame",
+          "atMs": 23347.9
+        },
+        {
+          "name": "active",
+          "atMs": 23348
+        }
+      ]
+    },
+    "after": {
+      "signalConnected": true,
+      "hostOnline": true,
+      "controlState": "ACTIVE",
+      "controller": true,
+      "hasLease": true,
+      "inputAllowed": true,
+      "keyboardPending": 0,
+      "pressedKeys": 0,
+      "pressedMouseButtons": 0,
+      "mediaPhase": "active",
+      "networkMode": "auto",
+      "transport": "webrtc",
+      "pcState": "connected",
+      "candidate": {
+        "localType": "host",
+        "remoteType": "host",
+        "protocol": "udp",
+        "relayProtocol": null
+      },
+      "videoWidth": 1152,
+      "videoHeight": 720,
+      "readyState": 4,
+      "paused": false,
+      "callbacks": 45,
+      "callbackAgeMs": 43,
+      "mediaTime": 8.559,
+      "presentedFrames": 47,
+      "productFrameSeq": 44,
+      "relayLoadedAtMs": null,
+      "relayStale": false,
+      "framesDecoded": 50,
+      "bytesReceived": 400320,
+      "nonBlackRatio": 1,
+      "startupMarks": [
+        {
+          "name": "html-shell",
+          "atMs": 1581.7
+        },
+        {
+          "name": "core-interactive",
+          "atMs": 2350.3
+        },
+        {
+          "name": "start-click",
+          "atMs": 4453.1
+        },
+        {
+          "name": "signal-connected",
+          "atMs": 7160.7
+        },
+        {
+          "name": "first-frame",
+          "atMs": 23347.9
+        },
+        {
+          "name": "active",
+          "atMs": 23348
+        }
+      ]
+    }
+  },
+  "pass": true,
+  "elapsedSeconds": 167.803,
+  "endedAt": "2026-10-25T21:36:17.625108+00:00"
+}

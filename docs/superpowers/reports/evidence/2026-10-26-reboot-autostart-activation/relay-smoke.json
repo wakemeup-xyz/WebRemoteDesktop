@@ -1,0 +1,408 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-10-25T21:37:29.435301+00:00",
+  "origin": "https://link.stockhub.wiki",
+  "networkModeRequested": "relay",
+  "singleMachine": true,
+  "physicalRemoteNetwork": "NOT RUN",
+  "nativeKeyboardMouseVisibleEffect": "NOT RUN",
+  "longSessionAndReboot": "NOT RUN",
+  "gates": {
+    "/health": {
+      "httpStatus": 200,
+      "statusOk": true
+    },
+    "/api/status": {
+      "httpStatus": 200,
+      "statusOk": true
+    },
+    "passwordLogin": {
+      "httpStatus": 200,
+      "usedRealForm": true
+    },
+    "freshMedia": {
+      "pass": true,
+      "observationSeconds": 8
+    },
+    "controlLease": {
+      "pass": true
+    },
+    "resetAck": {
+      "sent": true,
+      "results": {
+        "mouse": {
+          "status": "applied",
+          "accepted": true,
+          "elapsedMs": 378,
+          "transport": "datachannel"
+        },
+        "keyboard": {
+          "status": "applied",
+          "accepted": true,
+          "elapsedMs": 471,
+          "transport": "datachannel"
+        }
+      },
+      "pass": true,
+      "meaning": "validated reset ACK; no real key/click/text or visible-effect claim"
+    }
+  },
+  "preflight": {
+    "hostOnline": true,
+    "viewerCount": 0,
+    "relayViewerCount": 0
+  },
+  "media": {
+    "before": {
+      "signalConnected": true,
+      "hostOnline": true,
+      "controlState": "ACTIVE",
+      "controller": true,
+      "hasLease": true,
+      "inputAllowed": true,
+      "inputDiagnostic": {
+        "isActive": true,
+        "blockedReasons": [],
+        "keyboardState": "READY",
+        "keyboardTransport": null,
+        "keyboardLastSent": 0,
+        "keyboardLastApplied": 0,
+        "pendingMouseReset": false,
+        "recovery": {
+          "state": "idle",
+          "generation": 0,
+          "reason": null,
+          "mouseConfirmed": false,
+          "keyboardConfirmed": false,
+          "retryAvailable": false
+        },
+        "mediaGate": {
+          "enabled": true,
+          "hasActiveControl": true,
+          "manualDisconnect": false,
+          "mediaState": "active",
+          "runtimePhase": "active",
+          "inputIsActive": true,
+          "blockedReasons": []
+        }
+      },
+      "keyboardPending": 0,
+      "pressedKeys": 0,
+      "pressedMouseButtons": 0,
+      "mediaPhase": "active",
+      "networkMode": "relay",
+      "transport": "webrtc",
+      "pcState": "connected",
+      "candidate": {
+        "localType": "relay",
+        "remoteType": "relay",
+        "protocol": "udp",
+        "relayProtocol": "udp"
+      },
+      "videoWidth": 1152,
+      "videoHeight": 720,
+      "readyState": 4,
+      "paused": false,
+      "callbacks": 1,
+      "callbackAgeMs": 141,
+      "mediaTime": 0,
+      "presentedFrames": 1,
+      "productFrameSeq": 1,
+      "relayLoadedAtMs": null,
+      "relayStale": false,
+      "framesDecoded": 1,
+      "bytesReceived": 84256,
+      "nonBlackRatio": 1,
+      "startupMarks": [
+        {
+          "name": "html-shell",
+          "atMs": 782.2
+        },
+        {
+          "name": "core-interactive",
+          "atMs": 1620.3
+        },
+        {
+          "name": "start-click",
+          "atMs": 2309.7
+        },
+        {
+          "name": "signal-connected",
+          "atMs": 4501
+        },
+        {
+          "name": "first-frame",
+          "atMs": 8020.1
+        },
+        {
+          "name": "active",
+          "atMs": 8020.2
+        }
+      ]
+    },
+    "after": {
+      "signalConnected": true,
+      "hostOnline": true,
+      "controlState": "ACTIVE",
+      "controller": true,
+      "hasLease": true,
+      "inputAllowed": true,
+      "inputDiagnostic": {
+        "isActive": true,
+        "blockedReasons": [],
+        "keyboardState": "READY",
+        "keyboardTransport": null,
+        "keyboardLastSent": 0,
+        "keyboardLastApplied": 0,
+        "pendingMouseReset": false,
+        "recovery": {
+          "state": "idle",
+          "generation": 0,
+          "reason": null,
+          "mouseConfirmed": false,
+          "keyboardConfirmed": false,
+          "retryAvailable": false
+        },
+        "mediaGate": {
+          "enabled": true,
+          "hasActiveControl": true,
+          "manualDisconnect": false,
+          "mediaState": "active",
+          "runtimePhase": "active",
+          "inputIsActive": true,
+          "blockedReasons": []
+        }
+      },
+      "keyboardPending": 0,
+      "pressedKeys": 0,
+      "pressedMouseButtons": 0,
+      "mediaPhase": "active",
+      "networkMode": "relay",
+      "transport": "webrtc",
+      "pcState": "connected",
+      "candidate": {
+        "localType": "relay",
+        "remoteType": "relay",
+        "protocol": "udp",
+        "relayProtocol": "udp"
+      },
+      "videoWidth": 1152,
+      "videoHeight": 720,
+      "readyState": 4,
+      "paused": false,
+      "callbacks": 30,
+      "callbackAgeMs": 217,
+      "mediaTime": 7.836,
+      "presentedFrames": 34,
+      "productFrameSeq": 30,
+      "relayLoadedAtMs": null,
+      "relayStale": false,
+      "framesDecoded": 36,
+      "bytesReceived": 257881,
+      "nonBlackRatio": 1,
+      "startupMarks": [
+        {
+          "name": "html-shell",
+          "atMs": 782.2
+        },
+        {
+          "name": "core-interactive",
+          "atMs": 1620.3
+        },
+        {
+          "name": "start-click",
+          "atMs": 2309.7
+        },
+        {
+          "name": "signal-connected",
+          "atMs": 4501
+        },
+        {
+          "name": "first-frame",
+          "atMs": 8020.1
+        },
+        {
+          "name": "active",
+          "atMs": 8020.2
+        }
+      ]
+    }
+  },
+  "afterReset": {
+    "signalConnected": true,
+    "hostOnline": true,
+    "controlState": "ACTIVE",
+    "controller": true,
+    "hasLease": true,
+    "inputAllowed": true,
+    "inputDiagnostic": {
+      "isActive": true,
+      "blockedReasons": [],
+      "keyboardState": "READY",
+      "keyboardTransport": null,
+      "keyboardLastSent": 1,
+      "keyboardLastApplied": 1,
+      "pendingMouseReset": false,
+      "recovery": {
+        "state": "idle",
+        "generation": 0,
+        "reason": null,
+        "mouseConfirmed": false,
+        "keyboardConfirmed": false,
+        "retryAvailable": false
+      },
+      "mediaGate": {
+        "enabled": true,
+        "hasActiveControl": true,
+        "manualDisconnect": false,
+        "mediaState": "active",
+        "runtimePhase": "active",
+        "inputIsActive": true,
+        "blockedReasons": []
+      }
+    },
+    "keyboardPending": 0,
+    "pressedKeys": 0,
+    "pressedMouseButtons": 0,
+    "mediaPhase": "active",
+    "networkMode": "relay",
+    "transport": "webrtc",
+    "pcState": "connected",
+    "candidate": {
+      "localType": "relay",
+      "remoteType": "relay",
+      "protocol": "udp",
+      "relayProtocol": "udp"
+    },
+    "videoWidth": 1152,
+    "videoHeight": 720,
+    "readyState": 4,
+    "paused": false,
+    "callbacks": 33,
+    "callbackAgeMs": 79,
+    "mediaTime": 8.825,
+    "presentedFrames": 38,
+    "productFrameSeq": 33,
+    "relayLoadedAtMs": null,
+    "relayStale": false,
+    "framesDecoded": 40,
+    "bytesReceived": 266431,
+    "nonBlackRatio": 1,
+    "startupMarks": [
+      {
+        "name": "html-shell",
+        "atMs": 782.2
+      },
+      {
+        "name": "core-interactive",
+        "atMs": 1620.3
+      },
+      {
+        "name": "start-click",
+        "atMs": 2309.7
+      },
+      {
+        "name": "signal-connected",
+        "atMs": 4501
+      },
+      {
+        "name": "first-frame",
+        "atMs": 8020.1
+      },
+      {
+        "name": "active",
+        "atMs": 8020.2
+      }
+    ]
+  },
+  "postProbe": {
+    "signalConnected": true,
+    "hostOnline": true,
+    "controlState": "ACTIVE",
+    "controller": true,
+    "hasLease": true,
+    "inputAllowed": true,
+    "inputDiagnostic": {
+      "isActive": true,
+      "blockedReasons": [],
+      "keyboardState": "READY",
+      "keyboardTransport": null,
+      "keyboardLastSent": 1,
+      "keyboardLastApplied": 1,
+      "pendingMouseReset": false,
+      "recovery": {
+        "state": "idle",
+        "generation": 0,
+        "reason": null,
+        "mouseConfirmed": false,
+        "keyboardConfirmed": false,
+        "retryAvailable": false
+      },
+      "mediaGate": {
+        "enabled": true,
+        "hasActiveControl": true,
+        "manualDisconnect": false,
+        "mediaState": "active",
+        "runtimePhase": "active",
+        "inputIsActive": true,
+        "blockedReasons": []
+      }
+    },
+    "keyboardPending": 0,
+    "pressedKeys": 0,
+    "pressedMouseButtons": 0,
+    "mediaPhase": "active",
+    "networkMode": "relay",
+    "transport": "webrtc",
+    "pcState": "connected",
+    "candidate": {
+      "localType": "relay",
+      "remoteType": "relay",
+      "protocol": "udp",
+      "relayProtocol": "udp"
+    },
+    "videoWidth": 1152,
+    "videoHeight": 720,
+    "readyState": 4,
+    "paused": false,
+    "callbacks": 33,
+    "callbackAgeMs": 102,
+    "mediaTime": 8.825,
+    "presentedFrames": 38,
+    "productFrameSeq": 33,
+    "relayLoadedAtMs": null,
+    "relayStale": false,
+    "framesDecoded": 40,
+    "bytesReceived": 266431,
+    "nonBlackRatio": 1,
+    "startupMarks": [
+      {
+        "name": "html-shell",
+        "atMs": 782.2
+      },
+      {
+        "name": "core-interactive",
+        "atMs": 1620.3
+      },
+      {
+        "name": "start-click",
+        "atMs": 2309.7
+      },
+      {
+        "name": "signal-connected",
+        "atMs": 4501
+      },
+      {
+        "name": "first-frame",
+        "atMs": 8020.1
+      },
+      {
+        "name": "active",
+        "atMs": 8020.2
+      }
+    ]
+  },
+  "pass": true,
+  "elapsedSeconds": 71.017,
+  "endedAt": "2026-10-25T21:38:40.454769+00:00"
+}

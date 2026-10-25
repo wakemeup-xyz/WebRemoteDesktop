@@ -1,0 +1,14 @@
+{
+  "scope": "exploratory urllib client; not the browser or canonical curl",
+  "observations": [
+    {
+      "route": "/",
+      "httpStatus": 403
+    },
+    {
+      "route": "/health",
+      "httpStatus": 403
+    }
+  ],
+  "subsequentBrowserAndCurl": "200; see positive smoke and asset evidence; cause of client difference not established"
+}

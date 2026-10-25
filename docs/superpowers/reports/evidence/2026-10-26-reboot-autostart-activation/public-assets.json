@@ -1,0 +1,28 @@
+{
+  "at": "2026-10-25T21:37:05.323487+00:00",
+  "buildId": "c6915df5ba8c0c6f",
+  "routeClient": "curl-default",
+  "layers": [
+    {
+      "layer": "login",
+      "httpStatus": 200,
+      "returnCode": 0,
+      "bytes": 980,
+      "hasCurrentBuild": true
+    },
+    {
+      "layer": "viewer",
+      "httpStatus": 200,
+      "returnCode": 0,
+      "bytes": 27225,
+      "hasCurrentBuild": true
+    },
+    {
+      "layer": "core",
+      "httpStatus": 200,
+      "returnCode": 0,
+      "bytes": 518985,
+      "matchesLocalSha256": true
+    }
+  ]
+}

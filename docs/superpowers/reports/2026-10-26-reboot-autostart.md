@@ -2,6 +2,8 @@
 
 计划：`../plans/2026-10-26-reboot-autostart.md`；设计：`../specs/2026-10-26-reboot-autostart-design.md`。
 
+后续用户已授权实际启动、正式隧道与运行验收；服务已上线，正式域名的直连/TURN及临时 Terminal 冒烟通过，详见 [后续激活记录](2026-10-26-reboot-autostart-activation.md)。下文保留前一开发阶段的历史状态，不覆盖当时的 NOT RUN。
+
 ## 本轮边界
 
 用户授权开发测试及后续重启恢复。使用原先干净 checkout 的独立分支 `codex/reboot-autostart`，保留生产服务绝对路径。已只安装五个持久用户 plist；未激活或重启生产服务、未操作 tunnel。真实重启、公网画面和输入 NOT RUN。
