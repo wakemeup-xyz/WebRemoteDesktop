@@ -13,6 +13,9 @@ Use this project-local skill for service lifecycle work in `/Users/macstudio1/AI
 2. Read [service-rules.md](references/service-rules.md) before issuing any restart command.
 3. Interpret `重启服务` as local-only restart: `signal-server` plus Host.
 4. Use `skills/webremote-service/scripts/wrd_service.py` for status and restart commands.
+5. For reboot recovery, use `python3 scripts/install-reboot-autostart.py --check` (read only). `--install` only persists the five project user plists; it never enables, loads, starts or restarts them. Signal/local maintenance must retain its persistent plist. Formal connector activation still needs separate authorization; quick tunnel is never installed for autostart.
+
+Reboot recovery means after this macOS user logs in. FileVault/login screens, manual session unlock and in-memory Terminal restoration are outside this guarantee. Report installed configuration, live activation and actual reboot acceptance separately.
 
 ## Safety Rules
 

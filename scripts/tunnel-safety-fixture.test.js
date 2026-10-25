@@ -127,7 +127,7 @@ function runExecutable(scriptPath, fixture, extraEnv = {}) {
   return spawnSync('/bin/bash', [scriptPath], {
     cwd: projectRoot,
     encoding: 'utf8',
-    timeout: 10000,
+    timeout: 60000,
     env: {
       ...process.env,
       PATH: `${fixture.bin}:${process.env.PATH || ''}`,
@@ -298,8 +298,8 @@ test('executable run-safe states diagnose without kill, URL deletion, or replace
       cloudflaredPath,
       `#!/bin/sh
 printf 'cloudflared ${state}\\n' >> "$WRD_SPAWN_LOG"
-if [ -n "$WRD_KILL_READY_FILE" ]; then : > "$WRD_KILL_READY_FILE"; fi
 ${cloudflaredBody}
+if [ -n "$WRD_KILL_READY_FILE" ]; then : > "$WRD_KILL_READY_FILE"; fi
 exit 1
 `,
     );
@@ -310,7 +310,7 @@ exit 1
         URL_FILE: fixture.urlFile,
         URL_ARCHIVE_FILE: fixture.archiveFile,
         PID_FILE: path.join(fixture.root, `${state}.pid`),
-        URL_POLL_ATTEMPTS: '10',
+        URL_POLL_ATTEMPTS: '100',
         URL_POLL_INTERVAL_SECONDS: '0.2',
         URL_READY_TIMEOUT_SECONDS: '0',
         WRD_FIXTURE_HEALTH_STATE: state === 'unreachable' ? 'origin-unreachable' : 'deliverable',

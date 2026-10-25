@@ -45,7 +45,7 @@ trim_launch_log() {
 wait_for_signal_server() {
   local elapsed=0
   while [ "$WAIT_TIMEOUT_SECONDS" = "0" ] || [ "$elapsed" -lt "$WAIT_TIMEOUT_SECONDS" ]; do
-    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+    if curl --noproxy '*' --connect-timeout 2 --max-time 3 -fsS "$HEALTH_URL" >/dev/null 2>&1; then
       return 0
     fi
     sleep "$WAIT_INTERVAL_SECONDS"
@@ -59,7 +59,7 @@ wait_for_host_auth() {
   local auth_body
   auth_body=$(printf '{"secret":"%s"}' "${HOST_SHARED_SECRET:-}")
   while [ "$WAIT_TIMEOUT_SECONDS" = "0" ] || [ "$elapsed" -lt "$WAIT_TIMEOUT_SECONDS" ]; do
-    if curl -fsS \
+    if curl --noproxy '*' --connect-timeout 2 --max-time 3 -fsS \
       -H 'Content-Type: application/json' \
       -X POST \
       -d "$auth_body" \

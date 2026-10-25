@@ -5,6 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-fixed-domain.sh
 source "$SCRIPT_DIR/lib-fixed-domain.sh"
 
+if [ "${1:-}" = "--preflight" ]; then
+  # Read-only watcher admission. The Python helper checks configuration and
+  # exact ownership without registering even a throwaway bootstrap probe.
+  wrd_fixed_validate_connector
+  exit 0
+fi
+
 if ! token_connectors="$(wrd_fixed_count_token_connectors)"; then
   echo "refusing restart: unable to inspect cloudflared processes; no managed connector submit" >&2
   exit 2
@@ -28,15 +35,10 @@ if [ "${owners:-0}" -gt 1 ]; then
 fi
 
 wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG"
-if [ "${1:-}" = "--preflight" ]; then
-  # Read-only watcher admission: repeat these checks in the real worker too.
-  exit 0
-fi
 wrd_fixed_unset_tunnel_token
 
 echo "=== restarting formal connector $WRD_FIXED_TUNNEL_NAME ==="
-wrd_fixed_stop_connector
-wrd_fixed_start_connector
+wrd_fixed_restart_connector
 
 if wrd_fixed_wait_formal_health; then
   echo "formal health ok: $WRD_FIXED_FORMAL_HEALTH_URL"

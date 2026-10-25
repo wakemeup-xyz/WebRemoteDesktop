@@ -8,7 +8,6 @@ const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 const preflightPath = path.join(__dirname, 'fixed-tunnel-preflight.sh');
-const startFixedPath = path.join(__dirname, 'start-fixed-domain.sh');
 
 test('fixed tunnel preflight reports token/multiple owners without mutation or secret output', () => {
   const source = fs.readFileSync(preflightPath, 'utf8');
@@ -74,8 +73,9 @@ test('fixed tunnel preflight classifies protocol and recent stability without se
 });
 
 test('fixed-domain managed command defaults to http2 and permits explicit quic override', () => {
-  const source = fs.readFileSync(startFixedPath, 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, 'lib-fixed-domain.sh'), 'utf8');
+  const wrapper = fs.readFileSync(path.join(__dirname, 'run-fixed-domain-launchctl.sh'), 'utf8');
   assert.match(source, /WRD_FIXED_TUNNEL_PROTOCOL="\$\{WRD_FIXED_TUNNEL_PROTOCOL:-http2\}"/);
-  assert.match(source, /--protocol "\$WRD_FIXED_TUNNEL_PROTOCOL"/);
-  assert.match(source, /http2\|quic/);
+  assert.match(wrapper, /--protocol "\$3"/);
+  assert.match(wrapper, /http2\|quic/);
 });

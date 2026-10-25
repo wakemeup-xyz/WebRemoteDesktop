@@ -71,11 +71,18 @@ test('safe stop script stops the tunnel through the shared launchctl helper', ()
   assert.match(source, /wrd_tunnel_launchctl_stop/);
 });
 
-test('fixed-domain startup requires config credentials-file and never passes a tunnel token', () => {
+test('fixed-domain startup delegates credentials and literal argv to the shared formal API', () => {
   const source = fs.readFileSync(fixedDomainPath, 'utf8');
-
-  assert.match(source, /credentials-file/);
-  assert.match(source, /--config[^\n]+run[^\n]+TUNNEL_NAME/);
+  const library = fs.readFileSync(path.join(__dirname, 'lib-fixed-domain.sh'), 'utf8');
+  const helper = fs.readFileSync(path.join(__dirname, 'wrd_fixed_launchagent.py'), 'utf8');
+  const wrapper = fs.readFileSync(path.join(__dirname, 'run-fixed-domain-launchctl.sh'), 'utf8');
+  assert.match(source, /lib-fixed-domain\.sh/);
+  assert.match(source, /wrd_fixed_preflight_connector/);
+  assert.match(source, /restart-fixed-domain-tunnel\.sh/);
+  assert.match(library, /wrd_fixed_launchagent\.py/);
+  assert.match(helper, /credentials-file/);
+  assert.match(wrapper, /exec "\$1" tunnel --config "\$2" --protocol "\$3" run "\$4"/);
   assert.doesNotMatch(source, /--token\b/);
-  assert.match(source, /unset TUNNEL_TOKEN/);
+  assert.match(wrapper, /unset TUNNEL_TOKEN/);
+  assert.doesNotMatch(source + library, /\bpkill\b|launchctl submit/);
 });

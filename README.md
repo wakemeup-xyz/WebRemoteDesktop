@@ -30,6 +30,22 @@
 
 ## 启动项目服务
 
+### 重启后自动恢复（用户登录后）
+
+Signal、Host、正式 named tunnel、awake 与 watcher 使用持久的用户 LaunchAgent。电脑重启并登录该 macOS 用户后自动加载；FileVault 解锁前、尚未登录或手工锁定会话不承诺远程解锁。共享 Terminal 内存会话不会跨电脑重启保留。
+
+```bash
+# 只读检查：配置是否匹配、任务是否加载/禁用、本地 health 与 Host 在线
+python3 scripts/install-reboot-autostart.py --check
+
+# 只保存五个持久配置，不 enable/bootstrap/kickstart，不启动或重启服务
+python3 scripts/install-reboot-autostart.py --install
+```
+
+安装目标为 `~/Library/LaunchAgents/com.webremotedesktop.*.plist`。安装前校验所有路径与正式 tunnel 的 credentials-file；失败恢复原配置，不写密码或 token。只安装文件不表示当前服务已运行，若检查显示任务 disabled，须在明确授权的激活窗口中启用对应用户任务；不要启用历史 `com.cloudflare.cloudflared` token daemon。
+
+Signal 与正式 connector 的进程退出由 launchd 按 10 秒节流恢复；存活 connector 的健康失败仍由既有 watcher 按 180 秒/每小时最多两次的预算处理。后续本地重启和正式 connector 重启都会保留持久配置，不再退回临时注册。普通本地维护不操作 tunnel，quick tunnel 不加入自启。实际激活与验收步骤见 [安全启动手册](docs/runbook-safe-startup.md#重启恢复安装与激活边界)。
+
 ### 启动前准备
 
 首次运行前，先确认以下依赖和权限已经就绪：
@@ -185,12 +201,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 
 `./scripts/status-safe-wrd.sh` 若发现现有 `cloudflared` argv 含 `--token`，只输出固定安全告警，不显示 token，也不会停止或重启 tunnel。凭据迁移和 tunnel 重启必须由用户单独授权。
 
-如本地服务不是 `8080`，可在执行前覆盖：
-
-```bash
-LOCAL_PORT=9000 ./scripts/setup-cloudflare.sh
-LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
-```
+当前持久启动与本地维护统一使用 `127.0.0.1:8080`；`start-fixed-domain.sh` 会拒绝其它本地端口，避免 tunnel 与本地 helper 指向不同服务。
 
 如需同时生成可选开发子域配置，可在执行 `setup-cloudflare.sh` 时显式开启：
 

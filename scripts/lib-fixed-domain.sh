@@ -74,25 +74,28 @@ wrd_fixed_has_token_connector() {
   [ "$(wrd_fixed_count_token_connectors)" -gt 0 ]
 }
 
-wrd_fixed_stop_connector() {
-  wrd_fixed_unset_tunnel_token
-  launchctl remove "$WRD_FIXED_LABEL" 2>/dev/null || true
-  # Only the named formal runner with config + run <name>
-  pkill -f "cloudflared tunnel --config .* run ${WRD_FIXED_TUNNEL_NAME}" 2>/dev/null || true
-  pkill -f "cloudflared tunnel --config .* --protocol .* run ${WRD_FIXED_TUNNEL_NAME}" 2>/dev/null || true
-  sleep 1
+wrd_fixed_launchagent() {
+  local helper
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wrd_fixed_launchagent.py"
+  CLOUDFLARED="$CLOUDFLARED" CLOUDFLARED_CONFIG="$CLOUDFLARED_CONFIG" \
+    WRD_FIXED_TUNNEL_PROTOCOL="$WRD_FIXED_TUNNEL_PROTOCOL" \
+    WRD_FIXED_TUNNEL_NAME="$WRD_FIXED_TUNNEL_NAME" WRD_FIXED_LABEL="$WRD_FIXED_LABEL" \
+    WRD_FIXED_DOMAIN_LOG="$WRD_FIXED_DOMAIN_LOG" python3 "$helper" "$@"
 }
 
-wrd_fixed_start_connector() {
-  local protocol="$WRD_FIXED_TUNNEL_PROTOCOL"
-  case "$protocol" in
-    http2|quic) ;;
-    *) echo "WRD_FIXED_TUNNEL_PROTOCOL must be http2 or quic" >&2; return 1 ;;
-  esac
-  wrd_fixed_require_credentials_file "$CLOUDFLARED_CONFIG" || return 1
-  wrd_fixed_unset_tunnel_token
-  launchctl submit -l "$WRD_FIXED_LABEL" -- /bin/zsh -lc \
-    "unset TUNNEL_TOKEN; exec \"$CLOUDFLARED\" tunnel --config \"$CLOUDFLARED_CONFIG\" --protocol \"$protocol\" run \"$WRD_FIXED_TUNNEL_NAME\" >> \"$WRD_FIXED_DOMAIN_LOG\" 2>&1"
+wrd_fixed_validate_connector() {
+  # Read-only watcher admission: does not register even a throwaway probe.
+  wrd_fixed_launchagent validate
+}
+
+wrd_fixed_preflight_connector() {
+  # Wide-start admission registers only a unique /usr/bin/true probe.
+  wrd_fixed_launchagent preflight
+}
+
+wrd_fixed_restart_connector() {
+  # Persistent plist transaction, exact-label stop and rollback share one owner.
+  wrd_fixed_launchagent restart
 }
 
 wrd_fixed_wait_formal_health() {

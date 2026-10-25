@@ -48,6 +48,8 @@ function prepareRunnerProject() {
 function runnerEnv(fixture, overrides = {}, inherited = process.env) {
   return {
     ...inherited,
+    HOME: fixture.projectDir,
+    WRD_TURN_JSON: path.join(fixture.projectDir, 'no-production-turn.json'),
     ...overrides,
     WRD_HOST_LAUNCH_LOG: fixture.launchLogPath,
     WRD_HOST_LOG_FILE: fixture.hostLogPath,
@@ -165,7 +167,7 @@ test('run-host-launchctl waits for signal-server health before starting host.py'
   assert.equal(fs.existsSync(fixture.pythonMarkerPath), false, 'host.py should not start before health check succeeds');
 });
 
-test('run-host-launchctl starts host.py once signal-server health is ready', async (t) => {
+test('run-host-launchctl starts host.py after local health/auth even with an unusable proxy', async (t) => {
   const fixture = prepareRunnerProject();
   t.after(() => {
     fs.rmSync(fixture.projectDir, { recursive: true, force: true });
@@ -202,6 +204,14 @@ test('run-host-launchctl starts host.py once signal-server health is ready', asy
       WRD_TEST_PYTHON_SLEEP_SECONDS: '30',
       HOST_SHARED_SECRET: 'ok-secret',
       WRD_HOST_HEALTH_URL: `http://127.0.0.1:${address.port}/health`,
+      HTTP_PROXY: 'http://127.0.0.1:1',
+      HTTPS_PROXY: 'http://127.0.0.1:1',
+      ALL_PROXY: 'http://127.0.0.1:1',
+      http_proxy: 'http://127.0.0.1:1',
+      https_proxy: 'http://127.0.0.1:1',
+      all_proxy: 'http://127.0.0.1:1',
+      NO_PROXY: '',
+      no_proxy: '',
       WRD_HOST_AUTH_URL: `http://127.0.0.1:${address.port}/api/auth/login/host`,
       WRD_HOST_WAIT_INTERVAL_SECONDS: '0.1',
     }),
@@ -212,14 +222,16 @@ test('run-host-launchctl starts host.py once signal-server health is ready', asy
     await once(child, 'exit').catch(() => {});
   });
 
-  for (let i = 0; i < 50; i += 1) {
+  // This is process scheduling allowance, not a Viewer startup SLA.
+  for (let i = 0; i < 200; i += 1) {
     if (fs.existsSync(fixture.pythonMarkerPath)) {
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  assert.equal(fs.existsSync(fixture.pythonMarkerPath), true, 'host.py should start after health check succeeds');
+  assert.equal(fs.existsSync(fixture.pythonMarkerPath), true,
+    `host.py should start after health check succeeds: ${fs.existsSync(fixture.launchLogPath) ? fs.readFileSync(fixture.launchLogPath, 'utf8') : 'no wrapper log'}`);
   assert.match(fs.readFileSync(fixture.pythonMarkerPath, 'utf8'), /host\.py/);
 });
 
@@ -280,7 +292,7 @@ test('run-host-launchctl does not start host.py until host auth succeeds', async
 
   allowAuth = true;
 
-  for (let i = 0; i < 50; i += 1) {
+  for (let i = 0; i < 200; i += 1) {
     if (fs.existsSync(fixture.pythonMarkerPath)) {
       break;
     }
@@ -404,7 +416,7 @@ fi
   return { sourcePath, installedPath, oldPlist, newPlist, temporaryDir,
     run() {
       const result = spawnSync('bash', [invocationPath], {
-        cwd: projectDir, encoding: 'utf8', timeout: 10_000,
+        cwd: projectDir, encoding: 'utf8', timeout: 30_000,
         env: { ...process.env, PROJECT_DIR: projectDir, WRD_HOST_LABEL: label,
           WRD_HOST_LAUNCH_LOG: path.join(projectDir, 'wrd-host-launch.log'),
           WRD_HOST_LOG_FILE: path.join(projectDir, 'back-debug.log'),

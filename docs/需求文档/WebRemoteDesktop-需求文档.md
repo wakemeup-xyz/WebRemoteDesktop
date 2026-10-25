@@ -362,6 +362,8 @@ CodeHarness学习助手 是一个基于 WebRTC 的浏览器远程桌面系统。
 
 ### 4.2 启动顺序
 
+重启恢复：Signal、Host、正式 named tunnel、awake、watch 使用 `~/Library/LaunchAgents/` 中的持久配置，在该用户登录 macOS 后自动加载。Signal 保留 Interactive；Signal/正式 connector 的进程退出由 launchd KeepAlive（10 秒节流）恢复，存活 connector 的健康故障仍受原 watcher 的 180 秒/每小时最多两次门槛限制。`scripts/install-reboot-autostart.py --check` 只读核对配置与运行，`--install` 只保存配置，不启用/启动/重启服务。后续服务维护不能将持久配置退回临时 submit。quick tunnel 不加入自启，旧系统 token daemon不恢复。FileVault 解锁前、登录前、手工锁定会话及重启前的内存 Terminal 会话不在恢复承诺内。离线测试与真实重启、公网画面和输入分开验收；详见 [设计](../superpowers/specs/2026-10-26-reboot-autostart-design.md) 与 [执行记录](../superpowers/reports/2026-10-26-reboot-autostart.md)。
+
 1. 启动防睡眠服务：`scripts/install-awake-keeper.sh`（一次性安装）或 `scripts/run-awake-keeper.sh`
 2. 启动 Signal Server：`node server.js`
 3. 检查已有 Cloudflare Tunnel（暴露 `127.0.0.1:8080`）；普通启动不自动启动、恢复或替换 quick tunnel；若旧版 quick-tunnel LaunchAgent 仍处于加载状态，只禁用并 bootout 该旧自动任务，不删除 URL 文件

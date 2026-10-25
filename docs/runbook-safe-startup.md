@@ -4,6 +4,18 @@
 
 ## 启动方式总览
 
+### 重启恢复安装与激活边界
+
+`python3 scripts/install-reboot-autostart.py --check`（默认模式）只读核对五个持久 plist、用户任务 loaded/running/disabled、本地健康和 Host 在线。`--install` 先验证 Signal、wrapper、正式 config/credentials-file，再原子保存 Signal/Host/fixed-domain/awake/fixed-watch 五个配置到 `~/Library/LaunchAgents/`；任何写入失败恢复此前字节和权限，回滚失败保留私有恢复副本并明确失败。配置安装不执行 launchctl，不启用、不加载、不重启任务，也不接入 Viewer。
+
+承诺是**该用户登录 macOS 后**恢复；不是 FileVault 解锁前或登录前提供桌面。屏幕录制/辅助功能权限仍须预先授予，手工锁定会话不可远程解锁。内存中的 Terminal 会话不会跨电脑重启保存。仓库和 Node/Python/cloudflared 绝对路径改变后必须重新安装并检查。
+
+首次激活需要单独授权的操作窗口：先只读检查配置、任务禁用状态及 formal ownership；本地服务用 `python3 skills/webremote-service/scripts/wrd_service.py restart-local`，正式 connector 用 `./scripts/restart-fixed-domain-tunnel.sh`，二者授权分开。后者只管理精确项目 label；遇到外部/多 owner/token connector 拒绝接管，不启用历史系统 token daemon，不重建 quick tunnel。Host/awake/watch 已加载时无需额外 bounce；未加载或 disabled 时只处理这五个项目用户任务，不能凭目录里有文件宣称已启用。
+
+Signal 和正式 named connector 的持久配置设置 RunAtLoad/KeepAlive=true、ThrottleInterval=10。launchd 负责登录/进程退出恢复；存活 connector 的健康故障仍只由 watcher 按 180 秒、每小时最多两次预算处理。`start-fixed-domain.sh` 在操作本地服务前完成 formal 输入/owner/注册能力预检；local 失败不改 connector，formal 注册/enable/kickstart失败仅回滚自己并报告部分失败，不再中断已恢复的本地服务。注册成功但公网健康未达标时保留已启动connector并返回失败，不再为了本次探测额外bounce。
+
+实际激活后核对 `/health`、`/api/status`、正式入口 HTML/当前资源，再在授权范围内确认新鲜画面和输入。离线 fixture、安装成功、生产加载与真实重启验收分别记录；没有实际重启则重启验收保持 NOT RUN。
+
 当前仓库推荐按下面优先级选择启动方式：
 
 1. **正式公网入口**：`./scripts/start-fixed-domain.sh`
@@ -87,7 +99,7 @@ cd /Users/macstudio1/AI/Claude/WebRemoteDesktop
 - 重启 Host 时必须使用 `./scripts/restart-host.sh`，不要手工 `kill` 后重启
 - `./scripts/restart-host.sh` 的重启动作是复用已加载的 `com.webremotedesktop.host` 并 `kickstart -k`；只有已安装 plist 与仓库副本不一致、或该 agent 尚未加载时才重新注册（bootstrap）
 - Host plist显式 `ProcessType=Interactive`；必须在复制源plist之前比较已安装配置。配置变化时，先保留旧配置并验证bootstrap，再替换注册；安装或注册失败会尝试恢复旧job及配置，并返回非0。回滚也失败时保留私有备份路径，不能宣称恢复成功。
-- 本地维护helper的Signal启动使用私有plist、参数数组及 `ProcessType=Interactive`，不再依赖 `launchctl submit` 的默认daemon调度。唯一临时probe预检失败时不停止旧Signal；实际注册/health失败时尝试旧submit恢复并明确 `interactive_applied=false`，即使服务恢复也返回失败。该配置只用于本地Signal，不操作tunnel。
+- 本地维护helper的Signal使用持久用户plist、参数数组及 `ProcessType=Interactive`。唯一临时probe预检失败时不停止旧Signal；实际注册/health失败优先恢复旧持久配置/job，无旧持久配置时才尝试旧submit恢复并明确 `interactive_applied=false`，即使服务恢复也返回失败。该配置只用于本地Signal，不操作tunnel。
 - 当 shell 上下文无法注册 LaunchAgent 时（agent/沙箱/ssh 下 `launchctl bootstrap` 会返回 `Bootstrap failed: 5: Input/output error`），`lib-host-launchctl.sh` 会先用 throwaway probe 验证能力；验证失败就直接拒绝卸载现有 agent 并给出提示，不会把原本健康的 Host 留在未加载状态。此时请在 GUI Terminal 会话中执行启动脚本
 - `Bootstrap failed: 5` 不能单独证明GUI权限不足；本机曾因临时文件缺 `.plist` 后缀复现相同错误。预检使用唯一私有目录内的 `probe.plist` 及唯一label，失败/清理失败都不卸载旧Host；restart失败后核实真实项目Host并维护PID文件。
 - 仓库内脚本对本机 `127.0.0.1:8080` 的探活一律使用 `curl --noproxy '*'`，避免宿主机设置了 `HTTP_PROXY` 时把「本机健康」误判成 down
@@ -225,12 +237,7 @@ VIEWER_ACCESS_PASSWORD=... python3 scripts/viewer_bootstrap_acceptance.py \
 - 本机存在 `~/.cloudflared/config.yml`
 - 已创建 `wrd-tunnel` 命名隧道
 
-如本地服务不是默认 `8080`，可在执行前覆盖：
-
-```bash
-LOCAL_PORT=9000 ./scripts/setup-cloudflare.sh
-LOCAL_PORT=9000 ./scripts/start-fixed-domain.sh
-```
+当前持久启动与本地 helper 固定使用 `127.0.0.1:8080`；`start-fixed-domain.sh` 拒绝其它端口，避免本地恢复与 tunnel origin 不一致。
 
 如需同时生成可选开发子域配置，可在执行 `setup-cloudflare.sh` 时显式开启：
 
@@ -295,7 +302,7 @@ DEV_LOCAL_ORIGIN=http://127.0.0.1:5173 \
 
 - **`重启服务`** 只表示重启本地 `signal-server` / Host（例如 `restart-host.sh`、复用 safe 链路时重启 8080 侧）。
 - **不得**把「重启服务」解释为重建 quick tunnel，也**不得**解释为重启 formal named tunnel。
-- 允许自动重启 formal connector 的**唯一**自动化路径是已安装的 formal watcher（`com.webremotedesktop.fixed-watch` → `watch-fixed-domain.sh` → `restart-fixed-domain-tunnel.sh`）。除此之外，formal restart 必须由操作者显式执行 `./scripts/restart-fixed-domain-tunnel.sh` 或 `./scripts/upgrade-cloudflared.sh`（升级路径内嵌一次 formal bounce）。
+- 存活 formal connector 因持续健康失败触发重启的**唯一**自动化路径是已安装的 formal watcher（`com.webremotedesktop.fixed-watch` → `watch-fixed-domain.sh` → `restart-fixed-domain-tunnel.sh`），保留 180 秒/每小时最多两次门槛。持久 LaunchAgent 另负责用户登录和进程退出恢复（10 秒节流），不新增健康重启循环。除此之外，formal restart 必须由操作者显式执行 `./scripts/restart-fixed-domain-tunnel.sh` 或 `./scripts/upgrade-cloudflared.sh`（升级路径内嵌一次 formal bounce）。
 - `./scripts/start-fixed-domain.sh` 仍是“本地服务 + formal 启动”的宽路径；connector-only 恢复优先用 `restart-fixed-domain-tunnel.sh`，不要默认走全量 start。
 
 #### Preflight 保持只读
