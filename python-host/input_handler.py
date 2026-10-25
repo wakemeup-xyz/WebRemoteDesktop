@@ -328,11 +328,14 @@ class InputHandler:
                 if not input_commit_fence.get()():
                     return {"status": "stale-lease", "inputIds": []}
                 if desktop is not None and desktop.status == "applied":
-                    desktop = self._desktop_writes.commit(
-                        data["seq"],
-                        lease_id=data.get("leaseId"),
-                        lease_epoch=data.get("leaseEpoch"),
-                    )
+                    if input_type == "mouse" and action == "reset":
+                        desktop = self._desktop_writes.commit_reset(desktop_data)
+                    else:
+                        desktop = self._desktop_writes.commit(
+                            data["seq"],
+                            lease_id=data.get("leaseId"),
+                            lease_epoch=data.get("leaseEpoch"),
+                        )
             finally:
                 if lock_acquired_flag:
                     self._input_lock.release()
@@ -560,25 +563,29 @@ class InputHandler:
             reason,
             ",".join(sorted(buttons)),
         )
-        try:
-            if not self.monitor:
-                return
-            position = self._last_mouse_position or (self.monitor.x, self.monitor.y)
-            for button in ('left', 'right', 'middle'):
-                if button not in buttons:
-                    continue
-                event_type = {
-                    'left': kCGEventLeftMouseUp,
-                    'right': kCGEventRightMouseUp,
-                    'middle': kCGEventOtherMouseUp,
-                }.get(button, kCGEventLeftMouseUp)
-                event = CGEventCreateMouseEvent(
-                    self.source, event_type, position, self._get_mouse_button(button)
-                )
-                CGEventPost(kCGHIDEventTap, event)
-        finally:
-            self._pressed_mouse_buttons.clear()
-            self._pressed_mouse_button = None
+        if not self.monitor:
+            raise RuntimeError("Cannot release tracked mouse buttons without a monitor")
+        position = self._last_mouse_position or (self.monitor.x, self.monitor.y)
+        for button in ('left', 'right', 'middle'):
+            if button not in buttons:
+                continue
+            event_type = {
+                'left': kCGEventLeftMouseUp,
+                'right': kCGEventRightMouseUp,
+                'middle': kCGEventOtherMouseUp,
+            }.get(button, kCGEventLeftMouseUp)
+            event = CGEventCreateMouseEvent(
+                self.source, event_type, position, self._get_mouse_button(button)
+            )
+            if event is None:
+                raise RuntimeError("Cannot create mouse release event")
+            CGEventPost(kCGHIDEventTap, event)
+            # Keep failed and unattempted releases tracked for the next reset.
+            self._pressed_mouse_buttons.discard(button)
+            if self._pressed_mouse_button == button:
+                self._pressed_mouse_button = None
+        if self._pressed_mouse_buttons or self._pressed_mouse_button:
+            raise RuntimeError("Mouse release left tracked buttons")
 
     def _normalize_scroll_delta(self, delta_x, delta_y):
         """Convert browser wheel deltas to compact Quartz line scroll units."""

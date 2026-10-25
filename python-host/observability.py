@@ -1,6 +1,7 @@
 import json
 import hashlib
 import logging
+import math
 import os
 import re
 import threading
@@ -14,6 +15,7 @@ _SENSITIVE_INPUT_KEYS = {"data", "key", "code", "text", "payload", "x", "y"}
 _MAX_INPUT_IDS = 64
 _MAX_INPUT_ID_LENGTH = 128
 _MAX_PAYLOAD_BYTES = 64 * 1024
+_MAX_INPUT_DURATION_MS = 0x7FFFFFFF
 _SAFE_INPUT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _SAFE_INPUT_TYPES = frozenset({"keyboard", "mouse", "command"})
 _SAFE_INPUT_ACTIONS = frozenset({
@@ -143,6 +145,7 @@ def summarize_input_event(
     status=None,
     applied_seq=None,
     ack_accepted=None,
+    admission_wait_ms=None,
     reason=None,
 ):
     payload = data.get("payload", {}) if isinstance(data, dict) else {}
@@ -187,6 +190,16 @@ def summarize_input_event(
     }
     raw_reason = reason if reason is not None else (data.get("reason") if isinstance(data, dict) else None)
     summary["reason"] = _safe_enum(raw_reason, _SAFE_INPUT_REASONS, None)
+    # Nullable observation only: reject coerced/invalid/unbounded durations
+    # instead of clamping them into a fabricated measured value.
+    admission_wait = None
+    if type(admission_wait_ms) in (int, float):
+        try:
+            if math.isfinite(admission_wait_ms) and 0 <= admission_wait_ms <= _MAX_INPUT_DURATION_MS:
+                admission_wait = round(float(admission_wait_ms), 3)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    summary["hostAdmissionWaitMs"] = admission_wait
     if local_execute_ms is not None:
         try:
             summary["localExecuteMs"] = round(max(0.0, min(float(local_execute_ms), _MAX_PAYLOAD_BYTES)), 3)

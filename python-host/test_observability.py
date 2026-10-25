@@ -82,6 +82,7 @@ def test_input_summary_whitelists_outcome_fields_without_raw_input_values():
         "leaseEpoch": 12,
         "appliedSeq": 7,
         "reason": None,
+        "hostAdmissionWaitMs": None,
         "localExecuteMs": 12.346,
         "timingScope": "host-adapter-await",
         "timingIncludesQueueWait": True,

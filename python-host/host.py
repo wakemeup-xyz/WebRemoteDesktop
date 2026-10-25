@@ -69,7 +69,7 @@ from capture_experiment import CaptureExperiment
 from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
 from capture_resource_owner import CaptureResourceOwner
 from peer_cleanup_observation import PeerCleanupObservation, SEQUENCE_CAP, peer_cleanup_json
-from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult
+from input_admission_queue import InputAdmissionQueue, completed_future, AdmissionResult, input_queued_ns
 # Production relay uses the bounded capture/encode pipeline.  The public symbol
 # remains a fixture seam: tests can replace ``host.RelayFrameWorker`` with the
 # old one-stage fake without changing the production default.
@@ -2603,6 +2603,7 @@ class WebRemoteHost:
         applied_seq=None,
         local_execute_ms=None,
         ack_accepted=None,
+        admission_wait_ms=None,
     ):
         """Emit bounded input metadata and aggregate move/wheel observations."""
         high_frequency = (
@@ -2628,7 +2629,10 @@ class WebRemoteHost:
                 applied_seq=applied_seq,
                 local_execute_ms=local_execute_ms,
                 ack_accepted=ack_accepted,
+                admission_wait_ms=admission_wait_ms,
             )
+            if event != "host_input_received":
+                summary.pop("hostAdmissionWaitMs", None)
         if summary["inputType"] == "mouse" and summary["action"] in {"move", "wheel"}:
             aggregates = getattr(self, "_input_observation_aggregates", None)
             if aggregates is None:
@@ -2735,6 +2739,14 @@ class WebRemoteHost:
 
     async def _execute_input(self, data, authority):
         """Handle input commands from viewer while recording safe outcomes."""
+        admission_wait_ms = None
+        try:
+            queued_ns = input_queued_ns.get()
+            entered_ns = time.perf_counter_ns()
+            if type(queued_ns) is int and type(entered_ns) is int and 0 <= queued_ns <= entered_ns:
+                admission_wait_ms = (entered_ns - queued_ns) / 1_000_000
+        except Exception:
+            pass  # Optional timing cannot change admission, native work or ACKs.
         accepted = False
         result = None
         adapter_started = None
@@ -2835,6 +2847,7 @@ class WebRemoteHost:
             accepted = True
             self._emit_input_observation(
                 "host_input_received", data, status="accepted",
+                admission_wait_ms=admission_wait_ms,
             )
             if input_type == "keyboard" and action == "reset":
                 logger.info("Keyboard reset observed transport=%s", transport)

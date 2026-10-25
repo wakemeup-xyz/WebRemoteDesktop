@@ -266,6 +266,74 @@ def test_duplicate_gap_stale_stolen_token_and_future_epoch_do_not_execute():
     assert [event[0] for event in adapter.events] == ["KeyA"]
 
 
+def test_reset_duplicates_require_last_successful_reset_identity():
+    adapter = RecordingKeyboardAdapter()
+    state = active_state(adapter)
+    assert state.apply(key_envelope(seq=1, phase="down", code="KeyA")).status == "applied"
+    collision = envelope("reset", seq=1, payload={"reason": "manual"})
+    assert state.apply(collision).status == "resync-required"
+    assert state.snapshot().pressed_codes == frozenset({"KeyA"})
+    reset = envelope("reset", seq=3, payload={"reason": "manual"})
+    assert state.apply(reset).status == "applied"
+    events = list(adapter.events)
+    assert state.apply(reset).status == "duplicate"
+    assert state.apply({**reset, "inputIds": ["different"]}).status == "resync-required"
+    assert adapter.events == events
+    assert state.apply(key_envelope(seq=4, phase="down", code="KeyB")).status == "applied"
+    assert state.apply(reset).status == "duplicate"
+    assert state.snapshot().pressed_codes == frozenset({"KeyB"})
+    assert state.apply(envelope("reset", seq=6, payload={"reason": "manual"})).status == "applied"
+    assert state.apply(reset).status == "resync-required"
+    assert "input-6" not in repr(state.snapshot())
+    state.transition(connection_generation=2, lease_id=LEASE_ID, lease_epoch=1)
+    assert state.apply(key_envelope(seq=1, phase="down", code="KeyA")).status == "applied"
+    assert state.apply(collision).status == "resync-required"
+
+
+def test_failed_or_stale_reset_cannot_commit_or_leave_success_proof():
+    adapter = OneShotKeyupFailingAdapter("KeyA")
+    state = active_state(adapter)
+    assert state.apply(key_envelope(seq=1, phase="down", code="KeyA")).status == "applied"
+    reset = envelope("reset", seq=3, payload={"reason": "manual"})
+    assert state.apply(reset).status == "execution-failed"
+    assert state.snapshot().last_applied_seq == 1
+    assert state.snapshot().pressed_codes == frozenset({"KeyA"})
+    assert state.apply(reset, commit_fence=lambda: False).status == "stale-lease"
+    assert state.snapshot().last_applied_seq == 1
+    assert state.apply(key_envelope(seq=2, phase="down", code="KeyB")).status == "applied"
+    assert state.apply(key_envelope(seq=3, phase="up", code="KeyB")).status == "applied"
+    assert state.apply(reset).status == "resync-required"
+
+
+def test_lifecycle_reset_failure_retains_pressed_state_until_successful_retry():
+    adapter = OneShotKeyupFailingAdapter("KeyA")
+    state = active_state(adapter)
+    assert state.apply(key_envelope(seq=1, phase="down", code="KeyA")).status == "applied"
+    assert state.reset(lease_epoch=1, reason="signal-disconnect").status == "execution-failed"
+    assert state.snapshot().pressed_codes == frozenset({"KeyA"})
+    assert state.snapshot().last_applied_seq == 1
+    assert state.reset(lease_epoch=1, reason="signal-disconnect").status == "applied"
+    assert state.snapshot().pressed_codes == frozenset()
+    assert state.snapshot().last_applied_seq == 1
+
+
+def test_transition_failure_does_not_install_lease_generation_or_clear_sequence():
+    adapter = OneShotKeyupFailingAdapter("KeyA")
+    state = active_state(adapter)
+    assert state.apply(key_envelope(seq=1, phase="down", code="KeyA")).status == "applied"
+    transition = dict(connection_generation=2, lease_id="lease-000000000002", lease_epoch=2)
+    assert state.transition(**transition).status == "execution-failed"
+    snapshot = state.snapshot()
+    assert (snapshot.connection_generation, snapshot.lease_epoch, snapshot.last_applied_seq) == (1, 1, 1)
+    assert snapshot.pressed_codes == frozenset({"KeyA"})
+    assert state.apply(key_envelope(seq=1, phase="down", code="KeyB", epoch=2,
+                                    lease_id="lease-000000000002")).status == "stale-lease"
+    assert state.transition(**transition).status == "applied"
+    snapshot = state.snapshot()
+    assert (snapshot.connection_generation, snapshot.lease_epoch, snapshot.last_applied_seq) == (2, 2, 0)
+    assert snapshot.pressed_codes == frozenset()
+
+
 def test_transition_releases_pressed_keys_and_connection_generation_controls_epoch_changes():
     adapter = RecordingKeyboardAdapter()
     state = active_state(adapter, generation=2, epoch=8)
@@ -371,6 +439,41 @@ def test_legacy_adapter_issues_sequences_and_resets_before_new_transport():
     assert legacy.apply({"type": "keyboard", "action": "keyup", "payload": {"code": "KeyA"}}, transport="datachannel").status == "applied"
     assert [event[:2] for event in adapter.events] == [("KeyA", True), ("KeyA", False)]
     assert state.snapshot().last_applied_seq == 3
+
+
+def test_failed_legacy_explicit_reset_keeps_sequence_for_following_keyup():
+    adapter = OneShotKeyupFailingAdapter("KeyA")
+    state = RemoteKeyboardState(adapter)
+    legacy = LegacyInputAdapter(state)
+    legacy.bind(connection_generation=1, lease_id=LEASE_ID, lease_epoch=1)
+    assert legacy.apply({"type": "keyboard", "action": "keydown", "payload": {"code": "KeyA"}},
+                        transport="socket").status == "applied"
+    assert legacy.apply({"type": "keyboard", "action": "reset", "payload": {"reason": "manual"}},
+                        transport="socket").status == "execution-failed"
+    assert state.snapshot().last_applied_seq == 1
+    assert state.snapshot().pressed_codes == frozenset({"KeyA"})
+    assert legacy.apply({"type": "keyboard", "action": "keyup", "payload": {"code": "KeyA"}},
+                        transport="socket").status == "applied"
+    assert state.snapshot().last_applied_seq == 2
+    assert state.snapshot().pressed_codes == frozenset()
+    assert [event[:2] for event in adapter.events] == [("KeyA", True), ("KeyA", False)]
+
+
+def test_failed_legacy_transport_reset_retries_before_event_on_same_new_transport():
+    adapter = OneShotKeyupFailingAdapter("KeyA")
+    state = RemoteKeyboardState(adapter)
+    legacy = LegacyInputAdapter(state)
+    legacy.bind(connection_generation=1, lease_id=LEASE_ID, lease_epoch=1)
+    assert legacy.apply({"type": "keyboard", "action": "keydown", "payload": {"code": "KeyA"}},
+                        transport="socket").status == "applied"
+    event = {"type": "keyboard", "action": "keydown", "payload": {"code": "KeyB"}}
+    assert legacy.apply(event, transport="datachannel").status == "execution-failed"
+    assert state.snapshot().last_applied_seq == 1
+    assert [item[:2] for item in adapter.events] == [("KeyA", True)]
+    assert legacy.apply(event, transport="datachannel").status == "applied"
+    # Retry commits reset seq2 then the event seq3, with no skipped host cursor.
+    assert state.snapshot().last_applied_seq == 3
+    assert [item[:2] for item in adapter.events] == [("KeyA", True), ("KeyA", False), ("KeyB", True)]
 
 
 def test_legacy_adapter_resets_before_the_first_event_on_a_new_transport():

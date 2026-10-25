@@ -24,6 +24,7 @@
 - 失败native、stale authority、旧lease不能产生或更新成功证明。keyboard已有跳号reset保留，补相同证明规则；legacy输入路径不扩大授权。
 - 独立复核补充：mouse释放失败不能在finally无条件清掉tracking，否则下次重试会误称已经释放；只移除确实成功释放的按钮。keyboard显式reset、生命周期reset及transition若仍有未释放按键，必须返回失败，transition不得安装新lease。测试仅fake native，不操作真实按键。
 - InputHandler在同一执行锁内validate，等native返回并通过commit fence后，reset调用commit_reset，其他可靠输入仍commit。失败不消耗屏障序号。
+- 兼容适配器的host-owned序号也只随applied且原commit fence有效时推进；失败reset不得使后续普通keyup永久落入sequence-gap。显式reset和transport切换两条路径均须验证。
 
 ## 外层计时
 

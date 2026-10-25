@@ -24,11 +24,12 @@
 
 **Interfaces:** 新增`ReliableDesktopWriteState.commit_reset(data) -> DesktopWriteResult`。InputHandler仅在执行锁内native成功和commit fence通过之后调用；普通commit接口不变。keyboard apply继续自己完成native提交。
 
-- [ ] 先复现失败：state.last=1时有效mouse reset seq3应validate applied且尚未推进；native成功commit_reset后last=3，晚到普通seq2不执行。普通command seq3仍gap。
-- [ ] 写失败反例：普通down seq2已提交后，不同ID reset seq2应resync-required；同ID已执行reset副本duplicate；transition后旧证明失效；native失败/stale fence没有提交或证明。
-- [ ] fake mouse release抛异常后tracking仍保留、重试确实再次释放；keyboard lifecycle reset/transition部分keyup失败不成功、不安装新lease。只提取AST或纯model，不导入Quartz。
-- [ ] 实施最小逻辑：reset validate允许向前跳；commit_reset复核并保存有界seq/ID证明；keyboard同样只对自己已执行reset返回positive duplicate。InputHandler按action选择提交函数。
-- [ ] 跑对应纯模型与AST fake-native回归，独立review证明不会越过在途native、普通seq不放宽、证明不外泄。
+- [x] 先复现失败：state.last=1时有效mouse reset seq3应validate applied且尚未推进；native成功commit_reset后last=3，晚到普通seq2不执行。普通command seq3仍gap。
+- [x] 写失败反例：普通down seq2已提交后，不同ID reset seq2应resync-required；同ID已执行reset副本duplicate；transition后旧证明失效；native失败/stale fence没有提交或证明。
+- [x] fake mouse release抛异常后tracking仍保留、重试确实再次释放；keyboard lifecycle reset/transition部分keyup失败不成功、不安装新lease。只提取AST或纯model，不导入Quartz。
+- [x] legacy显式及transport-change reset失败后，不推进未提交的host-owned序号；测试下一次keyup或同transport重试可以真实释放，不永久gap。
+- [x] 实施最小逻辑：reset validate允许向前跳；commit_reset复核并保存有界seq/ID证明；keyboard同样只对自己已执行reset返回positive duplicate。InputHandler按action选择提交函数。
+- [x] 跑对应纯模型与AST fake-native回归，独立review证明不会越过在途native、普通seq不放宽、证明不外泄。
 
 示例最小断言：
 
@@ -49,9 +50,9 @@ assert state.validate({**reset, 'inputIds': ['different']}).status == 'resync-re
 
 **Interfaces:** `summarize_input_event(..., admission_wait_ms=None)`产生可选`hostAdmissionWaitMs`。`_execute_input`入口用现有`input_queued_ns`和同源perf_counter_ns计算一次，仅传给既有host_input_received。
 
-- [ ] fake clock复现submit=1ms、drain入口=41ms，结构化摘要应40ms；合法0保持0；None/非法/未来queued不生成数值；原hostQueueMs和ACK不变。
-- [ ] 添加可选有限非负有界scalar，缺失null。高频move/wheel仍原聚合，不新增ID哈希或逐条日志；观测失败不阻断输入。
-- [ ] 定向测试observer、admission及Host输入路径，验证新字段不接触正文/坐标/原ID，不使用默认日志目录跑测试。
+- [x] fake clock复现submit=1ms、drain入口=41ms，结构化摘要应40ms；合法0保持0；None/非法/未来queued不生成数值；原hostQueueMs和ACK不变。
+- [x] 添加可选有限非负有界scalar，缺失null。高频move/wheel仍原聚合，不新增ID哈希或逐条日志；观测失败不阻断输入。
+- [x] 定向测试observer、admission及Host输入路径，验证新字段不接触正文/坐标/原ID，不使用默认日志目录跑测试。
 
 ### Task 3: 整合、维护加载和验收
 

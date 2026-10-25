@@ -34,3 +34,51 @@ def test_reliable_desktop_writes_are_lease_ordered_and_moves_do_not_consume_sequ
     assert state.apply(write(action="showDock", seq=3, input_id="command-gap")).status == "sequence-gap"
     assert state.apply(write(action="reset", seq=2, input_id="reset-2", payload={"reason": "manual"})).status == "applied"
     assert state.snapshot().last_applied_seq == 2
+
+
+def test_reset_jumps_only_after_commit_and_fences_late_ordinary_writes():
+    state = ReliableDesktopWriteState()
+    state.transition(lease_id=LEASE_ID, lease_epoch=4)
+    assert state.apply(write(action="showDock", seq=1)).status == "applied"
+    reset = write(action="reset", seq=3, input_id="fence-3", payload={"reason": "manual"})
+    assert state.validate(reset).status == "applied"
+    assert state.snapshot().last_applied_seq == 1
+    assert state.commit(3).status == "sequence-gap"
+    assert state.commit_reset(reset).status == "applied"
+    assert state.snapshot().last_applied_seq == 3
+    assert state.validate(write(action="showDock", seq=2)).status == "duplicate"
+    assert state.validate(write(action="showDock", seq=5)).status == "sequence-gap"
+
+
+def test_only_exact_successful_reset_proof_can_duplicate_even_after_later_write():
+    state = ReliableDesktopWriteState()
+    state.transition(lease_id=LEASE_ID, lease_epoch=4)
+    assert state.apply(write(action="showDock", seq=1)).status == "applied"
+    collision = write(action="reset", seq=1, payload={"reason": "manual"})
+    assert state.validate(collision).status == "resync-required"
+    assert state.commit_reset(collision).status == "resync-required"
+    reset = write(action="reset", seq=3, input_id="proof", payload={"reason": "manual"})
+    assert state.apply(reset).status == "applied"
+    assert state.apply(write(action="showDock", seq=4)).status == "applied"
+    assert state.validate(reset).status == "duplicate"
+    assert state.validate({**reset, "inputIds": ["different"]}).status == "resync-required"
+    replacement = write(action="reset", seq=6, input_id="new-proof", payload={"reason": "manual"})
+    assert state.apply(replacement).status == "applied"
+    assert state.validate(reset).status == "resync-required"
+    assert "proof" not in repr(state.snapshot())
+    state.transition(lease_id=LEASE_ID, lease_epoch=5)
+    assert state.validate(reset).status == "stale-lease"
+    assert state.apply(write(action="showDock", seq=1) | {"leaseEpoch": 5}).status == "applied"
+    assert state.validate(collision | {"leaseEpoch": 5}).status == "resync-required"
+
+
+def test_reset_proof_rejects_unbounded_or_invalid_ids_and_rechecks_lease():
+    state = ReliableDesktopWriteState()
+    state.transition(lease_id=LEASE_ID, lease_epoch=4)
+    reset = write(action="reset", seq=3, payload={"reason": "manual"})
+    for ids in (["x" * 129], ["x"] * 65, [3], ["bad id"], []):
+        assert state.validate(reset | {"inputIds": ids}).status == "invalid-input"
+    assert state.validate(reset).status == "applied"
+    state.transition(lease_id="lease-000000000002", lease_epoch=5)
+    assert state.commit_reset(reset).status == "stale-lease"
+    assert state.snapshot().last_applied_seq == 0

@@ -208,6 +208,8 @@ class RemoteKeyboardState:
         self._lease_id: Optional[str] = None
         self._lease_epoch = 0
         self._last_applied_seq = 0
+        # Only the last native-successful reset can acknowledge an old reset.
+        self._last_reset_proof = None
         self._pressed_codes: set[str] = set()
 
     def transition(self, *, connection_generation: int, lease_id: str, lease_epoch: int) -> ApplyResult:
@@ -218,10 +220,13 @@ class RemoteKeyboardState:
         if connection_generation == self._connection_generation and lease_epoch <= self._lease_epoch:
             return self._result("stale-lease")
         self._release_all("lease-transition")
+        if self._pressed_codes:
+            return self._result("execution-failed")
         self._connection_generation = connection_generation
         self._lease_id = lease_id
         self._lease_epoch = lease_epoch
         self._last_applied_seq = 0
+        self._last_reset_proof = None
         return self._result("applied")
 
     def apply(self, envelope: Any, *, authoritative_modifiers: bool = True, commit_fence=lambda: True) -> ApplyResult:
@@ -233,12 +238,18 @@ class RemoteKeyboardState:
             return self._result("stale-lease")
         sequence = value["seq"]
         if sequence <= self._last_applied_seq:
+            if value["action"] == "reset" and self._last_reset_proof != (sequence, tuple(value["inputIds"])):
+                return self._result("resync-required")
             return self._result("duplicate")
         if value["action"] != "reset" and sequence != self._last_applied_seq + 1:
             return self._result("sequence-gap")
         try:
             if value["action"] == "reset":
                 self._release_all(value["payload"]["reason"])
+                # _release_all retains keys whose native keyup failed. Such a
+                # partial release cannot certify a successful reset barrier.
+                if self._pressed_codes:
+                    return self._result("execution-failed")
             elif value["action"] == "key":
                 self._apply_key(
                     value["payload"],
@@ -259,12 +270,16 @@ class RemoteKeyboardState:
         if not commit_fence():
             return self._result("stale-lease")
         self._last_applied_seq = sequence
+        if value["action"] == "reset":
+            self._last_reset_proof = (sequence, tuple(value["inputIds"]))
         return self._result("applied")
 
     def reset(self, *, lease_epoch: int, reason: str) -> ApplyResult:
         if lease_epoch != self._lease_epoch:
             return self._result("stale-lease")
         self._release_all(reason if reason in _RESET_REASONS else "unspecified")
+        if self._pressed_codes:
+            return self._result("execution-failed")
         return self._result("applied")
 
     def snapshot(self) -> KeyboardSnapshot:
@@ -386,7 +401,7 @@ class LegacyInputAdapter:
         if self._transport is not None and transport != self._transport:
             reset = self._envelope("reset", {"reason": "transport-change"})
             result = self._state.apply(reset, commit_fence=commit_fence)
-            if commit_fence():
+            if result.status == "applied" and commit_fence():
                 self._next_seq += 1
             if result.status != "applied":
                 return result
@@ -402,7 +417,7 @@ class LegacyInputAdapter:
             self._envelope(action, payload),
             authoritative_modifiers=authoritative_modifiers, commit_fence=commit_fence,
         )
-        if commit_fence():
+        if result.status == "applied" and commit_fence():
             self._next_seq += 1
         return result
 

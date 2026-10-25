@@ -1,6 +1,7 @@
 """Lease-bound ordering for reliable mouse actions and Host commands."""
 
 from dataclasses import dataclass
+import re
 from typing import Any, Optional
 
 
@@ -8,6 +9,7 @@ _SAFE_INTEGER_MAX = (1 << 53) - 1
 _RELIABLE_MOUSE_ACTIONS = frozenset({"down", "up", "wheel", "reset"})
 _MOUSE_ACTIONS = _RELIABLE_MOUSE_ACTIONS | {"move"}
 _COMMAND_ACTIONS = frozenset({"showDock", "switchInputMethod"})
+_RESET_INPUT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 @dataclass(frozen=True)
@@ -53,7 +55,10 @@ def validate_desktop_write(data: Any) -> bool:
         return False
     payload = data["payload"]
     if action == "reset":
-        return set(payload) == {"reason"} and isinstance(payload["reason"], str) and bool(payload["reason"])
+        return (set(payload) == {"reason"} and isinstance(payload["reason"], str) and bool(payload["reason"])
+                and 1 <= len(data["inputIds"]) <= 64
+                and all(isinstance(input_id, str) and 1 <= len(input_id) <= 128
+                        and _RESET_INPUT_ID_RE.fullmatch(input_id) for input_id in data["inputIds"]))
     if not all(isinstance(payload.get(key), (int, float)) and 0 <= payload[key] <= 1 for key in ("relX", "relY")):
         return False
     if action == "wheel":
@@ -68,11 +73,14 @@ class ReliableDesktopWriteState:
         self._lease_id: Optional[str] = None
         self._lease_epoch = 0
         self._last_applied_seq = 0
+        # One bounded, lease-local proof; never exposed in snapshots or logs.
+        self._last_reset_proof = None
 
     def transition(self, *, lease_id: str, lease_epoch: int) -> DesktopWriteResult:
         if not isinstance(lease_id, str) or len(lease_id) < 16 or type(lease_epoch) is not int or lease_epoch < 1:
             return self._result("invalid-input")
         self._lease_id, self._lease_epoch, self._last_applied_seq = lease_id, lease_epoch, 0
+        self._last_reset_proof = None
         return self._result("applied")
 
     def validate(self, data: Any) -> DesktopWriteResult:
@@ -90,11 +98,30 @@ class ReliableDesktopWriteState:
         if not is_reliable_desktop_write(data):
             return self._result("unordered")
         sequence = data["seq"]
+        is_reset = data["type"] == "mouse" and data["action"] == "reset"
         if sequence <= self._last_applied_seq:
+            if is_reset and self._last_reset_proof != (sequence, tuple(data["inputIds"])):
+                return self._result("resync-required")
             return self._result("duplicate")
-        if sequence != self._last_applied_seq + 1:
+        if not is_reset and sequence != self._last_applied_seq + 1:
             return self._result("sequence-gap")
         return self._result("applied")
+
+    def commit_reset(self, data: Any) -> DesktopWriteResult:
+        """Commit a native-successful reset fence under the execution lock.
+
+        The caller must first complete native release and its authority fence.
+        Revalidation here prevents a lease transition or an older sequence from
+        turning that completion into a proof for another operation.
+        """
+        if not isinstance(data, dict) or data.get("type") != "mouse" or data.get("action") != "reset":
+            return self._result("invalid-input")
+        result = self.validate(data)
+        if result.status == "applied":
+            self._last_applied_seq = data["seq"]
+            self._last_reset_proof = (data["seq"], tuple(data["inputIds"]))
+            return self._result("applied")
+        return result
 
     def commit(self, sequence: int, *, lease_id: Optional[str] = None, lease_epoch: Optional[int] = None) -> DesktopWriteResult:
         """Commit one previously validated reliable write after execution."""
@@ -115,6 +142,8 @@ class ReliableDesktopWriteState:
         """Validate and commit atomically for callers without execution."""
         result = self.validate(data)
         if result.status == "applied" and is_reliable_desktop_write(data):
+            if data["type"] == "mouse" and data["action"] == "reset":
+                return self.commit_reset(data)
             return self.commit(
                 data["seq"],
                 lease_id=data.get("leaseId"),
