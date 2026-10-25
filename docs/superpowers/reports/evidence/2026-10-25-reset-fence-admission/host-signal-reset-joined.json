@@ -1,0 +1,4904 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "path": "back-debug.log",
+      "snapshotBytes": 3629954,
+      "snapshotLines": 1983,
+      "snapshotSha256": "4f03b07c425993d9310eed8d53f8e1563b1ccf373fb6392b4e35a8cecff3fdc5",
+      "matchedLines": 120,
+      "parseErrors": 0
+    },
+    {
+      "path": "/tmp/signal-server.log",
+      "snapshotBytes": 15556959,
+      "snapshotLines": 621724,
+      "snapshotSha256": "019c193c0971be1c9edebf0afe9f805725eecc327c07fbae0366c8d12a5047ef",
+      "matchedBlocks": 80,
+      "parsedNodeInspectBlocks": 1
+    }
+  ],
+  "probeSources": {
+    "summarySha256": "561f9e6e8db7704e7d833f7c172f9fac6b970e0b4a0d98914378255f79b4aeb3",
+    "samplesSha256": "f10703115d9d7359fe0172225ee14c8996973c98629c700cb028f58273ed5991"
+  },
+  "inputCount": 40,
+  "sourceEventCounts": {
+    "host_input_received": 40,
+    "host_input_result": 40,
+    "host_input_ack_sent": 40,
+    "signal_input_relayed": 40,
+    "signal_reset_ack_observed": 40
+  },
+  "percentileNearestRank": 1,
+  "distributions": {
+    "all": {
+      "hostAdmissionWaitMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 0.07,
+        "p50": 0.294,
+        "median": 0.3025,
+        "p95": 1.84,
+        "max": 2.747
+      },
+      "hostQueueMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 0.093377,
+        "p50": 0.273889,
+        "median": 0.282138,
+        "p95": 1.941932,
+        "max": 10.919297
+      },
+      "hostApplyMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 0.005224,
+        "p50": 0.038494,
+        "median": 0.047807,
+        "p95": 0.144268,
+        "max": 0.177407
+      },
+      "hostAdapterAwaitMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 0.5185229238122702,
+        "p50": 1.1283629573881626,
+        "median": 1.1285614455118775,
+        "p95": 5.288470070809126,
+        "max": 13.99739901535213
+      },
+      "hostObservedLocalExecuteMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 0.519,
+        "p50": 1.128,
+        "median": 1.1284999999999998,
+        "p95": 5.288,
+        "max": 13.997
+      },
+      "m1InputAckRttMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 201.39999985694885,
+        "p50": 237.59999990463257,
+        "median": 238.29999995231628,
+        "p95": 348.2000000476837,
+        "max": 369.09999990463257
+      },
+      "inputAckArrivalRttMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 201.39999985694885,
+        "p50": 237.59999990463257,
+        "median": 238.04999995231628,
+        "p95": 347.60000014305115,
+        "max": 368.59999990463257
+      },
+      "inputAckValidationMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 0,
+        "p50": 0.39999985694885254,
+        "median": 0.3999999761581421,
+        "p95": 0.6000001430511475,
+        "max": 1.5
+      },
+      "dcPostHandlerLeadsSocketCopyMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 84.0,
+        "p50": 217.59999990463257,
+        "median": 217.7499998807907,
+        "p95": 382.59999990463257,
+        "max": 837.3000001907349
+      },
+      "signalRequestToAckMs": {
+        "count": 40,
+        "missing": 0,
+        "min": 3.7330880016088486,
+        "p50": 13.36778699979186,
+        "median": 13.407653000205755,
+        "p95": 28.144734002649784,
+        "max": 29.48098300024867
+      }
+    },
+    "mouse": {
+      "hostAdmissionWaitMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.07,
+        "p50": 0.166,
+        "median": 0.166,
+        "p95": 0.929,
+        "max": 2.747
+      },
+      "hostQueueMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.132398,
+        "p50": 0.327729,
+        "median": 0.356558,
+        "p95": 3.788631,
+        "max": 10.919297
+      },
+      "hostApplyMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.005224,
+        "p50": 0.010399,
+        "median": 0.010756,
+        "p95": 0.037426,
+        "max": 0.038494
+      },
+      "hostAdapterAwaitMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.6842969451099634,
+        "p50": 1.2628270778805017,
+        "median": 1.2850150233134627,
+        "p95": 4.468313883990049,
+        "max": 12.310249963775277
+      },
+      "hostObservedLocalExecuteMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.684,
+        "p50": 1.263,
+        "median": 1.285,
+        "p95": 4.468,
+        "max": 12.31
+      },
+      "m1InputAckRttMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 201.39999985694885,
+        "p50": 222.70000004768372,
+        "median": 230.14999997615814,
+        "p95": 347.39999985694885,
+        "max": 358.60000014305115
+      },
+      "inputAckArrivalRttMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 201.39999985694885,
+        "p50": 222.59999990463257,
+        "median": 230.09999990463257,
+        "p95": 347.2000000476837,
+        "max": 358.5
+      },
+      "inputAckValidationMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0,
+        "p50": 0.10000014305114746,
+        "median": 0.10000014305114746,
+        "p95": 0.2999999523162842,
+        "max": 1.5
+      },
+      "dcPostHandlerLeadsSocketCopyMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 84.40000009536743,
+        "p50": 215.59999990463257,
+        "median": 216.59999990463257,
+        "p95": 247.5,
+        "max": 383.39999985694885
+      },
+      "signalRequestToAckMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 5.053424999117851,
+        "p50": 11.410758998245,
+        "median": 11.944190498441458,
+        "p95": 26.492887999862432,
+        "max": 28.144734002649784
+      }
+    },
+    "keyboard": {
+      "hostAdmissionWaitMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.085,
+        "p50": 1.064,
+        "median": 1.131,
+        "p95": 1.84,
+        "max": 2.011
+      },
+      "hostQueueMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.093377,
+        "p50": 0.204237,
+        "median": 0.20700649999999998,
+        "p95": 0.636258,
+        "max": 1.804109
+      },
+      "hostApplyMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.05712,
+        "p50": 0.086218,
+        "median": 0.089666,
+        "p95": 0.170027,
+        "max": 0.177407
+      },
+      "hostAdapterAwaitMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.5185229238122702,
+        "p50": 1.0694239754229784,
+        "median": 1.0725085157901049,
+        "p95": 5.288470070809126,
+        "max": 13.99739901535213
+      },
+      "hostObservedLocalExecuteMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.519,
+        "p50": 1.069,
+        "median": 1.0725,
+        "p95": 5.288,
+        "max": 13.997
+      },
+      "m1InputAckRttMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 207.29999995231628,
+        "p50": 239,
+        "median": 246.19999992847443,
+        "p95": 348.2000000476837,
+        "max": 369.09999990463257
+      },
+      "inputAckArrivalRttMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 206.79999995231628,
+        "p50": 238.5,
+        "median": 245.69999992847443,
+        "p95": 347.60000014305115,
+        "max": 368.59999990463257
+      },
+      "inputAckValidationMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 0.39999985694885254,
+        "p50": 0.5,
+        "median": 0.5499999523162842,
+        "p95": 0.6000001430511475,
+        "max": 1.5
+      },
+      "dcPostHandlerLeadsSocketCopyMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 84.0,
+        "p50": 217.89999985694885,
+        "median": 218.29999995231628,
+        "p95": 382.59999990463257,
+        "max": 837.3000001907349
+      },
+      "signalRequestToAckMs": {
+        "count": 20,
+        "missing": 0,
+        "min": 3.7330880016088486,
+        "p50": 14.23572999984026,
+        "median": 14.277429999783635,
+        "p95": 28.217493999749422,
+        "max": 29.48098300024867
+      }
+    }
+  },
+  "groups": [
+    {
+      "inputIdHash": "cdb1c9b30fb3cead",
+      "round": 1,
+      "seq": 1,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1378,
+          "sourceLineSha256": "b1b9689ddb6e744f66189e3b5e1dd27396d2f810c49d369fa287771e6fc4ef85",
+          "timestampUtc": "2026-10-25T04:55:21.786598+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.187,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 1,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1380,
+          "sourceLineSha256": "b3baec748bb5bb74a5cbbafac81cf4bd9c27436333b00200eed9ddc7f99f728f",
+          "timestampUtc": "2026-10-25T04:55:21.787575+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 1,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.591,
+            "seq": 1,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1381,
+          "sourceLineSha256": "7303763baddb12a67df713e39ea9cdb6f5699b8ed4bcc95c898423b823f7591b",
+          "timestampUtc": "2026-10-25T04:55:21.788156+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 1,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 1,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619338,
+          "sourceLineEnd": 619361,
+          "sourceBlockSha256": "3222382906627f16ba25ba669d5aa7ab193af43997d798a4ccc69ff8b1456dbc",
+          "timestampUtc": "2026-10-25T04:55:21.784Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 1.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619386,
+          "sourceLineEnd": 619409,
+          "sourceBlockSha256": "5eadcf9a9a60e3b304db843b621999897d8684ce6ce60975e9f9d3e28729dd96",
+          "timestampUtc": "2026-10-25T04:55:21.798Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 14.23572999984026,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 209.79999995231628,
+        "inputAckArrivalRttMs": 208.29999995231628,
+        "inputAckValidationMs": 1.5,
+        "apiEntryToPostHandlerMs": 211.5,
+        "socketCopyPostHandlerMs": 419,
+        "dcPostHandlerLeadsSocketCopyMs": 207.5
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.5913921631872654,
+        "hostQueueMs": 0.136883,
+        "hostApplyMs": 0.108587,
+        "hostAdmissionWaitMs": 0.187,
+        "hostObservedLocalExecuteMs": 0.591
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 14.23572999984026
+      }
+    },
+    {
+      "inputIdHash": "8f7617cd87aa336e",
+      "round": 1,
+      "seq": 1,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1374,
+          "sourceLineSha256": "f21944152545b31c49f8133712682d4ab49c114f473e99abba0296357fabaf5f",
+          "timestampUtc": "2026-10-25T04:55:21.782107+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.172,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 1,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1376,
+          "sourceLineSha256": "6e2d9a5a537f6b0f4da8770792dff8d924a0ba3d594bd454f762ecb03f10a7f6",
+          "timestampUtc": "2026-10-25T04:55:21.783928+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 1,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.374,
+            "seq": 1,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1377,
+          "sourceLineSha256": "c11acecfa6174fca398845f02ab699f7b12c8af6be9d58b48fa9bb131b997941",
+          "timestampUtc": "2026-10-25T04:55:21.784653+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 1,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 1,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619313,
+          "sourceLineEnd": 619336,
+          "sourceBlockSha256": "46da70a1d63df15e7c8bba63880a6639c4b5c9ed9c0c819b2724ca5281ed4428",
+          "timestampUtc": "2026-10-25T04:55:21.781Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 1.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619362,
+          "sourceLineEnd": 619385,
+          "sourceBlockSha256": "041d701c47bbdb8d36917f54e5f98cfa073d1a2399a90d4eb09390937a258bf9",
+          "timestampUtc": "2026-10-25T04:55:21.786Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 5.053424999117851,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 205.60000014305115,
+        "inputAckArrivalRttMs": 204.10000014305115,
+        "inputAckValidationMs": 1.5,
+        "apiEntryToPostHandlerMs": 210.20000004768372,
+        "socketCopyPostHandlerMs": 409.60000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 199.40000009536743
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.3741380535066128,
+        "hostQueueMs": 0.603782,
+        "hostApplyMs": 0.030921,
+        "hostAdmissionWaitMs": 0.172,
+        "hostObservedLocalExecuteMs": 1.374
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 5.053424999117851
+      }
+    },
+    {
+      "inputIdHash": "7b57dae49ef53ea2",
+      "round": 2,
+      "seq": 2,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1389,
+          "sourceLineSha256": "80bf8c06ee947c02e0f0a0fa2720a490685393895fe14226cdff4725177fad39",
+          "timestampUtc": "2026-10-25T04:55:23.336957+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.228,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 2,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1391,
+          "sourceLineSha256": "7e22dbbf46b2dab7e9d97adfd9042af6f547f4092d3f95199f3869f7885ab9e2",
+          "timestampUtc": "2026-10-25T04:55:23.338144+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 2,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.791,
+            "seq": 2,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1392,
+          "sourceLineSha256": "6c7b370fe7f47fda0a08dd4f25744ce12718136b454decc0ba39c33b2eab2fdd",
+          "timestampUtc": "2026-10-25T04:55:23.338746+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 2,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 2,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619436,
+          "sourceLineEnd": 619459,
+          "sourceBlockSha256": "29cb6d1cf29e8a1fb1b6e87f8ca7e0dd17491c7d32f0550742f9cee3889aef95",
+          "timestampUtc": "2026-10-25T04:55:23.334Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 2.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619484,
+          "sourceLineEnd": 619507,
+          "sourceBlockSha256": "0a2316b2bcd5c4faafd797bcb6a378e42e58ab2ad411dbbb2fab31aa9d068d87",
+          "timestampUtc": "2026-10-25T04:55:23.340Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 5.924288999289274,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 214.5,
+        "inputAckArrivalRttMs": 213.90000009536743,
+        "inputAckValidationMs": 0.5999999046325684,
+        "apiEntryToPostHandlerMs": 215.59999990463257,
+        "socketCopyPostHandlerMs": 429.40000009536743,
+        "dcPostHandlerLeadsSocketCopyMs": 213.80000019073486
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.7911049760878086,
+        "hostQueueMs": 0.122455,
+        "hostApplyMs": 0.12664,
+        "hostAdmissionWaitMs": 0.228,
+        "hostObservedLocalExecuteMs": 0.791
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 5.924288999289274
+      }
+    },
+    {
+      "inputIdHash": "e3d2fa86df167184",
+      "round": 2,
+      "seq": 2,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1385,
+          "sourceLineSha256": "c53b005c29d696e2cf3cfbf650b336f6bfbadd4c6861e454ae251ed717a5ee5b",
+          "timestampUtc": "2026-10-25T04:55:23.332381+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.166,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 2,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1387,
+          "sourceLineSha256": "cd8a5ebff74a89d7b602decde70fd1fdc317cb3db68d472ef8b3916f019be9f8",
+          "timestampUtc": "2026-10-25T04:55:23.334147+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 2,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.129,
+            "seq": 2,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1388,
+          "sourceLineSha256": "b8232ca9934143d68112e434a74bd29713fd723973e917ce16f1def58de643cd",
+          "timestampUtc": "2026-10-25T04:55:23.335025+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 2,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 2,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619411,
+          "sourceLineEnd": 619434,
+          "sourceBlockSha256": "55ab1a463c9d2cf06221fbb33fff2761f4f4dda64a7f89a6bb2a069c307d548d",
+          "timestampUtc": "2026-10-25T04:55:23.326Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 2.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619460,
+          "sourceLineEnd": 619483,
+          "sourceBlockSha256": "e23eeeb596066824af23f55443220705ab91c10a66a09d24a20c8adfdbaeeb54",
+          "timestampUtc": "2026-10-25T04:55:23.336Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 9.919820997864008,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 213.79999995231628,
+        "inputAckArrivalRttMs": 213.59999990463257,
+        "inputAckValidationMs": 0.20000004768371582,
+        "apiEntryToPostHandlerMs": 215,
+        "socketCopyPostHandlerMs": 428.60000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 213.60000014305115
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.1287599336355925,
+        "hostQueueMs": 0.32614,
+        "hostApplyMs": 0.037426,
+        "hostAdmissionWaitMs": 0.166,
+        "hostObservedLocalExecuteMs": 1.129
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 9.919820997864008
+      }
+    },
+    {
+      "inputIdHash": "fa48d178648ae42b",
+      "round": 3,
+      "seq": 3,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1404,
+          "sourceLineSha256": "b1c4893dc83aa974a304a80f0de329f06dc09a398ba977f55c7a82384f0a6d7b",
+          "timestampUtc": "2026-10-25T04:55:24.936364+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.483,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 3,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1406,
+          "sourceLineSha256": "e72861dce5c74c316583f2d04ed638ec38bb961a8ee09c2f36f6d6707865d6e2",
+          "timestampUtc": "2026-10-25T04:55:24.942149+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 3,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 5.288,
+            "seq": 3,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1407,
+          "sourceLineSha256": "204a62c3ac51a3c7abf7e81c164a8c49672063e911082f601e363f030836857a",
+          "timestampUtc": "2026-10-25T04:55:24.942789+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 3,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 3,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619534,
+          "sourceLineEnd": 619557,
+          "sourceBlockSha256": "817e5b09faccc55d3dfbaf59e28929df957bc90441e50089b23f5507d7ebb7fe",
+          "timestampUtc": "2026-10-25T04:55:24.931Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 3.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619582,
+          "sourceLineEnd": 619605,
+          "sourceBlockSha256": "8a5edf3953742fdf7cf0867a7f34d2aeb98f4ad484c953a409aae71bc4fbd748",
+          "timestampUtc": "2026-10-25T04:55:24.946Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 14.31912999972701,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 305.7999999523163,
+        "inputAckArrivalRttMs": 305.2000000476837,
+        "inputAckValidationMs": 0.5999999046325684,
+        "apiEntryToPostHandlerMs": 306.7999999523163,
+        "socketCopyPostHandlerMs": 541.2000000476837,
+        "dcPostHandlerLeadsSocketCopyMs": 234.40000009536743
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 5.288470070809126,
+        "hostQueueMs": 0.421978,
+        "hostApplyMs": 0.072692,
+        "hostAdmissionWaitMs": 0.483,
+        "hostObservedLocalExecuteMs": 5.288
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 14.31912999972701
+      }
+    },
+    {
+      "inputIdHash": "6f25f4da0217e948",
+      "round": 3,
+      "seq": 3,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1400,
+          "sourceLineSha256": "68bd283aecf02b3e185eaf6cb5b40614539082ab58da6543dafafa85aeed2f9a",
+          "timestampUtc": "2026-10-25T04:55:24.932549+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.07,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 3,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1402,
+          "sourceLineSha256": "b340b6be0769d0e5a86904b4db4dfff8745a86f15254e380da00b605e5f5ec94",
+          "timestampUtc": "2026-10-25T04:55:24.933924+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 3,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.019,
+            "seq": 3,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1403,
+          "sourceLineSha256": "75d791f171cb4cc8aca3ff1e5012ec16d4bd6a0d02ae07e299f30133fa3d4686",
+          "timestampUtc": "2026-10-25T04:55:24.934529+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 3,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 3,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619509,
+          "sourceLineEnd": 619532,
+          "sourceBlockSha256": "fc43af0b6e9ec49cbb60753090d5658f28683535383ad49d4af7890d77640c8b",
+          "timestampUtc": "2026-10-25T04:55:24.931Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 3.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619558,
+          "sourceLineEnd": 619581,
+          "sourceBlockSha256": "7260b69a8742d3ed575329c368220a1ee47cb540ffe5a610300a1ccf73a81fc6",
+          "timestampUtc": "2026-10-25T04:55:24.936Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 5.280129998922348,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 304.7999999523163,
+        "inputAckArrivalRttMs": 304.5,
+        "inputAckValidationMs": 0.2999999523162842,
+        "apiEntryToPostHandlerMs": 305.90000009536743,
+        "socketCopyPostHandlerMs": 540.5,
+        "dcPostHandlerLeadsSocketCopyMs": 234.59999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.0193048510700464,
+        "hostQueueMs": 0.292375,
+        "hostApplyMs": 0.011113,
+        "hostAdmissionWaitMs": 0.07,
+        "hostObservedLocalExecuteMs": 1.019
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 5.280129998922348
+      }
+    },
+    {
+      "inputIdHash": "ef437621237283e3",
+      "round": 4,
+      "seq": 4,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1417,
+          "sourceLineSha256": "ac2889e9f10d319678083f3ba017079bb6a2c2fe4b9e97ee24eec8bd1fee55e8",
+          "timestampUtc": "2026-10-25T04:55:26.419000+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.259,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 4,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1419,
+          "sourceLineSha256": "6195d2e0be8874ec9ee379378ec308aa6326362a8724d1c9467fdcfbd21eab0e",
+          "timestampUtc": "2026-10-25T04:55:26.421206+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 4,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.734,
+            "seq": 4,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1420,
+          "sourceLineSha256": "09907516040c1584ae6d0e432d926e393cf16e00d2f6df39bcc85388c10efab0",
+          "timestampUtc": "2026-10-25T04:55:26.421974+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 4,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 4,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619632,
+          "sourceLineEnd": 619655,
+          "sourceBlockSha256": "a7703aa3bf4deba299612146880c47a7c80bd48941dc85578233d901ba537191",
+          "timestampUtc": "2026-10-25T04:55:26.411Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 4.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619680,
+          "sourceLineEnd": 619703,
+          "sourceBlockSha256": "851db2967be3b35ad24445e6555be760aefc4eceb235746de0fa09ea78c769b3",
+          "timestampUtc": "2026-10-25T04:55:26.424Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 13.36778699979186,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 348.2000000476837,
+        "inputAckArrivalRttMs": 347.60000014305115,
+        "inputAckValidationMs": 0.5999999046325684,
+        "apiEntryToPostHandlerMs": 349.10000014305115,
+        "socketCopyPostHandlerMs": 433.10000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 84.0
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.7344991210848093,
+        "hostQueueMs": 0.559692,
+        "hostApplyMs": 0.081813,
+        "hostAdmissionWaitMs": 1.259,
+        "hostObservedLocalExecuteMs": 1.734
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 13.36778699979186
+      }
+    },
+    {
+      "inputIdHash": "b34e938320e82c2b",
+      "round": 4,
+      "seq": 4,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1413,
+          "sourceLineSha256": "834e894e06eead7a8d9d9e79504f27bb61d51e7791a0fb7559da53783fba8ca7",
+          "timestampUtc": "2026-10-25T04:55:26.416638+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.312,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 4,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1415,
+          "sourceLineSha256": "fa86a7b42cfa1a9457e14ff03ad67fc0c6140fe73f8859fe06b4f318e43a0ca8",
+          "timestampUtc": "2026-10-25T04:55:26.417934+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 4,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.884,
+            "seq": 4,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1416,
+          "sourceLineSha256": "9a98ad2da8c200840cb0874d55c2aaa24efbba6260d662d9f6d25c3d2764652c",
+          "timestampUtc": "2026-10-25T04:55:26.418576+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 4,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 4,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619607,
+          "sourceLineEnd": 619630,
+          "sourceBlockSha256": "bdc221048698df38221b97d5a2950622df5775bf0cdc4f51832b96f61b019540",
+          "timestampUtc": "2026-10-25T04:55:26.410Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 4.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619656,
+          "sourceLineEnd": 619679,
+          "sourceBlockSha256": "92aa562a432b4540bb33ea9fddb255e84463d7608d68ebc037c60b0f0bdb4231",
+          "timestampUtc": "2026-10-25T04:55:26.423Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 13.44751900061965,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 347.39999985694885,
+        "inputAckArrivalRttMs": 347.2000000476837,
+        "inputAckValidationMs": 0.19999980926513672,
+        "apiEntryToPostHandlerMs": 348.5,
+        "socketCopyPostHandlerMs": 432.90000009536743,
+        "dcPostHandlerLeadsSocketCopyMs": 84.40000009536743
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.8835620246827602,
+        "hostQueueMs": 0.290387,
+        "hostApplyMs": 0.013736,
+        "hostAdmissionWaitMs": 0.312,
+        "hostObservedLocalExecuteMs": 0.884
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 13.44751900061965
+      }
+    },
+    {
+      "inputIdHash": "6fb62af1e3d64efa",
+      "round": 5,
+      "seq": 5,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1428,
+          "sourceLineSha256": "ede2c8676a7d69fe0555d68a94fc707578dfde6775899a53712d54c6fc42f8de",
+          "timestampUtc": "2026-10-25T04:55:28.038401+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.064,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 5,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1430,
+          "sourceLineSha256": "f2d2970890d4e7ae95d708646c24247135dd21da8f8860c0ca8bbebb04ed498a",
+          "timestampUtc": "2026-10-25T04:55:28.040371+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 5,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.508,
+            "seq": 5,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1431,
+          "sourceLineSha256": "7842ba9053e47adc29fbede435a471702479e8ebfdfe1665ed40208e644f2323",
+          "timestampUtc": "2026-10-25T04:55:28.040909+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 5,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 5,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619730,
+          "sourceLineEnd": 619753,
+          "sourceBlockSha256": "62c93b3bfd356e137408090e984c3b5a91010d3745ca98143e7a40f20248b510",
+          "timestampUtc": "2026-10-25T04:55:28.027Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 5.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619778,
+          "sourceLineEnd": 619801,
+          "sourceBlockSha256": "f8b93840bfebfceb39a20559b7a009eed56e4f1eef2bee2a714314db2f1e5e66",
+          "timestampUtc": "2026-10-25T04:55:28.042Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 14.881436999887228,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 317.2999999523163,
+        "inputAckArrivalRttMs": 316.69999980926514,
+        "inputAckValidationMs": 0.6000001430511475,
+        "apiEntryToPostHandlerMs": 318.2999999523163,
+        "socketCopyPostHandlerMs": 1155.6000001430511,
+        "dcPostHandlerLeadsSocketCopyMs": 837.3000001907349
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.5080210287123919,
+        "hostQueueMs": 0.636258,
+        "hostApplyMs": 0.080864,
+        "hostAdmissionWaitMs": 1.064,
+        "hostObservedLocalExecuteMs": 1.508
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 14.881436999887228
+      }
+    },
+    {
+      "inputIdHash": "9c16394ef0e73a41",
+      "round": 5,
+      "seq": 5,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1424,
+          "sourceLineSha256": "0d5d03685990ef233aeea56de9af806da248672937b356b35e9c4288806c00e4",
+          "timestampUtc": "2026-10-25T04:55:28.036313+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.35,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 5,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1426,
+          "sourceLineSha256": "0b5776dc92b222f80553d241b4fd23325fdcf26ae878906b3e0622739ee32ee5",
+          "timestampUtc": "2026-10-25T04:55:28.037514+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 5,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.86,
+            "seq": 5,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1427,
+          "sourceLineSha256": "bdfbaab0e2fd515fe90bf228cae237722efd3839f8391c091954620f66ffbb7c",
+          "timestampUtc": "2026-10-25T04:55:28.038056+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 5,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 5,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619705,
+          "sourceLineEnd": 619728,
+          "sourceBlockSha256": "321bc38e2aceb1e74239e4da160b059935653a7e137a673479ec7cdcfff5a57f",
+          "timestampUtc": "2026-10-25T04:55:28.027Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 5.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619754,
+          "sourceLineEnd": 619777,
+          "sourceBlockSha256": "1c0699ab2e8ecad69622c32ab28ea5d075eccb9d104c0fc53607dfef7d6469b4",
+          "timestampUtc": "2026-10-25T04:55:28.041Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 14.90369999781251,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 312.89999985694885,
+        "inputAckArrivalRttMs": 312.89999985694885,
+        "inputAckValidationMs": 0,
+        "apiEntryToPostHandlerMs": 314,
+        "socketCopyPostHandlerMs": 525,
+        "dcPostHandlerLeadsSocketCopyMs": 211
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.859810970723629,
+        "hostQueueMs": 0.252423,
+        "hostApplyMs": 0.00938,
+        "hostAdmissionWaitMs": 0.35,
+        "hostObservedLocalExecuteMs": 0.86
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 14.90369999781251
+      }
+    },
+    {
+      "inputIdHash": "73cdc7cf933f4511",
+      "round": 6,
+      "seq": 6,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1441,
+          "sourceLineSha256": "1885d8b13aa33858ba5382bc0227e5eab1d82d7509c45b2e5676dd5ea4f2129f",
+          "timestampUtc": "2026-10-25T04:55:29.585115+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.597,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 6,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1445,
+          "sourceLineSha256": "de8cf7b735328f13feb7d1d0e2f5c8d340b416feabe8fa03fc1916fc549fcc01",
+          "timestampUtc": "2026-10-25T04:55:29.599726+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 6,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 13.997,
+            "seq": 6,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1446,
+          "sourceLineSha256": "8cf999966cfb4e5b50ccec9fd563f00330101c2fb3f52e90a19fc91c588eb711",
+          "timestampUtc": "2026-10-25T04:55:29.600390+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 6,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 6,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619828,
+          "sourceLineEnd": 619851,
+          "sourceBlockSha256": "dd7fea0dc1678e2dc3927db69accf1776af8a354550663b9b74a7dd3be7b619e",
+          "timestampUtc": "2026-10-25T04:55:29.574Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 6.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619876,
+          "sourceLineEnd": 619899,
+          "sourceBlockSha256": "eb3f4dac1e01e26071fb7310ff5f543604f80cef5f3a96fa7a1247338d14487f",
+          "timestampUtc": "2026-10-25T04:55:29.604Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 29.48098300024867,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 369.09999990463257,
+        "inputAckArrivalRttMs": 368.59999990463257,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 370,
+        "socketCopyPostHandlerMs": 600.0999999046326,
+        "dcPostHandlerLeadsSocketCopyMs": 230.09999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 13.99739901535213,
+        "hostQueueMs": 0.264575,
+        "hostApplyMs": 0.170027,
+        "hostAdmissionWaitMs": 0.597,
+        "hostObservedLocalExecuteMs": 13.997
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 29.48098300024867
+      }
+    },
+    {
+      "inputIdHash": "a6d0fd674e1b33f8",
+      "round": 6,
+      "seq": 6,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1437,
+          "sourceLineSha256": "97be55be03c9a7cc4d7281d71aff2111a8444dcdfb69446a061cecd1c3af7d87",
+          "timestampUtc": "2026-10-25T04:55:29.576667+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.929,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 6,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1439,
+          "sourceLineSha256": "c737aa3f460b9b20318b648819e87d0fe273271fa75359733c38b83d6df437ea",
+          "timestampUtc": "2026-10-25T04:55:29.579845+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 6,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 2.697,
+            "seq": 6,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1440,
+          "sourceLineSha256": "9a1722f42e01e18c8941790e8afdb0c4cc561bcad585dfa4b321fe345bddfd70",
+          "timestampUtc": "2026-10-25T04:55:29.580635+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 6,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 6,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619803,
+          "sourceLineEnd": 619826,
+          "sourceBlockSha256": "4c018f280539fc73409d10a797faaeb11d3fe4fe579c54439211b88b5a4ee1e0",
+          "timestampUtc": "2026-10-25T04:55:29.573Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 6.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619852,
+          "sourceLineEnd": 619875,
+          "sourceBlockSha256": "7e9b2e02663c4e5bc6bb49333e1a5c1434d9691f76456143091fc8f52b5a0c11",
+          "timestampUtc": "2026-10-25T04:55:29.599Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 25.57038700208068,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 358.60000014305115,
+        "inputAckArrivalRttMs": 358.5,
+        "inputAckValidationMs": 0.10000014305114746,
+        "apiEntryToPostHandlerMs": 359.7000000476837,
+        "socketCopyPostHandlerMs": 599.7999999523163,
+        "dcPostHandlerLeadsSocketCopyMs": 240.09999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 2.696711104363203,
+        "hostQueueMs": 1.941932,
+        "hostApplyMs": 0.038494,
+        "hostAdmissionWaitMs": 0.929,
+        "hostObservedLocalExecuteMs": 2.697
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 25.57038700208068
+      }
+    },
+    {
+      "inputIdHash": "3dfff954e32ffeb3",
+      "round": 7,
+      "seq": 7,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1454,
+          "sourceLineSha256": "55b65ceb3010be291bbbebad779b8c9d1ea6ea192a7a733c8f0372e4338f3967",
+          "timestampUtc": "2026-10-25T04:55:31.113277+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.198,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 7,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1456,
+          "sourceLineSha256": "d9b65e6e5318b2aeb231a9aa9c26418e3931b1a72cffdcad621008a718706cbd",
+          "timestampUtc": "2026-10-25T04:55:31.114840+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 7,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.076,
+            "seq": 7,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1457,
+          "sourceLineSha256": "d09fedb9da0e3623a234f0bbcce8a82a5ea1fe48198c320c36cc30ee46fd26de",
+          "timestampUtc": "2026-10-25T04:55:31.115478+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 7,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 7,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619926,
+          "sourceLineEnd": 619949,
+          "sourceBlockSha256": "6e89ddf1b1b4ef5ce0dced79dcd7bc94c46b5c9c7e285de025e768e354748ef0",
+          "timestampUtc": "2026-10-25T04:55:31.109Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 7.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619974,
+          "sourceLineEnd": 619997,
+          "sourceBlockSha256": "363f157b0c9418e9eb998259c6bb69c8c572d979b068d19b11ffdb782d9df073",
+          "timestampUtc": "2026-10-25T04:55:31.117Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 8.503384999930859,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 253.5,
+        "inputAckArrivalRttMs": 252.89999985694885,
+        "inputAckValidationMs": 0.6000001430511475,
+        "apiEntryToPostHandlerMs": 254.60000014305115,
+        "socketCopyPostHandlerMs": 490.60000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 236.0
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.0755930561572313,
+        "hostQueueMs": 0.273889,
+        "hostApplyMs": 0.065763,
+        "hostAdmissionWaitMs": 1.198,
+        "hostObservedLocalExecuteMs": 1.076
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 8.503384999930859
+      }
+    },
+    {
+      "inputIdHash": "8c58e1ea15d3a882",
+      "round": 7,
+      "seq": 7,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1450,
+          "sourceLineSha256": "78347d4efbeba0183b1c0f68a2184802ce95467295faae919f1845ec2dcf5a70",
+          "timestampUtc": "2026-10-25T04:55:31.110272+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.185,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 7,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1452,
+          "sourceLineSha256": "92db1943fc4a47b7d4990c5d5e8f3ee0c07f9c3a04c86169eb03739e77a60b28",
+          "timestampUtc": "2026-10-25T04:55:31.112340+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 7,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.597,
+            "seq": 7,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1453,
+          "sourceLineSha256": "8ca1f71a545366fdeff5060f5c7efffe7e91dbb98cd4ab10c0529b7f5ddc6cc0",
+          "timestampUtc": "2026-10-25T04:55:31.112883+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 7,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 7,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619901,
+          "sourceLineEnd": 619924,
+          "sourceBlockSha256": "a9fff37d4a1763f1be9c1758f8dbe81f0e393521c9dcda002fc5dcdcd7716f31",
+          "timestampUtc": "2026-10-25T04:55:31.107Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 7.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619950,
+          "sourceLineEnd": 619973,
+          "sourceBlockSha256": "8bce919469275e9952d517f59338a143eb5448720640369e721c411c4e57c5cf",
+          "timestampUtc": "2026-10-25T04:55:31.116Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 8.614677999168634,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 241.40000009536743,
+        "inputAckArrivalRttMs": 241.29999995231628,
+        "inputAckValidationMs": 0.10000014305114746,
+        "apiEntryToPostHandlerMs": 242.79999995231628,
+        "socketCopyPostHandlerMs": 490.2999999523163,
+        "dcPostHandlerLeadsSocketCopyMs": 247.5
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.5967399813234806,
+        "hostQueueMs": 0.907577,
+        "hostApplyMs": 0.00944,
+        "hostAdmissionWaitMs": 0.185,
+        "hostObservedLocalExecuteMs": 1.597
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 8.614677999168634
+      }
+    },
+    {
+      "inputIdHash": "72e87a7daad5fd4f",
+      "round": 8,
+      "seq": 8,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1466,
+          "sourceLineSha256": "cab3bba7d88ebb924ddcad79090e0b950a976e1a71ba355bdb206d79f8fc6818",
+          "timestampUtc": "2026-10-25T04:55:32.649543+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.097,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 8,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1468,
+          "sourceLineSha256": "92d83b307463c51e4c4fe84947474463eb1fd6ec6b9086838e141e9288e31602",
+          "timestampUtc": "2026-10-25T04:55:32.650606+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 8,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.647,
+            "seq": 8,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1469,
+          "sourceLineSha256": "414131c7b0cc90b0c18d7e3bda40a1281a813ea7ffe825cf6e31d52c0981da8f",
+          "timestampUtc": "2026-10-25T04:55:32.651047+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 8,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 8,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620048,
+          "sourceLineEnd": 620071,
+          "sourceBlockSha256": "56b7c7a8408ef7ff31d81a5bd1d8a800322e3515fabd046db9f676fd46f9beb8",
+          "timestampUtc": "2026-10-25T04:55:32.648Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 8.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620072,
+          "sourceLineEnd": 620095,
+          "sourceBlockSha256": "b95e853cb382f5c20f21d5bc4282f0f2cf2b2a711bc21293cedc112ecbb99498",
+          "timestampUtc": "2026-10-25T04:55:32.652Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 3.7330880016088486,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 253.39999985694885,
+        "inputAckArrivalRttMs": 252.89999985694885,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 254.40000009536743,
+        "socketCopyPostHandlerMs": 466.7999999523163,
+        "dcPostHandlerLeadsSocketCopyMs": 212.39999985694885
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.6469939835369587,
+        "hostQueueMs": 0.175096,
+        "hostApplyMs": 0.086186,
+        "hostAdmissionWaitMs": 0.097,
+        "hostObservedLocalExecuteMs": 0.647
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 3.7330880016088486
+      }
+    },
+    {
+      "inputIdHash": "9eaba4c5728bb90c",
+      "round": 8,
+      "seq": 8,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1462,
+          "sourceLineSha256": "8204848b9e051a54f38b3c2b6ac40d163b6e62e404d8db3a4583ab073aa72989",
+          "timestampUtc": "2026-10-25T04:55:32.628176+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.311,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 8,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1464,
+          "sourceLineSha256": "beaadc0f19fb18c7e19f200cd43e8fd2bcc77e0546ae72e7f81d1d5f23c4708c",
+          "timestampUtc": "2026-10-25T04:55:32.629795+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 8,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.127,
+            "seq": 8,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1465,
+          "sourceLineSha256": "c222bf3eb67fb7c5c87c8ae2a7b74d9ff31fd4468a430ac72ac2db6c97a4e0ea",
+          "timestampUtc": "2026-10-25T04:55:32.630552+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 8,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 8,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 619999,
+          "sourceLineEnd": 620022,
+          "sourceBlockSha256": "ffbd12c0ab54d7e385e4c023d501c961d28416fdc53da3584800fb1b86ed8063",
+          "timestampUtc": "2026-10-25T04:55:32.625Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 8.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620023,
+          "sourceLineEnd": 620046,
+          "sourceBlockSha256": "2b64ecf65dbea57172b96c3712fe2aafcccff99a1fdaaf2eb29dc9100b804877",
+          "timestampUtc": "2026-10-25T04:55:32.635Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 9.53574499860406,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 217.39999985694885,
+        "inputAckArrivalRttMs": 217.39999985694885,
+        "inputAckValidationMs": 0,
+        "apiEntryToPostHandlerMs": 218.40000009536743,
+        "socketCopyPostHandlerMs": 430.2000000476837,
+        "dcPostHandlerLeadsSocketCopyMs": 211.79999995231628
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.126987161114812,
+        "hostQueueMs": 0.327729,
+        "hostApplyMs": 0.031384,
+        "hostAdmissionWaitMs": 0.311,
+        "hostObservedLocalExecuteMs": 1.127
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 9.53574499860406
+      }
+    },
+    {
+      "inputIdHash": "3fd2b5a9e599d24d",
+      "round": 9,
+      "seq": 9,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1477,
+          "sourceLineSha256": "c81f56ef761615495fdb6251ace245b5bf3dc66b9539220371be3df912363c93",
+          "timestampUtc": "2026-10-25T04:55:34.233986+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.84,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 9,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1479,
+          "sourceLineSha256": "9040805ae7b35bfb0b8485d8b3f44da43cc2e95283793946c14ad8f78d5ab09e",
+          "timestampUtc": "2026-10-25T04:55:34.235818+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 9,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.304,
+            "seq": 9,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1480,
+          "sourceLineSha256": "e336c0b73a421f41fdab71fdfdf8f0dcd05ffe4c5b30994ec91092a70e3a0f15",
+          "timestampUtc": "2026-10-25T04:55:34.236682+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 9,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 9,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620122,
+          "sourceLineEnd": 620145,
+          "sourceBlockSha256": "1f546ec1abff64079f30b75415313b95e08eb9f56ac9191b1e47ea4a1e04e532",
+          "timestampUtc": "2026-10-25T04:55:34.224Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 9.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620170,
+          "sourceLineEnd": 620193,
+          "sourceBlockSha256": "f40396641493b1ce7a86ec36fc4c106f5ba027caa6f0e06df2a7a5c64e336d85",
+          "timestampUtc": "2026-10-25T04:55:34.241Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 16.638962000608444,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 304.2000000476837,
+        "inputAckArrivalRttMs": 303.59999990463257,
+        "inputAckValidationMs": 0.6000001430511475,
+        "apiEntryToPostHandlerMs": 305.10000014305115,
+        "socketCopyPostHandlerMs": 524.9000000953674,
+        "dcPostHandlerLeadsSocketCopyMs": 219.79999995231628
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.304164994508028,
+        "hostQueueMs": 0.189864,
+        "hostApplyMs": 0.141042,
+        "hostAdmissionWaitMs": 1.84,
+        "hostObservedLocalExecuteMs": 1.304
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 16.638962000608444
+      }
+    },
+    {
+      "inputIdHash": "755b1800eb626768",
+      "round": 9,
+      "seq": 9,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1473,
+          "sourceLineSha256": "a64b02edd7d26e97914ce35532c36c1c17ba30b97fdcf87438d93e09af41e689",
+          "timestampUtc": "2026-10-25T04:55:34.230551+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.166,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 9,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1475,
+          "sourceLineSha256": "509a2966d04e655bc4ed4e1920e255d07841517c116d193d9be0ae216f40b495",
+          "timestampUtc": "2026-10-25T04:55:34.232653+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 9,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.307,
+            "seq": 9,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1476,
+          "sourceLineSha256": "ae0bc62941a3a0c469bdb66a6adf60c3ede771421a0d4faf8bd95f266242ffd0",
+          "timestampUtc": "2026-10-25T04:55:34.233530+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 9,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 9,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620097,
+          "sourceLineEnd": 620120,
+          "sourceBlockSha256": "a720262a5feb57530957564cc45b763fbadf4864e3b4d46f5e5570f7a3cca7c1",
+          "timestampUtc": "2026-10-25T04:55:34.223Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 9.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620146,
+          "sourceLineEnd": 620169,
+          "sourceBlockSha256": "e122d6ccb9833b7e96376a2e00c65c6f54db1fe179d6848b3ec868c57ffc931b",
+          "timestampUtc": "2026-10-25T04:55:34.240Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 16.53048399835825,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 303.5,
+        "inputAckArrivalRttMs": 303.30000019073486,
+        "inputAckValidationMs": 0.19999980926513672,
+        "apiEntryToPostHandlerMs": 304.59999990463257,
+        "socketCopyPostHandlerMs": 524.3999998569489,
+        "dcPostHandlerLeadsSocketCopyMs": 219.79999995231628
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.3072029687464237,
+        "hostQueueMs": 0.385387,
+        "hostApplyMs": 0.026791,
+        "hostAdmissionWaitMs": 0.166,
+        "hostObservedLocalExecuteMs": 1.307
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 16.53048399835825
+      }
+    },
+    {
+      "inputIdHash": "176139218baa5570",
+      "round": 10,
+      "seq": 10,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1492,
+          "sourceLineSha256": "40acbe8834be5ed368ba70b80bb26b4478433121837765bfec70945b6b059ace",
+          "timestampUtc": "2026-10-25T04:55:35.699083+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.294,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 10,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1494,
+          "sourceLineSha256": "f7bfad3d0450aef5017128d4ebb1a7fe65605983c68d7a93295fa67053109a99",
+          "timestampUtc": "2026-10-25T04:55:35.700195+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 10,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.554,
+            "seq": 10,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1495,
+          "sourceLineSha256": "702e2f8e164d4d43fbc1c6e64fe382ac1ce3c4bed7d03c25dd5a165206737938",
+          "timestampUtc": "2026-10-25T04:55:35.700816+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 10,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 10,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620220,
+          "sourceLineEnd": 620243,
+          "sourceBlockSha256": "da27f6190201122c2181e26d66e61dc6bd09fca4107014a1d8c4c7e704bd725c",
+          "timestampUtc": "2026-10-25T04:55:35.692Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 10.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620268,
+          "sourceLineEnd": 620291,
+          "sourceBlockSha256": "4ba71b44830a601442ddc514fbdf59165dd8733235bf2cc3955b81d2a4e1b8a3",
+          "timestampUtc": "2026-10-25T04:55:35.704Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 11.799357999116182,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 218.20000004768372,
+        "inputAckArrivalRttMs": 217.59999990463257,
+        "inputAckValidationMs": 0.6000001430511475,
+        "apiEntryToPostHandlerMs": 219,
+        "socketCopyPostHandlerMs": 435.59999990463257,
+        "dcPostHandlerLeadsSocketCopyMs": 216.59999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.5544871091842651,
+        "hostQueueMs": 0.167944,
+        "hostApplyMs": 0.177407,
+        "hostAdmissionWaitMs": 0.294,
+        "hostObservedLocalExecuteMs": 0.554
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 11.799357999116182
+      }
+    },
+    {
+      "inputIdHash": "649dc698d5ef32f0",
+      "round": 10,
+      "seq": 10,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1488,
+          "sourceLineSha256": "7f30db364a0c4d90cd297e4ff8d7732364de5a08d8cea112cab55251e0c4a4f2",
+          "timestampUtc": "2026-10-25T04:55:35.693741+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.087,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 10,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1490,
+          "sourceLineSha256": "7f366b85ff62749e758510a7b640609352b9d637a132dc365fc72c47e9267076",
+          "timestampUtc": "2026-10-25T04:55:35.696703+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 10,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 2.575,
+            "seq": 10,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1491,
+          "sourceLineSha256": "2eebd81c4c84b08eefd07c154c8322a528e9463ed87772f3752b58e3353dc48b",
+          "timestampUtc": "2026-10-25T04:55:35.697338+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 10,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 10,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620195,
+          "sourceLineEnd": 620218,
+          "sourceBlockSha256": "a19352ee2ef706e38d855d5671a5aedfa88dd2b9d9b081750ec98fed8528ed58",
+          "timestampUtc": "2026-10-25T04:55:35.692Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 10.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620244,
+          "sourceLineEnd": 620267,
+          "sourceBlockSha256": "43c481ab1a07138628f4093e4f7e9c4e1ce5a417653b1d68fbefa93ffc42eb2f",
+          "timestampUtc": "2026-10-25T04:55:35.699Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 7.0943409986793995,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 212.09999990463257,
+        "inputAckArrivalRttMs": 211.89999985694885,
+        "inputAckValidationMs": 0.20000004768371582,
+        "apiEntryToPostHandlerMs": 213.20000004768372,
+        "socketCopyPostHandlerMs": 420.60000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 207.40000009536743
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 2.574821002781391,
+        "hostQueueMs": 0.132398,
+        "hostApplyMs": 0.007346,
+        "hostAdmissionWaitMs": 0.087,
+        "hostObservedLocalExecuteMs": 2.575
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 7.0943409986793995
+      }
+    },
+    {
+      "inputIdHash": "d9421a5e8dedc343",
+      "round": 11,
+      "seq": 11,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1503,
+          "sourceLineSha256": "8702c8d53bf924cb9ccc78f4d161b391fc5aabfa6369e5515e7a7957b4f49e71",
+          "timestampUtc": "2026-10-25T04:55:37.293132+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.79,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 11,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1505,
+          "sourceLineSha256": "8322f08e1dd9277653b6dda6aaf1c19242f91087e3316900dc193d58a3768b38",
+          "timestampUtc": "2026-10-25T04:55:37.294479+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 11,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.873,
+            "seq": 11,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1506,
+          "sourceLineSha256": "177f6f253a05ac47d914074644ee0aae3ad325b107aa66d67e4591448dbf3ec9",
+          "timestampUtc": "2026-10-25T04:55:37.294939+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 11,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 11,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620318,
+          "sourceLineEnd": 620341,
+          "sourceBlockSha256": "278c3e68eb835fbee8bb97d24391f52db1fa1a30fe2261ae0b0b90aea51fd39e",
+          "timestampUtc": "2026-10-25T04:55:37.277Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 11.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620366,
+          "sourceLineEnd": 620389,
+          "sourceBlockSha256": "f41dc4d4893eddb71862285307575aed753adfc1cc303cc30e0d04eef1bdacb1",
+          "timestampUtc": "2026-10-25T04:55:37.296Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 19.7488909997046,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 296,
+        "inputAckArrivalRttMs": 295.5,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 296.7999999523163,
+        "socketCopyPostHandlerMs": 525.5999999046326,
+        "dcPostHandlerLeadsSocketCopyMs": 228.79999995231628
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.8730548433959484,
+        "hostQueueMs": 0.166907,
+        "hostApplyMs": 0.060417,
+        "hostAdmissionWaitMs": 1.79,
+        "hostObservedLocalExecuteMs": 0.873
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 19.7488909997046
+      }
+    },
+    {
+      "inputIdHash": "d94abb620958fce3",
+      "round": 11,
+      "seq": 11,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1499,
+          "sourceLineSha256": "fadec61f53b17229d100c053f6081ef641d3e127cf99e12d77af8bc3f2a2b48a",
+          "timestampUtc": "2026-10-25T04:55:37.287772+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.169,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 11,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1501,
+          "sourceLineSha256": "a55468476120e5e2f81b7972ac45291be306e6f6345027241826a8d394c7f209",
+          "timestampUtc": "2026-10-25T04:55:37.291881+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 11,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 3.649,
+            "seq": 11,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1502,
+          "sourceLineSha256": "86d48e08fe804e40f98e6596d614be71d26e02a32b932e39632f84bc06a07f1d",
+          "timestampUtc": "2026-10-25T04:55:37.292641+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 11,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 11,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620293,
+          "sourceLineEnd": 620316,
+          "sourceBlockSha256": "459067b07aa56ef1721555e7478aaa63f34dbce4b9c9b80bac5369a32f4ff7a5",
+          "timestampUtc": "2026-10-25T04:55:37.276Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 11.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620342,
+          "sourceLineEnd": 620365,
+          "sourceBlockSha256": "a53dd0df6a67822cf125fc5fb74e01432727490a4bea804014b2843906169ebf",
+          "timestampUtc": "2026-10-25T04:55:37.296Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 19.759213998913765,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 285.2999999523163,
+        "inputAckArrivalRttMs": 285.19999980926514,
+        "inputAckValidationMs": 0.10000014305114746,
+        "apiEntryToPostHandlerMs": 286.2999999523163,
+        "socketCopyPostHandlerMs": 525.2000000476837,
+        "dcPostHandlerLeadsSocketCopyMs": 238.90000009536743
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 3.6491460632532835,
+        "hostQueueMs": 1.690118,
+        "hostApplyMs": 0.008747,
+        "hostAdmissionWaitMs": 0.169,
+        "hostObservedLocalExecuteMs": 3.649
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 19.759213998913765
+      }
+    },
+    {
+      "inputIdHash": "8d6e38955cac757c",
+      "round": 12,
+      "seq": 12,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1516,
+          "sourceLineSha256": "cd46b023a9df31616db00281821470de8ba7bd308203a78bdbc56a0bac2cf419",
+          "timestampUtc": "2026-10-25T04:55:38.767463+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.462,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 12,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1518,
+          "sourceLineSha256": "5df1d8c95ed04dace5aa12ebc1c95083c1873ac08e276cf106a217134cf03935",
+          "timestampUtc": "2026-10-25T04:55:38.769137+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 12,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.238,
+            "seq": 12,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1519,
+          "sourceLineSha256": "348c0e4e72dd8fb3c077608dbc6aa3b5535ace0ddc36fc89162cfeee91b0a31e",
+          "timestampUtc": "2026-10-25T04:55:38.769587+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 12,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 12,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620416,
+          "sourceLineEnd": 620439,
+          "sourceBlockSha256": "889d8c3f75985df7db9b301132453e52a8157598a2d87f06ff5f66a4bd16409c",
+          "timestampUtc": "2026-10-25T04:55:38.760Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 12.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620464,
+          "sourceLineEnd": 620487,
+          "sourceBlockSha256": "fa4dd6a26f57e262f007e4126d15e7751dd228af8e989733332b4f058f25f0c0",
+          "timestampUtc": "2026-10-25T04:55:38.771Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 10.412747997790575,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 215.19999980926514,
+        "inputAckArrivalRttMs": 214.59999990463257,
+        "inputAckValidationMs": 0.5999999046325684,
+        "apiEntryToPostHandlerMs": 215.90000009536743,
+        "socketCopyPostHandlerMs": 598.5,
+        "dcPostHandlerLeadsSocketCopyMs": 382.59999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.238252967596054,
+        "hostQueueMs": 0.310938,
+        "hostApplyMs": 0.139128,
+        "hostAdmissionWaitMs": 1.462,
+        "hostObservedLocalExecuteMs": 1.238
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 10.412747997790575
+      }
+    },
+    {
+      "inputIdHash": "61717157ab4ba9c4",
+      "round": 12,
+      "seq": 12,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1512,
+          "sourceLineSha256": "a8c320203335b9cea13ada945585a761bced87ce15c423d78e5cdd16e74f4499",
+          "timestampUtc": "2026-10-25T04:55:38.764566+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.155,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 12,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1514,
+          "sourceLineSha256": "e136bc4a00025b84d5da2c661d2f8b4f8fb0a4b82707734b5294abcc07f329f5",
+          "timestampUtc": "2026-10-25T04:55:38.766368+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 12,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.263,
+            "seq": 12,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1515,
+          "sourceLineSha256": "daf5456fbd6296f9cd10bbe8df2ae995c1da41e378aa7e2f769b3b809b4ff359",
+          "timestampUtc": "2026-10-25T04:55:38.767084+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 12,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 12,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620391,
+          "sourceLineEnd": 620414,
+          "sourceBlockSha256": "11fdba2507f22ad893b15dc77c64f398e4159526eb44b01c91fe9275b6f32ade",
+          "timestampUtc": "2026-10-25T04:55:38.760Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 12.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620440,
+          "sourceLineEnd": 620463,
+          "sourceBlockSha256": "1fb1c1e7af30c65ed5c9c769f9848aa0aa8d60e6b680b9ac9bc76422cc0d175c",
+          "timestampUtc": "2026-10-25T04:55:38.770Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 10.285509001463652,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 213.70000004768372,
+        "inputAckArrivalRttMs": 213.70000004768372,
+        "inputAckValidationMs": 0,
+        "apiEntryToPostHandlerMs": 214.90000009536743,
+        "socketCopyPostHandlerMs": 598.2999999523163,
+        "dcPostHandlerLeadsSocketCopyMs": 383.39999985694885
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.2628270778805017,
+        "hostQueueMs": 0.455391,
+        "hostApplyMs": 0.026298,
+        "hostAdmissionWaitMs": 0.155,
+        "hostObservedLocalExecuteMs": 1.263
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 10.285509001463652
+      }
+    },
+    {
+      "inputIdHash": "4904615f3c462365",
+      "round": 13,
+      "seq": 13,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1528,
+          "sourceLineSha256": "84e5ead6fc51891fcdd13705b6ae74fe847709b2c7bed7bcb29916adca3dfd60",
+          "timestampUtc": "2026-10-25T04:55:40.319950+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.7,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 13,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1530,
+          "sourceLineSha256": "0a49808db87293e974706a69a8dfe54a77ada028adbdce082ac5b511b5c8e7b6",
+          "timestampUtc": "2026-10-25T04:55:40.321331+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 13,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.814,
+            "seq": 13,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1531,
+          "sourceLineSha256": "cb1ce34fb50dcc90584dfaf2b496a1bf6354fe2b2e7187e7a9379c3e71666f4c",
+          "timestampUtc": "2026-10-25T04:55:40.322206+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 13,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 13,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620514,
+          "sourceLineEnd": 620537,
+          "sourceBlockSha256": "cad0f687fc5866d3615116d7ac2307d9133232affa36fbe5247ebca0e4beb67a",
+          "timestampUtc": "2026-10-25T04:55:40.309Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 13.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620562,
+          "sourceLineEnd": 620585,
+          "sourceBlockSha256": "b39fd2dd223059857eedf58155165239899ad249b1eedd053f3538559f224edc",
+          "timestampUtc": "2026-10-25T04:55:40.323Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 14.359898000955582,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 219.90000009536743,
+        "inputAckArrivalRttMs": 219.5,
+        "inputAckValidationMs": 0.40000009536743164,
+        "apiEntryToPostHandlerMs": 220.69999980926514,
+        "socketCopyPostHandlerMs": 442.19999980926514,
+        "dcPostHandlerLeadsSocketCopyMs": 221.5
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.8144020102918148,
+        "hostQueueMs": 0.209776,
+        "hostApplyMs": 0.093114,
+        "hostAdmissionWaitMs": 0.7,
+        "hostObservedLocalExecuteMs": 0.814
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 14.359898000955582
+      }
+    },
+    {
+      "inputIdHash": "e5622a4eda06a9f2",
+      "round": 13,
+      "seq": 13,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1524,
+          "sourceLineSha256": "88514157f27ce98673b95c135288b3d28a93ea831d2e4168357681ddbb6b96db",
+          "timestampUtc": "2026-10-25T04:55:40.309831+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.127,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 13,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1526,
+          "sourceLineSha256": "3ceed9d80b0e32049e59ba02d5627795015701fa0b31caa0a4accd422fd11a4d",
+          "timestampUtc": "2026-10-25T04:55:40.314683+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 13,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 4.411,
+            "seq": 13,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1527,
+          "sourceLineSha256": "d4f3da41454b16f6a3eab930f293da51ce664a1e6acb8a6eb86ac9ee6a7cf9ff",
+          "timestampUtc": "2026-10-25T04:55:40.315179+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 13,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 13,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620489,
+          "sourceLineEnd": 620512,
+          "sourceBlockSha256": "e10b776847db6bc8ddb03a5b9bad3f3bad312f901a5a107b7ff885416d868c0c",
+          "timestampUtc": "2026-10-25T04:55:40.308Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 13.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620538,
+          "sourceLineEnd": 620561,
+          "sourceBlockSha256": "6904a0d209a929a071b0cc49eaf339ded956389a6e5883f0fddd3eba4a1e4982",
+          "timestampUtc": "2026-10-25T04:55:40.320Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 11.410758998245,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 216.10000014305115,
+        "inputAckArrivalRttMs": 216,
+        "inputAckValidationMs": 0.10000014305114746,
+        "apiEntryToPostHandlerMs": 216.89999985694885,
+        "socketCopyPostHandlerMs": 436.5,
+        "dcPostHandlerLeadsSocketCopyMs": 219.60000014305115
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 4.410926019772887,
+        "hostQueueMs": 0.229274,
+        "hostApplyMs": 0.010399,
+        "hostAdmissionWaitMs": 0.127,
+        "hostObservedLocalExecuteMs": 4.411
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 11.410758998245
+      }
+    },
+    {
+      "inputIdHash": "b3596fdd995b6976",
+      "round": 14,
+      "seq": 14,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1542,
+          "sourceLineSha256": "394a2cbafc81cb0773d300c98cb424157eca4b2bfd2d4af0437a705546c2f5d7",
+          "timestampUtc": "2026-10-25T04:55:41.845269+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.2,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 14,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1544,
+          "sourceLineSha256": "7adbb9821c77f042fe561dc4dec8d3af2b15717bf518a7bb2da24a34dd8699f9",
+          "timestampUtc": "2026-10-25T04:55:41.846663+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 14,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.032,
+            "seq": 14,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1545,
+          "sourceLineSha256": "0a189a428ca8934f58d35d6a33148b0bf061cdbd6a9bacb4d2461e560f10dd49",
+          "timestampUtc": "2026-10-25T04:55:41.847334+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 14,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 14,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620612,
+          "sourceLineEnd": 620635,
+          "sourceBlockSha256": "75a2a6ebffb3d791c70932902ae648223dcc169aef4ce9b940cd69d9da0d4323",
+          "timestampUtc": "2026-10-25T04:55:41.833Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 14.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620660,
+          "sourceLineEnd": 620683,
+          "sourceBlockSha256": "7a5b30538a9e35275192430c648e29499ed969a6ea131268b938e577556ea69d",
+          "timestampUtc": "2026-10-25T04:55:41.849Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 15.440565999597311,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 213.59999990463257,
+        "inputAckArrivalRttMs": 213.20000004768372,
+        "inputAckValidationMs": 0.39999985694885254,
+        "apiEntryToPostHandlerMs": 214.40000009536743,
+        "socketCopyPostHandlerMs": 428.40000009536743,
+        "dcPostHandlerLeadsSocketCopyMs": 214.0
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.0324239265173674,
+        "hostQueueMs": 0.093377,
+        "hostApplyMs": 0.078278,
+        "hostAdmissionWaitMs": 1.2,
+        "hostObservedLocalExecuteMs": 1.032
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 15.440565999597311
+      }
+    },
+    {
+      "inputIdHash": "b0b0ab3210183d01",
+      "round": 14,
+      "seq": 14,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1538,
+          "sourceLineSha256": "3d228d14ab7e469074cd8feee7787393ca8deae6a3b426b2cd7ce79229e02724",
+          "timestampUtc": "2026-10-25T04:55:41.842972+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.093,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 14,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1540,
+          "sourceLineSha256": "c94f3292f5369b262fc49731aaa0cf74ec7741c1d3f36d34a064a4637cc3a9a9",
+          "timestampUtc": "2026-10-25T04:55:41.844412+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 14,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.104,
+            "seq": 14,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1541,
+          "sourceLineSha256": "64774d6b8dcab10782a596f531873018d512b5880f75f57546761c814f134262",
+          "timestampUtc": "2026-10-25T04:55:41.844986+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 14,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 14,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620587,
+          "sourceLineEnd": 620610,
+          "sourceBlockSha256": "c060a4227a0719b19c68cf860d59dbdd66b00dc9026fdf107d4e9b4a3c08d05b",
+          "timestampUtc": "2026-10-25T04:55:41.832Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 14.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620636,
+          "sourceLineEnd": 620659,
+          "sourceBlockSha256": "f531c99415599f56c877f8c59686e703064cebb099f3a0889e1248bd3e537ebe",
+          "timestampUtc": "2026-10-25T04:55:41.848Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 16.269076999276876,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 209.39999985694885,
+        "inputAckArrivalRttMs": 209.29999995231628,
+        "inputAckValidationMs": 0.09999990463256836,
+        "apiEntryToPostHandlerMs": 210.40000009536743,
+        "socketCopyPostHandlerMs": 428,
+        "dcPostHandlerLeadsSocketCopyMs": 217.59999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.1035911738872528,
+        "hostQueueMs": 0.489884,
+        "hostApplyMs": 0.006998,
+        "hostAdmissionWaitMs": 0.093,
+        "hostObservedLocalExecuteMs": 1.104
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 16.269076999276876
+      }
+    },
+    {
+      "inputIdHash": "ca4a6491f0b8089e",
+      "round": 15,
+      "seq": 15,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1555,
+          "sourceLineSha256": "8421a8c3ca03639872b9ec5c4ed6e27f000c62fbbb33b7f03fcab21dd6c128b3",
+          "timestampUtc": "2026-10-25T04:55:43.394975+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.84,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 15,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1557,
+          "sourceLineSha256": "e0ebf952a7620495c27ecfceba9e9256d91a9ff04f2020ee0b4e9f1d6d126639",
+          "timestampUtc": "2026-10-25T04:55:43.396449+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 15,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.069,
+            "seq": 15,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1558,
+          "sourceLineSha256": "2aacbc8520b66a85d05d622678bc6aee2caedbe73eecc68ff70db6e86471fbb4",
+          "timestampUtc": "2026-10-25T04:55:43.396990+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 15,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 15,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620710,
+          "sourceLineEnd": 620733,
+          "sourceBlockSha256": "6da963401a831c3857fcd2f9086ff20c94292999fb3263cd8d306a308b0ff265",
+          "timestampUtc": "2026-10-25T04:55:43.370Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 15.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620758,
+          "sourceLineEnd": 620781,
+          "sourceBlockSha256": "3ed1e064e734ace6728b5561af7aeb6ad61a11b9b0bebc4d25156378ac6c6c3e",
+          "timestampUtc": "2026-10-25T04:55:43.398Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 28.217493999749422,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 266.7000000476837,
+        "inputAckArrivalRttMs": 266.2000000476837,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 267.39999985694885,
+        "socketCopyPostHandlerMs": 482.7999999523163,
+        "dcPostHandlerLeadsSocketCopyMs": 215.40000009536743
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.0690158233046532,
+        "hostQueueMs": 0.218955,
+        "hostApplyMs": 0.108801,
+        "hostAdmissionWaitMs": 1.84,
+        "hostObservedLocalExecuteMs": 1.069
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 28.217493999749422
+      }
+    },
+    {
+      "inputIdHash": "c0a603cd1d318282",
+      "round": 15,
+      "seq": 15,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1551,
+          "sourceLineSha256": "acb36928fb09d851b6211ab50acd3c0cf435ccf19a9478aa4073b28b033d1dbc",
+          "timestampUtc": "2026-10-25T04:55:43.391315+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 2.747,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 15,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1553,
+          "sourceLineSha256": "ff13e2e0ab08fc892b66344ab93abbd716df2d5bc8b94a8b9d32d6e9f18c2058",
+          "timestampUtc": "2026-10-25T04:55:43.393546+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 15,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.809,
+            "seq": 15,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1554,
+          "sourceLineSha256": "df5a63167a9ba2fe4dd9ca0bf306419f546fadb3cdff5d54c73eea9180b2f292",
+          "timestampUtc": "2026-10-25T04:55:43.394566+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 15,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 15,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620685,
+          "sourceLineEnd": 620708,
+          "sourceBlockSha256": "80779e30f604c281c831ef84dc1bc62a3b6c506ea60f0ef2b2c0a87a785600c4",
+          "timestampUtc": "2026-10-25T04:55:43.369Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 15.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620734,
+          "sourceLineEnd": 620757,
+          "sourceBlockSha256": "d024b3278de3f62073c78f3416f100c83e689fd85ce8a97f790542e1d229e12a",
+          "timestampUtc": "2026-10-25T04:55:43.398Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 28.144734002649784,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 266.10000014305115,
+        "inputAckArrivalRttMs": 265.90000009536743,
+        "inputAckValidationMs": 0.20000004768371582,
+        "apiEntryToPostHandlerMs": 266.7999999523163,
+        "socketCopyPostHandlerMs": 482.39999985694885,
+        "dcPostHandlerLeadsSocketCopyMs": 215.59999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.809458015486598,
+        "hostQueueMs": 0.525212,
+        "hostApplyMs": 0.031666,
+        "hostAdmissionWaitMs": 2.747,
+        "hostObservedLocalExecuteMs": 1.809
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 28.144734002649784
+      }
+    },
+    {
+      "inputIdHash": "45cca68afd18e761",
+      "round": 16,
+      "seq": 16,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1567,
+          "sourceLineSha256": "d7874943aab27b5824e62f24e76940c58fb0bd570dccb6565a58f869538ebb0b",
+          "timestampUtc": "2026-10-25T04:55:44.922303+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 2.011,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 16,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1569,
+          "sourceLineSha256": "4757aa1c6da66747bba4e7c345fea3a80bb45714cac0aee0e1bd96e9f92bfb40",
+          "timestampUtc": "2026-10-25T04:55:44.927106+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 16,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 4.367,
+            "seq": 16,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1570,
+          "sourceLineSha256": "dcef3c1f8de52f87f67ae60821b58ac95ec64a8ef2331d42883704f56d1a0ecb",
+          "timestampUtc": "2026-10-25T04:55:44.927581+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 16,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 16,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620808,
+          "sourceLineEnd": 620831,
+          "sourceBlockSha256": "9a83d764ff2371a08c67722f3b4370cba5e5760f774fb44eed84c54fb62917a1",
+          "timestampUtc": "2026-10-25T04:55:44.902Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 16.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620856,
+          "sourceLineEnd": 620879,
+          "sourceBlockSha256": "f9f54ca64aa4bbf75b9eb21e8ee609545483d1febdc11bf5baf9cf6a031ff938",
+          "timestampUtc": "2026-10-25T04:55:44.929Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 26.632333997637033,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 224.20000004768372,
+        "inputAckArrivalRttMs": 223.60000014305115,
+        "inputAckValidationMs": 0.5999999046325684,
+        "apiEntryToPostHandlerMs": 225.10000014305115,
+        "socketCopyPostHandlerMs": 451.80000019073486,
+        "dcPostHandlerLeadsSocketCopyMs": 226.70000004768372
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 4.367360146716237,
+        "hostQueueMs": 1.804109,
+        "hostApplyMs": 0.086218,
+        "hostAdmissionWaitMs": 2.011,
+        "hostObservedLocalExecuteMs": 4.367
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 26.632333997637033
+      }
+    },
+    {
+      "inputIdHash": "8abe1b9254a03ff8",
+      "round": 16,
+      "seq": 16,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1563,
+          "sourceLineSha256": "f8c0858244c08737aae58d6ce86e38e17068d6640e30636f35c6246d9984c8bd",
+          "timestampUtc": "2026-10-25T04:55:44.908531+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.107,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 16,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1565,
+          "sourceLineSha256": "97269860fab4f6eeb8ca948879dd4628abd57bdcf05a9db504063090c7795beb",
+          "timestampUtc": "2026-10-25T04:55:44.921207+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 16,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 12.31,
+            "seq": 16,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1566,
+          "sourceLineSha256": "a06d6f968160b1f24561326e084c0ac8eb6d153d63c3aefa7bda4bc59c01bd9d",
+          "timestampUtc": "2026-10-25T04:55:44.921926+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 16,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 16,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620783,
+          "sourceLineEnd": 620806,
+          "sourceBlockSha256": "20a8809802cc85db87e75e4630b1288a6802bea4323911528b2c123aa7537053",
+          "timestampUtc": "2026-10-25T04:55:44.901Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 16.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620832,
+          "sourceLineEnd": 620855,
+          "sourceBlockSha256": "44a1d651150cb0c48f4d8dfd3d3531e0575759021386605b57d4dac5fa150878",
+          "timestampUtc": "2026-10-25T04:55:44.928Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 26.492887999862432,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 222.70000004768372,
+        "inputAckArrivalRttMs": 222.59999990463257,
+        "inputAckValidationMs": 0.10000014305114746,
+        "apiEntryToPostHandlerMs": 223.90000009536743,
+        "socketCopyPostHandlerMs": 451.60000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 227.70000004768372
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 12.310249963775277,
+        "hostQueueMs": 10.919297,
+        "hostApplyMs": 0.007882,
+        "hostAdmissionWaitMs": 0.107,
+        "hostObservedLocalExecuteMs": 12.31
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 26.492887999862432
+      }
+    },
+    {
+      "inputIdHash": "422a1dfb66be4685",
+      "round": 17,
+      "seq": 17,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1581,
+          "sourceLineSha256": "f1b990e295791507827190e9e518ab9330b2fe1a553d85cb72282e7f518a3b54",
+          "timestampUtc": "2026-10-25T04:55:46.451694+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.438,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 17,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1583,
+          "sourceLineSha256": "53a6f1114e7f72e8b470353a40b76148906cc55cdabe7c6e8915feaba07caa1b",
+          "timestampUtc": "2026-10-25T04:55:46.453705+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 17,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.542,
+            "seq": 17,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1584,
+          "sourceLineSha256": "c9e703f788b502155840221af1d21650d975b9e0812ac146513d09d4a4533009",
+          "timestampUtc": "2026-10-25T04:55:46.454186+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 17,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 17,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620906,
+          "sourceLineEnd": 620929,
+          "sourceBlockSha256": "36a55c7b1f3f8d7f5fdcdffcf9f30746edb6bbefed88dc467cf3639adc85e017",
+          "timestampUtc": "2026-10-25T04:55:46.446Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 17.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620954,
+          "sourceLineEnd": 620977,
+          "sourceBlockSha256": "e18bfd66024d0386dc721c956ebedecca2272c3e9b749bee4952cfb807e2cfa7",
+          "timestampUtc": "2026-10-25T04:55:46.459Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 12.69514499977231,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 228.30000019073486,
+        "inputAckArrivalRttMs": 227.80000019073486,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 229.09999990463257,
+        "socketCopyPostHandlerMs": 447.7999999523163,
+        "dcPostHandlerLeadsSocketCopyMs": 218.70000004768372
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.5421290881931782,
+        "hostQueueMs": 0.204237,
+        "hostApplyMs": 0.144268,
+        "hostAdmissionWaitMs": 1.438,
+        "hostObservedLocalExecuteMs": 1.542
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 12.69514499977231
+      }
+    },
+    {
+      "inputIdHash": "398a611b17232d6c",
+      "round": 17,
+      "seq": 17,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1577,
+          "sourceLineSha256": "6c80e4a09a1121c65ba02c62757468bc37de820a542dac74d8cdcad4b4378f37",
+          "timestampUtc": "2026-10-25T04:55:46.449282+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.118,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 17,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1579,
+          "sourceLineSha256": "acac202cb9466fb9da6ae7c20d53dc92222f1d2d2f1229b016e7e565b5809531",
+          "timestampUtc": "2026-10-25T04:55:46.450598+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 17,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.928,
+            "seq": 17,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1580,
+          "sourceLineSha256": "a17773b96c38694b194237991e71af20ed10370ada1199d9a4653888dfa3489c",
+          "timestampUtc": "2026-10-25T04:55:46.451321+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 17,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 17,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620881,
+          "sourceLineEnd": 620904,
+          "sourceBlockSha256": "861cbac7a5aa39613d5f7f76544735545358e6dfc134a19043c31627a0d45101",
+          "timestampUtc": "2026-10-25T04:55:46.445Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 17.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 620930,
+          "sourceLineEnd": 620953,
+          "sourceBlockSha256": "f57096f4a1a61418929faa39b113103d3c990d3073f43e0b168f8e910994c092",
+          "timestampUtc": "2026-10-25T04:55:46.458Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 12.477621998637915,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 218,
+        "inputAckArrivalRttMs": 217.90000009536743,
+        "inputAckValidationMs": 0.09999990463256836,
+        "apiEntryToPostHandlerMs": 218.90000009536743,
+        "socketCopyPostHandlerMs": 447.5,
+        "dcPostHandlerLeadsSocketCopyMs": 228.59999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.92845200560987,
+        "hostQueueMs": 0.239756,
+        "hostApplyMs": 0.007103,
+        "hostAdmissionWaitMs": 0.118,
+        "hostObservedLocalExecuteMs": 0.928
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 12.477621998637915
+      }
+    },
+    {
+      "inputIdHash": "4dc2ff65b23a299e",
+      "round": 18,
+      "seq": 18,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1591,
+          "sourceLineSha256": "a1a54795421051249bc9e0a047773d1366ee0620ca9f0459aa360749932f3394",
+          "timestampUtc": "2026-10-25T04:55:47.973548+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.819,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 18,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1593,
+          "sourceLineSha256": "f263ebae3277cf2988498d1c3ebe3efa36b2c1163b55d6038705de12ee3e05d8",
+          "timestampUtc": "2026-10-25T04:55:47.974993+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 18,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.128,
+            "seq": 18,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1594,
+          "sourceLineSha256": "b88c357446754900401daf11b8366959c26720b86fe1952d77705f6a04be8452",
+          "timestampUtc": "2026-10-25T04:55:47.975514+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 18,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 18,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621047,
+          "sourceLineEnd": 621070,
+          "sourceBlockSha256": "90c85831aff2330e9344bc430f8f6fc74dff48fb493ae95c2563c5d0134866b5",
+          "timestampUtc": "2026-10-25T04:55:47.967Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 18.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621095,
+          "sourceLineEnd": 621118,
+          "sourceBlockSha256": "8004f1f06bd3e5feee701af3732c9013e3174cc51691bc216f8c2e4b0313c149",
+          "timestampUtc": "2026-10-25T04:55:47.976Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 9.122040998190641,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 263.2999999523163,
+        "inputAckArrivalRttMs": 262.7999999523163,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 264,
+        "socketCopyPostHandlerMs": 428.2000000476837,
+        "dcPostHandlerLeadsSocketCopyMs": 164.20000004768372
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.1283629573881626,
+        "hostQueueMs": 0.138967,
+        "hostApplyMs": 0.059658,
+        "hostAdmissionWaitMs": 0.819,
+        "hostObservedLocalExecuteMs": 1.128
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 9.122040998190641
+      }
+    },
+    {
+      "inputIdHash": "b5e59f5f0b7b8f7e",
+      "round": 18,
+      "seq": 18,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1587,
+          "sourceLineSha256": "05cf7c75f11c90b74ac1436d547c8628e34ad672f7bc3faf2be431357807841e",
+          "timestampUtc": "2026-10-25T04:55:47.971907+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.111,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 18,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1589,
+          "sourceLineSha256": "188f5ab75769976bf083713c39becdbb854711b322ad1ba4c4d6e6af85b9fa98",
+          "timestampUtc": "2026-10-25T04:55:47.972917+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 18,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.684,
+            "seq": 18,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1590,
+          "sourceLineSha256": "51ad713c00c1b16b7386a149997ce1121735989406469f94571d5b5c2113a46b",
+          "timestampUtc": "2026-10-25T04:55:47.973317+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 18,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 18,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621022,
+          "sourceLineEnd": 621045,
+          "sourceBlockSha256": "e0b91fd64e4c7710912f468b7a9c7408cb3635b42c50541d18d81d43dbf5ee74",
+          "timestampUtc": "2026-10-25T04:55:47.967Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 18.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621071,
+          "sourceLineEnd": 621094,
+          "sourceBlockSha256": "6113d3a4b6ec99848ea05bc5d2c091d64a3f0dfcfeea62b3ed2ccbc7a9559c26",
+          "timestampUtc": "2026-10-25T04:55:47.976Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 8.97723700106144,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 262.5,
+        "inputAckArrivalRttMs": 262.5,
+        "inputAckValidationMs": 0,
+        "apiEntryToPostHandlerMs": 263.60000014305115,
+        "socketCopyPostHandlerMs": 428.10000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 164.5
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.6842969451099634,
+        "hostQueueMs": 0.198991,
+        "hostApplyMs": 0.005224,
+        "hostAdmissionWaitMs": 0.111,
+        "hostObservedLocalExecuteMs": 0.684
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 8.97723700106144
+      }
+    },
+    {
+      "inputIdHash": "93fab62e38212317",
+      "round": 19,
+      "seq": 19,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1604,
+          "sourceLineSha256": "281b47f6bbf6c5f34391116d8291ea5fb2c45f7a24d2a569d58193224abb224f",
+          "timestampUtc": "2026-10-25T04:55:49.535135+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 1.24,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 19,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1606,
+          "sourceLineSha256": "59f173bd98d7b09ba77012b1cddba822ede4fe486c7f57c0ff8b1d4ac12ca962",
+          "timestampUtc": "2026-10-25T04:55:49.536557+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 19,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 1.069,
+            "seq": 19,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1607,
+          "sourceLineSha256": "bfb91a631d06fe4a5168335f2fd90f630e3406bcef47cb1f80a2a36df7b9b087",
+          "timestampUtc": "2026-10-25T04:55:49.537057+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 19,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 19,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621145,
+          "sourceLineEnd": 621168,
+          "sourceBlockSha256": "f50d614caa9493b76c9a151ecea39a3c30c5a2810d3d8a1ed0b0dd85133e5f81",
+          "timestampUtc": "2026-10-25T04:55:49.519Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 19.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621193,
+          "sourceLineEnd": 621216,
+          "sourceBlockSha256": "721e0eedbf4ecbf4e10b1fe7c95b198cf40fe42932df3cdf71a6fc99ed94c1a7",
+          "timestampUtc": "2026-10-25T04:55:49.538Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 19.102173000574112,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 239,
+        "inputAckArrivalRttMs": 238.5,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 239.79999995231628,
+        "socketCopyPostHandlerMs": 457.69999980926514,
+        "dcPostHandlerLeadsSocketCopyMs": 217.89999985694885
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 1.0694239754229784,
+        "hostQueueMs": 0.409357,
+        "hostApplyMs": 0.12046,
+        "hostAdmissionWaitMs": 1.24,
+        "hostObservedLocalExecuteMs": 1.069
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 19.102173000574112
+      }
+    },
+    {
+      "inputIdHash": "92f153c294a606a8",
+      "round": 19,
+      "seq": 19,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1600,
+          "sourceLineSha256": "4dd4cd1cc37ad079a56a892ad6a01023db54177ee6d132d08d7df4faec653994",
+          "timestampUtc": "2026-10-25T04:55:49.529197+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.167,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 19,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1602,
+          "sourceLineSha256": "86cefe4f46c265bc2171cbfac5e0b4eddf8bd7f80222f3e5109986467ff0eae8",
+          "timestampUtc": "2026-10-25T04:55:49.534137+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 19,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 4.468,
+            "seq": 19,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1603,
+          "sourceLineSha256": "10f1d32318b37c02e6d55aae622b34e2fcaac7ff058f31205efeca474ea49c96",
+          "timestampUtc": "2026-10-25T04:55:49.534761+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 19,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 19,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621120,
+          "sourceLineEnd": 621143,
+          "sourceBlockSha256": "02cbbce09706eea73e058135867b1d7f760846c04265de7259d9cee520cd6aea",
+          "timestampUtc": "2026-10-25T04:55:49.517Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 19.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621169,
+          "sourceLineEnd": 621192,
+          "sourceBlockSha256": "5dea680b20b42ac9eae7349ffa5297e1305dc8aef8795c846b54baa7d1133915",
+          "timestampUtc": "2026-10-25T04:55:49.538Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 20.284853000193834,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 237.59999990463257,
+        "inputAckArrivalRttMs": 237.59999990463257,
+        "inputAckValidationMs": 0,
+        "apiEntryToPostHandlerMs": 238.59999990463257,
+        "socketCopyPostHandlerMs": 453.5,
+        "dcPostHandlerLeadsSocketCopyMs": 214.90000009536743
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 4.468313883990049,
+        "hostQueueMs": 3.788631,
+        "hostApplyMs": 0.026907,
+        "hostAdmissionWaitMs": 0.167,
+        "hostObservedLocalExecuteMs": 4.468
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 20.284853000193834
+      }
+    },
+    {
+      "inputIdHash": "1f8da866568ebfe3",
+      "round": 20,
+      "seq": 20,
+      "leaseEpoch": 7,
+      "typeMouse": 0,
+      "typeKeyboard": 1,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1617,
+          "sourceLineSha256": "8c87beaea2eecd2219a90bb8e2fcb442c017c1086a1ce388cb02aa136b1ae7f0",
+          "timestampUtc": "2026-10-25T04:55:51.031701+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.085,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 20,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1619,
+          "sourceLineSha256": "22acb89eff08dea658a4bc3b5b70b3ab62fec8ece44ecdfbc373300ebf209169",
+          "timestampUtc": "2026-10-25T04:55:51.032649+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 20,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.519,
+            "seq": 20,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1620,
+          "sourceLineSha256": "0c30ce1b5e35182da60c89f03c62e60b1c875d30cc311df21f5184f22a583fed",
+          "timestampUtc": "2026-10-25T04:55:51.033198+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 20,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 20,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621243,
+          "sourceLineEnd": 621266,
+          "sourceBlockSha256": "4ac89f8b490792883d8e128bf56ce9b32be657008bc2ba6f3d67561e57fab059",
+          "timestampUtc": "2026-10-25T04:55:51.030Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 20.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621291,
+          "sourceLineEnd": 621314,
+          "sourceBlockSha256": "faf55ec0f98bc13d7fe9c34b7c8181f5cdb2a972f07f7f9dd8e49fe7def49ff0",
+          "timestampUtc": "2026-10-25T04:55:51.034Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 4.163840997964144,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 207.29999995231628,
+        "inputAckArrivalRttMs": 206.79999995231628,
+        "inputAckValidationMs": 0.5,
+        "apiEntryToPostHandlerMs": 208,
+        "socketCopyPostHandlerMs": 418.10000014305115,
+        "dcPostHandlerLeadsSocketCopyMs": 210.10000014305115
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.5185229238122702,
+        "hostQueueMs": 0.159878,
+        "hostApplyMs": 0.05712,
+        "hostAdmissionWaitMs": 0.085,
+        "hostObservedLocalExecuteMs": 0.519
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 4.163840997964144
+      }
+    },
+    {
+      "inputIdHash": "35d2a0f7a234cbc9",
+      "round": 20,
+      "seq": 20,
+      "leaseEpoch": 7,
+      "typeMouse": 1,
+      "typeKeyboard": 0,
+      "events": [
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1613,
+          "sourceLineSha256": "da124cb2f58b8620ae902ee1683765637932b9419da5c108a274018af8162980",
+          "timestampUtc": "2026-10-25T04:55:51.027666+00:00",
+          "event": "host_input_received",
+          "metrics": {
+            "appliedSeq": 0,
+            "hostAdmissionWaitMs": 0.114,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 20,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1615,
+          "sourceLineSha256": "aeb1dea9b628b323123fc0d7f8abde0179371f93aef4033afae966b143bc1ef9",
+          "timestampUtc": "2026-10-25T04:55:51.028966+00:00",
+          "event": "host_input_result",
+          "metrics": {
+            "appliedSeq": 20,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "localExecuteMs": 0.842,
+            "seq": 20,
+            "timingIncludesQueueWait": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "back-debug.log",
+          "sourceLine": 1616,
+          "sourceLineSha256": "359d4bc910b040b4cc1ab2d9231cdd137475ab55d564da9dd437652358e036d4",
+          "timestampUtc": "2026-10-25T04:55:51.029521+00:00",
+          "event": "host_input_ack_sent",
+          "metrics": {
+            "appliedSeq": 20,
+            "inputIdCount": 1,
+            "leaseEpoch": 7,
+            "seq": 20,
+            "ackAccepted": 1,
+            "status_applied": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621218,
+          "sourceLineEnd": 621241,
+          "sourceBlockSha256": "c12c0710b58005f57679997735cfd7a0e43c2668537993dea31e4fdf0edfab69",
+          "timestampUtc": "2026-10-25T04:55:51.024Z",
+          "event": "signal_input_relayed",
+          "metrics": {
+            "seq": 20.0,
+            "leaseEpoch": 7.0,
+            "appliedSeq": 0.0,
+            "inputIdCount": 1.0,
+            "status_accepted": 1
+          }
+        },
+        {
+          "source": "/tmp/signal-server.log",
+          "sourceLineStart": 621267,
+          "sourceLineEnd": 621290,
+          "sourceBlockSha256": "2c26fce2f8198db83b16ececf45896674d666acac6b28e07fb208633c0218a31",
+          "timestampUtc": "2026-10-25T04:55:51.031Z",
+          "event": "signal_reset_ack_observed",
+          "metrics": {
+            "leaseEpoch": 7.0,
+            "signalRequestToAckMs": 7.336436998099089,
+            "targetAvailable": 1,
+            "shapeValid": 1,
+            "forwarded": 1,
+            "ackLeaseMatchesRequest": 1,
+            "ackTypeMatchesRequest": 1,
+            "status_applied": 1
+          }
+        }
+      ],
+      "eventCounts": {
+        "host_input_received": 1,
+        "host_input_result": 1,
+        "host_input_ack_sent": 1,
+        "signal_input_relayed": 1,
+        "signal_reset_ack_observed": 1
+      },
+      "viewerSameClockMs": {
+        "m1InputAckRttMs": 201.39999985694885,
+        "inputAckArrivalRttMs": 201.39999985694885,
+        "inputAckValidationMs": 0,
+        "apiEntryToPostHandlerMs": 202.20000004768372,
+        "socketCopyPostHandlerMs": 412.2999999523163,
+        "dcPostHandlerLeadsSocketCopyMs": 210.09999990463257
+      },
+      "hostReportedStageMs": {
+        "hostAdapterAwaitMs": 0.8418229408562183,
+        "hostQueueMs": 0.217218,
+        "hostApplyMs": 0.005451,
+        "hostAdmissionWaitMs": 0.114,
+        "hostObservedLocalExecuteMs": 0.842
+      },
+      "signalSameClockMs": {
+        "signalRequestToAckMs": 7.336436998099089
+      }
+    }
+  ],
+  "signalStageLogMatchedCount": 40,
+  "completeFiveEventGroups": 40,
+  "singleAppliedResultGroups": 40,
+  "acceptedSocketAckGroups": 40,
+  "sourceDigestContract": {
+    "hostLine": "SHA256 of exact UTF-8 source line without CR/LF terminator; whitespace preserved",
+    "signalBlock": "SHA256 of exact UTF-8 source lines joined with LF, without trailing LF; whitespace preserved",
+    "snapshot": "SHA256 of raw snapshotBytes file prefix, including original line terminators"
+  },
+  "digestCorrection": {
+    "oldDigestsIncludedFinalLfCount": 200,
+    "sourceMappingsChanged": 0,
+    "metricValuesChanged": 0,
+    "normalizedDigestsReverified": 200
+  },
+  "verification": {
+    "snapshotPrefixes": 2,
+    "hostLineMappings": 120,
+    "exactSourceMetricFields": 1280,
+    "normalizedEventDigests": 200,
+    "signalBlockMappings": 80,
+    "exactSampleMetricFields": 520,
+    "exactGroupHostMetricFields": 80,
+    "exactGroupSignalMetricFields": 40,
+    "fiveEventGroups": 40,
+    "distributionCells": 210
+  },
+  "privateAnalysisSha256": "a266b1a5681763cc4bb3fa67f3a290f9b99e0d1999757cf026f513e1e03b5cf4",
+  "crossClockSubtraction": "FORBIDDEN",
+  "cpuProfile": "NOT_RUN"
+}

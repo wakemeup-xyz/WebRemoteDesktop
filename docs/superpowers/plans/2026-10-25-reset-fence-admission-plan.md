@@ -58,8 +58,10 @@ assert state.validate({**reset, 'inputIds': ['different']}).status == 'resync-re
 
 **Files:** 新运行报告与脱敏evidence，更新本spec/plan与需求文档。
 
-- [ ] 合并定向Python回归、diff检查与独立代码review；main按逻辑提交；Signal/Viewer源码未变时不重建dist。
-- [ ] 当前Viewer0才经helper restart-host；保留cloudflared PID及URL状态，重新读取并回报两密码，确认本地和公网健康。
-- [ ] 严格组件source/build/PID manifest下跑20对正常安全reset与正式within-grace复验；对新hostAdmissionWaitMs逐hash关联，不能比较不同网络时段而夸称健康p95改善。
-- [ ] 记录公网502/EOF及后续200，根因未定位部分保留；实际浏览器CF边缘/候选路径与proxy证据按可测范围记录，不改tunnel配置。
-- [ ] 最终review、隐私/相对链接/源摘要检查，提交报告，结束前核对服务可用和无遗留owned Viewer。三小时/业务可见效果仍NOT RUN。
+- [x] 合并定向Python回归、diff检查与独立代码review；main按逻辑提交；Signal/Viewer源码未变时不重建dist。
+- [x] 当前Viewer0才经helper restart-host；保留cloudflared PID及URL状态，重新读取并回报两密码，确认本地和公网健康。
+- [x] 严格组件source/build/PID manifest下跑20对正常安全reset与正式within-grace复验；对新hostAdmissionWaitMs逐hash关联，不能比较不同网络时段而夸称健康p95改善。
+- [x] 记录公网502/EOF及后续200，根因未定位部分保留；实际浏览器CF边缘/候选路径与proxy证据按可测范围记录，不改tunnel配置。
+- [x] 最终review、隐私/相对链接/源摘要检查，提交报告，结束前核对服务可用和无遗留owned Viewer。三小时/业务可见效果仍NOT RUN。
+
+执行事实：main实现`7ba8dcf`，Host-only加载PID31867，Signal83219/Viewer build`c6915df5ba8c0c6f`保持。20对40次reset通过，当前原M1 p95为347.4/348.2ms；admission p95/max为1.840/2.747ms，不将剩余时间命名为纯网络。正式within-grace恢复3.999185秒、稳定30.025816秒；前置300.240649秒/301样本，最终continuity因故意断线保留INCOMPLETE。完整记录见[实施复核](../reports/2026-10-25-reset-fence-admission-review.md)。本计划限定的恢复语义与观测优化不代表200ms、真实业务效果或三小时资格通过。

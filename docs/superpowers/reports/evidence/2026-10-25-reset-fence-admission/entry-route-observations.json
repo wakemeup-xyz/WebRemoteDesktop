@@ -1,0 +1,220 @@
+{
+  "curlRoutes": {
+    "schemaVersion": 1,
+    "scope": "four-unauthenticated-health-requests-with-explicit-route-labels",
+    "performanceQualification": "NOT_RUN",
+    "proxyOrTunnelConfigurationChanged": false,
+    "rows": [
+      {
+        "atEpochMs": 1792903570913,
+        "scope": "unauthenticated-entry-route-observation-not-performance-qualification",
+        "curlBypassEnvironmentProxy": true,
+        "curlProxyUsed": 0,
+        "exitCode": 0,
+        "status": 200,
+        "healthyJson": true,
+        "edgeColo": "SEA",
+        "connectSeconds": 0.193386,
+        "tlsSeconds": 0.431822,
+        "ttfbSeconds": 0.9581,
+        "totalSeconds": 0.9586,
+        "remoteIpSha256": "c4699f73fa677f975539a40f328f5815f1354acbc19fc4d011c15dbe7f2ba479",
+        "responseBodySha256": "3f11759c3be31b7a52d45c7992df9e1731335f327497b38f7fd2bb894dac177d",
+        "responseBytes": 54
+      },
+      {
+        "atEpochMs": 1792903572091,
+        "scope": "unauthenticated-entry-route-observation-not-performance-qualification",
+        "curlBypassEnvironmentProxy": false,
+        "curlProxyUsed": 1,
+        "exitCode": 0,
+        "status": 200,
+        "healthyJson": true,
+        "edgeColo": "SJC",
+        "connectSeconds": 0.00043,
+        "tlsSeconds": 0.580467,
+        "ttfbSeconds": 1.157414,
+        "totalSeconds": 1.157907,
+        "remoteIpSha256": "12ca17b49af2289436f303e0166030a21e525d266e209267433801a8fd4071a0",
+        "responseBodySha256": "daa7aa65490dbcb04dd812dade9507dc4c1af770be75f27a0c61996adef0d28a",
+        "responseBytes": 54
+      },
+      {
+        "atEpochMs": 1792903573313,
+        "scope": "unauthenticated-entry-route-observation-not-performance-qualification",
+        "curlBypassEnvironmentProxy": true,
+        "curlProxyUsed": 0,
+        "exitCode": 0,
+        "status": 200,
+        "healthyJson": true,
+        "edgeColo": "HKG",
+        "connectSeconds": 0.284665,
+        "tlsSeconds": 0.374645,
+        "ttfbSeconds": 1.198414,
+        "totalSeconds": 1.198916,
+        "remoteIpSha256": "9d1144143047f7ab45b95468dee2a107cdcfbf33110274e3ca10849807be821b",
+        "responseBodySha256": "c9264900bc2fe4cbb63807c437e5282abe995f71cbe1a17db370afe6bc7a4ef8",
+        "responseBytes": 54
+      },
+      {
+        "atEpochMs": 1792903576052,
+        "scope": "unauthenticated-entry-route-observation-not-performance-qualification",
+        "curlBypassEnvironmentProxy": false,
+        "curlProxyUsed": 1,
+        "exitCode": 0,
+        "status": 200,
+        "healthyJson": true,
+        "edgeColo": "SJC",
+        "connectSeconds": 0.000461,
+        "tlsSeconds": 1.875366,
+        "ttfbSeconds": 2.71391,
+        "totalSeconds": 2.714569,
+        "remoteIpSha256": "12ca17b49af2289436f303e0166030a21e525d266e209267433801a8fd4071a0",
+        "responseBodySha256": "54b10125c228939e14707814095a08045579a89d7a5fc83ef43d8084eaf394af",
+        "responseBytes": 54
+      }
+    ]
+  },
+  "browserFailure": {
+    "schemaVersion": 1,
+    "scope": "unauthenticated-Chromium-health-entry-only",
+    "nativeInput": "NOT_RUN",
+    "viewerStart": "NOT_RUN",
+    "websocketRoute": "NOT_OBSERVED",
+    "performanceQualification": "NOT_RUN",
+    "failure": "TimeoutError",
+    "rows": [],
+    "lifecycle": {
+      "captureStatus": "unavailable",
+      "cleanupStatus": "incomplete",
+      "writeStatus": "ok",
+      "ownedProcessExitEvidence": "not-observed"
+    },
+    "elapsedSeconds": 12.52002501487732
+  },
+  "browserSuccess": {
+    "schemaVersion": 1,
+    "scope": "unauthenticated-Chromium-health-entry-only",
+    "nativeInput": "NOT_RUN",
+    "viewerStart": "NOT_RUN",
+    "websocketRoute": "NOT_OBSERVED",
+    "performanceQualification": "NOT_RUN",
+    "failure": null,
+    "rows": [
+      {
+        "status": 200,
+        "edgeColo": "HKG",
+        "remoteIpSha256": "9d1144143047f7ab45b95468dee2a107cdcfbf33110274e3ca10849807be821b",
+        "remoteIpVersion": 4,
+        "navigation": {
+          "protocol": "h2",
+          "connectMs": 623.7000000476837,
+          "tlsMs": 194.5,
+          "requestToFirstByteMs": 512.7000000476837,
+          "totalMs": 1228.6000001430511
+        },
+        "atEpochMs": 1792903631459
+      },
+      {
+        "status": 200,
+        "edgeColo": "HKG",
+        "remoteIpSha256": "9d1144143047f7ab45b95468dee2a107cdcfbf33110274e3ca10849807be821b",
+        "remoteIpVersion": 4,
+        "navigation": {
+          "protocol": "h2",
+          "connectMs": 0,
+          "tlsMs": 0,
+          "requestToFirstByteMs": 522.2999999523163,
+          "totalMs": 525.7999999523163
+        },
+        "atEpochMs": 1792903632003
+      },
+      {
+        "status": 200,
+        "edgeColo": "HKG",
+        "remoteIpSha256": "9d1144143047f7ab45b95468dee2a107cdcfbf33110274e3ca10849807be821b",
+        "remoteIpVersion": 4,
+        "navigation": {
+          "protocol": "h2",
+          "connectMs": 0,
+          "tlsMs": 0,
+          "requestToFirstByteMs": 630.6000001430511,
+          "totalMs": 632.5
+        },
+        "atEpochMs": 1792903632653
+      }
+    ],
+    "lifecycle": {
+      "captureStatus": "ok",
+      "cleanupStatus": "api-finished-exit-unknown",
+      "writeStatus": "ok",
+      "ownedProcessExitEvidence": "not-observed"
+    },
+    "lifecycleStages": {
+      "failureDetectedMs": null,
+      "failureWallEpochMs": null,
+      "cleanupStatus": "api-finished-exit-unknown",
+      "managerStart": {
+        "startedMs": 2056081027,
+        "finishedMs": 2056082073,
+        "status": "ok"
+      },
+      "managerLaunch": {
+        "startedMs": 2056082073,
+        "finishedMs": 2056086563,
+        "status": "ok"
+      },
+      "managerStop": {
+        "startedMs": 2056089191,
+        "finishedMs": 2056089207,
+        "status": "ok"
+      },
+      "browserClose": {
+        "startedMs": 2056089146,
+        "finishedMs": 2056089191,
+        "status": "closed"
+      }
+    },
+    "elapsedSeconds": 8.179156064987183
+  },
+  "schemaVersion": 1,
+  "performanceQualification": "NOT_RUN",
+  "proxyOrTunnelConfigurationChanged": false,
+  "initialPublicFailure": {
+    "evidenceKind": "root-tool-observed-selected-response-metadata; raw HTTP dump not retained",
+    "responseDateUtc": "2026-10-25T04:17:08Z",
+    "route": "curl-bypass-environment-proxy",
+    "status": 502,
+    "edgeColo": "SEA",
+    "dnsSeconds": 0.005655,
+    "connectSeconds": 0.269917,
+    "tlsSeconds": 0.789378,
+    "ttfbSeconds": 2.219345,
+    "totalSeconds": 2.220093,
+    "responseBytes": 16,
+    "sameRequestRayCorrelation": "NOT_PROVEN"
+  },
+  "tunnelEofLines": [
+    {
+      "line": 6015,
+      "sha256Utf8WithoutNewline": "071e9e0ce165e7a82f0d1d438fb6b33f9ce07b4f50dac55702ae2a46392b852a",
+      "utc": "2026-10-25T04:17:05Z",
+      "errorClass": "origin-EOF",
+      "originService": "http://localhost:8080"
+    },
+    {
+      "line": 6016,
+      "sha256Utf8WithoutNewline": "5fe6651af0a29eb08c727d965677de4cc74a5363dbed03fd4645b9d6b27a38b5",
+      "utc": "2026-10-25T04:17:05Z",
+      "errorClass": "origin-EOF",
+      "originService": "http://localhost:8080"
+    }
+  ],
+  "correlationLimit": "Same-minute correlation only, not proved to be same request or unique root cause",
+  "browserWebSocketHandshake": {
+    "source": "native-reset-api.json summary.socketHandshakes",
+    "status": 101,
+    "edgeColo": "SEA",
+    "turnMediaPathLocation": "NOT_PROVEN"
+  }
+}

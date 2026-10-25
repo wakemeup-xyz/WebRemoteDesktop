@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "verifiedAtEpochMs": 1792905025449,
+  "signalPid": 83219,
+  "hostPid": 31867,
+  "signalSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+  "viewerSourceCommit": "6312429d6cd4b40d8769e8daba2c098fb0c25ddb",
+  "hostSourceCommit": "7ba8dcfad1d51ce826c29e1dbf4db78aba2826a4",
+  "sourceEvidence": "Root Host-only load record, unchanged component PIDs and frozen Host source SHA; not inferred from docs HEAD",
+  "viewerBuildId": "c6915df5ba8c0c6f",
+  "sourceSha256": {
+    "python-host/host.py": "d8487121ccd5114b96652c38ce729ec5da1f80885608f8fedefecf1aa4245fb2",
+    "python-host/input_handler.py": "6d7109dadaaff6e3fd360eaa1e0281d4b98224e5769c56e4f2141e0b71f4ae82",
+    "python-host/remote_desktop_write_state.py": "6e21bfa0483fa9da6bfe74db93f18a7bcbfb3df0fd40af75e6fe8cbce17c70bb",
+    "python-host/remote_keyboard_state.py": "385c39871cacf39328468f426ba3c995ab6a3cc29383b0efee2b93398706d39b",
+    "python-host/observability.py": "931b8930970087c966a7257a35d036a22fda15e3b5fea048af1f900886d057a6"
+  },
+  "localHealthOk": true,
+  "hostOnline": true,
+  "viewerCount": 0,
+  "relayViewerCount": 0,
+  "publicHealthProbes": [
+    {
+      "route": "bypass-environment-proxy",
+      "curlProxyUsed": 0,
+      "status": 200,
+      "exitCode": 0,
+      "healthyJson": true,
+      "totalSeconds": 0.983484
+    },
+    {
+      "route": "environment-proxy",
+      "curlProxyUsed": 1,
+      "status": 200,
+      "exitCode": 0,
+      "healthyJson": true,
+      "totalSeconds": 1.737342
+    }
+  ],
+  "publicManifestMatchesLocal": true,
+  "publicManifestRoute": "bypass-environment-proxy",
+  "terminalEnabled": true,
+  "terminalSessionCount": 0,
+  "terminalCleanupPendingCount": 0,
+  "cloudflaredState": "6438 Sat Oct 24 09:54:07 2026",
+  "tunnelTouched": false,
+  "safeUrlFilePresent": false,
+  "credentialsReadFrom": "current local runtime config; chat only; never persisted here",
+  "postCleanupFirstGate": {
+    "status": "NOT_PASSED",
+    "predicate": "local-health-ok AND Host-online AND Viewer-count-zero AND relay-Viewer-count-zero",
+    "individualFields": "NOT_RETAINED",
+    "failureKind": "preflight-assertion",
+    "followupAtEpochMs": 1792904687021,
+    "followupLocalHealthOk": true,
+    "followupHostOnline": true,
+    "followupViewerCount": 0,
+    "followupRelayViewerCount": 0,
+    "sessionEvictionOrRestart": false
+  },
+  "previousSuccessfulHealthEpochMs": 1792904785115
+}

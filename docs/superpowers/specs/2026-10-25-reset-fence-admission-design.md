@@ -4,7 +4,7 @@
 
 ## 新证据与目标
 
-- 当前加载 Signal/Viewer/Host 为 `6312429`，Viewer build `c6915df5ba8c0c6f`；main `1363bcb` 仅追加文档，工作区开始时干净。
+- 规划开始时基线：Signal/Viewer/Host 为 `6312429`，Viewer build `c6915df5ba8c0c6f`；main `1363bcb` 仅追加文档，工作区开始时干净。实施后的分组件加载状态见[运行复核](../reports/2026-10-25-reset-fence-admission-review.md)。
 - 上轮健康 reset RTT p95 约276ms，Host/产品处理远小于总等待；不能把剩余时间直接称为单向网络。当前公网出现一次502，cloudflared同分钟记录origin EOF，随后canonical health恢复200。本地/Host始终在线，原因尚未完全定位。
 - 纯模型复现：普通写入seq1成功；reset seq3返回sequence-gap；迟到普通seq2成功；rewind后的新reset seq2返回duplicate。这不是reset实际执行成功的证据，可能误开安全屏障。无native、浏览器或服务输入参与该复现。
 - 减少缺口恢复所需的额外拒绝/重试往返，并消除将另一操作的重复序号误认为reset完成的情况。健康网络276ms本身不因这项修复保证下降，不更改RTT口径。

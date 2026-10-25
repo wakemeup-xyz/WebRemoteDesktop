@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "codeCommit": "7ba8dcfad1d51ce826c29e1dbf4db78aba2826a4",
+  "planCommit": "86649b7",
+  "sourceSha256": {
+    "python-host/host.py": "d8487121ccd5114b96652c38ce729ec5da1f80885608f8fedefecf1aa4245fb2",
+    "python-host/input_handler.py": "6d7109dadaaff6e3fd360eaa1e0281d4b98224e5769c56e4f2141e0b71f4ae82",
+    "python-host/remote_desktop_write_state.py": "6e21bfa0483fa9da6bfe74db93f18a7bcbfb3df0fd40af75e6fe8cbce17c70bb",
+    "python-host/remote_keyboard_state.py": "385c39871cacf39328468f426ba3c995ab6a3cc29383b0efee2b93398706d39b",
+    "python-host/observability.py": "931b8930970087c966a7257a35d036a22fda15e3b5fea048af1f900886d057a6"
+  },
+  "testRuns": [
+    {
+      "scope": "integrated-before-final-Legacy-repair",
+      "privateLogSha256": "f656a2b579d544ec939ed6d8b612f3e830ef6cdd4b9513e696fd7ecb670b100f",
+      "passed": 177,
+      "subtestsPassed": 141,
+      "durationSeconds": 141.16,
+      "failed": 0
+    },
+    {
+      "scope": "final-affected-after-Legacy-repair",
+      "privateLogSha256": "7ac9bdf3a98b51dece84401d30f97bb129b280ece7d40f0dfeea40e539cdbd98",
+      "passed": 49,
+      "subtestsPassed": 0,
+      "durationSeconds": 2.68,
+      "failed": 0
+    }
+  ],
+  "countsAreNotDistinctSum": true,
+  "nativeInputDuringOfflineTests": false,
+  "testIsolation": "pure model / AST actual-method extraction / fake Quartz and transports; no real Host import",
+  "review": {
+    "task1": "independent final CLEAN after partial-release and Legacy cursor repairs",
+    "task2": "root source/test review CLEAN",
+    "postProbeIncrement": "independent CLEAN; only allowlisted WS handshake status and CF colo; no payload subscription or product override"
+  },
+  "probe": {
+    "parentSha256": "30e8586a6c130b44434c55bae4a2a9c99c6481521f1bb5d05cd2b9bbef21faac",
+    "currentSha256": "b5309ca825b39f042773538973846c415cbf3b32f10ba798d9fdbf7e8e049479",
+    "incrementDiffSha256": "5cd6659ddeff393ce1a9b450ef1b595608381f2d6762b07bf091993b40866ec2"
+  },
+  "frontendBuildOrBroadRetest": "NOT_RUN-no-client-source-change",
+  "productionSequenceGapInjection": "NOT_RUN",
+  "businessInput": "NOT_RUN",
+  "physicalDisplay": "NOT_RUN",
+  "threeHourContinuity": "NOT_RUN",
+  "sourceEvidenceCorrection": {
+    "problem": "Old per-event SHA included trailing LF contrary to declared contract; all mappings and values unchanged",
+    "privateCorrectedAnalysisSha256": "a266b1a5681763cc4bb3fa67f3a290f9b99e0d1999757cf026f513e1e03b5cf4",
+    "status": "independent-200-of-200-source-digests-PASS"
+  },
+  "finalIndependentReview": {
+    "status": "CLEAN",
+    "sourceDigestsMatched": 200,
+    "sourceSnapshotsMatched": 2,
+    "recoveryAndFrameEndpointNumbers": "PASS",
+    "privacyAndRelativeLinks": "PASS",
+    "cpuNetworkCausalBoundaries": "PASS",
+    "nativeInputOrServiceActionsDuringReview": false
+  }
+}
