@@ -4602,6 +4602,29 @@ test('initial visible attempt binds active media without requiring a resume requ
   assert.equal(emitted[0][1].connectionAttemptId, 'attempt-initial');
 });
 
+test('connection-attempt bind is idempotent within one scope and rebinds on scope changes', () => {
+  const { WebRTC } = loadWebRTC();
+  const emitted = [];
+  WebRTC.socket = { id: 'socket-a', connected: true, emit(...args) { emitted.push(args); } };
+  WebRTC.controlState = {
+    state: 'ACTIVE', controller: true, hostOnline: true,
+    lease: { leaseId: 'lease-000000000001', leaseEpoch: 1 },
+  };
+  WebRTC.currentConnectionAttemptId = 'attempt-idempotent';
+  WebRTC.connectionAttemptSequence = 1;
+  WebRTC.networkMode = 'relay';
+
+  assert.equal(WebRTC.bindCurrentConnectionAttempt(), true);
+  assert.equal(WebRTC.bindCurrentConnectionAttempt(), true);
+  assert.equal(emitted.filter(([event]) => event === 'connection-attempt-bind').length, 1);
+
+  WebRTC.connectionAttemptSequence = 2;
+  assert.equal(WebRTC.bindCurrentConnectionAttempt(), true);
+  WebRTC.controlState.lease = { leaseId: 'lease-000000000001', leaseEpoch: 2 };
+  assert.equal(WebRTC.bindCurrentConnectionAttempt(), true);
+  assert.equal(emitted.filter(([event]) => event === 'connection-attempt-bind').length, 3);
+});
+
 test('ensureMediaActiveIfVisible clears page-hidden and replays active intent', () => {
   const { WebRTC, context } = loadWebRTC();
   const controllerSource = require('node:fs').readFileSync(

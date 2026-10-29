@@ -86,6 +86,11 @@ test('watch never references quick tunnel or local app killers', () => {
   assert.match(src, /restart-fixed-domain-tunnel\.sh/);
 });
 
+test('production watcher defaults formal probes to direct mode', () => {
+  const src = fs.readFileSync(watchPath, 'utf8');
+  assert.match(src, /WRD_FIXED_PROBE_PROXY_MODE=\"\$\{WRD_FIXED_PROBE_PROXY_MODE:-direct\}\"/);
+});
+
 test('origin-down does not restart', () => {
   const { result, out } = decide(
     { NOW_EPOCH: '1000', ORIGIN_OK: '0', FORMAL_OK: '0' },

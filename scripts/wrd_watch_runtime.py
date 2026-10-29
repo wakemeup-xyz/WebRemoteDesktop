@@ -76,6 +76,15 @@ class WatchRuntime:
                 if row['outcome'] == 'ok' and row['reason'] == 'ok':
                     return True
                 if row['outcome'] == 'failed' and row['reason'] in RECOVERABLE:
+                    # An environment-proxy observation is not an independent
+                    # formal-entry observation.  Proxy TLS/connectivity can
+                    # fail while the origin and tunnel are healthy; treating
+                    # it as a confirmed formal outage would authorize the
+                    # very tunnel restart that caused the observed outages.
+                    # Explicit direct probes remain eligible for the existing
+                    # continuous formal-down policy below.
+                    if layer == 'formal-health' and row.get('proxyMode') == 'environment':
+                        return None
                     # Auth/proxy denial, throttling, assets and missing passive
                     # samples never authorize connector recovery.
                     if row['reason'] == 'http-status' and not (row['httpStatus'] and row['httpStatus'] >= 500):

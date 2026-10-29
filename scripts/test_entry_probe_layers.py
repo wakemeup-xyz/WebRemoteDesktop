@@ -216,7 +216,8 @@ class ProductionSamplerTest(unittest.TestCase):
         clock, status = [0], [503]
         def fetch(layer, **kw):
             return (status[0], b'failed') if layer == 'formal-health' else (200, b'{"status":"ok"}')
-        sampler = LayeredSampler(ProbeBoundariesTest.config, now=lambda: clock[0], fetch=fetch)
+        sampler = LayeredSampler(ProbeBoundariesTest.config, now=lambda: clock[0], fetch=fetch,
+                                 proxy_mode='direct')
         runtime = WatchRuntime(clock_epoch='fixture')
         for tick in (0,60,120):
             clock[0] = tick

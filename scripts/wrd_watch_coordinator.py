@@ -295,7 +295,11 @@ def main(argv=None):
          'login-html': '/login.html', 'viewer-html': '/desktop.html'},
         manifest_loader=lambda: read_manifest(os.environ.get('WRD_FIXED_ASSET_MANIFEST',
             str(directory.parent / 'web-client' / 'dist' / 'asset-manifest.json'))),
-        proxy_mode=os.environ.get('WRD_FIXED_PROBE_PROXY_MODE', 'environment'))
+        # The recovery writer must not use a user's environment proxy as its
+        # only formal-entry authority.  An explicit environment mode remains
+        # available for diagnostics, but its formal failures are unknown in
+        # WatchRuntime and cannot trigger a connector restart.
+        proxy_mode=os.environ.get('WRD_FIXED_PROBE_PROXY_MODE', 'direct'))
     def preflight():
         return run_owned_probe(["/bin/bash", str(restart), "--preflight"], deadline=Deadline(5),
                                allowed_executables={"/bin/bash"})["outcome"] == "ok"
@@ -315,7 +319,10 @@ def main(argv=None):
             # Fixed fields only; never argv, credentials, request content or URL.
             record = {"at": time.time(), "status": snapshot.get("status"), "action": snapshot.get("action"),
                       "tick": snapshot.get("lastTick"), "observations": snapshot.get("observations"),
-                      "inFlight": bool(coordinator.worker), "probes": snapshot.get("probeLayers", [])}
+                      "inFlight": bool(coordinator.worker), "probes": snapshot.get("probeLayers", []),
+                      "restartActor": "watch-coordinator" if snapshot.get("operation") else None,
+                      "decisionId": (snapshot.get("operation") or {}).get("id"),
+                      "operationState": (snapshot.get("operation") or {}).get("state")}
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("a") as stream:
                 stream.write(json.dumps(record, separators=(",", ":")) + "\n")

@@ -30,6 +30,27 @@ const PAINT_ISSUE_COPY = {
   },
 };
 
+// Keep recovery release reasons bounded and specific enough for the server
+// timeline.  Reset send/rejection failures must not be flattened into a
+// timeout: the safety action is identical (release, reset barrier, explicit
+// re-acquire), but the reason distinguishes ACK, authority, and transport
+// failures in later review.
+const INPUT_RECOVERY_RELEASE_REASONS = new Map([
+  ['mouse-reset-send-failed', 'input-recovery-mouse-reset-send-failed'],
+  ['keyboard-reset-send-failed', 'input-recovery-keyboard-reset-send-failed'],
+  ['mouse-reset-retry-failed', 'input-recovery-mouse-reset-retry-failed'],
+  ['mouse-reset-ack-stale-lease', 'input-recovery-mouse-reset-ack-stale-lease'],
+  ['mouse-reset-ack-invalid-input', 'input-recovery-mouse-reset-ack-invalid-input'],
+  ['mouse-reset-ack-unsupported-code', 'input-recovery-mouse-reset-ack-unsupported-code'],
+  ['mouse-reset-ack-execution-failed', 'input-recovery-mouse-reset-ack-execution-failed'],
+  ['keyboard-reset-ack-stale-lease', 'input-recovery-keyboard-reset-ack-stale-lease'],
+  ['keyboard-reset-ack-invalid-input', 'input-recovery-keyboard-reset-ack-invalid-input'],
+  ['keyboard-reset-ack-unsupported-code', 'input-recovery-keyboard-reset-ack-unsupported-code'],
+  ['keyboard-reset-ack-execution-failed', 'input-recovery-keyboard-reset-ack-execution-failed'],
+  ['recovery-timeout', 'input-recovery-timeout'],
+  ['recovery-failed', 'input-recovery-failed'],
+]);
+
 const FRAME_TRACE_STAGES = [
   'grab', 'age_at_recv', 'worker_queue', 'prepare', 'build',
   'reformat', 'encode', 'packetize', 'encode_total',
@@ -966,7 +987,7 @@ const WebRTC = {
       // Late WebRTC offers can leave Host on a stale attempt after tunnel switch.
       // Re-assert the current attempt before the single bounded replay.
       if (reason === 'wrong-attempt' || reason === 'applied-false') {
-        this.bindCurrentConnectionAttempt();
+        this.bindCurrentConnectionAttempt({ force: true });
       }
       if (
         (reason === 'wrong-attempt' || reason === 'applied-false')
@@ -3021,10 +3042,26 @@ const WebRTC = {
   },
 
   signalingConnectBudgetMs: 5000,
+  // A single opening WebSocket timeout may indicate a blocked path, but it
+  // must not pin every later reconnect to polling for the lifetime of the
+  // viewer session. Keep the fallback long enough for the next bounded retry,
+  // then probe WebSocket again.
+  signalingPollingFallbackTtlMs: 30000,
 
   // This identity follows explicit user connections, independently of media attempts.
   resetSignalingSession() {
-    this._signalingSession = { preferPolling: false, failure: null, capturedAtMs: null };
+    const previous = this._signalingSession;
+    if (previous?.pollingFallbackTimer != null) {
+      try { clearTimeout(previous.pollingFallbackTimer); } catch (_) {}
+    }
+    if (previous?.transportUpgradeCleanup) {
+      try { previous.transportUpgradeCleanup(); } catch (_) {}
+    }
+    this._signalingSession = {
+      preferPolling: false, preferPollingUntilMs: null, pollingFallbackTimer: null,
+      transportUpgradeCleanup: null,
+      failure: null, capturedAtMs: null,
+    };
     return this._signalingSession;
   },
 
@@ -3046,6 +3083,82 @@ const WebRTC = {
     const elapsed = now !== null && session.capturedAtMs !== null ? now - session.capturedAtMs : null;
     return Object.freeze({ ...session.failure,
       ageMs: typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= 3600000 ? elapsed : null });
+  },
+
+  expireSignalingPollingFallback(session, manager) {
+    if (!session || this._signalingSession !== session) return false;
+    if (session.transportUpgradeCleanup) {
+      try { session.transportUpgradeCleanup(); } catch (_) {}
+      session.transportUpgradeCleanup = null;
+    }
+    session.pollingFallbackTimer = null;
+    session.preferPolling = false;
+    session.preferPollingUntilMs = null;
+    try {
+      if (manager && manager === this.socket?.io) {
+        manager.opts.transports = ['websocket', 'polling'];
+      }
+    } catch (_) {}
+    return true;
+  },
+
+  watchSignalingEngineUpgrade(socket, session, manager) {
+    if (!socket || !session || this._signalingSession !== session) return false;
+    if (session.transportUpgradeCleanup) return true;
+    let engine = null;
+    try { engine = manager?.engine; } catch (_) {}
+    if (!engine || typeof engine.on !== 'function') return false;
+    const onUpgrade = () => {
+      if (this._signalingSession !== session || this.socket !== socket) return;
+      let transport = null;
+      try { transport = engine.transport?.name; } catch (_) {}
+      if (transport === 'websocket') this.expireSignalingPollingFallback(session, manager);
+    };
+    try {
+      engine.on('upgrade', onUpgrade);
+      session.transportUpgradeCleanup = () => {
+        try {
+          if (typeof engine.off === 'function') engine.off('upgrade', onUpgrade);
+          else if (typeof engine.removeListener === 'function') engine.removeListener('upgrade', onUpgrade);
+        } catch (_) {}
+      };
+      return true;
+    } catch (_) { return false; }
+  },
+
+  armSignalingPollingFallback(session, manager) {
+    if (!session || this._signalingSession !== session) return false;
+    const ttl = Number(this.signalingPollingFallbackTtlMs);
+    if (!Number.isFinite(ttl) || ttl <= 0) return false;
+    if (session.pollingFallbackTimer != null) {
+      try { clearTimeout(session.pollingFallbackTimer); } catch (_) {}
+    }
+    session.pollingFallbackTimer = setTimeout(() => {
+      this.expireSignalingPollingFallback(session, manager);
+    }, ttl);
+    session.pollingFallbackTimer?.unref?.();
+    return true;
+  },
+
+  noteSignalingTransportConnected(socket) {
+    const session = this._signalingSession;
+    if (!session || socket !== this.socket) return false;
+    let transport = null;
+    let manager = null;
+    try {
+      manager = socket.io;
+      transport = manager?.engine?.transport?.name;
+    } catch (_) {}
+    if (transport === 'websocket') {
+      this.expireSignalingPollingFallback(session, manager);
+      return true;
+    }
+    if (transport === 'polling' && session.preferPolling) {
+      this.armSignalingPollingFallback(session, manager);
+      this.watchSignalingEngineUpgrade(socket, session, manager);
+      return true;
+    }
+    return false;
   },
 
   recordSignalingFailure(error, socket, manager, session) {
@@ -3074,6 +3187,11 @@ const WebRTC = {
         options.transports = nextTransports;
         if (options.transports === nextTransports) {
           session.preferPolling = true;
+          const now = this.signalingMonotonicNow();
+          const ttl = Number(this.signalingPollingFallbackTtlMs);
+          session.preferPollingUntilMs = now !== null && Number.isFinite(ttl) && ttl > 0
+            ? now + ttl : null;
+          this.armSignalingPollingFallback(session, manager);
           fallbackSelected = true;
         }
       }
@@ -3117,7 +3235,14 @@ const WebRTC = {
   resolveSignalingTransports({ allowPolling = true } = {}) {
     // Websocket-first keeps formal cold path fast; polling remains a fallback when WS is blocked.
     if (allowPolling === false) return ['websocket'];
-    return this._signalingSession?.preferPolling ? ['polling', 'websocket'] : ['websocket', 'polling'];
+    const session = this._signalingSession;
+    if (session?.preferPolling && session.preferPollingUntilMs !== null) {
+      const now = this.signalingMonotonicNow();
+      if (now !== null && now >= session.preferPollingUntilMs) {
+        this.expireSignalingPollingFallback(session, this.socket?.io);
+      }
+    }
+    return session?.preferPolling ? ['polling', 'websocket'] : ['websocket', 'polling'];
   },
 
   buildSignalingSocketOptions({ token, reconnection = true, allowPolling = true } = {}) {
@@ -3896,6 +4021,7 @@ const WebRTC = {
     onCurrentSocket('connect', async () => {
       this.stopControlHeartbeat();
       this._controlHeartbeatCapability = null;
+      this.noteSignalingTransportConnected(socket);
       this.ensureDesktopSessionState()?.applyConnection({
         attemptId: this.currentConnectionAttemptId,
         state: 'online',
@@ -4173,7 +4299,11 @@ const WebRTC = {
       Input._recoveryControlReacquireRequired = true;
       if (Input._recoveryCycle) Input._recoveryCycle.retryAvailable = false;
     }
-    this.releaseControl('input-recovery-timeout', { preserveAcquireIntent: true });
+    const recoveryReason = typeof Input !== 'undefined'
+      ? Input._recoveryCycle?.reason : null;
+    const releaseReason = INPUT_RECOVERY_RELEASE_REASONS.get(recoveryReason)
+      || 'input-recovery-timeout';
+    this.releaseControl(releaseReason, { preserveAcquireIntent: true });
     return true;
   },
 
@@ -5720,12 +5850,31 @@ const WebRTC = {
     return true;
   },
 
-  bindCurrentConnectionAttempt() {
+  bindCurrentConnectionAttempt({ force = false } = {}) {
     const lease = this.activeLeaseEnvelope();
     if (!lease || !this.socket?.connected || !this.currentConnectionAttemptId) return false;
     if (!Number.isSafeInteger(this.connectionAttemptSequence) || this.connectionAttemptSequence < 1) {
       return false;
     }
+    const scope = {
+      socket: this.socket,
+      socketId: this.socket.id || null,
+      connectionAttemptId: this.currentConnectionAttemptId,
+      connectionAttemptSequence: this.connectionAttemptSequence,
+      leaseId: lease.leaseId,
+      leaseEpoch: lease.leaseEpoch,
+      networkMode: this.networkMode || '',
+    };
+    const previous = this._connectionAttemptBindScope;
+    const sameScope = previous
+      && previous.socket === scope.socket
+      && previous.socketId === scope.socketId
+      && previous.connectionAttemptId === scope.connectionAttemptId
+      && previous.connectionAttemptSequence === scope.connectionAttemptSequence
+      && previous.leaseId === scope.leaseId
+      && previous.leaseEpoch === scope.leaseEpoch
+      && previous.networkMode === scope.networkMode;
+    if (sameScope && !force) return true;
     this.socket.emit('connection-attempt-bind', {
       schemaVersion: 1,
       connectionAttemptId: this.currentConnectionAttemptId,
@@ -5734,6 +5883,7 @@ const WebRTC = {
       leaseEpoch: lease.leaseEpoch,
       networkMode: this.networkMode || undefined,
     });
+    this._connectionAttemptBindScope = scope;
     return true;
   },
 

@@ -54,6 +54,36 @@ class WatchRuntimeTest(unittest.TestCase):
             r.tick(0, observation)
             self.assertEqual(r.tick(1000, observation)["action"], "none")
 
+    def test_environment_proxy_formal_failure_is_unknown_and_cannot_restart(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(clock_epoch="a")
+        formal = probe_result("formal-health", outcome="failed", stage="tls",
+                              reason="tls-failed", proxy="environment")
+        for tick in (0, 180, 360, 540, 720):
+            state = r.tick(tick, {"origin": True, "formal": False,
+                                  "probes": [
+                                      probe_result("origin-health", outcome="ok", reason="ok"),
+                                      formal,
+                                  ]})
+            self.assertEqual(state["observations"]["formal"], None)
+            self.assertEqual(state["action"], "none")
+        self.assertIsNone(r.snapshot()["failStartedAt"])
+
+    def test_environment_proxy_formal_http_failure_is_unknown_and_cannot_restart(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(clock_epoch="a")
+        formal = probe_result("formal-health", outcome="failed", stage="headers",
+                              reason="http-status", status=503, proxy="environment")
+        for tick in (0, 180, 360, 540, 720):
+            state = r.tick(tick, {"origin": True, "formal": False,
+                                  "probes": [
+                                      probe_result("origin-health", outcome="ok", reason="ok"),
+                                      formal,
+                                  ]})
+            self.assertIsNone(state["observations"]["formal"])
+            self.assertEqual(state["action"], "none")
+        self.assertIsNone(r.snapshot()["failStartedAt"])
+
 
 if __name__ == "__main__":
     unittest.main()

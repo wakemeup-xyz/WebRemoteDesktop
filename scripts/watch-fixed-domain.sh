@@ -650,8 +650,10 @@ main() {
   export WRD_FIXED_WATCH_MAX_RESTARTS WRD_FIXED_WATCH_WINDOW_SEC
   export WRD_FIXED_FORMAL_HEALTH_URL WRD_FIXED_ORIGIN_HEALTH_URL
   # Layered production probes retain redacted JSON, share one 15s budget and
-  # sample HTML/core assets every 300s; environment proxy remains the default.
-  export WRD_FIXED_PROBE_PROXY_MODE="${WRD_FIXED_PROBE_PROXY_MODE:-environment}"
+  # sample HTML/core assets every 300s. Recovery authority uses direct formal
+  # entry checks by default; environment proxy is diagnostic-only and cannot
+  # authorize connector recovery in WatchRuntime.
+  export WRD_FIXED_PROBE_PROXY_MODE="${WRD_FIXED_PROBE_PROXY_MODE:-direct}"
   export WRD_FIXED_ASSET_MANIFEST="${WRD_FIXED_ASSET_MANIFEST:-$SCRIPT_DIR/../web-client/dist/asset-manifest.json}"
 
   if [ "$WRD_FIXED_WATCH_ONCE" = "1" ]; then

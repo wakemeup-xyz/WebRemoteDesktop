@@ -1197,6 +1197,41 @@ test('control reset protocol: actual recovery control button sends accepted rese
   assert.deepEqual(h.emitted[resetIndex].payload.inputIds, wire.inputIds);
 });
 
+test('input recovery release preserves the reset failure reason for server correlation', () => {
+  const h = readyControlResetFixture();
+  h.Input._recoveryCycle = {
+    state: 'failed', generation: 2, reason: 'keyboard-reset-send-failed',
+    leaseId: h.lease.leaseId, leaseEpoch: h.lease.leaseEpoch,
+    attemptId: h.WebRTC.currentConnectionAttemptId,
+    mouseConfirmed: false, keyboardConfirmed: false, retryAvailable: true,
+  };
+  assert.equal(h.WebRTC.requestControlRecovery(2), true);
+  const release = h.emitted.find(e => e.event === 'control-release');
+  assert.ok(release);
+  assert.equal(release.payload.reason, 'input-recovery-keyboard-reset-send-failed');
+  assert.equal(h.WebRTC.hasActiveControl(), false);
+});
+
+for (const reason of [
+  'keyboard-reset-ack-stale-lease',
+  'keyboard-reset-ack-invalid-input',
+  'keyboard-reset-ack-execution-failed',
+]) {
+  test(`input recovery release preserves ${reason}`, () => {
+    const h = readyControlResetFixture();
+    h.Input._recoveryCycle = {
+      state: 'failed', generation: 2, reason,
+      leaseId: h.lease.leaseId, leaseEpoch: h.lease.leaseEpoch,
+      attemptId: h.WebRTC.currentConnectionAttemptId,
+      mouseConfirmed: false, keyboardConfirmed: false, retryAvailable: true,
+    };
+    assert.equal(h.WebRTC.requestControlRecovery(2), true);
+    const release = h.emitted.find(e => e.event === 'control-release');
+    assert.ok(release);
+    assert.equal(release.payload.reason, `input-recovery-${reason}`);
+  });
+}
+
 for (const reason of ['host-offline', 'control-heartbeat-rejected', undefined]) {
   test(`control reset protocol: real freeze preserves diagnostic reason (${reason})`, () => {
     const h = readyControlResetFixture();

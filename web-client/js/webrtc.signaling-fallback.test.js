@@ -87,6 +87,70 @@ test('actual browser Socket.IO 4.8.3 stalled WS timeout changes the existing nex
   f.dispose();
 });
 
+test('polling fallback expires and restores websocket-first for later retries', () => {
+  const f = fixture();
+  f.advance(5000);
+  assert.equal(f.rtc._signalingSession.preferPolling, true);
+  assert.deepEqual(Array.from(f.rtc.resolveSignalingTransports()), ['polling', 'websocket']);
+  f.advance(f.rtc.signalingPollingFallbackTtlMs - 1);
+  assert.equal(f.rtc._signalingSession.preferPolling, true);
+  f.advance(1);
+  assert.equal(f.rtc._signalingSession.preferPolling, false);
+  assert.deepEqual(Array.from(f.rtc.resolveSignalingTransports()), ['websocket', 'polling']);
+  assert.deepEqual(Array.from(f.socket.io.opts.transports), ['websocket', 'polling']);
+  f.dispose();
+});
+
+test('a successful websocket connection clears the temporary polling preference', () => {
+  const f = fixture();
+  f.advance(5000);
+  assert.equal(f.rtc._signalingSession.preferPolling, true);
+  f.socket.io.engine.transport.name = 'websocket';
+  assert.equal(f.rtc.noteSignalingTransportConnected(f.socket), true);
+  assert.equal(f.rtc._signalingSession.preferPolling, false);
+  assert.deepEqual(Array.from(f.socket.io.opts.transports), ['websocket', 'polling']);
+  f.dispose();
+});
+
+test('an Engine.IO polling-to-websocket upgrade clears the temporary preference', () => {
+  const f = fixture();
+  f.advance(5000);
+  let upgrade = null; let removed = false;
+  const engine = { transport: { name: 'polling' }, on(event, callback) { if (event === 'upgrade') upgrade = callback; },
+    off(event, callback) { removed = event === 'upgrade' && callback === upgrade; } };
+  const manager = { engine, opts: { transports: ['polling', 'websocket'] } };
+  const socket = { io: manager };
+  f.rtc.socket = socket;
+  assert.equal(f.rtc.noteSignalingTransportConnected(socket), true);
+  assert.equal(f.rtc._signalingSession.preferPolling, true);
+  engine.transport.name = 'websocket';
+  upgrade();
+  assert.equal(f.rtc._signalingSession.preferPolling, false);
+  assert.deepEqual(Array.from(manager.opts.transports), ['websocket', 'polling']);
+  assert.equal(removed, true);
+  f.dispose();
+});
+
+test('resetting the signaling session retires a stale Engine upgrade listener', () => {
+  const f = fixture();
+  f.advance(5000);
+  let upgrade = null; let removed = false;
+  const engine = { transport: { name: 'polling' }, on(event, callback) { if (event === 'upgrade') upgrade = callback; },
+    off(event, callback) { removed = event === 'upgrade' && callback === upgrade; } };
+  const manager = { engine, opts: { transports: ['polling', 'websocket'] } };
+  const socket = { io: manager };
+  f.rtc.socket = socket;
+  f.rtc.noteSignalingTransportConnected(socket);
+  const oldSession = f.rtc._signalingSession;
+  f.rtc.resetSignalingSession();
+  assert.equal(removed, true);
+  engine.transport.name = 'websocket';
+  upgrade();
+  assert.equal(oldSession.preferPolling, true);
+  assert.equal(f.rtc._signalingSession.preferPolling, false);
+  f.dispose();
+});
+
 test('actual hard WS error falls through to polling within the original Engine and budget', () => {
   const f = fixture(); const engine = f.socket.io.engine;
   f.advance(200); f.websockets[0].onerror({ message: 'CANARY_PRIVATE' });
