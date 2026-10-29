@@ -1,6 +1,6 @@
 # 控制恢复与入口监测优化实施记录
 
-日期：2026-10-30（Asia/Shanghai）。承接[最近日志复核](2026-10-30-recent-log-review.md)和设计/计划文档。本轮完成代码与离线 review，但保留了生产加载边界：当前 Signal/Host 未重启，前端新 dist 未替换，避免中断尚未确认归属的 Viewer；tunnel 没有操作。
+日期：2026-10-30（Asia/Shanghai）。承接[最近日志复核](2026-10-30-recent-log-review.md)和设计/计划文档。本轮完成代码与离线 review。Signal/Host 未重启，tunnel 没有操作；前端 dist 已通过原子构建更新，当前 Viewer 不会被强制断开，刷新后会加载新代码。
 
 ## 已实现
 
@@ -15,10 +15,10 @@
 - watcher shell/LaunchAgent fixture：26 tests passed。
 - 前端 `webrtc.test.js`：426 tests passed。
 - signaling fallback + input continuity + diagnostic：156 tests passed；新增 reason 与 polling upgrade 测试均通过。
-- 私有前端构建通过：buildId `2ead120ba885641c`，manifest SHA `2100558e5e65c6e4698ff374337724ec8427f4ae93635f2db3d4e5e95bf81d85`。构建输出位于临时目录，未写入生产 `web-client/dist`。
+- 私有前端构建通过后已原子更新生产 dist：buildId `2ead120ba885641c`；本地和正式域名 `asset-manifest.json` 均返回该 buildId，desktopJs 为 `assets/desktop-core.f40085d1a3f90619.js`。Signal/Host 未重启，现有页面需刷新加载新资源。
 
 ## 加载状态与剩余边界
 
-只重载了 `com.webremotedesktop.fixed-watch` watcher；重载后 state 显示 `proxyMode=direct`、origin/formal均 healthy、action=none、无 in-flight recovery。Signal PID1263、Host PID1251 未重启，cloudflared 未操作。当前服务本地 health/Host 在线，但仍有一个未确认归属的 Viewer，占用 slot；因此没有执行会断开它的 Signal/Host 重启，也没有替换生产 dist。
+只重载了 `com.webremotedesktop.fixed-watch` watcher；重载后 state 显示 `proxyMode=direct`、origin/formal均 healthy、action=none、无 in-flight recovery。Signal PID1263、Host PID1251 未重启，cloudflared 未操作。当前服务本地 health/Host 在线，但仍有一个未确认归属的 Viewer，占用 slot；因此没有执行会断开它的 Signal/Host 重启。
 
 本轮没有做真实业务键鼠输入、物理显示、3小时连续性或 tunnel 实际重启验收。Watcher 修复可以阻止后续环境代理 false positive 触发 connector recovery，但不能从历史日志反推 SIGTERM 的最终发送者；该根因仍需只读检查 watcher/launchd/worker 的完整 decision 链。

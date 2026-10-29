@@ -45,9 +45,9 @@
 **Owner:** root
 
 - [x] 运行 Task1–3 定向测试、静态 diff、独立 review；不执行会发布 dist 的默认 pretest。
-- [x] 若客户端源码变化，完成私有构建前置审查并确认当前 Viewer 占位；本轮暂不重启 Signal/Host，避免中断未确认会话；不操作 tunnel。每次本地重启前已读 README/runbook/服务规则。
+- [x] 若客户端源码变化，完成私有构建并原子更新 dist；确认当前 Viewer 占位，本轮暂不重启 Signal/Host，避免中断未确认会话；不操作 tunnel。每次本地重启前已读 README/runbook/服务规则。
 - [x] 做 read-only watcher fixture acceptance，证明 formal proxy TLS false positive 不再触发 connector restart；实际 tunnel restart 不在本轮运行。
 - [x] 更新实施报告，记录当前 Viewer 占位、日志覆盖、性能与未完成真实业务/可见效果/三小时资格。
 - [x] 最终 git diff/隐私/相对链接/服务健康 review，提交 main；保持服务可用并不清理未确认的 Viewer。
 
-执行事实（2026-10-30）：watcher/entry 36 Python tests + watch shell 26 Node tests；前端 `webrtc.test.js` 426 tests、signaling fallback/input continuity/diagnostic 156 tests通过。私有构建通过，buildId `2ead120ba885641c`。Watcher 仅重载 `com.webremotedesktop.fixed-watch`，未触碰 cloudflared；重载后正式 probe 为 direct、origin/formal 均 healthy、action=none。当前 Signal/Host 未重启，生产 dist 加载边界单独记录在[实施记录](../reports/2026-10-30-control-recovery-execution.md)；Viewer slot仍需确认归属。实现与review已完成，待root统一提交。
+执行事实（2026-10-30）：watcher/entry 36 Python tests + watch shell 26 Node tests；前端 `webrtc.test.js` 426 tests、signaling fallback/input continuity/diagnostic 156 tests通过。构建并加载 dist，buildId `2ead120ba885641c`；本地/正式 manifest一致。Watcher 仅重载 `com.webremotedesktop.fixed-watch`，未触碰 cloudflared；重载后正式 probe 为 direct、origin/formal 均 healthy、action=none。当前 Signal/Host 未重启；Viewer slot仍需确认归属。实现与review已完成，生产加载边界见[实施记录](../reports/2026-10-30-control-recovery-execution.md)。
