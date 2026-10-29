@@ -1,0 +1,414 @@
+{
+  "schemaVersion": 1,
+  "snapshotAtEpochMs": 1793291479969,
+  "scope": {
+    "requested": "recent several days",
+    "actual": "bounded log files; no claim of full 72h",
+    "signalStructuredUtc": "2026-10-27T17:47:28.255Z..2026-10-29T16:24:34Z",
+    "signalConsoleUtc": "2026-10-27T17:46Z..2026-10-29T16:24Z",
+    "tunnelUtc": "2026-10-27T17:46Z..2026-10-29T16:08:47Z",
+    "hostRotatedUtc": "2026-10-28T21:57:43Z..2026-10-29T16:24:09Z"
+  },
+  "sourceSnapshots": [
+    {
+      "file": "signal-server.jsonl",
+      "bytes": 8680271,
+      "lines": 3926,
+      "sha256": "61324ad7441b9b6236443ef4e6f57b4b68b1146258e0c381067810f89c04b398"
+    },
+    {
+      "file": "signal-server.log",
+      "bytes": 3542426,
+      "lines": 143749,
+      "sha256": "58d74a06001d47925ae0bbc3412c59fd63ba003c405e5a4cca0edbbe7049ce75"
+    },
+    {
+      "file": "wrd-fixed-domain.log",
+      "bytes": 73793,
+      "lines": 624,
+      "sha256": "7abaed6d813d76e19de7d831574c7e1db932f62a3791cb73b7f23de1eaae0c1f"
+    },
+    {
+      "file": "back-debug.log.3",
+      "bytes": 10483551,
+      "lines": 3884,
+      "sha256": "3891281038f257868ba97aebe7f72d4b20fc926d9fe1a2039ac5971631f967dd"
+    },
+    {
+      "file": "back-debug.log.2",
+      "bytes": 10485571,
+      "lines": 7394,
+      "sha256": "d6d1d8ce4bd09a3a63f119bfe96276f118369253b694c80ea136011830dd5a43"
+    },
+    {
+      "file": "back-debug.log.1",
+      "bytes": 10485624,
+      "lines": 24309,
+      "sha256": "34834c9682c861432074510ef0a4e4637769d3e0f59c227c94e2f7ed8a218300"
+    },
+    {
+      "file": "back-debug.log",
+      "bytes": 10185656,
+      "lines": 16053,
+      "sha256": "b3f95bf8515277f8f82d1bcb66b2a64b2d522bee97959339657f72bb9491b4d1"
+    }
+  ],
+  "currentRuntime": {
+    "apiStatus": {
+      "status": "ok",
+      "hostOnline": true,
+      "viewerCount": 1,
+      "relayViewerCount": 0,
+      "viewerEpoch": 60
+    },
+    "processLinesRedacted": "1251 <path> host.py\n 1263 <path> <path> <path> tunnel --config <path> --protocol http2 run wrd-tunnel",
+    "safeUrlFilePresent": false,
+    "tunnelPidObserved": "26104",
+    "tunnelOperationThisReview": "none",
+    "observedProcessState": {
+      "hostPid": "1251",
+      "signalPid": "1263",
+      "cloudflaredPid": "26104",
+      "hostAndSignalAlive": true,
+      "safeUrlFilePresent": false
+    }
+  },
+  "signal": {
+    "signalSocketDisconnected": 59,
+    "disconnectReasons": {
+      "ping": 43,
+      "transport-close": 12,
+      "transport-error": 1,
+      "forced": 3
+    },
+    "disconnectTransport": {
+      "pingWebsocket": 34,
+      "pingPolling": 9,
+      "transportCloseWebsocket": 11,
+      "transportClosePolling": 1,
+      "transportErrorPolling": 1
+    },
+    "graceStarted": 56,
+    "graceExpired": 43,
+    "controlTransitionFailedClosed": 54,
+    "transitionReasons": {
+      "lease-expired": 39,
+      "released": 11,
+      "controller-disconnect": 3,
+      "rebind-rejected": 1
+    },
+    "controlResetCompletedApplied": 54,
+    "viewerReconnected": 10,
+    "viewerRebindConfirmed": 9,
+    "viewerRebindFailed": 1,
+    "heartbeatMaxReceiveGapMs": {
+      "n": 137,
+      "p50": 3452,
+      "p95": 9647,
+      "p99": 50595,
+      "max": 50595
+    },
+    "heartbeatLastReceivedAgeMs": {
+      "n": 118,
+      "p50": 12608,
+      "p95": 42111,
+      "p99": 43183,
+      "max": 44466
+    },
+    "nodeHeartbeatObservation": "all missed=0; p95 typically <=2ms; does not support persistent Signal event-loop CPU as primary cause",
+    "inputRelay": {
+      "signalInputRelayed": 183,
+      "resetAckObservedApplied": 180,
+      "unauthorizedResetRejected": 2,
+      "actionObserved": "reset only in structured Signal input records; business actions not observed here"
+    },
+    "attemptBinding": {
+      "attemptIds": 59,
+      "events": 188,
+      "multiplicity": {
+        "1": 5,
+        "2": 4,
+        "3": 37,
+        "4": 7,
+        "5": 3,
+        "6": 2,
+        "9": 1
+      },
+      "interpretation": "same attempt is bound repeatedly; source code emits bind on several recovery/media paths; possible rebind race, not a log duplicate"
+    },
+    "entryWindows": {
+      "count": 2784,
+      "empty": 2688,
+      "missedWindows": 0,
+      "coverageFailures": 0
+    },
+    "heartbeatPongEvidence": {
+      "pingTimeouts": 43,
+      "pongMissing": 27,
+      "pongLaterThanPingDeadline": 16,
+      "nodeMissedSamples": 0
+    },
+    "inputRejectedUnauthorized": [
+      {
+        "action": "keyboard-reset",
+        "reason": "unauthorized",
+        "evidence": "metadata-only; old lease/authority mismatch, not packet-loss proof",
+        "timestampsUtc": [
+          "2026-10-28T16:15Z",
+          "2026-10-29T16:12Z"
+        ]
+      }
+    ]
+  },
+  "host": {
+    "structuredCoverage": "back-debug.log.3/.2/.1/current",
+    "eventCounts": {
+      "host_event_loop_lag": 11911,
+      "host_input_received": 343,
+      "host_input_result": 343,
+      "host_input_ack_sent": 343,
+      "host_input_aggregate": 201,
+      "host_media_suspended": 23,
+      "host_media_resumed": 7,
+      "host_viewer_diagnostic_summary": 6
+    },
+    "eventLoopLagMs": {
+      "n": 11911,
+      "p50": 0.925,
+      "p95": 2.763,
+      "p99": 7.374,
+      "max": 146.768
+    },
+    "windowMaxLagMs": {
+      "p50": 2.858,
+      "p95": 15.145,
+      "p99": 62.646,
+      "max": 334.391
+    },
+    "activeCaptureLastDurationMs": {
+      "p50": 50.31,
+      "p95": 157.09,
+      "max": 370.527
+    },
+    "activeCaptureThreadCpuMs": {
+      "p50": 12.48,
+      "p95": 24.85,
+      "max": 38.32
+    },
+    "activeCaptureNonCpuMs": {
+      "p50": 37.36,
+      "p95": 134.11,
+      "max": 345.408
+    },
+    "captureCadenceHz": {
+      "p50": 17.57,
+      "p95": 19.25,
+      "max": 19.43,
+      "target": 20
+    },
+    "hostCpuPercentSingleCoreEquivalentDuringCapture": {
+      "p50": 80.77,
+      "p95": 94.2,
+      "max": 99.17,
+      "scope": "758 grabbing intervals; Host process CPU, not whole machine"
+    },
+    "rssDuringActiveCaptureMiB": {
+      "p50": 529.23,
+      "p95": 540.29,
+      "max": 542.95
+    },
+    "peakRssMiB": "968.43 observed in process telemetry; current RSS and historical peak are distinct",
+    "inputResultByTransport": {
+      "resetSocketApplied": 67,
+      "otherDataChannelApplied": 276
+    },
+    "currentTail": "pcState none, capture unavailable, input queues frozen, viewer fps=0/codec unknown in the latest host window; current status still reports one Viewer"
+  },
+  "viewerMedia": {
+    "statsRows": 15583,
+    "fpsZeroRows": 11448,
+    "codec": {
+      "video/H264": 12823,
+      "unknown": 2760
+    },
+    "nonzeroLostRows": 190,
+    "freezeRows": 44,
+    "droppedFrameRows": 1,
+    "activeSessions": "normal active samples are about 19-20fps and RTT31-53ms; full aggregate mixes page-hidden/unavailable/failed probes",
+    "gateIssue": "relay candidate or socket connected is not equivalent to decoded first frame"
+  },
+  "encoder": {
+    "sampleRows": 1059,
+    "encodeMs": {
+      "p50": 6.06,
+      "p95": 16.731,
+      "max": 29.011
+    },
+    "windowMaxEncodeMs": {
+      "p50": 20.369,
+      "p95": 76.568,
+      "p99": 129.259,
+      "max": 725.347
+    },
+    "worstWindowUtc": "2026-10-29T09:13:04Z",
+    "interpretation": "encode/capture long tails correlate with critical windows; source does not prove one root cause"
+  },
+  "diagnostics": {
+    "autoFailureUploads": 23,
+    "reasons": {
+      "signal-connect-error": 16,
+      "dc-stuck": 3,
+      "recovery-failed": 2,
+      "negotiation-timeout": 2
+    },
+    "logCount": 0,
+    "reportedLogCount": null,
+    "retainedLogCount": 0,
+    "metadataOnly": true,
+    "inputTraceDroppedRange": "1574..11198 across current failures; latest 1574..1793",
+    "expiredPendingAcksRange": "1..8",
+    "inputTraceTruncatedObserved": true,
+    "rawFiles": [
+      {
+        "file": "runtime_7ba00baa9222bd59c35aa131ac74c1ef_2159dd85918f8b3ad275b55e107cce09.json",
+        "bytes": 67849,
+        "sha256": "24ea00c5d17b458b8e7608fee94da0fa0613059edebf4c1800023ae126722d3a"
+      },
+      {
+        "file": "runtime_9f44396232bafef42cac4f4d42e0fe35_dbcc24573d6f2ca623cf6e6fe9fd4cbc.json",
+        "bytes": 75779,
+        "sha256": "999075b386ae12745f39e075fac7fdcb11c1c18dcd7a81f9022ba1e0c20ad93e"
+      },
+      {
+        "file": "runtime_ba03b46317da01feb4f2033245710c74_04ecc7b04e0ff507a4b1f70f404c452e.json",
+        "bytes": 38777,
+        "sha256": "48b541fe2722c17c2db421bcf9e076a35fae25e353cfd444ec396849fcb42c6b"
+      }
+    ]
+  },
+  "directRecoveryFailureEvidence": {
+    "date": "2026-10-28",
+    "reason": "recovery-failed / keyboard-reset-send-failed",
+    "mediaHealthyAtFailure": {
+      "pcIceSctpInputDcOpen": true,
+      "hasPaintedFrame": true,
+      "decodedDelta": 38,
+      "derivedFps": 19,
+      "framesDropped": 0
+    },
+    "controlGate": "blocked; keyboard reacquire plus keyboard/mouse reset pending",
+    "interpretation": "control recovery can fail while media is healthy; not a capture/CPU-only failure"
+  },
+  "tunnel": {
+    "registered": 47,
+    "edgeUnregisteredOrLost": 43,
+    "retrying": 41,
+    "requestErrors": 9,
+    "recentThreeDayOrigin502OrEOF": "not observed in this window; older 2026-10-25 502/EOF is outside this snapshot",
+    "redundancy": "edge churn observed with parallel connections; no proof of full tunnel outage",
+    "gracefulShutdowns": 9,
+    "starts": 10,
+    "shutdownUtc": [
+      "2026-10-28T05:30:39Z",
+      "2026-10-28T09:03:40Z",
+      "2026-10-28T10:04:37Z",
+      "2026-10-28T11:05:36Z",
+      "2026-10-28T12:06:45Z",
+      "2026-10-28T13:06:46Z",
+      "2026-10-28T14:06:46Z",
+      "2026-10-28T15:07:37Z",
+      "2026-10-29T00:07:40Z"
+    ],
+    "restartUtc": [
+      "2026-10-27T17:46:28Z",
+      "2026-10-28T05:36:38Z",
+      "2026-10-28T09:09:41Z",
+      "2026-10-28T10:10:37Z",
+      "2026-10-28T11:11:45Z",
+      "2026-10-28T12:12:36Z",
+      "2026-10-28T13:12:37Z",
+      "2026-10-28T14:13:37Z",
+      "2026-10-28T15:14:36Z",
+      "2026-10-29T00:13:34Z"
+    ],
+    "lifecycleInterpretation": "Repeated SIGTERM-triggered shutdown/restart pairs are real tunnel lifecycle interruptions; this review did not operate tunnel.",
+    "shutdownPattern": {
+      "periodicity": "8 adjacent intervals about 60-61 minutes",
+      "allConnectionTermination": "four edge connections terminate near each shutdown",
+      "restartDelaySeconds": [
+        361,
+        362,
+        363,
+        371,
+        355,
+        352,
+        413,
+        421,
+        356
+      ],
+      "interpretation": "supports public entry unavailability during process lifecycle gaps; SIGTERM sender/root cause unknown; no tunnel action taken"
+    }
+  },
+  "limitations": [
+    "No foreground business mouse/key/text acceptance in this review; structured Signal input records are reset-only and Host DataChannel business events are not end-to-end viewer-visible proof.",
+    "No CPU profiler, optical presentation proof, or 3-hour continuity proof.",
+    "Many rows are automated/maintenance or page-hidden sessions; do not treat aggregate zero-FPS as user-session FPS.",
+    "Current Viewer ownership is unknown; no eviction or restart performed."
+  ],
+  "controlRecoveryAmplifiers": {
+    "stickyPollingFallback": "recordSignalingFailure sets preferPolling for whole signaling session after one WS opening timeout; source reviewed, not changed",
+    "repeatedAttemptBind": "188 bind events across59 attempt IDs; multiplicity retained in signal.attemptBinding",
+    "keyboardResetHealthyMedia": "direct diagnostic sample in directRecoveryFailureEvidence"
+  },
+  "clientHeartbeatEvidence": {
+    "source": {
+      "file": "/tmp/wrd-diag/summary/2026-10-29.ndjson",
+      "bytes": 8159,
+      "sha256": "69736f33fc161b21536fd61675633bbd482b3bdd9d324fcc6aeb1f34cbc90792"
+    },
+    "windows": [
+      {
+        "sent": 3204,
+        "acknowledged": 3194,
+        "timeouts": 9,
+        "lastAckRttMs": 597.7,
+        "maxAckRttMs": 2400.0,
+        "lastAckAgeMs": 30414.8
+      },
+      {
+        "sent": 5436,
+        "acknowledged": 5424,
+        "timeouts": 11,
+        "lastAckRttMs": 704.6,
+        "maxAckRttMs": 2431.5,
+        "lastAckAgeMs": 11727.9
+      },
+      {
+        "sent": 5574,
+        "acknowledged": 5546,
+        "timeouts": 22,
+        "lastAckRttMs": 1759.5,
+        "maxAckRttMs": 2431.5,
+        "lastAckAgeMs": 7539.0
+      },
+      {
+        "sent": 5813,
+        "acknowledged": 5771,
+        "timeouts": 36,
+        "lastAckRttMs": 988.7,
+        "maxAckRttMs": 2486.2,
+        "lastAckAgeMs": 66022.6
+      }
+    ],
+    "serverSignalRequestToAckMaxMs": 128.9513,
+    "interpretation": "client ACK tail exceeds server local bracket; not one-way network proof"
+  },
+  "reviewCorrections": {
+    "tunnelGracefulShutdownCount": 9,
+    "tunnelStartCount": 10,
+    "sigtermSource": "unknown",
+    "inputAccounting": "183 total = 180 applied + 2 unauthorized + 1 unmatched/uncategorized in current window",
+    "captureResidualNaming": "non-thread-CPU residual; not equal to pure blocking wait",
+    "mediaHealthyNaming": "media sampling/painted frame evidence, not physical display proof"
+  }
+}
