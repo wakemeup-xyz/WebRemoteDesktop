@@ -609,3 +609,21 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 正式域名完成 4 轮交替动作；Host 日志确认同一 `attemptHash` 下 `command/showDock` 与 `keyboard/batch` 均完整经过 `received → result → ack_sent`，没有中断或未授权拒绝。
 - `showDock`：ACK p95 **73.8ms**、Host apply p95 **68.6ms**、`inputToPostApplyFrameMs` p95 **202.1ms**，画面变化 3/4；`Escape`：ACK p95 **15.2ms**、Host apply p95 **11.9ms**、`inputToPostApplyFrameMs` p95 **140.7ms**，画面变化 4/4。
 - 这条结果证明“输入链路完成但画面无变化”可以由动作幂等性解释；Escape 交替动作提供了稳定的画面变化证据。它仍是独立像素变化测量，严格 marker-backed `inputToVisibleEffectMs` 继续保持缺测边界。
+
+### 当前状态复核（2026-11-01，覆盖本报告前述历史状态）
+
+后续维护窗口又完成了 10 轮正式域名 `showDock → Escape` 交替控制。10/10 轮的两类输入都收到 ACK、完成 Host apply，并在 `remoteVideo` 上检测到预期画面变化；Host 事件均按同一 attempt 经过 `received → result → ack_sent`，没有出现中断、未授权拒绝或跨会话串线。代表性耗时范围为：`showDock` ACK 约 64–83ms、Host apply 约 60–76ms、`inputToPostApplyFrameMs` 约 163–246ms；`Escape` ACK 约 4–12ms、Host apply 约 0.5–5.1ms、`inputToPostApplyFrameMs` 约 101–172ms。
+
+这组结果把“输入被接受并导致画面改变”的真实证据从短样本推进到 10 轮交替样本；它仍不等价于受控 marker-backed `inputToVisibleEffectMs`，因为正式页面尚未提供可验证的场景 marker/captureSeq/RTP/decode/paint join。
+
+以本节为当前事实来源，前文早期“生产抓帧 A/B 未完成”“输入画面仍只有单次样本”等表述属于当时的阶段性状态，已被后续 CoreGraphics 修复复测、MSS 保持默认以及本节 10 轮交替控制证据覆盖。当前服务仍为 Signal/Host 健康、无 Viewer 占槽、默认 MSS、详细 frame trace 关闭。
+
+### Goal 是否需要修改
+
+Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆盖剩余硬门槛：
+
+1. 用正式的 controlled marker/captureSeq/RTP/decode/paint 证据闭合严格 `inputToVisibleEffectMs`，不能用 ACK 或像素差异样本代替。
+2. 决定详细 frame trace 的长期策略：继续维护窗口专用并接受少量 ring eviction，或进一步做有界批处理/独立通道，使其在生产诊断窗口达到 `UNALIGNED` 以外的稳定覆盖。
+3. 完成一次真实用户物理键鼠和持续控制的长会话验收，并同时记录 RSS、CPU、FPS、丢帧、fresh capture cadence 与可见效果；当前自动化交替控制不能替代该项。
+
+这些是同一可靠性目标的未完成验收门槛，不是新增需求。完成后再把 Goal 从 `active` 改为 `complete`；在此之前不应为了“代码和离线测试已通过”提前收口。
