@@ -437,3 +437,7 @@ watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-s
 - headless Playwright 无法把 `document.hidden`/`visibilityState` 变为真实后台页；本轮没有把伪造属性当成 `page-hidden` 生产触发。`page-hidden`、active-media-stale 的代码和离线测试仍通过，但真实生产事件仍为缺测。
 
 本轮新增 watcher 模式隔离、reset completion 生产关联和正常断开槽位释放证据；Goal 继续 `active`，不修改目标范围，也不调用 `complete`。
+
+### 当前诊断摘要的权威读数
+
+本地 admin observability summary 在本轮读取到：`summaryGapCount=81`，原因聚合为 `receipt-horizon`；`ringDropCount=0` 且 `coverageSignals.ringDrop.state=observed`，说明当前 ring 没有确认丢弃；诊断摘要窗口当时没有新的 diagnostic report，因此 `logCount`、FPS、丢帧和 `inputToVisibleEffectMs` 仍按缺测处理。这比把 `unknown` 当成零更安全，也证明日志系统现在能够区分“已观察为 0”“确认非零”和“本窗口没有诊断样本”。
