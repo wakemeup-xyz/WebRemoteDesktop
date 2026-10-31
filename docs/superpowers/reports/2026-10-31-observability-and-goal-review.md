@@ -479,3 +479,9 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - `9f35389` 让入口探测发送 `Accept-Encoding: gzip, deflate`，并在 Python 侧解码 gzip/deflate 后再校验健康 JSON；此前 gzip body 未解码会把正常 `/health` 误报成 `health-invalid`。
 - `a239750` 为延迟窗口增加 `latencyProfile`，探测语义变化时清空旧历史，避免未压缩资源样本污染新 p95/p99。
 - 新 watcher fingerprint `1ff4c2a0cb0a14b320914420` 加载后首轮资源耗时约为 login 1.38 秒、viewer 1.45 秒、core asset 2.10 秒，均低于预算，状态为 `entry-healthy`。此前 core asset 未压缩传输可达约 7.2 秒；该数值不再进入当前窗口。
+
+### 60 秒资源稳定性复测
+
+最新 direct formal passive 会话持续 60 秒，61 个采样全部通过：`missing=0`、`late=0`、`identityChange=0`、`pathChange=0`、`progressAfterBaseline=true`，`pcState=connected`、`hasPaintedFrame=true`，首帧约 5.39 秒。
+
+同一时间窗的 Host 结构化统计包含 13 个 active capture 样本：实际帧率约 18.8 Hz；抓帧耗时 p50/p95/max 约 38.3/53.6/53.6 ms，线程 CPU p95 约 9.1 ms，非 CPU p95 约 46.3 ms，窗口最大抓帧约 65.6 ms、最大非 CPU 约 57.1 ms；RSS p95 约 406.6 MiB，事件循环 lag p95 约 6.2 ms。长尾仍主要来自非 CPU 等待，而不是 Python 线程 CPU 饱和。
