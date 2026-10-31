@@ -354,3 +354,12 @@ Host 轮转日志在最近窗口有 7190 个可解析事件循环样本：`lagMs
 - 重启后的 Viewer 网页密码和 Terminal admin 密码已按 runbook 从本机配置核对；密码不写入版本化日志和诊断摘要。
 
 本轮服务已保持在线，核心代码已加载；Goal 仍未完成，下一步需要真实 Viewer 会话才能补齐 attemptHash、输入 ACK、媒体 freshness、首帧和端到端输入到画面证据。
+
+## 新版本被动真实会话复测（2026-10-31 23:45 Asia/Shanghai）
+
+- 使用固定域名执行 30 秒 relay 被动会话，`status=PASS`，31 个采样，`missing=0`、`late=0`、`failedObservations=0`、`identityChange=0`、`pathChange=0`，`maxObservedNoProgressMs=83.4`。
+- Viewer/Host 实际状态为 `pcState=connected`、`mediaPhase=active`、`hasPaintedFrame=true`、H.264、relay/UDP，`framesDecoded` 从 18 增长到 608，`framesDropped=0`；`first-frame` mark 约 7902.7 ms，`signal-connected` mark 约 6191.6 ms。
+- Signal 新日志出现 `connection_attempt_bound`，correlation 同时包含 `viewerHash` 和 `attemptHash`；说明新 attempt 关联已经进入生产进程。该会话没有发送业务键鼠/文本，因此 `signal_input_relayed`、Host apply、ACK 和 `inputToVisibleEffect` 仍保持缺测。
+- 会话结束后观察到 `transport close → viewer_disconnect_grace_started → lease-expired → control_reset_completed → viewer_disconnect_grace_expired`，随后 `/api/status` 为 `viewerCount=0`。这证明正常被动断线后的租约清理和槽位释放在新版本中实际生效；它仍不是 `page-hidden` 或 active-media-stale 的生产触发样本。
+
+这次复测把“新版本能建立稳定媒体、带 attemptHash、结束后释放槽位”推进到生产证据，但核心 Goal 的真实业务输入、输入 ACK、输入到画面、active-stall stale 释放和短断线后持续控制仍未闭环。
