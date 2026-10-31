@@ -731,3 +731,13 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 本轮复核测试：Node 诊断/运行时/入口集合 **87/87 PASS**，受控场景/采集器 **79/79 PASS**，Python 隧道/双阶段 worker/连接诊断 **11/11 PASS**。首次 Python 命令因缺少 `PYTHONPATH=python-host` 未执行测试，随后按项目环境重跑并通过；该命令环境问题不计入产品失败。
 
 本节只更新当前运行和覆盖证据，不改变 Goal 的完成边界。严格 marker-backed `inputToVisibleEffectMs`、物理键鼠/OS reserved、reset fault injection 和真实用户长会话仍保持未验收；Goal 继续为 `active`。
+
+## 2026-11-01 05:15–05:18 现版本协议复测与 tunnel 后半段降档
+
+- 现版本 `runtime_reliability_acceptance_final.py` 完成：恢复 **20/20 PASS**，p50 **321ms**、p95 **533ms**、max **535ms**；暂停 15 秒期间 payload 字节增量 **0**、帧增量 **0**；浏览器协议键盘、鼠标、single-desktop 接管均 **PASS**。
+- 同一轮 tunnel 媒体恢复 **20/20 PASS**，p50 **436.5ms**、p95 **442ms**。前段 ACK 稳定在约 10–15ms，但后段 relay worker 出现 `pendingRelayFrames`、`dropped/coalesced` 增加，profile 由 medium 经过 low 最终降至 survival；Host 结构化样本中的 capture p95/max 约 **123/152ms**，encode p95/max 约 **11/12ms**。
+- 该降档仍由 `pre-capture-backpressure` 触发，而非 Signal/Host 输入 ACK 丢失；本轮没有发现新的 `attemptHash` 缺失。下一项性能工作应继续区分“native capture wall time 足够慢”和“relay delivery/在途槽位造成的 backpressure”，避免通过单纯降档把短时队列压力放大成长期低 FPS。
+- 复测退出后，Viewer 槽位在约 30 秒 grace 窗口内从 1 回收到 `viewerCount=0`；Signal/Host 未重启，quick tunnel 未操作。
+- 复测期间 Host 曾记录 `event_loop.maxLagMs≈130ms`、`p99≈130ms`、当前 `lagMs` 已恢复到约 0–4ms，`schedulerLoadRatio≈0.39–0.48` 为 normal。该长尾发生在浏览器/Peer 清理和重绑定窗口，当前证据不足以归因于 CPU 饱和；应继续保留 max/p99 与 capture non-CPU 字段联合观察。
+
+本轮仍不把浏览器协议样本替代物理键鼠、严格 marker-backed visible effect、reset fault injection 或真实用户长会话；Goal 继续为 `active`。
