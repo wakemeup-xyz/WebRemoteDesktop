@@ -25,6 +25,7 @@ class WatchRuntime:
         self.state.setdefault("quarantineUntil", None)
         self.state.setdefault("quarantinedCount", 0)
         self.state.setdefault("lastMono", None)
+        self.state.setdefault("assetsObserved", False)
         old_epoch = self.state.get("clockEpoch")
         if old_epoch != clock_epoch and state:
             self.state["quarantinedCount"] = max(self.state["quarantinedCount"], len(self.state["recoveries"]))
@@ -93,8 +94,31 @@ class WatchRuntime:
                         return None
                     return False
                 return None
+            def asset_value(row):
+                if not row or row['outcome'] == 'unknown':
+                    return None
+                if row['outcome'] == 'ok' and row['reason'] == 'ok':
+                    return True
+                # Asset failures are entry degradation evidence only. They are
+                # deliberately never fed into the formal tunnel-recovery
+                # authority above.
+                if row['outcome'] == 'failed' and row['reason'] in {
+                        'http-status', 'http-auth', 'health-invalid', 'content-limit',
+                        'empty-content', 'invalid-target', 'invalid-manifest'}:
+                    return False
+                return None
+            asset_rows = [by_layer.get(layer) for layer in
+                          ('login-html', 'viewer-html', 'core-asset') if by_layer.get(layer)]
+            asset_value_result = None
+            if asset_rows:
+                self.state['assetsObserved'] = True
+                values = [asset_value(row) for row in asset_rows]
+                asset_value_result = False if False in values else True if all(value is True for value in values) else None
             observations = {'origin': health_value('origin-health'),
-                            'formal': health_value('formal-health')}
+                            'formal': health_value('formal-health'),
+                            'assets': asset_value_result}
+            if not asset_rows:
+                observations['assets'] = self.state.get('observations', {}).get('assets')
         self.state["observations"] = {key: observations.get(key) if type(observations.get(key)) is bool else None
                                       for key in ("origin", "formal", "assets")}
         self.state["action"] = "none"
@@ -107,7 +131,15 @@ class WatchRuntime:
         origin, formal = self.state["observations"]["origin"], self.state["observations"]["formal"]
         if origin is not True or formal is not False:
             self.state["failStartedAt"] = None
-            self.state["status"] = ("entry-healthy" if layered else "healthy") if origin and formal else "origin-down" if origin is False else "unknown"
+            if origin and formal:
+                if self.state["observations"].get("assets") is False:
+                    self.state["status"] = "entry-degraded"
+                elif self.state.get("assetsObserved") and self.state["observations"].get("assets") is None:
+                    self.state["status"] = "entry-unknown"
+                else:
+                    self.state["status"] = "entry-healthy" if layered else "healthy"
+            else:
+                self.state["status"] = "origin-down" if origin is False else "unknown"
         else:
             if self.state["failStartedAt"] is None:
                 self.state["failStartedAt"] = now

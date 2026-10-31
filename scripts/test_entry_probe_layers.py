@@ -161,6 +161,55 @@ class ProbeBoundariesTest(unittest.TestCase):
         self.assertEqual(sizes, [65537, 65537])
 
 class ProductionSamplerTest(unittest.TestCase):
+    def test_production_entry_paths_match_served_assets(self):
+        from scripts.wrd_watch_coordinator import DEFAULT_ENTRY_PATHS, LayeredSampler
+        self.assertEqual(DEFAULT_ENTRY_PATHS, {'login-html': '/index.html', 'viewer-html': '/viewer.html'})
+        calls = []
+        def fetch(layer, **kwargs):
+            calls.append((layer, kwargs['target']))
+            return 200, b'{"status":"ok"}' if layer.endswith('-health') else b'<html>served</html>'
+        sampler = LayeredSampler({
+            'origin': 'https://link.stockhub.wiki/health',
+            'formal': 'https://link.stockhub.wiki/health',
+            **DEFAULT_ENTRY_PATHS,
+            'manifest': {'desktopJs': 'assets/desktop-core.0123456789abcdef.js'},
+        }, fetch=fetch, now=lambda: 0)
+        rows = {row['layer']: row for row in sampler()['probes']}
+        self.assertEqual(rows['login-html']['outcome'], 'ok')
+        self.assertEqual(rows['viewer-html']['outcome'], 'ok')
+        self.assertEqual(rows['core-asset']['outcome'], 'ok')
+        self.assertIn(('login-html', 'https://link.stockhub.wiki/index.html'), calls)
+        self.assertIn(('viewer-html', 'https://link.stockhub.wiki/viewer.html'), calls)
+        self.assertIn(('core-asset', 'https://link.stockhub.wiki/assets/desktop-core.0123456789abcdef.js'), calls)
+
+    def test_passive_external_target_is_rejected_without_network(self):
+        from scripts.wrd_watch_coordinator import read_local_passive_runtime
+        row = read_local_passive_runtime(deadline=Deadline(15, lambda: 0), base_url='https://external.invalid')
+        self.assertEqual((row['outcome'], row['reason']), ('unknown', 'invalid-target'))
+
+    def test_local_passive_runtime_is_bounded_and_metadata_only(self):
+        from unittest.mock import patch
+        from scripts.wrd_watch_coordinator import read_local_passive_runtime
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def read(self, _):
+                return b'{"status":"ok","hostOnline":true,"viewerCount":1,"relayViewerCount":0,"mediaState":"suspended","mediaFresh":false,"mediaStateAgeMs":1200,"secret":"drop"}'
+        class Opener:
+            def open(self, request, timeout):
+                self.request, self.timeout = request, timeout
+                return Response()
+        opener = Opener()
+        with patch('scripts.wrd_watch_coordinator.urllib.request.build_opener', return_value=opener):
+            row = read_local_passive_runtime(deadline=Deadline(15, lambda: 0))
+        self.assertEqual(row['outcome'], 'ok')
+        self.assertEqual(row['stage'], 'passive')
+        self.assertEqual(row['runtime'], {'hostOnline': True, 'mediaFresh': False,
+                                          'viewerCount': 1, 'relayViewerCount': 0,
+                                          'mediaState': 'suspended', 'mediaStateAgeMs': 1200})
+        self.assertNotIn('secret', json.dumps(row))
+
     def test_asset_300_health_60_cadence_skip_tick_and_no_recovery_on_asset_failure(self):
         from scripts.wrd_watch_coordinator import WatchCoordinator, LayeredSampler
         from scripts.wrd_watch_runtime import WatchRuntime
@@ -180,7 +229,7 @@ class ProductionSamplerTest(unittest.TestCase):
             self.assertEqual([at for at, layer in calls if layer == 'core-asset'], [0,300,600])
             self.assertEqual(runtime.snapshot()['lastTick']['skippedTicks'], 4)
             self.assertEqual(workers, [])
-            self.assertEqual(runtime.snapshot()['status'], 'entry-healthy')
+            self.assertEqual(runtime.snapshot()['status'], 'entry-degraded')
             self.assertNotIn('https://', (Path(directory)/'state').read_text())
 
     def test_auth_passive_unknown_and_asset_only_failure_do_not_recover(self):

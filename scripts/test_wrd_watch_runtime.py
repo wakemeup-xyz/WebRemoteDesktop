@@ -54,6 +54,32 @@ class WatchRuntimeTest(unittest.TestCase):
             r.tick(0, observation)
             self.assertEqual(r.tick(1000, observation)["action"], "none")
 
+    def test_known_asset_failure_is_entry_degraded_without_tunnel_recovery(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(clock_epoch="a")
+        rows = [probe_result("origin-health", outcome="ok", reason="ok"),
+                probe_result("formal-health", outcome="ok", reason="ok"),
+                probe_result("login-html", outcome="failed", stage="headers", reason="http-status", status=404),
+                probe_result("viewer-html", outcome="ok", reason="ok"),
+                probe_result("core-asset", outcome="ok", reason="ok")]
+        state = r.tick(0, {"probes": rows})
+        self.assertEqual(state["status"], "entry-degraded")
+        self.assertEqual(state["observations"]["assets"], False)
+        self.assertEqual(state["action"], "none")
+
+    def test_asset_observation_is_retained_between_asset_rounds(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(clock_epoch="a")
+        healthy = [probe_result("origin-health", outcome="ok", reason="ok"),
+                   probe_result("formal-health", outcome="ok", reason="ok"),
+                   probe_result("viewer-html", outcome="failed", stage="headers", reason="http-status", status=404)]
+        first = r.tick(0, {"probes": healthy})
+        second = r.tick(60, {"probes": [probe_result("origin-health", outcome="ok", reason="ok"),
+                                         probe_result("formal-health", outcome="ok", reason="ok")]})
+        self.assertEqual(first["status"], "entry-degraded")
+        self.assertEqual(second["status"], "entry-degraded")
+        self.assertEqual(second["observations"]["assets"], False)
+
     def test_environment_proxy_formal_failure_is_unknown_and_cannot_restart(self):
         from scripts.wrd_entry_health import probe_result
         r = WatchRuntime(clock_epoch="a")

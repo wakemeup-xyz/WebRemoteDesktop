@@ -17,16 +17,19 @@ import stat
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 
 if __package__:
     from .wrd_deadline import Deadline, run_owned_probe
     from .wrd_watch_runtime import WatchRuntime
-    from .wrd_entry_health import probe_layers
+    from .wrd_entry_health import probe_layers, probe_result, _NoRedirectHandler
 else:
     from wrd_deadline import Deadline, run_owned_probe
     from wrd_watch_runtime import WatchRuntime
-    from wrd_entry_health import probe_layers
+    from wrd_entry_health import probe_layers, probe_result, _NoRedirectHandler
 
 
 def atomic_state(path, state):
@@ -181,12 +184,77 @@ class LayeredSampler:
                     config['manifest'] = None
         if self.passive_summary:
             try:
-                config['passive-runtime'] = self.passive_summary()
+                config['passive-runtime'] = self.passive_summary(deadline=deadline)
+            except TypeError:
+                # Keep fixture/embedding compatibility for the historical
+                # zero-argument callback. Production uses the bounded callback
+                # below and never falls back to an unbounded request.
+                try:
+                    config['passive-runtime'] = self.passive_summary()
+                except Exception:
+                    config['passive-runtime'] = None
             except Exception:
                 config['passive-runtime'] = None
         return {'probes': probe_layers(config, deadline=deadline, fetch=self.fetch,
                                        now=self.now, include_assets=assets_due,
                                        proxy_mode=self.proxy_mode)}
+
+
+def read_local_passive_runtime(*, deadline, base_url='http://127.0.0.1:8080'):
+    """Read the local Signal status as a bounded passive runtime source.
+
+    This is a read-only loopback request. It never authenticates, opens a
+    Viewer, sends input, or authorizes tunnel recovery. The response is
+    reduced to fixed counters and media freshness fields before it reaches the
+    durable watcher state.
+    """
+    target = str(base_url or '').rstrip('/') + '/api/status'
+    timeout = min(1.5, max(0.05, deadline.remaining()))
+    try:
+        parsed = urllib.parse.urlsplit(target)
+        if (parsed.scheme, parsed.hostname, parsed.port or 80) not in {
+                ('http', '127.0.0.1', 8080), ('http', 'localhost', 8080)}:
+            return probe_result('passive-runtime', stage='passive', reason='invalid-target',
+                                proxy='direct', route='origin')
+        request = urllib.request.Request(target, headers={
+            'Accept': 'application/json', 'Cache-Control': 'no-store',
+            'User-Agent': 'WRD-Passive-Runtime/1.0'})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
+        with opener.open(request, timeout=timeout) as response:
+            status = int(response.status if hasattr(response, 'status') else response.getcode())
+            body = response.read(65537)
+        if len(body) > 65536:
+            return probe_result('passive-runtime', outcome='failed', stage='content',
+                                reason='content-limit', status=status, timeout=timeout,
+                                proxy='direct', route='origin', size=len(body))
+        payload = json.loads(body)
+        if status < 200 or status >= 300 or not isinstance(payload, dict):
+            return probe_result('passive-runtime', outcome='failed', stage='content',
+                                reason='unavailable', status=status, timeout=timeout,
+                                proxy='direct', route='origin', size=len(body))
+        runtime = {}
+        for key in ('hostOnline', 'mediaFresh'):
+            if type(payload.get(key)) is bool:
+                runtime[key] = payload[key]
+        for key in ('viewerCount', 'relayViewerCount'):
+            value = payload.get(key)
+            if type(value) is int and 0 <= value <= 999999999:
+                runtime[key] = value
+        media_state = payload.get('mediaState')
+        if media_state in {'active', 'suspended', 'stale', 'unknown'}:
+            runtime['mediaState'] = media_state
+        age = payload.get('mediaStateAgeMs')
+        if type(age) in (int, float) and 0 <= age <= 86400000:
+            runtime['mediaStateAgeMs'] = age
+        return probe_result('passive-runtime', outcome='ok', stage='passive', reason='ok',
+                            status=status, timeout=timeout, proxy='direct', route='origin',
+                            size=len(body), runtime=runtime)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return probe_result('passive-runtime', stage='passive', reason='unavailable',
+                            timeout=timeout, proxy='direct', route='origin')
+
+
+DEFAULT_ENTRY_PATHS = {'login-html': '/index.html', 'viewer-html': '/viewer.html'}
 
 
 def read_manifest(path):
@@ -289,12 +357,15 @@ def main(argv=None):
         window_s=float(os.environ.get("WRD_FIXED_WATCH_WINDOW_SEC", 3600)),
         max_recoveries=int(os.environ.get("WRD_FIXED_WATCH_MAX_RESTARTS", 2)))
     restart = directory / "restart-fixed-domain-tunnel.sh"
+    passive_url = os.environ.get('WRD_FIXED_PASSIVE_RUNTIME_URL', 'http://127.0.0.1:8080')
     sample = LayeredSampler(
         {'origin': os.environ.get('WRD_FIXED_ORIGIN_HEALTH_URL', 'http://127.0.0.1:8080/health'),
          'formal': os.environ.get('WRD_FIXED_FORMAL_HEALTH_URL', 'https://link.stockhub.wiki/health'),
-         'login-html': '/login.html', 'viewer-html': '/desktop.html'},
+         **DEFAULT_ENTRY_PATHS},
         manifest_loader=lambda: read_manifest(os.environ.get('WRD_FIXED_ASSET_MANIFEST',
             str(directory.parent / 'web-client' / 'dist' / 'asset-manifest.json'))),
+        passive_summary=lambda *, deadline: read_local_passive_runtime(
+            deadline=deadline, base_url=passive_url),
         # The recovery writer must not use a user's environment proxy as its
         # only formal-entry authority.  An explicit environment mode remains
         # available for diagnostics, but its formal failures are unknown in

@@ -27,17 +27,21 @@ REASONS = {'ok', 'not-configured', 'unavailable', 'dns-failed', 'connect-failed'
            'content-limit', 'empty-content', 'invalid-target', 'invalid-manifest', 'invalid-response'}
 ROUTES = {'origin', 'formal', 'proxy', 'unknown'}
 RECOVERABLE = {'dns-failed', 'connect-failed', 'tls-failed', 'http-status', 'health-invalid'}
+PASSIVE_MEDIA_STATES = {'active', 'suspended', 'stale', 'unknown'}
 
 
 def probe_result(layer, *, outcome='unknown', stage='content', reason='unavailable',
                  status=None, elapsed=0, timeout=0, proxy='environment', resolver='system',
-                 size=0, route=None):
-    return {'schemaVersion': 2, 'layer': layer, 'outcome': outcome, 'stage': stage,
+                 size=0, route=None, runtime=None):
+    result = {'schemaVersion': 2, 'layer': layer, 'outcome': outcome, 'stage': stage,
             'reason': reason, 'httpStatus': status, 'elapsedMs': max(0, round(elapsed * 1000, 3)),
             'timeoutMs': max(0, round(timeout * 1000, 3)), 'proxyMode': proxy,
             'resolverMode': resolver, 'bytesRead': size,
             'routeClass': route or ('origin' if layer == 'origin-health' else 'formal'),
             'observedAt': datetime.now(timezone.utc).isoformat()}
+    if isinstance(runtime, dict):
+        result['runtime'] = runtime
+    return result
 
 
 def sanitize_probe(row, layer):
@@ -66,6 +70,24 @@ def sanitize_probe(row, layer):
     status = row.get('httpStatus')
     if type(status) is int and 100 <= status <= 599:
         result['httpStatus'] = status
+    if layer == 'passive-runtime' and isinstance(row.get('runtime'), dict):
+        raw_runtime = row['runtime']
+        runtime = {}
+        for key in ('hostOnline', 'mediaFresh'):
+            if type(raw_runtime.get(key)) is bool:
+                runtime[key] = raw_runtime[key]
+        for key in ('viewerCount', 'relayViewerCount'):
+            value = raw_runtime.get(key)
+            if type(value) is int and 0 <= value <= 999999999:
+                runtime[key] = value
+        media_state = raw_runtime.get('mediaState')
+        if media_state in PASSIVE_MEDIA_STATES:
+            runtime['mediaState'] = media_state
+        age = raw_runtime.get('mediaStateAgeMs')
+        if type(age) in (int, float) and math.isfinite(age) and 0 <= age <= 86400000:
+            runtime['mediaStateAgeMs'] = age
+        if runtime:
+            result['runtime'] = runtime
     return result
 
 
