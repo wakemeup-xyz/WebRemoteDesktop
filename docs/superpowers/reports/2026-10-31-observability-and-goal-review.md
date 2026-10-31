@@ -673,3 +673,7 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 随后 30 轮活动控制出现了明显的后半段延迟上升：`showDock` ACK/Host apply 约升至 300–360ms，`inputToPostApplyFrameMs` 最高约 922ms；Host 同时记录 `systemLoad1≈38–48`、WindowServer 接近满载、fresh cadence 下降到约 4–9Hz、抓帧非 CPU 长尾最高约 **674ms**、输出复用率约 60%。同一时段另一仓库正在运行 TypeScript 编译和 pytest，系统进程列表可直接确认这些外部负载。
 
 该窗口标记为 **contaminated**，不能用来判定 WebRemoteDesktop 的低负载产品回归；它同时证明现有 Host 日志已经能把输入延迟退化与系统负载、WindowServer、抓帧非 CPU 长尾和复用率关联起来。按项目边界没有停止其他仓库进程，也没有把这段污染数据混入通过门槛。
+
+### 调度负载分类运行证明
+
+最新 Host 被动窗口已加载调度负载分类字段：`logicalCpuCount=12`、`schedulerLoadRatio=4.107–4.925`、`schedulerLoadClass=critical`。同窗抓帧最大约 **1081ms**、最大非 CPU 等待约 **1044ms**、fresh cadence 约 **3Hz**，与高负载污染表现一致。该字段只描述 runnable-work pressure，不被解释为 CPU 使用率，也不改变媒体策略；它现在可以直接作为验收证据的 contamination 标记。
