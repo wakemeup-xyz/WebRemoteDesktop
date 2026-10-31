@@ -242,3 +242,5 @@
 - `after-grace` 受控路由实测 **INCOMPLETE**：fault capability available、触发 1 次、拦截 2 个 WebSocket 请求，startup verified，但 60 秒恢复窗口内未恢复。日志显示 10:52:47Z 断开、10:52:57Z lease expired/reset completed、10:53:07Z 新 connection attempt；随后没有 `viewer_reconnected` 或 `viewer_rebind_confirmed`，因此新连接没有重新获得控制租约，最终为 `recovery-deadline`。这说明长于 grace 的恢复需要显式的重新控制/重新 admission 验收，当前 passive runner 不能把新连接当成已恢复控制。
 
 本轮把“统一脱敏”和“within-grace 短断线”推进到可复核证据，但没有把 after-grace、实际业务输入、可见效果或物理显示误报为通过。Goal 仍保持 `active`。
+
+`1d4d591` 进一步把 `coverageSignals` 写入每份 durable summary 和 `diagnostic_uploaded` 摘要事件。当前新进程已再次重载为 Signal PID `30530`、Host PID `30565`，本地健康和 Host 在线正常，cloudflared PID `26104` 与 URL 文件保持不变；该改动尚需下一次真实诊断上传后再核对生产 summary 中的三个状态字段。
