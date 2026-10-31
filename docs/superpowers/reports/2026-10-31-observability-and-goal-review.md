@@ -596,3 +596,5 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - `verify-dock-adaptive-ui.py` 现在按正式 `sendLogs` 契约构造脱敏诊断 payload，包含 bounded Viewer logs、`logReceipt`、input trace、frame trace 和 diagnostic admission，再调用现有 receipt API。
 - 最新正式验收报告已被 Signal 接收并写入 daily summary：`logReceipt.state=valid`、`reported=69`、`retained=0`、`redacted=69`、`dropped=0`，`inputTraceEventCount=17`，control heartbeat 5/5 ACK、timeouts=0；验收脚本整体 **PASS**。
 - 该报告的 `summaryGapCount`/`ringDropCount` 为 `null`，因为 Viewer 报告没有权限/来源提供全局 summary coverage；管理员 observability 接口仍单独提供 `summaryGapCount=81`、`ringDropCount=0 observed`。两层证据现在能明确区分“本报告未观测”与“全局已观察”。
+
+- 后续修正验收脚本，按 `sendLogs` 契约把 bounded Viewer logs 一起上报；最新 summary 已稳定出现 `logReceipt.valid`，而不是低层上传时的 `unknown`。这证明验收工具本身不会再制造“无日志报告”的假阴性。
