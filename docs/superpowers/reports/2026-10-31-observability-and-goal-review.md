@@ -115,3 +115,14 @@
 - Signal 当前能看到 `diagnostic_uploaded`、`signal_input_relayed`、`reset_ack`、`rebind` 和 disconnect-grace 等事件，但历史 `session_stale_detected`、`media_stalled`、`slot_released` 仍为 0；门禁的离线测试通过，生产触发证据尚不存在。watcher 最新 tick 的实际入口、core asset 和 loopback passive-runtime 均为 200/ok，当前 fingerprint `33ddf5011fe34f827b8e9918` 已被加载；tunnel SIGTERM 的历史因果仍未闭环。
 
 这次实时证据把“日志系统是否足够”定为：**症状发现足够，自动归因和可用性判定不足**。缺口不在字段名称，而在生产链路尚未加载全部新代码、真实诊断包没有把 receipt/loss 字段带入常用摘要，以及没有一次真实输入到可见画面的闭环样本。
+
+## 最终维护窗口复核（2026-10-31 15:20 后）
+
+- 三小时 passive continuity 最终为 `PASS`：`elapsedSeconds=10800.5577`、`samples=10801`、`missingSamples=0`、`lateSamples=0`、`failedObservations=0`、`identityChangeObservations=0`、`pathChangeObservations=0`，`maxObservedNoProgressMs=1133.3`，`threeHourContinuityMet=true`。这只证明被动连接和帧回调连续，不证明业务输入、可见效果或物理显示。
+- lifecycle 证据显示 `coverage.status=partial`、`missingReferences=1`、`droppedEvents=34459`、`rx=4036`、`tx=14840`、`ep=432`、`eo=432`、`ef=14840`。这些是诊断事件环和关联覆盖的真实丢失证据，尚未自动进入常用 daily summary 查询。
+- supervisor 已按授权只重启本地 Signal/Host：新 PID 为 Signal `73182`、Host `73217`，cloudflared PID `26104` 未变化；验收结束后 `/api/status` 为 `viewerCount=0`、`mediaFresh=null`、`mediaState=unknown`，槽位已释放。
+- 新 Host 版本在短 passive 会话中实际输出 freshness 字段：`reuseRatio` 约 0.14–0.26，`lastFreshCaptureAgeMs` 约 3–103 ms；窗口内抓帧最大约 311 ms、非 CPU最大约 264 ms、线程 CPU最大约 47 ms，RSS 约 424–453 MiB。
+- 同一短会话的诊断 admission 出现 `frame_timing` dropped 最高 113、`capture_stats` dropped 2，原因包含 `congested`。这不会直接等同于视频丢帧，但会削弱输入到帧关联的观测覆盖。
+- 自动验收结果：暂停恢复 20/20，p95=800 ms、max=800 ms；15 秒媒体停止、浏览器协议键盘、鼠标、tunnel 媒体恢复（p95=493 ms）通过。双 Viewer 语义为 FAIL；物理键盘、OS reserved、reset fault injection 未运行，正式入口在该协议运行中为 BLOCKED。
+
+因此 Goal 仍保持 `active`：三小时连续性和 freshness 生产字段已有证据，但诊断 receipt/loss 常用汇总、真实输入到 visible effect、物理显示、reset fault injection、capture backend A/B、诊断通道拥塞处理和 tunnel 根因仍未闭环。

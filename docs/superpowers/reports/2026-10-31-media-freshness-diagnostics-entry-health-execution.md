@@ -51,3 +51,14 @@
 - 本轮验证：watcher/runtime 19/19、entry probe 17/17、Signal signaling 131/131、diagnostic/runtime/store/reset ACK 107/107、Host observability/admission 46/46。Host rotating writer 首次并行运行时出现一次已有时序抖动，单测及完整 Python 定向集重跑通过。
 - 三小时 passive 会话仍在运行，当前约 68 分钟、4090 个采样，connected/active、约 20 FPS、丢帧 0；无业务输入、visible effect 或物理显示证据。未重启 Signal/Host，未操作 tunnel。
 - 长会话期间 `CAPTURE_STATS` 输出约 18–19.5 FPS，但每 5 秒复用缓存帧约 17–56 个；Host cadence 实际约 9–13 Hz，lifetime 抓帧 max 约 1296 ms、非 CPU约 1263 ms、线程 CPU约 33 ms。`c4a6888` 已增加 fresh capture/reuse 观测字段；Host 重载和 backend A/B 仍待维护窗口。
+
+## 最终维护窗口结果（2026-10-31）
+
+- 三小时 passive continuity：`PASS`，10800.5577 秒、10801 个采样、无 missing/late/failure/identity/path change，最大无进展 1133.3 ms；`visibleEffect`、`activeControl`、`physicalDisplay` 仍为 `NOT_RUN`。
+- lifecycle 诊断覆盖为 `partial`，`missingReferences=1`、`droppedEvents=34459`；这是观察环丢失证据，不能被三小时 PASS 掩盖。
+- supervisor 已只重启本地 Signal/Host，Signal PID `73182`、Host PID `73217`，cloudflared PID `26104` 保持不变；验收结束后 Viewer 槽位为空。
+- 重启后的短 passive 会话已在 Host 生产日志中看到 freshness 字段：`reuseRatio` 约 0.14–0.26，`lastFreshCaptureAgeMs` 约 3–103 ms；窗口内抓帧 max 约 311 ms、非 CPU max 约 264 ms、线程 CPU max 约 47 ms、RSS 约 424–453 MiB。
+- 同一短会话的诊断 admission 出现 `frame_timing` dropped 最高 113、`capture_stats` dropped 2，原因含 `congested`；这属于诊断覆盖缺口，尚未修复或转为统一告警。
+- 自动协议验收：resume 20/20，p95=800 ms、max=800 ms；媒体停止、浏览器键鼠、tunnel 媒体恢复 p95=493 ms 通过；双 Viewer FAIL，物理键盘、OS reserved、reset fault injection 未运行，正式入口 BLOCKED。
+
+最终状态：代码和离线测试已完成，三小时被动连续性及 freshness 生产字段已验证；真实输入到可见效果、物理显示、reset fault injection、receipt/loss 日汇总、诊断通道拥塞处理和 capture backend A/B 仍待完成。
