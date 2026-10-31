@@ -67,6 +67,7 @@ from observability import (
 from aiortc_media_sender import AiortcMediaSender
 from adapters import CaptureAdapter, InputAdapter, LifecycleCoordinator, MediaSenderAdapter
 from capture_experiment import CaptureExperiment
+from screen_capture_backend import create_capture_backend
 from capture_cadence import CaptureCadenceObserver, unavailable_capture_cadence
 from capture_resource_owner import CaptureResourceOwner
 from peer_cleanup_observation import PeerCleanupObservation, SEQUENCE_CAP, peer_cleanup_json
@@ -1470,7 +1471,20 @@ class ScreenCaptureTrack(VideoStreamTrack):
         super().__init__()
         if capture_strategy is not None and not isinstance(capture_strategy, CaptureExperiment):
             raise TypeError("capture_strategy must be a CaptureExperiment or None")
-        self.sct = MSS()
+        requested_capture_backend = os.environ.get("WRD_CAPTURE_BACKEND", "mss")
+        try:
+            # Keep the historical host.MSS seam for fixtures and the default
+            # production path; experimental backends are selected explicitly.
+            self.sct = (MSS() if str(requested_capture_backend or "mss").strip().lower() in {"", "mss"}
+                        else create_capture_backend(requested_capture_backend))
+        except Exception:
+            # A backend experiment must never take the production Host down.
+            # Keep the requested/active distinction in the startup log so an
+            # A/B run cannot be mistaken for CoreGraphics evidence after fallback.
+            logger.warning("Capture backend unavailable; falling back to MSS")
+            self.sct = create_capture_backend("mss")
+        self._capture_backend_requested = str(requested_capture_backend or "mss").strip().lower() or "mss"
+        self._capture_backend_name = getattr(self.sct, "name", "mss")
         self._capture_resource_owner = CaptureResourceOwner(self.sct)
         self.monitor = select_capture_monitor(self.sct.monitors, fallback_monitors=get_screeninfo_monitors())
         self.frame_count = 0
@@ -1571,12 +1585,14 @@ class ScreenCaptureTrack(VideoStreamTrack):
             raise
 
         logger.info(
-            "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s",
+            "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s, capture_backend=%s, requested_backend=%s",
             self.monitor,
             target_fps,
             max_width,
             max_height,
             HAS_CV2,
+            self._capture_backend_name,
+            self._capture_backend_requested,
         )
 
     def _capture_loop(self):
