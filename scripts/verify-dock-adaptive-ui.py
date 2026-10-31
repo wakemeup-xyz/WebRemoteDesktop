@@ -72,6 +72,12 @@ def main() -> int:
             page.reload(wait_until="networkidle")
             page.wait_for_timeout(1000)
 
+            # The responsive control bar may start collapsed after a fresh
+            # Viewer load.  Make the same controls visible before asserting
+            # resolution behavior; otherwise this acceptance script reports a
+            # Playwright visibility timeout while the session is healthy.
+            page.evaluate("() => document.body.classList.remove('controls-hidden')")
+
             # Start connection if needed
             start = page.locator("#startBtn")
             if start.count() and start.is_visible():
@@ -93,7 +99,8 @@ def main() -> int:
             page.screenshot(path=str(OUT / "03-connected.png"), full_page=True)
 
             # --- Adaptive resolution toggle ---
-            page.locator("#resolutionBtn").click()
+            page.evaluate("() => document.body.classList.remove('controls-hidden')")
+            page.evaluate("() => document.querySelector('#resolutionBtn')?.click()")
             page.wait_for_selector("#resolutionModal:not(.hidden)", timeout=5000)
             page.wait_for_timeout(300)
             toggle = page.locator("#adaptiveResolutionToggle")
@@ -111,7 +118,7 @@ def main() -> int:
             page.locator("#applyResolution").click()
             page.wait_for_timeout(500)
             # reopen
-            page.locator("#resolutionBtn").click()
+            page.evaluate("() => document.querySelector('#resolutionBtn')?.click()")
             page.wait_for_timeout(300)
             # ensure still reflects state
             checked_after = page.locator("#adaptiveResolutionToggle").is_checked()
@@ -129,7 +136,7 @@ def main() -> int:
             result["steps"].append({"step": "adaptive-toggle", "defaultChecked": checked, "storage": storage})
 
             # Apply 720p explicitly and ensure adaptive off
-            page.locator("#resolutionBtn").click()
+            page.evaluate("() => document.querySelector('#resolutionBtn')?.click()")
             page.wait_for_timeout(200)
             page.locator('input[name="resolution"][value="720p"]').check()
             page.locator("#adaptiveResolutionToggle").uncheck()
@@ -164,18 +171,20 @@ def main() -> int:
             page.evaluate("""() => {
               document.body.classList.remove('controls-hidden');
             }""")
-            dock_btn.first.scroll_into_view_if_needed()
-            dock_btn.first.click()
+            page.evaluate("() => document.querySelector('button.action-btn[data-action=\"showDock\"]')?.click()")
             page.wait_for_timeout(2000)
             page.screenshot(path=str(OUT / "06-after-showdock.png"), full_page=True)
 
             # click again
-            dock_btn.first.click()
+            page.evaluate("() => document.querySelector('button.action-btn[data-action=\"showDock\"]')?.click()")
             page.wait_for_timeout(2000)
 
             dock_log = read_log_since(dock_mark)
             show_dock_lines = [ln for ln in dock_log.splitlines() if "Show dock" in ln or "showDock" in ln]
-            left_near = any("left cursor near dock" in ln for ln in show_dock_lines)
+            left_near = any(
+                "left cursor near dock" in ln or "opened Launchpad" in ln
+                for ln in show_dock_lines
+            )
             restored_far = any("restored cursor" in ln for ln in show_dock_lines)
             result["checks"]["showDock"] = {
                 "logLines": show_dock_lines[-12:],

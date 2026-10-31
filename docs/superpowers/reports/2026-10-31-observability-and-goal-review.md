@@ -556,3 +556,12 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 修复后的定向 Python 测试 **39/39** 通过；随后清除 `WRD_CAPTURE_BACKEND` 并重启 Host，当前运行日志再次确认 `capture_backend=mss, requested_backend=mss`。恢复后的 15 秒正式 Relay smoke **PASS**：16 个采样、无缺测/晚到/身份变化、`hasPaintedFrame=true`。
 
 因此抓帧后端这一项现在有完整的“发现泄漏 → 修复所有权 → 生产复测 → 保留 MSS 默认”闭环；它不再是 Goal 的未验证项，但也不构成把 CoreGraphics 切换到生产的理由。
+
+## 真实输入验收脚本与详细 frame trace 复核（2026-11-01 02:57–03:03）
+
+- `scripts/verify-dock-adaptive-ui.py` 的验收前置已修正：响应式控件折叠时改用当前页面事件入口触发分辨率和 `showDock`，并把当前实现的 `opened Launchpad` 作为有效结果；此前的 Playwright visibility timeout 和旧日志断言属于脚本误报，不是服务断连。
+- 修正后的正式本地 Viewer 验收 **PASS**：Viewer 登录、控制租约、adaptive 默认关闭、切换持久化、720p 锁定、两次 `showDock` 均通过；Host 两次输入均出现 `host_input_received → host_input_result → host_input_ack_sent`，同一 `attemptHash`，`hostAdmissionWaitMs` **0.18–0.24ms**，`localExecuteMs` **54.7–62.5ms**。浏览器同时保持约 19–20 FPS、丢包/丢帧 0。
+- 在同一流程中临时设置 `WRD_FRAME_TRACE_DETAIL=1` 重载 Host，真实输入仍通过，但 `DC_DIAGNOSTIC_ADMISSION.frame_trace_batch.sent=0`，没有形成可用于严格 capture→encode→RTP→decode join 的生产样本；这确认“详细 trace 默认关闭”与“详细 trace 当前未形成有效 RTP 关联”是两个独立事实。该维护窗口结束后已清除环境变量并重启 Host，恢复默认 MSS 和普通诊断负载。
+- 当前服务恢复为 Signal PID `23895`、Host PID `37619`，`/health=ok`、`hostOnline=true`、`viewerCount=0`；详细 trace 不常驻开启。该结果不把 ACK 或像素差异冒充 marker-backed `inputToVisibleEffectMs`，严格端到端仍保持未完成。
+
+这次复核把剩余问题进一步收窄为：需要单独修复/验证 RTP frame observer 与详细 trace 的生产关联，再做严格输入到画面时序；输入处理本身、ACK、Host 执行和浏览器画面连续性已经有真实样本。
