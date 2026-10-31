@@ -67,13 +67,24 @@ def _id(value):
 
 
 def _hash(value):
-    if value is not None and (type(value) is not str or re.fullmatch('[0-9a-f]{16}', value) is None):
+    if value is not None and (type(value) is not str or re.fullmatch('[0-9a-f]{16,64}', value) is None):
         raise ValueError('schema-rejected')
 
 
 def hash_identity(value, salt):
     if not isinstance(value, str) or not 1 <= len(value) <= 128: return None
     return hashlib.sha256(salt + value.encode('utf-8')).hexdigest()[:16]
+
+
+def production_hash_identity(value):
+    """Match Signal/Host structured-log correlation (unsalted SHA-256/32)."""
+    if not isinstance(value, str) or not 1 <= len(value) <= 128: return None
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()[:32]
+
+
+def _matches_identity_hash(value, raw, salt):
+    if raw is None or value is None: return False
+    return value in (hash_identity(raw, salt), production_hash_identity(raw))
 
 
 def _json(data):
@@ -240,28 +251,45 @@ class ServerRecoveryEvidence:
     def _select(self, value, identities):
         if type(value) is not dict: self._fail('server-log-schema')
         name = value.get('event'); correlation = value.get('correlation', {})
-        sockets = {v for v in (identities['socketId'], identities['previousSocketId']) if v is not None}
+        # The browser-facing identities are kept only in memory. Production
+        # structured logs use bounded deidentified hashes; never accept a
+        # raw viewer/session correlation from a log line. This also lets the
+        # runner consume logs emitted after the privacy migration without
+        # changing the browser snapshot contract.
         session = identities['sessionId']
+        socket_values = tuple(v for v in (identities['socketId'], identities['previousSocketId']) if v is not None)
+        socket_hashes = {h for raw in socket_values for h in (hash_identity(raw, self._salt), production_hash_identity(raw))}
+        session_hashes = {h for h in (hash_identity(session, self._salt), production_hash_identity(session)) if h is not None}
         rebind = name in ('viewer_rebind_confirmed', 'viewer_rebind_failed')
         direct_rebind_match = False
         if rebind:
             try:
-                _keys(correlation, ('viewerId', 'previousViewerId', 'browserSessionId'))
-                if any(not _id(v) for v in correlation.values()): raise ValueError()
+                _keys(correlation, ('viewerHash', 'previousViewerHash', 'browserSessionHash'))
+                for value_hash in correlation.values(): _hash(value_hash)
             except ValueError: self._fail('server-log-schema')
             # Server observation can precede the next browser snapshot. Retain
             # only its direct stable session/known-previous link; never adopt
             # the new socket into browser identities or match other event kinds.
             direct_rebind_match = (session is not None
-                and correlation['browserSessionId'] == session
-                and correlation['previousViewerId'] in sockets)
+                and correlation['browserSessionHash'] in session_hashes
+                and correlation['previousViewerHash'] in socket_hashes)
         if type(correlation) is dict and self._reset_epoch is not None:
-            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets and not direct_rebind_match
-                or correlation.get('browserSessionId') is not None and correlation.get('browserSessionId') != session):
+            if (correlation.get('viewerHash') is not None and correlation.get('viewerHash') not in socket_hashes and not direct_rebind_match
+                or correlation.get('browserSessionHash') is not None and correlation.get('browserSessionHash') not in session_hashes):
                 self._fail('server-log-gap')
         if name not in EVENTS: return
         meta = value.get('meta')
         host = name == 'signal_socket_disconnected'
+        # Reject raw or otherwise unknown correlation keys even when the
+        # event belongs to another session. Silently skipping a malformed raw
+        # line would make the guarded evidence look complete.
+        if type(correlation) is not dict or not set(correlation) <= {
+            'viewerHash', 'previousViewerHash', 'browserSessionHash'}:
+            self._fail('server-log-schema')
+        try:
+            for value_hash in correlation.values(): _hash(value_hash)
+        except ValueError:
+            self._fail('server-log-schema')
         if host:
             if type(meta) is not dict or meta.get('role') not in ('host', 'viewer', 'relay-viewer'):
                 self._fail('server-log-schema')
@@ -271,19 +299,19 @@ class ServerRecoveryEvidence:
             if not direct_rebind_match: return
         elif not host and not reset:
             if type(correlation) is not dict: self._fail('server-log-schema')
-            if not (correlation.get('viewerId') in sockets or session is not None and correlation.get('browserSessionId') == session): return
-            if (correlation.get('viewerId') is not None and correlation.get('viewerId') not in sockets
-                or correlation.get('browserSessionId') is not None and correlation.get('browserSessionId') != session):
+            if not (correlation.get('viewerHash') in socket_hashes or session is not None and correlation.get('browserSessionHash') in session_hashes): return
+            if (correlation.get('viewerHash') is not None and correlation.get('viewerHash') not in socket_hashes
+                or correlation.get('browserSessionHash') is not None and correlation.get('browserSessionHash') not in session_hashes):
                 return
         try:
             _keys(value, ('ts', 'level', 'domain', 'event', 'message', 'source', 'schemaVersion', 'correlation', 'meta', 'redactionVersion'))
-            if type(correlation) is not dict or not set(correlation) <= {'viewerId', 'previousViewerId', 'browserSessionId', 'connectionAttemptId'}: raise ValueError()
-            if any(not _id(v) for v in correlation.values()): raise ValueError()
+            if type(correlation) is not dict or not set(correlation) <= {'viewerHash', 'previousViewerHash', 'browserSessionHash'}: raise ValueError()
+            for value_hash in correlation.values(): _hash(value_hash)
             if host or reset: _keys(correlation, ())
             elif name in ('viewer_disconnect_grace_started', 'viewer_disconnect_grace_expired'):
-                _keys(correlation, ('viewerId', 'browserSessionId'))
+                _keys(correlation, ('viewerHash', 'browserSessionHash'))
             else:
-                _keys(correlation, ('viewerId', 'previousViewerId', 'browserSessionId'))
+                _keys(correlation, ('viewerHash', 'previousViewerHash', 'browserSessionHash'))
             if value['schemaVersion'] != 1 or type(value['schemaVersion']) is not int or type(value['redactionVersion']) is not int or value['redactionVersion'] != 1: raise ValueError()
             _enum(value['level'], ('info',)); _enum(value['domain'], ('signaling',) if host else ('control',))
             if type(value['message']) is not str or len(value['message']) > 256 or value['source'] != 'signal-server': raise ValueError()
@@ -318,9 +346,16 @@ class ServerRecoveryEvidence:
             if self._reset_epoch is not None and self._reset_epoch != epoch: self._fail('server-log-gap')
             self._reset_epoch = epoch
         elif reset: self._reset_epoch = None
+        viewer_hash = None
+        session_hash = None
+        if not host:
+            session_hash = next((hash_identity(session, self._salt) for _ in (0,)
+                if session is not None and correlation.get('browserSessionHash') in session_hashes), correlation.get('browserSessionHash'))
+            viewer_hash = next((hash_identity(raw, self._salt) for raw in socket_values
+                if _matches_identity_hash(correlation.get('viewerHash'), raw, self._salt)), correlation.get('viewerHash'))
         row = {'n': len(self._events)+1, 'event': EVENTS[name], 'serverTimestampMs': timestamp,
-               'viewerHash': None if host else hash_identity(correlation.get('viewerId'), self._salt),
-               'sessionHash': None if host else hash_identity(correlation.get('browserSessionId'), self._salt),
+               'viewerHash': viewer_hash,
+               'sessionHash': session_hash,
                'leaseEpoch': epoch, 'state': state}
         self._events.append(validate_server_event(row)); self._last_time = timestamp
 

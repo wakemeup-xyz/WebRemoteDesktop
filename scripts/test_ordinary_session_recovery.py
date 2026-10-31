@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from scripts.ordinary_session_recovery import (
     ServerRecoveryEvidence, HostContinuityObserver, hash_identity,
+    production_hash_identity,
     read_local_host_status, validate_recovery_row,
 )
 
@@ -19,7 +20,8 @@ IDS = {'sessionId': 'session-canary', 'socketId': 'socket-new', 'previousSocketI
 
 def event(name='viewer_disconnect_grace_started', *, viewer='socket-old', session='session-canary', meta=None, ts='2026-10-18T01:00:00.000Z'):
     return {'ts': ts, 'level': 'info', 'domain': 'control', 'event': name, 'message': name,
-            'source': 'signal-server', 'schemaVersion': 1, 'correlation': {'viewerId': viewer, 'browserSessionId': session},
+            'source': 'signal-server', 'schemaVersion': 1, 'correlation': {
+                'viewerHash': hash_identity(viewer, SALT), 'browserSessionHash': hash_identity(session, SALT)},
             'meta': meta if meta is not None else {'graceMs': 8000}, 'redactionVersion': 1}
 
 
@@ -41,6 +43,23 @@ class LogTests(unittest.TestCase):
         encoded = json.dumps(self.e.snapshot())
         for private in ('session-canary', 'socket-old', str(self.path), 'token-canary'): self.assertNotIn(private, encoded)
         self.assertEqual(self.e.read_tick(IDS), [])
+
+    def test_current_production_hash_correlation_is_accepted_and_raw_is_rejected(self):
+        current = event()
+        current['correlation'] = {
+            'viewerHash': production_hash_identity('socket-old'),
+            'browserSessionHash': production_hash_identity('session-canary'),
+        }
+        self.e.start(); self.append(current)
+        rows = self.e.read_tick(IDS)
+        self.assertEqual(rows[0]['viewerHash'], hash_identity('socket-old', SALT))
+        self.assertEqual(rows[0]['sessionHash'], hash_identity('session-canary', SALT))
+
+        self.e.close(); self.path.write_bytes(b''); self.e = ServerRecoveryEvidence(self.path, SALT); self.e.start()
+        raw = event(); raw['correlation'] = {'viewerId': 'socket-old', 'browserSessionId': 'session-canary'}
+        self.append(raw)
+        with self.assertRaisesRegex(ValueError, '^server-log-schema$'):
+            self.e.read_tick(IDS)
 
     def test_reset_only_after_matching_expiry(self):
         self.e.start()
@@ -350,7 +369,9 @@ class AdditionalLogTests(unittest.TestCase):
     def test_confirmed_rebind_and_duplicate_reset_projection(self):
         self.e.start()
         rebind = event('viewer_rebind_confirmed', viewer='socket-new', meta={'leaseEpoch': 1})
-        rebind['correlation'] = {'viewerId': 'socket-new', 'previousViewerId': 'socket-old', 'browserSessionId': 'session-canary'}
+        rebind['correlation'] = {'viewerHash': hash_identity('socket-new', SALT),
+                                 'previousViewerHash': hash_identity('socket-old', SALT),
+                                 'browserSessionHash': hash_identity('session-canary', SALT)}
         self.append(rebind)
         self.assertEqual(self.e.read_tick(IDS)[0]['event'], 'rebind-confirmed')
         self.append(event('viewer_disconnect_grace_expired', meta={'leaseEpoch': 2, 'state': 'REVOKING', 'reason': 'viewer-disconnect-timeout'}))
@@ -501,8 +522,9 @@ class SettlingHttpOwnershipTests(unittest.IsolatedAsyncioTestCase):
 
 def rebind_event(name='viewer_rebind_confirmed', **correlation_changes):
     value = event(name, viewer='server-new-canary', meta={'leaseEpoch': 1} if name == 'viewer_rebind_confirmed' else {'reason': 'rebind-rejected'})
-    value['correlation'] = {'viewerId': 'server-new-canary', 'previousViewerId': 'socket-old',
-                            'browserSessionId': 'session-canary', **correlation_changes}
+    value['correlation'] = {'viewerHash': hash_identity('server-new-canary', SALT),
+                            'previousViewerHash': hash_identity('socket-old', SALT),
+                            'browserSessionHash': hash_identity('session-canary', SALT), **correlation_changes}
     return value
 
 
@@ -532,7 +554,7 @@ class DirectRebindCorrelationTests(unittest.TestCase):
             self.assertNotIn(private, projection)
 
     def test_known_current_rebind_projects_session_from_its_logged_field(self):
-        self.e.start(); self.append(rebind_event(viewerId='socket-new'))
+        self.e.start(); self.append(rebind_event(viewerHash=hash_identity('socket-new', SALT)))
         rows = self.e.read_tick(IDS)
         self.assertEqual(rows[0]['sessionHash'], hash_identity('session-canary', SALT))
         self.assertEqual(rows[0]['viewerHash'], hash_identity('socket-new', SALT))
@@ -549,14 +571,17 @@ class DirectRebindCorrelationTests(unittest.TestCase):
 
     def test_foreign_session_unknown_previous_or_unknown_stable_session_cannot_bind(self):
         self.e.start()
-        for changes in ({'browserSessionId': 'foreign-session-canary'}, {'previousViewerId': 'unknown-previous-canary'},
-                        {'viewerId': 'socket-new', 'browserSessionId': 'foreign-session-canary'},
-                        {'viewerId': 'socket-new', 'previousViewerId': 'unknown-previous-canary'}):
+        for changes in ({'browserSessionHash': hash_identity('foreign-session-canary', SALT)},
+                        {'previousViewerHash': hash_identity('unknown-previous-canary', SALT)},
+                        {'viewerHash': hash_identity('socket-new', SALT),
+                         'browserSessionHash': hash_identity('foreign-session-canary', SALT)},
+                        {'viewerHash': hash_identity('socket-new', SALT),
+                         'previousViewerHash': hash_identity('unknown-previous-canary', SALT)}):
             self.append(rebind_event(**changes))
         self.assertEqual(self.e.read_tick(IDS), [])
         self.assertEqual(self.e.snapshot()['coverage'], 'complete')
         fresh = ServerRecoveryEvidence(self.path, SALT); self.addCleanup(fresh.close); fresh.start()
-        self.append(rebind_event(viewerId='socket-new'))
+        self.append(rebind_event(viewerHash=hash_identity('socket-new', SALT)))
         self.assertEqual(fresh.read_tick(dict(IDS, sessionId=None)), [])
 
     def test_missing_malformed_and_unknown_matching_rebind_correlation_fails_closed(self):
@@ -992,7 +1017,7 @@ class RecoveryBoundaryTests(unittest.TestCase):
                 for coverage in ('complete','incomplete'):
                     with self.subTest(cause=cause,coverage=coverage):
                         e=ServerRecoveryEvidence(path,SALT); e.start()
-                        start=event(); failed=rebind_event('viewer_rebind_failed',viewerId='socket-new'); failed['meta']['reason']=cause
+                        start=event(); failed=rebind_event('viewer_rebind_failed',viewerHash=hash_identity('socket-new', SALT)); failed['meta']['reason']=cause
                         with path.open('ab') as f:
                             for raw in (start,failed): f.write(json.dumps(raw).encode()+b'\n')
                         events=e.read_tick(IDS); e.close()
