@@ -667,3 +667,9 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 30 轮活动控制的资源窗口显示：Host fresh capture cadence 约 **18.98Hz**，RSS 约 **423–444MiB**、峰值约 **452MiB**，event loop p95 约 **3.9ms**，抓帧最大非 CPU 等待约 **114ms**。输入和画面均通过，但共享诊断 DataChannel 出现 `frame_timing` 丢 **10**、`capture_stats` 丢 **1**、`congested=11`；这属于诊断观测争用，不是输入丢失。
 
 为此在 Host 增加两级有界节流：输入关联 `frame_timing` 最短间隔 100ms，idle `frame_timing` 从每 5 帧降为每 10 帧。当前部署复测 10 轮交替控制仍为 10/10 画面变化，`showDock` ACK/Host apply/post-apply frame p95 约 **83.4/73.0/254.1ms**，`Escape` 约 **12.0/1.6/161.6ms**；同一窗口诊断 admission 为 `frame_timing 68/0`、`capture_stats 7/0`、`congested=0`。说明节流降低了诊断争用，没有改变输入协议或 Host apply 语义。
+
+### 高系统负载污染窗口的归因边界
+
+随后 30 轮活动控制出现了明显的后半段延迟上升：`showDock` ACK/Host apply 约升至 300–360ms，`inputToPostApplyFrameMs` 最高约 922ms；Host 同时记录 `systemLoad1≈38–48`、WindowServer 接近满载、fresh cadence 下降到约 4–9Hz、抓帧非 CPU 长尾最高约 **674ms**、输出复用率约 60%。同一时段另一仓库正在运行 TypeScript 编译和 pytest，系统进程列表可直接确认这些外部负载。
+
+该窗口标记为 **contaminated**，不能用来判定 WebRemoteDesktop 的低负载产品回归；它同时证明现有 Host 日志已经能把输入延迟退化与系统负载、WindowServer、抓帧非 CPU 长尾和复用率关联起来。按项目边界没有停止其他仓库进程，也没有把这段污染数据混入通过门槛。
