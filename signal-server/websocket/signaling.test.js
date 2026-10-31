@@ -1224,6 +1224,13 @@ test('control lifecycle survives the production logger with correlation and no c
   io.connect(host);
   io.connect(first);
   const grant = grantActiveLease(io, host, first, 'logging-grant');
+  first.trigger('connection-attempt-bind', {
+    schemaVersion: 1,
+    connectionAttemptId: 'attempt-grace-log',
+    connectionAttemptSequence: 1,
+    leaseId: grant.leaseId,
+    leaseEpoch: grant.leaseEpoch,
+  });
   first.disconnect();
   const replacement = new FakeSocket('viewer-log-b', 'viewer');
   replacement.handshake.auth.viewerSessionId = 'viewer-session-log';
@@ -1246,6 +1253,7 @@ test('control lifecycle survives the production logger with correlation and no c
   assert.equal(grace.meta.graceMs, 8000);
   assert.deepEqual(grace.correlation, {
     viewerHash: correlationHash(first.id), browserSessionHash: correlationHash('viewer-session-log'),
+    attemptHash: correlationHash('attempt-grace-log'),
   });
   const reconnected = events.find((event) => event.event === 'viewer_reconnected');
   assert.deepEqual(reconnected.correlation, {

@@ -890,6 +890,11 @@ function setupSignaling(io, options = {}) {
     const sessionId = socket?._wrdViewerSessionId;
     if (!sessionId || viewerDisconnectGraceMs <= 0) return false;
     if (connections.viewers.get(socket.id) !== socket) return false;
+    // Capture the authoritative attempt before the grace callback removes the
+    // viewer and clears its attempt progress. This keeps ordinary disconnect
+    // lifecycle events joinable with input/media events without retaining the
+    // socket or lease token beyond the bounded grace window.
+    const connectionAttemptId = currentViewerConnectionAttempt(socket.id);
     const existing = viewerSessionBindings.get(sessionId);
     if (existing?.timer) clearTimeoutFn(existing.timer);
     const timer = setTimeoutFn(() => {
@@ -905,6 +910,7 @@ function setupSignaling(io, options = {}) {
           const snapshot = desktopLease.snapshot();
           emitControlEvent('viewer_disconnect_grace_expired', {
             viewerId: socket.id, sessionId, reason: 'viewer-disconnect-timeout',
+            connectionAttemptId,
             leaseEpoch: snapshot.leaseEpoch, state: snapshot.state,
           });
         } catch (_error) { /* best effort */ }
@@ -916,6 +922,7 @@ function setupSignaling(io, options = {}) {
     emitControlEvent('viewer_disconnect_grace_started', {
       viewerId: socket.id,
       sessionId,
+      connectionAttemptId,
       graceMs: viewerDisconnectGraceMs,
     });
     return true;

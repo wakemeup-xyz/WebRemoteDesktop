@@ -485,3 +485,32 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 最新 direct formal passive 会话持续 60 秒，61 个采样全部通过：`missing=0`、`late=0`、`identityChange=0`、`pathChange=0`、`progressAfterBaseline=true`，`pcState=connected`、`hasPaintedFrame=true`，首帧约 5.39 秒。
 
 同一时间窗的 Host 结构化统计包含 13 个 active capture 样本：实际帧率约 18.8 Hz；抓帧耗时 p50/p95/max 约 38.3/53.6/53.6 ms，线程 CPU p95 约 9.1 ms，非 CPU p95 约 46.3 ms，窗口最大抓帧约 65.6 ms、最大非 CPU 约 57.1 ms；RSS p95 约 406.6 MiB，事件循环 lag p95 约 6.2 ms。长尾仍主要来自非 CPU 等待，而不是 Python 线程 CPU 饱和。
+
+## 2026-11-01 继续验收与 grace 关联增强
+
+### 真实输入与可见画面
+
+- 扩展浏览器验收再次通过：暂停 15 秒无媒体增长、恢复、键盘协议矩阵、鼠标双击/拖拽、终端与暂停共存、正式域名媒体冒烟均 **PASS**；safe quick tunnel 因 URL 文件为空保持 **BLOCKED**，物理键盘、OS reserved、fault injection 和 20 次恢复 P95 继续 **NOT RUN**。原始结果保留在 `/tmp/wrd-acceptance/task9-extended-report.json`。
+- 新增 5 次正式域名 `showDock → Escape` 真实循环，5/5 命令被接受并在 Host 执行。对 `remoteVideo` 逐 50 ms 轮询，第一次超过视觉变化阈值的耗时为 **697.6、783.8、784.8、812.2、839.9 ms**，p50 **784.8 ms**、p95/max **839.9 ms**；画面变化覆盖率约 60%–79%，平均像素差峰值约 21.2–79.5/255。Host 对应 `attemptHash` 全部存在，`hostAdmissionWaitMs` 约 0.21–0.31 ms，`localExecuteMs` 约 76.8–89.1 ms。
+- 该样本是独立的 remoteVideo 像素差异证据，足以证明输入确实改变了远端画面，但没有把截图差异冒充 marker-backed `inputToVisibleEffectMs`；严格 frame marker/captureSeq/RTP join 仍保持缺测边界。
+
+### Signal/Host 关联与断线日志
+
+- 最新管理员事件链出现同一 attempt 的 `connection_attempt_bound → signal_input_relayed → signal_reset_ack_observed → Host input received/result/ack_sent`；Host 最新 45 条输入全部带 `attemptHash`，缺失数为 0。
+- 新增 grace 生命周期关联：`viewer_disconnect_grace_started` 和 `viewer_disconnect_grace_expired` 在删除 Viewer 前保存当前 attempt，写入同一 `attemptHash`；不保存 socket、lease 或输入内容。Signal 全量定向测试 **133/133**、Viewer admission 集 **32/32**、语法检查均通过。
+- stale 生产事件仍保持同一 attempt 的 `media_stalled → session_stale_detected → slot_released → control_reset_completed`，槽位回收后 `/api/status` 的 `viewerCount` 回到 0。
+
+### 诊断覆盖现状
+
+- 最新 admin summary：`summaryGapCount=81`，原因 `receipt-horizon`，状态 `nonzero`；`ringDropCount=0`，状态 `observed`。当前窗口没有新的诊断报告，因此 `coverage.missing` 明确列出 `diagnostics/logCount/fps/droppedFrames/inputToVisibleEffectMs`，没有把缺测当作零。
+- 新增 grace attempt 关联后，普通断线、输入、reset、stale 生命周期可以在同一生产事件窗口中连接；诊断窗口仍需要真实 Viewer 上传报告才能填充 FPS、丢帧和 frame trace。
+
+### 固定域名入口分段与抓帧 A/B
+
+- 固定域名直连 15 次 `/health` 均返回 200、无错误：DNS p95 **1.6 ms**，TCP connect p95 **117.0 ms**，TLS p95 **500.2 ms**，TTFB/total p95 **1636.2/1636.5 ms**。watcher 当前仍可能显示 `entry-slow`，因为窗口保留过约 3.23 秒的 formal-health 历史样本；origin-health 约 95 ms p95、passive-runtime 为 0 ms。该信号指向公网入口/TLS/边缘响应长尾，不支持重启本地 Host 或 Signal，也不授权重建 tunnel。
+- 当前机器 40 样本本机 A/B（无服务、浏览器、输入或 tunnel）：空闲 MSS wall p95/max **31.809/34.530 ms**，CoreGraphics **23.242/24.181 ms**；一个受控 CPU worker 下 MSS **64.601/89.061 ms**，CoreGraphics **59.801/69.803 ms**。两者 under-load 非 CPU p95 接近（58.927/59.074 ms），CoreGraphics 线程 CPU 仍显著较低。生产 `ScreenCaptureTrack` 已使用 `CaptureExperiment(1.0, 1)` 的单倍抓帧策略；同一 Relay/编码/浏览器 paint 窗口的后端 A/B 尚未完成，暂不切换默认 backend。
+- 最近 Host active capture 摘要的极端 `maxDurationMs` 约 275.8 ms、`maxDurationNonCpuMs` 约 267.5 ms，线程 CPU 峰值约 9 ms，说明抓帧长尾主要由 WindowServer/native IPC/调度等待造成，不是 Python CPU 饱和。当前代码已有独立抓帧与 bounded relay capture/encode worker；下一步应在同一生产会话中比较后端和可见 FPS 后再改默认实现。
+
+### 本轮结论
+
+本轮把真实输入到画面从单次差异样本推进为 5 次分布，并补齐普通断线 grace 的 attempt 关联；服务仍保持 `/health=ok`、`hostOnline=true`、`viewerCount=0`，正式 tunnel 未操作。Goal 继续 `active`，剩余门槛是 marker-backed 严格端到端指标、同一生产会话的 capture backend 全链路 A/B、以及更长的真实用户持续控制/资源联合验收。
