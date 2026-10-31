@@ -547,3 +547,12 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 当前本地状态：Signal PID `23895`、Host PID `27476`，`/health=ok`、`hostOnline=true`、`viewerCount=0`；cloudflared 未重启，公网地址文件未修改。Viewer 密码为 `WSGkdvmeUEU2bzTE8Tc04zcL`，Terminal admin 密码为 `JoMKcyouKHqJAegq1q`。
 
 该 A/B 结果把“是否切换抓屏后端”从未验证推进为**有反证的决策**：保留 MSS 为生产默认，CoreGraphics 只作为隔离失败实验。后续若要继续，只能先单独修复并证明 CoreGraphics 的 native 资源释放和有界内存，再重新做同负载 A/B；当前没有理由修改 goal 的目标范围。
+
+### CoreGraphics 资源释放修复与复测（2026-11-01 02:48–02:53）
+
+- 复核确认上一轮 GiB 级增长来自 PyObjC 包装的 CoreFoundation 对象无法在每帧建立可靠释放边界。`screen_capture_backend.py` 已改用 CoreGraphics/CoreFoundation 的 ctypes C API，显式释放 `CGWindowListCreateImage` 和 `CGDataProviderCopyData` 返回的对象；独立 200 帧测试 RSS 从约 38MiB 增至约 130MiB 后稳定，不再按帧增长。
+- 修复后的正式域名 Relay 30 秒会话 **PASS**：31 个采样、无缺测/晚到/身份变化，`hasPaintedFrame=true`，最大无进展约 **216.7ms**，会话结束后槽位正常回收。内存保持约 **352–389MiB**，说明泄漏已消除。
+- 但同一窗口 CoreGraphics 新鲜抓帧约 **12.35Hz**，抓帧 `maxDurationMs` 约 **202.8ms**，`maxDurationNonCpuMs` 约 **175.0ms**，事件循环 p95 最大约 **20.5ms**；与 MSS 近期约 **17.3Hz / 35.6ms / 22.2ms** 相比仍明显更差。CoreGraphics 继续保留为可选实验后端，生产默认仍为 MSS。
+- 修复后的定向 Python 测试 **39/39** 通过；随后清除 `WRD_CAPTURE_BACKEND` 并重启 Host，当前运行日志再次确认 `capture_backend=mss, requested_backend=mss`。恢复后的 15 秒正式 Relay smoke **PASS**：16 个采样、无缺测/晚到/身份变化、`hasPaintedFrame=true`。
+
+因此抓帧后端这一项现在有完整的“发现泄漏 → 修复所有权 → 生产复测 → 保留 MSS 默认”闭环；它不再是 Goal 的未验证项，但也不构成把 CoreGraphics 切换到生产的理由。
