@@ -187,3 +187,11 @@
 - freshness/signaling 定向回归 138/138 通过；diagnostic-store/runtime-evidence 定向回归 37/37 通过。当前服务保持 `hostOnline=true`、`viewerCount=0`，本轮未重启服务、未操作 tunnel。
 
 这两项补强解决了日志和 freshness 的已知 P1 缺口，但不改变 Goal 的最终边界：真实输入到 visible effect/physical display、reset fault injection、capture backend A/B、诊断拥塞长会话和 tunnel SIGTERM 根因仍未完成或缺少强证据。
+
+## 重载后生产核对（2026-10-31 17:10）
+
+- 按 runbook 仅重载本地 Signal/Host：Signal PID `1993`、Host PID `2021`；cloudflared PID `26104` 保持不变，临时 URL 文件仍为空。
+- `/health` 和 `/api/status` 均为 `ok`，Host 在线、Viewer 槽位为 0；手动诊断结束后的 Viewer 已在宽限期后释放。
+- 管理员 observability summary 已返回 `coverageSignals.summaryGap={state:nonzero,count:80}`、`ringDrop={state:unknown,count:null}`、`source=observed`，验证全局 receipt-horizon gap 已可查询。
+- 重载后手动诊断 summary 新增 `logReceipt=valid`、reported=45、retained=0、redacted=45、dropped=0，input trace loss 全 0；`summaryGapCount/ringDropCount` 在 Viewer 报告未提供全局覆盖时仍保持 null，符合 unknown 语义。
+- 当前 Viewer build `6a137d3286eb3eb3` 与 manifest 的 `desktop-core.7cc6a5c79eafe8af.js` 一致。Goal 继续保持 `active`。
