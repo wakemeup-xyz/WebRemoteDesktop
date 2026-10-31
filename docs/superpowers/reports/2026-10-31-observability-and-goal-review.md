@@ -692,3 +692,11 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 隧道窗口暴露独立的性能长尾：`RelayCaptureEncodeWorker` 的 capture p95 约 **264ms**、max 约 **309ms**，出现 coalesced/drop，随后 profile 从 medium 降至 survival；encode p95 约 **26ms**。20 次恢复仍通过，但持续隧道画面在该窗口会明显降帧，后续优化应继续针对隧道 MSS/native capture，而不是调整 WebRTC ACK 或 Signal reset。
 - 自动化浏览器退出后，Signal 在 grace 窗口内暂时保留 1 个 Viewer；约 90 秒后生产 `/api/status` 回到 `viewerCount=0`，并记录 `viewer_disconnect_grace_expired`。本轮没有残留槽位，也没有重启服务或 tunnel。
 - 物理键盘、OS reserved、reset fault injection、safe quick tunnel 和严格 marker-backed `inputToVisibleEffectMs` 仍为 **NOT RUN/BLOCKED**，Goal 继续保持 `active`。
+
+### 隧道 capture-aware pacing 实施（2026-11-01 04:42–04:49）
+
+- 针对上一窗口 medium profile 目标 6fps、实际 capture 只能约 2–3fps 的问题，`TunnelRelayStreamer` 现在记录 capture wall time：连续两次超过当前 profile 帧间隔的 1.25 倍时下调 profile，并设置 capture floor；连续 8 次低于帧间隔 0.75 倍后才解除 floor，ACK 稳定反馈才能恢复 profile。该策略只调整节奏，不声称消除了 WindowServer/native capture 长尾。
+- 新增单测覆盖 capture floor、ACK 不立即回升和稳定快采样后的恢复；隧道 worker/transport 定向集合 **106/106 PASS**，Host/诊断集合 **80/80 PASS**。
+- 按 runbook 只重启本地 Signal/Host 使代码加载：Signal PID `75057`、Host PID `75092`，cloudflared/tunnel 未操作，`/tmp/wrd-safe-current-url.txt` 前后均为空。重启后第二轮自动化扩展验收恢复 20/20、p95 **461ms**，隧道媒体 20/20 PASS。
+- 新窗口 Host relay 证据显示 capture p95 约 **114ms**、max **148ms**，明显低于上一窗口约 264/309ms；profile 后续下降仍由 `pre-capture-backpressure`/ACK 反馈触发，说明 capture-aware pacing 没有伪造“长尾已消失”的结论。
+- 自动化浏览器退出后再次经过 disconnect grace，当前 `/api/status` 为 `health_ok=true`、`hostOnline=true`、`viewerCount=0`。Viewer 密码仍为本机配置中的 `WSGkdvmeUEU2bzTE8Tc04zcL`，Terminal admin 密码为 `JoMKcyouKHqJAegq1q`。
