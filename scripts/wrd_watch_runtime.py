@@ -41,6 +41,7 @@ class WatchRuntime:
         self.state.setdefault("assetsObserved", False)
         self.state.setdefault("latencyHistory", {})
         self.state.setdefault("latency", {})
+        self.state.setdefault("latencyMode", None)
         self.state.setdefault("slowLayers", [])
         old_epoch = self.state.get("clockEpoch")
         if old_epoch != clock_epoch and state:
@@ -187,6 +188,14 @@ class WatchRuntime:
 
     def _observe_latency(self, rows):
         history = self.state.setdefault("latencyHistory", {})
+        modes = {row.get('proxyMode') for row in rows
+                 if isinstance(row, dict) and row.get('proxyMode') in {'environment', 'direct'}}
+        current_mode = next(iter(modes)) if len(modes) == 1 else 'mixed' if modes else None
+        if current_mode is not None and current_mode != self.state.get('latencyMode'):
+            # p95/p99 are meaningful only within one network vantage. Never
+            # mix an environment proxy window with direct formal probes.
+            history.clear()
+            self.state['latencyMode'] = current_mode
         stats = {}
         slow_layers = []
         for row in rows:

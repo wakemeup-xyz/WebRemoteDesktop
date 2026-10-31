@@ -92,6 +92,17 @@ class WatchRuntimeTest(unittest.TestCase):
         self.assertEqual(len(state["latencyHistory"]["formal-health"]), 120)
         self.assertEqual(state["latency"]["formal-health"]["sampleCount"], 120)
 
+    def test_latency_window_resets_when_probe_mode_changes(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(clock_epoch="a")
+        r.tick(0, {"probes": [probe_result("formal-health", outcome="ok", reason="ok",
+                                             elapsed=6.0, proxy="environment")]})
+        state = r.tick(60, {"probes": [probe_result("formal-health", outcome="ok", reason="ok",
+                                                      elapsed=0.1, proxy="direct")]})
+        self.assertEqual(state["latencyMode"], "direct")
+        self.assertEqual(state["latency"]["formal-health"]["sampleCount"], 1)
+        self.assertEqual(state["latency"]["formal-health"]["p95Ms"], 100.0)
+
     def test_asset_observation_is_retained_between_asset_rounds(self):
         from scripts.wrd_entry_health import probe_result
         r = WatchRuntime(clock_epoch="a")
