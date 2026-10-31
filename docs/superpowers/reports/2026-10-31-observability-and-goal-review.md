@@ -514,3 +514,9 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 ### 本轮结论
 
 本轮把真实输入到画面从单次差异样本推进为 5 次分布，并补齐普通断线 grace 的 attempt 关联；服务仍保持 `/health=ok`、`hostOnline=true`、`viewerCount=0`，正式 tunnel 未操作。Goal 继续 `active`，剩余门槛是 marker-backed 严格端到端指标、同一生产会话的 capture backend 全链路 A/B、以及更长的真实用户持续控制/资源联合验收。
+
+### 重载后的生产加载证明
+
+- 按 runbook 只重启本地 Signal/Host，Signal PID `18500`、Host PID `18544`；正式 cloudflared PID `26104` 未变，`/tmp/wrd-safe-current-url.txt` 仍为空。
+- 重启后完整媒体会话实际出现 `connection_attempt_bound`，随后 `viewer_disconnect_grace_started` 带同一 `attemptHash`；对应 `control_reset_completed` 的 `correlationMissing=false`。早退、未完成 WebRTC attempt 的连接仍按设计保留 `correlationMissing=true`，不会伪造关联。
+- 该会话结束后等待 grace 到期，`/api/status` 回到 `hostOnline=true`、`viewerCount=0`；本地健康检查保持 `status=ok`。
