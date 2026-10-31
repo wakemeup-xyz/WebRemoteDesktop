@@ -12,6 +12,7 @@ else:
 
 
 LATENCY_HISTORY_LIMIT = 120
+LATENCY_PROFILE = 'http-compressed-v1'
 DEFAULT_LATENCY_BUDGETS_MS = {
     'origin-health': 2000.0,
     'formal-health': 3000.0,
@@ -42,6 +43,12 @@ class WatchRuntime:
         self.state.setdefault("latencyHistory", {})
         self.state.setdefault("latency", {})
         self.state.setdefault("latencyMode", None)
+        previous_profile = self.state.get("latencyProfile")
+        if previous_profile != LATENCY_PROFILE:
+            self.state["latencyHistory"] = {}
+            self.state["latency"] = {}
+            self.state["slowLayers"] = []
+        self.state["latencyProfile"] = LATENCY_PROFILE
         self.state.setdefault("slowLayers", [])
         old_epoch = self.state.get("clockEpoch")
         if old_epoch != clock_epoch and state:

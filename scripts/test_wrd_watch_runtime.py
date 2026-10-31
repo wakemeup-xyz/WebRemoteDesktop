@@ -103,6 +103,19 @@ class WatchRuntimeTest(unittest.TestCase):
         self.assertEqual(state["latency"]["formal-health"]["sampleCount"], 1)
         self.assertEqual(state["latency"]["formal-health"]["p95Ms"], 100.0)
 
+    def test_latency_window_resets_when_probe_profile_changes(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(state={
+            "clockEpoch": "a",
+            "latencyProfile": "http-uncompressed-v0",
+            "latencyHistory": {"formal-health": [9999]},
+        }, clock_epoch="a")
+        state = r.tick(0, {"probes": [probe_result("formal-health", outcome="ok", reason="ok",
+                                                       elapsed=0.2, proxy="direct")]})
+        self.assertEqual(state["latencyProfile"], "http-compressed-v1")
+        self.assertEqual(state["latency"]["formal-health"]["sampleCount"], 1)
+        self.assertEqual(state["latency"]["formal-health"]["p95Ms"], 200.0)
+
     def test_asset_observation_is_retained_between_asset_rounds(self):
         from scripts.wrd_entry_health import probe_result
         r = WatchRuntime(clock_epoch="a")
