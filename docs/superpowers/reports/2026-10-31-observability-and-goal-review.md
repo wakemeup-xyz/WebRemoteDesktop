@@ -659,3 +659,5 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 最新一次加载新 Viewer 构建的 detail trace 复测结果：`sampleCount=172`，`ringDropCount=0`，`hostDroppedTraceCount=0`，`expiredFrameCount=0`，`expiredTraceCount=2`，`droppedTraceCount=2`，`pendingFrames=4`，`pendingTraces=0`。因此本窗口的 `UNALIGNED` 原因已被精确归类为 **2 条 Host trace 等待对应 rVFC 超时**；没有本地 ring 淘汰，也没有 Host/DataChannel 显式丢弃。详细 trace 环境已清除，Host 已恢复默认 MSS/普通诊断负载。
 
 恢复后的默认负载又完成一次短被动会话：Host 新建 `ScreenCaptureTrack` 日志明确为 `frame_trace=False`，Viewer 保持 `pcState=connected`、约 20 FPS paint，详细 trace 诊断保持 `PENDING` 且所有 loss counters 为 0。当前服务已回到普通生产观测模式。
+
+当前部署再次完成 10 轮正式域名 `showDock → Escape` 交替控制：两类动作均为 10/10 画面变化，Host 日志同一 `attemptHash` 下全部经过 `received → result → ack_sent`。本窗口 `showDock` ACK p95 **77.3ms**、Host apply p95 **72.4ms**、`inputToPostApplyFrameMs` p95 **258.6ms**；`Escape` ACK p95 **14.5ms**、Host apply p95 **7.3ms**、`inputToPostApplyFrameMs` p95 **147.7ms**。浏览器关闭后的 grace 清理也已闭环：`control_reset_completed → viewer_disconnect_grace_expired`，`viewerCount` 从 1 回到 0。
