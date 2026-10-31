@@ -309,7 +309,7 @@ function setupSignaling(io, options = {}) {
   const rebindAckTimeoutsMs = boundedRebindAckTimeoutsMs.length > 0
     ? boundedRebindAckTimeoutsMs : [1_500, 3_000, 6_000];
   const interval = intervalFactory(() => {
-    dispatchLeaseEffect(desktopLease.expire());
+    dispatchLeaseExpiry();
   }, 1000);
   interval?.unref?.();
 
@@ -325,6 +325,49 @@ function setupSignaling(io, options = {}) {
   // Attempt binding and generation progress share one record, but applied:false only
   // releases generation progress — never deletes the authoritative attempt bind.
   const mediaActivityProgress = new Map();
+  // Reset-only barriers outlive the Viewer socket that caused them. Retain
+  // only bounded in-memory identity context until the matching Host ACK so
+  // reset completion can be correlated without retaining lease/input data.
+  const resetCorrelationByEpoch = new Map();
+
+  function boundedResetCorrelation(context = {}) {
+    const viewerId = typeof context.viewerId === 'string' && context.viewerId ? context.viewerId : null;
+    const connectionAttemptId = typeof context.connectionAttemptId === 'string'
+      && isValidConnectionAttemptId(context.connectionAttemptId)
+      ? context.connectionAttemptId : null;
+    return { viewerId, connectionAttemptId };
+  }
+
+  function rememberResetCorrelation(leaseEpoch, context = {}) {
+    if (!Number.isSafeInteger(leaseEpoch)) return;
+    const bounded = boundedResetCorrelation(context);
+    if (!bounded.viewerId && !bounded.connectionAttemptId) return;
+    resetCorrelationByEpoch.set(leaseEpoch, bounded);
+    while (resetCorrelationByEpoch.size > 32) {
+      resetCorrelationByEpoch.delete(resetCorrelationByEpoch.keys().next().value);
+    }
+  }
+
+  function consumeResetCorrelation(leaseEpoch) {
+    if (!Number.isSafeInteger(leaseEpoch)) return { viewerId: null, connectionAttemptId: null };
+    const value = resetCorrelationByEpoch.get(leaseEpoch)
+      || { viewerId: null, connectionAttemptId: null };
+    resetCorrelationByEpoch.delete(leaseEpoch);
+    return value;
+  }
+
+  function leaseExpiryCorrelation() {
+    const snapshot = desktopLease.snapshot();
+    const viewerId = snapshot.controllerViewerId || snapshot.pendingViewerId;
+    const progress = viewerId ? mediaActivityProgress.get(viewerId) : null;
+    return boundedResetCorrelation({ viewerId, connectionAttemptId: progress?.connectionAttemptId });
+  }
+
+  function dispatchLeaseExpiry() {
+    const correlation = leaseExpiryCorrelation();
+    const effect = desktopLease.expire();
+    dispatchLeaseEffect(effect, effect?.reason, correlation);
+  }
 
   function emitControlEvent(type, fields = {}) {
     // Match the production logger contract: unknown top-level fields are
@@ -349,7 +392,7 @@ function setupSignaling(io, options = {}) {
       'lastFrameAgeMs', 'lastReceivedAgeMs', 'lastStatsAgeMs', 'lastHeartbeatAgeMs',
       'lastProgressAgeMs', 'progressAgeMs', 'lastMediaAckAgeMs', 'activeStallAgeMs',
       'activeRecoveryAfterMs', 'activeRecoveryRequested', 'mediaStateAgeMs', 'activityAgeMs',
-      'suspendedAgeMs', 'staleAfterMs', 'recoveryAfterMs', 'release',
+      'suspendedAgeMs', 'staleAfterMs', 'recoveryAfterMs', 'release', 'correlationMissing',
     ]) {
       if (Object.prototype.hasOwnProperty.call(fields, key)) meta[key] = fields[key];
     }
@@ -547,7 +590,7 @@ function setupSignaling(io, options = {}) {
   // never begin an unobservable reset transition, and every REVOKING effect
   // reaches the Host through dispatchLeaseEffect below.
   function withLeaseExpiry(operation) {
-    dispatchLeaseEffect(desktopLease.expire());
+    dispatchLeaseExpiry();
     return operation();
   }
 
@@ -753,7 +796,10 @@ function setupSignaling(io, options = {}) {
           const reason = 'rebind-cancelled';
           clearLegacyRelayCompanion(nextId, { stop: true });
           const result = desktopLease.beginRelease({ viewerId: nextId, reason });
-          dispatchLeaseEffect(result, reason);
+          dispatchLeaseEffect(result, reason, {
+            viewerId: nextId,
+            connectionAttemptId: currentViewerConnectionAttempt(nextId),
+          });
           clearRebind();
           emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
           return;
@@ -788,7 +834,10 @@ function setupSignaling(io, options = {}) {
         clearRebind();
         const reason = ack?.reason === 'rebind-timeout' ? 'rebind-timeout' : 'rebind-rejected';
         const result = desktopLease.beginRelease({ viewerId: nextId, reason });
-        dispatchLeaseEffect(result, reason);
+        dispatchLeaseEffect(result, reason, {
+          viewerId: nextId,
+          connectionAttemptId: currentViewerConnectionAttempt(nextId),
+        });
         emitControlEvent('viewer_rebind_failed', { viewerId: nextId, previousViewerId: previousId, sessionId, reason });
       };
       sendRebind();
@@ -846,6 +895,10 @@ function setupSignaling(io, options = {}) {
     if (connections.viewers.get(socket.id) !== socket) return null;
     clearViewerSessionBinding(socket);
     clearLegacyRelayCompanion(socket.id, { stop: true });
+    const resetCorrelation = {
+      viewerId: socket.id,
+      connectionAttemptId: currentViewerConnectionAttempt(socket.id),
+    };
     connections.viewers.delete(socket.id);
     viewerFreshness.unregister(socket.id);
     clearPendingInputs(socket.id);
@@ -860,7 +913,7 @@ function setupSignaling(io, options = {}) {
     // reset-only barrier (dispatchLeaseEffect). Never bypass with a
     // side-channel sendControlTransition after FREE.
     if (leaseResult.transition) {
-      dispatchLeaseEffect(leaseResult, leaseResult.reason || reason);
+      dispatchLeaseEffect(leaseResult, leaseResult.reason || reason, resetCorrelation);
     } else {
       broadcastControlState(leaseResult.reason || reason);
     }
@@ -903,7 +956,7 @@ function setupSignaling(io, options = {}) {
     return true;
   }
 
-  function dispatchLeaseEffect(effect, reason = effect?.reason) {
+  function dispatchLeaseEffect(effect, reason = effect?.reason, correlationContext = {}) {
     if (!effect || (!effect.reason && !effect.transition)) return false;
     if (reason === 'lease-expired') {
       for (const viewer of connections.viewers.values()) summarizeControlHeartbeat(viewer, 'lease-expired');
@@ -926,6 +979,7 @@ function setupSignaling(io, options = {}) {
     broadcastControlState(reason);
     sendControlTransition(effect);
     if (resetOnlyBarrier && Number.isSafeInteger(snapshotAfter.leaseEpoch)) {
+      rememberResetCorrelation(snapshotAfter.leaseEpoch, correlationContext);
       // Candidate failures produce a fresh reset-only transition; reset-only
       // failures stay on the same epoch. Both need bounded recovery retries.
       startResetRetry(snapshotAfter.leaseEpoch, reason || effect.reason || 'transition-failed');
@@ -1531,7 +1585,10 @@ function setupSignaling(io, options = {}) {
         reason: data.reason || 'released',
       }));
       if (result.transition) {
-        dispatchLeaseEffect(result, 'released');
+        dispatchLeaseEffect(result, 'released', {
+          viewerId: socket.id,
+          connectionAttemptId: currentViewerConnectionAttempt(socket.id),
+        });
       }
     });
 
@@ -1539,6 +1596,7 @@ function setupSignaling(io, options = {}) {
       if (role !== 'host' || connections.host !== socket) return;
       const status = data.status === 'applied' ? 'applied' : 'rejected';
       let completedResetEpoch = null;
+      let completedResetCorrelation = null;
       const result = withLeaseExpiry(() => {
         // Expiry may replace a candidate with a reset-only barrier. Inspect the
         // actual pending transition after expiry, immediately before the ACK.
@@ -1552,6 +1610,7 @@ function setupSignaling(io, options = {}) {
         if (status === 'applied' && isResetOnlyPending(pending)
           && pending.leaseEpoch === data.leaseEpoch && effect.state === 'FREE') {
           completedResetEpoch = pending.leaseEpoch;
+          completedResetCorrelation = consumeResetCorrelation(completedResetEpoch);
         }
         return effect;
       });
@@ -1565,6 +1624,8 @@ function setupSignaling(io, options = {}) {
           leaseEpoch: completedResetEpoch,
           status: 'applied',
           state: 'FREE',
+          ...(completedResetCorrelation || {}),
+          correlationMissing: !completedResetCorrelation?.connectionAttemptId,
         });
       }
       if (result.lease) {

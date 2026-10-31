@@ -166,6 +166,12 @@ test('reset completion records only exact applied reset once with persisted safe
   const host = h.connect('outcome-host', 'host');
   const viewer = h.connect('outcome-viewer', 'viewer');
   const lease = h.grant(host, viewer);
+  viewer.trigger('connection-attempt-bind', {
+    leaseId: lease.leaseId,
+    leaseEpoch: lease.leaseEpoch,
+    connectionAttemptId: 'outcome-reset-attempt',
+    connectionAttemptSequence: 1,
+  });
   const completions = rows => rows.filter(row => row.event === 'control_reset_completed');
   assert.equal(completions(h.events).length, 0, 'grant ACK is not reset completion');
   viewer.trigger('control-release', { reason: 'released' });
@@ -187,7 +193,13 @@ test('reset completion records only exact applied reset once with persisted safe
   assert.equal(h.timers.size, 0);
   for (const rows of [h.events, h.storedEvents, h.persisted]) {
     assert.equal(completions(rows).length, 1);
-    assert.deepEqual(completions(rows)[0].meta, { leaseEpoch: reset.leaseEpoch, status: 'applied', state: 'FREE' });
+    assert.deepEqual(completions(rows)[0].meta, {
+      leaseEpoch: reset.leaseEpoch, status: 'applied', state: 'FREE', correlationMissing: false,
+    });
+    assert.deepEqual(completions(rows)[0].correlation, {
+      viewerHash: correlationHash('outcome-viewer'),
+      attemptHash: correlationHash('outcome-reset-attempt'),
+    });
   }
   host.trigger('control-transition-ack', ack);
   host.trigger('control-transition-ack', { leaseEpoch: lease.leaseEpoch, status: 'applied' });
@@ -199,6 +211,21 @@ test('reset completion records only exact applied reset once with persisted safe
   for (const canary of [lease.leaseId, 'ACK_OUTCOME_CANARY', 'INPUT_OUTCOME_CANARY']) {
     assert.equal(persisted.includes(canary), false);
   }
+});
+
+test('reset completion marks missing attempt correlation explicitly', () => {
+  const h = makeControlOutcomeFixture();
+  const host = h.connect('outcome-host', 'host');
+  const viewer = h.connect('outcome-viewer', 'viewer');
+  const lease = h.grant(host, viewer);
+  viewer.trigger('control-release', { reason: 'released' });
+  const reset = host.sent.filter(row => row.event === 'control-transition').at(-1).data;
+  host.trigger('control-transition-ack', { leaseEpoch: reset.leaseEpoch, status: 'applied' });
+  const completion = h.events.filter(row => row.event === 'control_reset_completed').at(-1);
+  assert.equal(completion.meta.correlationMissing, true);
+  assert.deepEqual(completion.correlation, { viewerHash: correlationHash('outcome-viewer') });
+  assert.equal(completion.meta.leaseEpoch, reset.leaseEpoch);
+  assert.equal(lease.leaseEpoch < reset.leaseEpoch, true);
 });
 
 test('reset completion rejects old Host socket even when replacement has the same ID', () => {
