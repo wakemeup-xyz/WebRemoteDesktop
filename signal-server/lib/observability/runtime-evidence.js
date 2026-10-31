@@ -94,7 +94,8 @@ function projectCorrelation(report, metrics, outcomes) {
       present: available('inputToVisibleEffectMs'),
     },
   };
-  correlation.complete = CORRELATION_STAGES.every(stage => correlation.stages[stage]);
+  correlation.complete = correlation.scopeAvailable
+    && CORRELATION_STAGES.every(stage => correlation.stages[stage]);
   return correlation;
 }
 
