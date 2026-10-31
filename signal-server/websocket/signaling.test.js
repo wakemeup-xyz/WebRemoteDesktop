@@ -3092,6 +3092,59 @@ test('page-hidden media freshness records stale lifecycle and releases the viewe
   assert.equal(getConnectionStatus().viewerCount, 0);
 });
 
+test('active media stall requests a current-attempt keyframe before any release', () => {
+  resetConnections();
+  const io = makeIo();
+  let now = 0;
+  let tick = null;
+  const events = [];
+  setupSignaling(io, {
+    now: () => now,
+    config: { viewerMediaStaleMs: 30000 },
+    logger: { log() {}, warn() {}, info() {}, error() {} },
+    structuredLogger: { info(event) { events.push(event); } },
+    recentEventStore: { append() {} },
+    scheduler: { setTimeout, clearTimeout },
+    viewerFreshnessScheduler: {
+      setInterval(fn) { tick = fn; return { unref() {} }; },
+      clearInterval() {},
+    },
+  });
+  const host = new FakeSocket('active-stall-host', 'host');
+  const viewer = new FakeSocket('active-stall-viewer', 'viewer');
+  host.handshake.auth.inputProtocolVersion = viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer, 'active-stall-grant');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1, connectionAttemptId: 'active-stall-attempt', connectionAttemptSequence: 1,
+    leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch,
+  });
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1, state: 'active', reasons: [], generation: 1,
+    connectionAttemptId: 'active-stall-attempt', leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch,
+  });
+  viewer.trigger('viewer-stats', {
+    connectionAttemptId: 'active-stall-attempt', connectionAttemptSequence: 1, generation: 1,
+    decodedDelta: 1, receivedDelta: 1,
+  });
+  now = 30000;
+  tick();
+  assert.equal(host.sent.some(event => event.event === 'request-keyframe'), false);
+  viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
+  now = 260000;
+  viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
+  now = 270000;
+  tick();
+  const request = host.sent.filter(event => event.event === 'request-keyframe').at(-1)?.data;
+  assert.equal(request.reason, 'media-stalled-recovery');
+  assert.equal(request.viewerId, viewer.id);
+  assert.equal(request.connectionAttemptId, 'active-stall-attempt');
+  assert.equal(request.generation, 1);
+  assert.equal(request.requestSequence, 1);
+  assert.equal(events.some(event => event.event === 'media_stall_recovery_requested'), true);
+  assert.equal(viewer.disconnected, false);
+});
+
 function mediaRejectionRouteFixture() {
   resetConnections();
   const io = makeIo();
