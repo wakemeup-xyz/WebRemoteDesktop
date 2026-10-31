@@ -132,8 +132,14 @@ def _http_fetch(target, *, layer, deadline, limit, proxy_mode, opener=None):
     if proxy_mode == 'direct':
         handlers.append(urllib.request.ProxyHandler({}))
     request_opener = opener or urllib.request.build_opener(*handlers)
-    request = urllib.request.Request(target, headers={'Accept': 'application/json' if layer.endswith('-health') else '*/*',
-                                                     'User-Agent': 'WRD-Entry-Health/2.0'})
+    request = urllib.request.Request(target, headers={
+        'Accept': 'application/json' if layer.endswith('-health') else '*/*',
+        # Match the real Viewer fetch path so asset latency measures the
+        # compressed Cloudflare/browser response rather than an uncompressed
+        # 500+ KiB diagnostic transfer.
+        'Accept-Encoding': 'gzip, deflate, br',
+        'User-Agent': 'WRD-Entry-Health/2.0',
+    })
     response = request_opener.open(request, timeout=deadline.remaining())
     try:
         status = int(response.status if hasattr(response, 'status') else response.getcode())
