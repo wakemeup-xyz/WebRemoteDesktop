@@ -102,3 +102,16 @@
 当前三小时 passive 会话仍在运行，约 68 分钟、4090 个采样，持续 connected/active，约 20 FPS，丢帧为 0；它仍不包含真实业务输入、visible effect 或物理显示证据。因此 Goal 仍保持 `active`，阶段 5 的短断线、真实输入、可见效果、物理显示和 3 小时长会话仍未闭环。
 
 长会话继续暴露出抓屏语义缺口：`CAPTURE_STATS` 输出约 18–19.5 FPS，但每 5 秒复用缓存帧约 17–56 个；Host cadence 实际约 9–13 Hz。当前 lifetime 最大抓帧约 1296 ms，其中非 CPU 约 1263 ms、线程 CPU 约 33 ms，不能把它归因成 Python CPU 卡顿。`c4a6888` 已增加 `freshCaptureCount`、`reuseRatio`、`lastFreshCaptureAgeMs` 和连续复用计数；Host 尚未重载，因此这些字段待维护窗口结束后验证。
+
+## 实时复核（2026-10-31 14:00 左右）
+
+本节只记录本轮复核时已存在的运行证据，不把仍在进行的长会话提前算作通过：
+
+- Signal PID `31381`、Host PID `31415`、watcher PID `51489` 和 cloudflared PID `26104` 均仍在运行；`/api/status` 返回 `health_ok/hostOnline=true`，当前 passive Viewer 的 `mediaFresh=true`、`mediaState=active`、`lastFrameAgeMs=0`。这证明当前被动会话有媒体进展，不能替代真实业务输入和可见效果验收。
+- 三小时 passive 会话的 `samples.jsonl` 已记录约 `6308` 秒、`6308` 个采样；`pcState=connected`、`mediaPhase=active`、累计 `framesDropped=0`，但 `summary.json` 仍是启动时的 `INCOMPLETE` 占位，最终连续性结论必须等进程退出后再读取。
+- 当前 `back-debug.log`（05:14–06:03 UTC，528 条 Host 事件循环窗口）显示 fresh capture cadence 约 9–13 Hz；输出统计约 11.5–19.6 FPS，每 5 秒复用缓存帧约 14–56 个。抓帧 lifetime 最大耗时 1296 ms，其中非 CPU 1263 ms、线程 CPU 33 ms；RSS 约 492–559 MiB，系统 load1 约 4.3–19.4，事件循环 p95 约 4.5–25 ms。Viewer 解码 FPS 的 p50/p95 约 19/20，丢帧和丢包为 0，因此不能用 decoded FPS 代替 fresh capture 健康度，也不能把长尾简单归因成 Python CPU。
+- 当前 Host 日志仍没有 `freshCaptureCount`、`reusedOutputCount` 或 `lastFreshCaptureAgeMs`；这与 `c4a6888` 已提交但 Host 尚未重载的事实一致。新的 freshness 生产证据要等三小时会话结束后的受控本地重启。
+- `/tmp/wrd-diag/summary` 的 40 条（10 月 28–30 日）摘要仍全部为 `reportedLogCount=null`、`retainedLogCount=0`、`redactedLogCount=null`，`summaryGapCount`、`ringDropCount`、`coverageStatus`、`logReceipt`、`inputTraceLoss` 和 `frameTrace` 均未形成可用运行证据；`.summary-state` 仍记录 `receipt-horizon` gap（当前为 52）。这说明代码契约已有，但生产汇总尚不能区分“未采集、未传输、被裁剪、写入失败”四类原因。
+- Signal 当前能看到 `diagnostic_uploaded`、`signal_input_relayed`、`reset_ack`、`rebind` 和 disconnect-grace 等事件，但历史 `session_stale_detected`、`media_stalled`、`slot_released` 仍为 0；门禁的离线测试通过，生产触发证据尚不存在。watcher 最新 tick 的实际入口、core asset 和 loopback passive-runtime 均为 200/ok，当前 fingerprint `33ddf5011fe34f827b8e9918` 已被加载；tunnel SIGTERM 的历史因果仍未闭环。
+
+这次实时证据把“日志系统是否足够”定为：**症状发现足够，自动归因和可用性判定不足**。缺口不在字段名称，而在生产链路尚未加载全部新代码、真实诊断包没有把 receipt/loss 字段带入常用摘要，以及没有一次真实输入到可见画面的闭环样本。
