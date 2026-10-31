@@ -150,6 +150,18 @@ test('pending diagnostic storage preserves bounded log receipt state without log
   assert.equal(JSON.stringify(cached).includes('PRIVATE_LOG_CANARY'), false);
 });
 
+test('pending diagnostic storage preserves bounded frame correlation counters', () => {
+  const { runtimeDiagnosticForStorage } = require('./runtime-diagnostic');
+  const report = fixture()({ reason: 'input-ack-timeout' });
+  report.traceSummary = { frameTrace: { acceptanceState: 'UNALIGNED', matchedCount: 4, droppedTraceCount: 2 } };
+  const cached = runtimeDiagnosticForStorage(report);
+  assert.deepEqual(cached.traceSummary.frameTrace, {
+    acceptanceState: 'UNALIGNED', pendingFrames: null, pendingTraces: null,
+    seenIdentities: null, matchedCount: 4, droppedTraceCount: 2,
+    invalidBatchCount: null, staleTraceCount: null, conflictingTraceCount: null,
+  });
+});
+
 test('runtime clipping upgrades a log receipt to truncated', () => {
   const { boundRuntimeDiagnostic } = require('./runtime-diagnostic');
   const clipped = boundRuntimeDiagnostic({ schemaVersion: 3, diagnosticId: 'a'.repeat(32), logs: ['x'],

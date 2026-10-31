@@ -155,13 +155,22 @@
       reported: safeNumber(rawReceipt.reported), retained: safeNumber(rawReceipt.retained),
       redacted: safeNumber(rawReceipt.redacted), dropped: safeNumber(rawReceipt.dropped),
     } : undefined;
+    const rawFrameTrace = payload.traceSummary?.frameTrace;
+    const frameTrace = rawFrameTrace && typeof rawFrameTrace === 'object' ? {
+      acceptanceState: rawFrameTrace.acceptanceState === 'UNALIGNED' ? 'UNALIGNED' : 'PENDING',
+      ...Object.fromEntries(['pendingFrames', 'pendingTraces', 'seenIdentities', 'matchedCount',
+        'droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount']
+        .map(key => [key, safeNumber(rawFrameTrace[key])])),
+    } : undefined;
     return { schemaVersion: 3, diagnosticId: digest(payload.diagnosticId), reason: payload.reason,
       trigger: payload.trigger, connectionAttemptId: storageHash(payload.connectionAttemptId),
       captured: clone(payload.captured), build: clone(payload.build), latencyStatus: payload.latencyStatus,
       latency: latency(payload.latency), inputState: {},
       ...(logReceipt ? { logReceipt } : {}),
-      ...(payload.traceSummary?.controlHeartbeat ? { traceSummary: {
-        controlHeartbeat: sanitizeControlHeartbeat(payload.traceSummary.controlHeartbeat),
+      ...(payload.traceSummary?.controlHeartbeat || frameTrace ? { traceSummary: {
+        ...(payload.traceSummary?.controlHeartbeat
+          ? { controlHeartbeat: sanitizeControlHeartbeat(payload.traceSummary.controlHeartbeat) } : {}),
+        ...(frameTrace ? { frameTrace } : {}),
       } } : {}),
       inputTrace: { schemaVersion: 3, traceNowMs: safeNumber(trace.traceNowMs),
         counters: Object.fromEntries(Object.entries(trace.counters || {}).filter(([key, value]) => /^[a-zA-Z]{1,40}$/.test(key) && Number.isSafeInteger(value) && value >= 0)),
