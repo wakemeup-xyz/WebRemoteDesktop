@@ -598,3 +598,8 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 该报告的 `summaryGapCount`/`ringDropCount` 为 `null`，因为 Viewer 报告没有权限/来源提供全局 summary coverage；管理员 observability 接口仍单独提供 `summaryGapCount=81`、`ringDropCount=0 observed`。两层证据现在能明确区分“本报告未观测”与“全局已观察”。
 
 - 后续修正验收脚本，按 `sendLogs` 契约把 bounded Viewer logs 一起上报；最新 summary 已稳定出现 `logReceipt.valid`，而不是低层上传时的 `unknown`。这证明验收工具本身不会再制造“无日志报告”的假阴性。
+
+### 8 次正式域名控制循环（2026-11-01 03:28 左右）
+
+- 独立临时验收脚本在正式域名完成 8 次 `showDock` 控制循环，8/8 命令均收到 ACK 并完成 Host apply；`ackP95` **69.2ms**、`hostApplyP95` **62.7ms**、`inputToPostApplyFrameP95` **221.0ms**，每次浏览器统计保持约 19–20 FPS。
+- `remoteVideo` 像素直方图变化在 3/8 次出现。重复 `showDock` 是幂等动作，后续点击不一定改变画面，因此这不是输入中断证据；下一轮视觉验收应使用 `showDock → Escape` 交替动作，避免把“动作无状态变化”误判为丢输入。
