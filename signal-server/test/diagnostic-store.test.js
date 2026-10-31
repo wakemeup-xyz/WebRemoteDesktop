@@ -55,7 +55,9 @@ test('same diagnostic ID uses shared durable receipts even after raw removal', t
 test('durable summaries retain only console counts and input trace counts after raw eviction and reload', t => {
   const f=fixture(t,{maxPerViewer:1});
   f.write('counted','fixture-viewer',{logContentPolicy:'metadata-only',reportedLogCount:2,
-    retainedLogCount:0,redactedLogCount:2,inputTraceEventCount:1,logs:[],inputTrace:{events:[{stage:'ack'}]}});
+    retainedLogCount:0,redactedLogCount:2,inputTraceEventCount:1,
+    logReceipt:{state:'truncated',reported:2,retained:0,redacted:2,dropped:1},
+    logs:[],inputTrace:{events:[{stage:'ack'}],counters:{droppedEvents:4,ackTimeoutCount:2}}});
   f.tick();f.write('newest');
   assert.deepEqual(raws(f.dir).map(r=>r.diagnosticId),['newest']);
   const reloaded=createDiagnosticStore({dir:f.dir,now:()=>f.tick(0)});
@@ -63,6 +65,8 @@ test('durable summaries retain only console counts and input trace counts after 
   assert.equal(row.logContentPolicy,'metadata-only');
   assert.equal(row.reportedLogCount,2);assert.equal(row.retainedLogCount,0);
   assert.equal(row.redactedLogCount,2);assert.equal(row.inputTraceEventCount,1);
+  assert.deepEqual(row.logReceipt, { state:'truncated', reported:2, retained:0, redacted:2, dropped:1 });
+  assert.deepEqual(row.inputTraceLoss, { droppedEvents:4, droppedHashCount:null, evictedPendingAcks:null, expiredPendingAcks:null, ackTimeoutCount:2 });
   for(const key of ['logs','inputTrace','events','keyboardDebug'])assert.equal(Object.hasOwn(row,key),false);
 });
 

@@ -11,6 +11,8 @@ const countValue = value => Number.isSafeInteger(value) && value >= 0 ? value : 
 const digestValue = value => typeof value === 'string' && /^[0-9a-f]{16,64}$/.test(value) ? value : null;
 const isRuntimeDiagnostic = value => Number.parseInt(value?.schemaVersion, 10) === 3;
 const OUTCOME_NAMES = ['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'];
+const LOG_RECEIPT_STATES = new Set(['empty', 'received', 'unknown', 'truncated', 'failed']);
+const INPUT_TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 function redactLatency(snapshot) {
   if (!isRecord(snapshot) || snapshot.schemaVersion !== 3) return null;
   const metrics = {};
@@ -44,10 +46,44 @@ function redactBuild(value) {
     : (typeof value?.builtAt === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value.builtAt) ? value.builtAt : null);
   return { id: digestValue(value?.id), builtAt };
 }
+function sanitizeLogReceipt(value, fallback = {}) {
+  const source = isRecord(value) ? value : fallback;
+  const state = safeEnum(source.state, LOG_RECEIPT_STATES);
+  const count = key => safeInteger(source[key], Number.MAX_SAFE_INTEGER);
+  const result = { state: state || 'unknown' };
+  for (const key of ['reported', 'retained', 'redacted', 'dropped']) {
+    const valueForKey = count(key);
+    if (valueForKey !== null) result[key] = valueForKey;
+  }
+  const reason = safeReason(source.reason);
+  if (reason !== null) result.reason = reason;
+  return result;
+}
+
+function inputTraceLoss(inputTrace) {
+  const counters = isRecord(inputTrace?.counters) ? inputTrace.counters
+    : (isRecord(inputTrace) ? inputTrace : {});
+  const result = {};
+  for (const key of INPUT_TRACE_LOSS_FIELDS) {
+    const value = safeInteger(counters[key], Number.MAX_SAFE_INTEGER);
+    if (value !== null) result[key] = value;
+  }
+  return result;
+}
+
 function redactRuntimeDiagnostic(payload) {
   // Console content is intentionally excluded from schema 3. Count the actual
   // received array first; client-supplied counters cannot establish evidence.
   const reportedLogCount = Array.isArray(payload.logs) ? payload.logs.length : null;
+  const logReceipt = sanitizeLogReceipt(payload.logReceipt, {
+    state: Array.isArray(payload.logs)
+      ? (payload.logs.length === 0 ? 'empty' : (safeInteger(payload.truncation?.dropped, Number.MAX_SAFE_INTEGER) > 0 ? 'truncated' : 'received'))
+      : 'unknown',
+    reported: reportedLogCount,
+    retained: 0,
+    redacted: reportedLogCount,
+    dropped: safeInteger(payload.truncation?.dropped, Number.MAX_SAFE_INTEGER),
+  });
   const latency = redactLatency(payload.latency);
   const inputTrace = redactInputTrace(payload.inputTrace);
   if (inputTrace) {
@@ -82,6 +118,8 @@ function redactRuntimeDiagnostic(payload) {
     inputState, inputTrace, startup: redactStartup(payload.startup), resources: null,
     scopeEnded: { events, dropped }, logs: [], keyboardDebug: [], events: [], probeResults: [], inputChannelTimeline: [],
     logContentPolicy: 'metadata-only', reportedLogCount, retainedLogCount: 0, redactedLogCount: reportedLogCount,
+    logReceipt,
+    inputTraceLoss: inputTraceLoss(inputTrace),
     inputTraceEventCount: Array.isArray(inputTrace?.events) ? inputTrace.events.length : null,
     traceSummary: {},
   };
@@ -541,6 +579,8 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     for (const key of ['reportedLogCount', 'retainedLogCount', 'redactedLogCount', 'inputTraceEventCount']) {
       meta[key] = safeInteger(report[key], Number.MAX_SAFE_INTEGER);
     }
+    if (isRecord(report.logReceipt)) meta.logReceipt = sanitizeLogReceipt(report.logReceipt);
+    if (isRecord(report.inputTraceLoss)) meta.inputTraceLoss = inputTraceLoss(report.inputTraceLoss);
   }
   if (safeInputState) {
     const gate = safeInputState.effectiveGate || {};
@@ -663,7 +703,8 @@ function ingestDiagnosticPayload(options = {}) {
 
   if (redacted.diagnosticId && redacted.captured) {
     for (const key of ['diagnosticId', 'captured', 'build', 'latencyStatus', 'latency', 'startup', 'resources', 'scopeEnded', 'truncation',
-      'logContentPolicy', 'reportedLogCount', 'retainedLogCount', 'redactedLogCount', 'inputTraceEventCount']) report[key] = redacted[key];
+    'logContentPolicy', 'reportedLogCount', 'retainedLogCount', 'redactedLogCount', 'inputTraceEventCount',
+    'logReceipt', 'inputTraceLoss']) report[key] = redacted[key];
   }
 
   if (redacted.failureCategory != null) {

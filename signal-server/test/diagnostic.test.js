@@ -952,8 +952,22 @@ test('runtime diagnostic counts received logs before redaction without retaining
   assert.equal(result.summaryEvent.meta.redactedLogCount, 2);
   assert.equal(result.summaryEvent.meta.inputTraceEventCount, 1);
   assert.equal(result.summaryEvent.meta.logContentPolicy, 'metadata-only');
+  assert.equal(result.report.logReceipt.state, 'received');
+  assert.equal(result.summaryEvent.meta.logReceipt.state, 'received');
   assert.equal(JSON.stringify(result).includes('PRIVATE_LOG_CANARY'), false);
   assert.equal(data.logs.length, 2);
+});
+
+test('runtime diagnostic receipt distinguishes empty and failed collection states', () => {
+  const empty = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit',
+    data: { ...runtimeFixture(), logs: [] }, config: { enableDiagPersist: false } });
+  assert.equal(empty.report.logReceipt.state, 'empty');
+  assert.equal(empty.summaryEvent.meta.logReceipt.state, 'empty');
+  const failed = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit',
+    data: { ...runtimeFixture(), logs: ['x'], logReceipt: { state: 'failed', reason: 'collector-failed' } },
+    config: { enableDiagPersist: false } });
+  assert.equal(failed.report.logReceipt.state, 'failed');
+  assert.equal(failed.summaryEvent.meta.logReceipt.state, 'failed');
 });
 
 test('runtime diagnostic keeps absent or malformed console log counts unknown', () => {

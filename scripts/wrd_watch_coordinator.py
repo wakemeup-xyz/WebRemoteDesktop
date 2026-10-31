@@ -306,7 +306,9 @@ def notify_status(status, *, popen=subprocess.Popen):
     """Existing local notification, with a finite wait and no content payload."""
     messages = {"budget-exhausted": "Recovery budget exhausted; inspect the service.",
                 "recovery-in-flight": "Recovery in progress; observations continue.",
-                "clock-untrusted": "Recovery history needs a full observation window."}
+                "clock-untrusted": "Recovery history needs a full observation window.",
+                "entry-degraded": "Entry assets degraded; tunnel recovery withheld.",
+                "entry-unknown": "Entry asset evidence unavailable; tunnel recovery withheld."}
     if status not in messages:
         return "ignored"
     try:

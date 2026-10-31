@@ -8,6 +8,9 @@
 const MAX_COUNT = 999999999;
 const MAX_SAMPLES = 256;
 const MAX_MISSING = 32;
+const LOG_RECEIPT_STATES = ['empty', 'received', 'unknown', 'truncated', 'failed'];
+const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
+const CORRELATION_STAGES = ['ack', 'hostApply', 'capture', 'encode', 'rtp', 'decode', 'present'];
 
 function boundedCount(value) {
   return Number.isSafeInteger(value) && value >= 0 ? Math.min(MAX_COUNT, value) : null;
@@ -53,6 +56,48 @@ function recordMissing(missing, name) {
   if (!missing.includes(name) && missing.length < MAX_MISSING) missing.push(name);
 }
 
+function projectLogReceipt(report, metadataOnly) {
+  const raw = report.logReceipt && typeof report.logReceipt === 'object' ? report.logReceipt : {};
+  const reported = firstCount(raw.reported, report.reportedLogCount,
+    Array.isArray(report.logs) ? report.logs.length : null);
+  const retained = firstCount(raw.retained, report.retainedLogCount,
+    Array.isArray(report.logs) ? report.logs.length : null);
+  const redacted = firstCount(raw.redacted, report.redactedLogCount);
+  const dropped = firstCount(raw.dropped, report.truncation?.dropped);
+  let state = LOG_RECEIPT_STATES.includes(raw.state) ? raw.state : null;
+  if (!state) {
+    if (reported === null) state = 'unknown';
+    else if (dropped !== null && dropped > 0) state = 'truncated';
+    else if (reported === 0) state = 'empty';
+    else state = metadataOnly ? 'received' : 'received';
+  }
+  return { state, reported, retained, redacted, dropped };
+}
+
+function projectInputTraceLoss(report) {
+  const counters = report.inputTraceLoss && typeof report.inputTraceLoss === 'object'
+    ? report.inputTraceLoss : (report.inputTrace?.counters || {});
+  return Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key, boundedCount(counters[key])]));
+}
+
+function projectCorrelation(report, metrics, outcomes) {
+  const available = name => metricCount(metrics, name) > 0;
+  const correlation = {
+    scopeAvailable: Boolean(report.latency?.scope && typeof report.latency.scope === 'object'),
+    stages: {
+      ack: available('inputAckRttMs') || boundedCount(outcomes.acked) > 0,
+      hostApply: available('hostApplyMs') || available('hostAdapterAwaitMs'),
+      capture: available('capturePrepareMs') || available('captureGrabMs'),
+      encode: available('encoderMs') || available('encodeTotalMs'),
+      rtp: available('rtpApiAwaitMs') || available('relayFrameAckRttMs'),
+      decode: available('inputToFrameNoticeMs') || available('inputToPostApplyFrameMs'),
+      present: available('inputToVisibleEffectMs'),
+    },
+  };
+  correlation.complete = CORRELATION_STAGES.every(stage => correlation.stages[stage]);
+  return correlation;
+}
+
 function projectDiagnostic(report = {}) {
   const latency = report.latency && typeof report.latency === 'object' ? report.latency : {};
   const metrics = latency.metrics && typeof latency.metrics === 'object' ? latency.metrics : {};
@@ -76,6 +121,8 @@ function projectDiagnostic(report = {}) {
     report.heartbeat?.ringDropped,
     report.runtime?.heartbeat?.ringDropped,
   );
+  const logReceipt = projectLogReceipt(report, metadataOnly);
+  const inputTraceLoss = projectInputTraceLoss(report);
   const sent = firstCount(outcomes.sent, report.inputTrace?.counters?.sent);
   const visible = metricCount(metrics, 'inputToVisibleEffectMs');
   const visibleCoverage = ratio(visible, sent);
@@ -116,6 +163,9 @@ function projectDiagnostic(report = {}) {
     metadataOnly,
     summaryGapCount,
     ringDropCount,
+    logReceipt,
+    inputTraceLoss,
+    correlation: projectCorrelation(report, metrics, outcomes),
     fps,
     dropped,
     droppedIntervalDelta,
@@ -196,6 +246,13 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const visibleSamples = visibleRows.reduce((total, row) => total + (row.samples ?? 0), 0);
     const sent = visibleRows.reduce((total, row) => total + (row.sent ?? 0), 0);
     const visibleCoverage = ratio(visibleSamples, sent);
+    const logReceipts = Object.fromEntries(LOG_RECEIPT_STATES.map(state => [state, 0]));
+    projected.forEach(row => { if (logReceipts[row.logReceipt?.state] !== undefined) logReceipts[row.logReceipt.state]++; });
+    const inputTraceLoss = Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key,
+      projected.reduce((total, row) => total + (row.inputTraceLoss?.[key] ?? 0), 0)]));
+    const correlationStages = Object.fromEntries(CORRELATION_STAGES.map(stage => [stage,
+      projected.filter(row => row.correlation?.stages?.[stage] === true).length]));
+    const correlationReports = projected.filter(row => row.correlation).length;
     const rss = sampleStats(resourceSamples.map(row => row.rssMiB));
     const cpu = sampleStats(resourceSamples.map(row => row.cpuPercent));
     if (!projected.length) recordMissing(missing, 'diagnostics');
@@ -218,7 +275,9 @@ function createRuntimeEvidenceRecorder(options = {}) {
           unknownReports: projected.filter(row => row.logCount === null).length },
         retainedLogCount: sumKnown('retainedLogCount'),
         redactedLogCount: sumKnown('redactedLogCount'),
+        logReceiptStates: logReceipts,
         inputTraceEventCount: sumKnown('inputTraceEventCount'),
+        inputTraceLoss,
         metadataOnlyReports: projected.filter(row => row.metadataOnly).length,
         summaryGapCount: summaryCoverage.droppedSummaryCount + sum('summaryGapCount'),
         summaryGaps: summaryCoverage.gaps.slice(),
@@ -230,6 +289,8 @@ function createRuntimeEvidenceRecorder(options = {}) {
         droppedFramesIntervalDelta: sampleStats(droppedIntervalDelta),
         droppedFramesIntervalDeltaScope: 'webrtc-inbound-interval' },
       visibleEffect: { sent: sent || null, samples: visibleSamples || null, coverage: visibleCoverage },
+      correlation: { reports: correlationReports, stages: correlationStages,
+        completeReports: projected.filter(row => row.correlation?.complete === true).length },
       coverage: { complete: missing.length === 0, missing },
     };
   }

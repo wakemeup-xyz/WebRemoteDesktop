@@ -14,6 +14,8 @@ const time = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\
 const enumValue = (value, allowed) => allowed.includes(value) ? value : null;
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const knownCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+const LOG_RECEIPT_STATES = new Set(['empty', 'received', 'unknown', 'truncated', 'failed']);
+const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 function getDiagDir() { return process.env.WRD_DIAG_DIR?.trim() ? path.resolve(process.env.WRD_DIAG_DIR.trim()) : '/tmp/wrd-diag'; }
 function ensureDirectory(dir) {
   fs.mkdirSync(dir,{recursive:true});
@@ -200,7 +202,14 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
       reportedLogCount:knownCount(r.reportedLogCount),
       retainedLogCount:knownCount(r.retainedLogCount)??(Array.isArray(r.logs)?r.logs.length:knownCount(r.logCount)),
       redactedLogCount:knownCount(r.redactedLogCount),
+      logReceipt: r.logReceipt && typeof r.logReceipt === 'object'
+        ? { state: enumValue(r.logReceipt.state, [...LOG_RECEIPT_STATES]) || 'unknown',
+          reported: knownCount(r.logReceipt.reported), retained: knownCount(r.logReceipt.retained),
+          redacted: knownCount(r.logReceipt.redacted), dropped: knownCount(r.logReceipt.dropped) }
+        : { state: 'unknown', reported: knownCount(r.reportedLogCount), retained: knownCount(r.retainedLogCount),
+          redacted: knownCount(r.redactedLogCount), dropped: null },
       inputTraceEventCount:Array.isArray(r.inputTrace?.events)?r.inputTrace.events.length:knownCount(r.inputTraceEventCount),
+      inputTraceLoss: Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key, knownCount(r.inputTraceLoss?.[key] ?? r.inputTrace?.counters?.[key])])),
       ...(r.traceSummary?.controlHeartbeat?{traceSummary:{controlHeartbeat:sanitizeControlHeartbeat(r.traceSummary.controlHeartbeat)}}:{}),
       sampleCount:metrics && typeof metrics==='object'?Object.values(metrics).reduce((n,item)=>Math.min(Number.MAX_SAFE_INTEGER,n+count(item?.count)),0):0};
   }

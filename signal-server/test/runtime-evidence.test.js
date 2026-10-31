@@ -221,3 +221,29 @@ test('durable summary policy projects console and trace counts without raw event
   assert.equal(row.redactedLogCount,2);assert.equal(row.inputTraceEventCount,1);
   assert.equal(row.metadataOnly,true);
 });
+
+test('receipt classifies console collection and preserves bounded input loss evidence', () => {
+  const base = { schemaVersion: 3, logContentPolicy: 'metadata-only', logs: [], reportedLogCount: 0,
+    inputTrace: { events: [], counters: { droppedEvents: 4, droppedHashCount: 2, evictedPendingAcks: 1,
+      expiredPendingAcks: 3, ackTimeoutCount: 5 } } };
+  assert.equal(projectDiagnostic(base).logReceipt.state, 'empty');
+  assert.deepEqual(projectDiagnostic(base).inputTraceLoss, {
+    droppedEvents: 4, droppedHashCount: 2, evictedPendingAcks: 1, expiredPendingAcks: 3, ackTimeoutCount: 5,
+  });
+  assert.equal(projectDiagnostic({ schemaVersion: 3, logContentPolicy: 'metadata-only' }).logReceipt.state, 'unknown');
+  assert.equal(projectDiagnostic({ ...base, reportedLogCount: 3, logReceipt: { state: 'truncated', reported: 3, dropped: 2 } }).logReceipt.state, 'truncated');
+  assert.equal(projectDiagnostic({ ...base, logReceipt: { state: 'failed' } }).logReceipt.state, 'failed');
+});
+
+test('receipt exposes stage correlation coverage without fabricating missing stages', () => {
+  const row = projectDiagnostic({ schemaVersion: 3, logContentPolicy: 'metadata-only', reportedLogCount: 1,
+    latency: { scope: { attemptHash: 'a'.repeat(32), generation: 1, leaseEpoch: 2 }, outcomes: { acked: 1 }, metrics: {
+      hostApplyMs: { count: 1 }, capturePrepareMs: { count: 1 }, encoderMs: { count: 1 },
+      rtpApiAwaitMs: { count: 1 }, inputToPostApplyFrameMs: { count: 1 }, inputToVisibleEffectMs: { count: 1 },
+    } } });
+  assert.equal(row.correlation.scopeAvailable, true);
+  assert.deepEqual(row.correlation.stages, {
+    ack: true, hostApply: true, capture: true, encode: true, rtp: true, decode: true, present: true,
+  });
+  assert.equal(row.correlation.complete, true);
+});
