@@ -520,3 +520,9 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 按 runbook 只重启本地 Signal/Host，Signal PID `18500`、Host PID `18544`；正式 cloudflared PID `26104` 未变，`/tmp/wrd-safe-current-url.txt` 仍为空。
 - 重启后完整媒体会话实际出现 `connection_attempt_bound`，随后 `viewer_disconnect_grace_started` 带同一 `attemptHash`；对应 `control_reset_completed` 的 `correlationMissing=false`。早退、未完成 WebRTC attempt 的连接仍按设计保留 `correlationMissing=true`，不会伪造关联。
 - 该会话结束后等待 grace 到期，`/api/status` 回到 `hostOnline=true`、`viewerCount=0`；本地健康检查保持 `status=ok`。
+
+### 120 秒 Relay 长会话
+
+- 使用正式域名和 Relay 模式完成 120 秒被动真实 Viewer 会话：121 个样本，`missing=0`、`late=0`、`failedObservations=0`、身份/路径变化均为 0，`pcState=connected`、`hasPaintedFrame=true`、`progressAfterBaseline=true`，最大无进展约 **416.7 ms**。
+- 同一窗口 Host active capture 统计：抓帧耗时 p50/p95/max 约 **53.9/119.2/119.2 ms**，线程 CPU p95 约 **14.7 ms**，非 CPU p95 约 **104.7 ms**，滚动最大抓帧约 **159.1 ms**、最大非 CPU 约 **143.3 ms**；RSS p95 约 **461.4 MiB**，窗口 system load p95 约 **8.58**。长会话没有断流，但高负载下抓帧长尾仍主要由非 CPU 等待构成。
+- 会话结束后槽位自动回收，`viewerCount=0`；该样本证明短断线/长会话的媒体连续性和租约清理保持稳定，但还不能替代真实用户物理操作或严格 marker-backed 可见效果验收。
