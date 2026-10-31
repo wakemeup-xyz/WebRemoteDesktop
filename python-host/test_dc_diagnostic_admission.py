@@ -33,6 +33,7 @@ def track_for(dc):
     track._pending_input_data = []
     track._timing_seq = 0
     track._frame_timing_sample_seq = 0
+    track._last_frame_timing_send_ns = 0
     return track
 
 
@@ -48,6 +49,15 @@ def test_frame_timing_sampling_preserves_input_rows_and_bounds_idle_rows():
     assert track._should_send_frame_timing() is True
     track._pending_input_ids.clear()
     assert track._should_send_frame_timing() is False
+
+
+def test_input_associated_frame_timing_is_rate_limited_during_diagnostic_bursts():
+    track = track_for(Channel())
+    track._pending_input_ids.add('input-hash')
+    track._last_frame_timing_send_ns = time.monotonic_ns()
+    assert track._should_send_frame_timing() is False
+    track._last_frame_timing_send_ns = 0
+    assert track._should_send_frame_timing() is True
 
 
 @pytest.mark.asyncio

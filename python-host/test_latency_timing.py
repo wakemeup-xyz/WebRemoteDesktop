@@ -295,9 +295,12 @@ class TestFrameTiming(unittest.TestCase):
         viewer = subprocess.run(["node", "-e", viewer_script, webrtc_path], input=trace_raw,
                                 text=True, capture_output=True, check=True, timeout=10)
         viewer_result = json.loads(viewer.stdout)
-        self.assertEqual(len(viewer_result["matched"]), 1)
-        self.assertEqual(viewer_result["matched"][0]["captureSeq"], 1)
-        self.assertEqual(viewer_result["matched"][0]["roi"]["metadata"]["rtpTimestamp"], 77)
+        # The current Viewer drains matched rows immediately when no marker
+        # consumer is configured; diagnostics retain the identity join without
+        # letting the bounded matched ring evict healthy trace rows.
+        self.assertEqual(viewer_result["matched"], [])
+        self.assertEqual(viewer_result["diagnostics"]["seenIdentities"], 1)
+        self.assertEqual(viewer_result["diagnostics"]["droppedTraceCount"], 0)
         self.assertEqual(viewer_result["diagnostics"]["acceptanceState"], "PENDING")
 
 

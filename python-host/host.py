@@ -1513,6 +1513,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
         # timing row, while sampling idle media rows so the observation stream
         # cannot congest the same reliable SCTP channel used for control.
         self._frame_timing_sample_seq = 0
+        self._last_frame_timing_send_ns = 0
         self._process_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="imgproc")
         self._timing_totals = {
             "sleep": 0.0,
@@ -2096,6 +2097,11 @@ class ScreenCaptureTrack(VideoStreamTrack):
     def _should_send_frame_timing(self):
         with self._pending_input_lock:
             input_pending = bool(self._pending_input_ids or self._pending_input_data)
+        if input_pending:
+            now_ns = time.monotonic_ns()
+            if now_ns - getattr(self, "_last_frame_timing_send_ns", 0) < 100_000_000:
+                self._frame_timing_sample_seq += 1
+                return False
         sample_idle_timing = (self._frame_timing_sample_seq % 5) == 0
         self._frame_timing_sample_seq += 1
         return input_pending or sample_idle_timing
@@ -2138,6 +2144,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
             timing["inputs"] = input_data_list
 
         self._timing_seq += 1
+        # Input-associated timing is diagnostic-only. Keep a bounded cadence
+        # so a burst of accepted inputs cannot continuously contend with the
+        # control channel while still exporting every fifth idle sample.
+        self._last_frame_timing_send_ns = time.monotonic_ns()
         if not self._send_disposable_diagnostic(timing):
             self._diagnostic_admission.note_legacy_drop(len(input_ids), len(input_data_list))
 
