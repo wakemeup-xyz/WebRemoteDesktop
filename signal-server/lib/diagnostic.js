@@ -7,6 +7,10 @@ const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
 const crypto = require('node:crypto');
 const hashIdentity = value => typeof value === 'string' && value.length > 0
   ? crypto.createHash('sha256').update(value).digest('hex').slice(0, 32) : null;
+// Reports may already contain a bounded hash from the viewer redactor. Keep
+// that value stable so a single attempt can be joined across services without
+// retaining the original identifier.
+const identityHash = value => digestValue(value) || hashIdentity(value);
 const finiteNonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const countValue = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const digestValue = value => typeof value === 'string' && /^[0-9a-f]{16,64}$/.test(value) ? value : null;
@@ -334,10 +338,8 @@ function safeTraceEvent(event) {
   copyInteger('seq');
   copyInteger('appliedSeq');
   copyInteger('leaseEpoch');
-  if (typeof event.connectionAttemptId === 'string'
-    && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(event.connectionAttemptId)) {
-    clean.connectionAttemptId = event.connectionAttemptId;
-  }
+  const attemptHash = identityHash(event.attemptHash || event.connectionAttemptId);
+  if (attemptHash) clean.attemptHash = attemptHash;
   const clientRttMs = safeFinite(event.clientRttMs);
   if (clientRttMs !== null) clean.clientRttMs = Math.round(clientRttMs * 100) / 100;
   copyEnum('focusKind', INPUT_DIAGNOSTIC_FOCUS_KINDS);
@@ -543,12 +545,27 @@ function redactDiagnosticPayload(payload) {
 // Keep the public persistence API; all real filesystem operations and receipts
 // live in the one diagnostic store. HTTP and Socket still share this ingress.
 const diagnosticStore = () => createDiagnosticStore({ dir: getDiagDir() });
-function persistDiagnostic(filename, report) { return diagnosticStore().persistLegacy(filename, report); }
+function deidentifyPersistedReport(report, viewerId = report?.viewerId) {
+  let safe;
+  try { safe = JSON.parse(JSON.stringify(report || {})); }
+  catch (_error) { safe = { ...(report || {}) }; }
+  safe.viewerHash = digestValue(safe.viewerHash) || hashIdentity(viewerId || safe.viewerId || safe.viewerHash || 'unknown');
+  safe.attemptHash = digestValue(safe.attemptHash) || hashIdentity(safe.connectionAttemptId);
+  safe.browserSessionHash = digestValue(safe.browserSessionHash) || hashIdentity(safe.browserSessionId);
+  delete safe.viewerId;
+  delete safe.connectionAttemptId;
+  delete safe.browserSessionId;
+  return safe;
+}
+function persistDiagnostic(filename, report) {
+  return diagnosticStore().persistLegacy(filename, deidentifyPersistedReport(report));
+}
 function loadDiagnosticReceipts(now) { return diagnosticStore().loadDiagnosticReceipts(now); }
 function saveDiagnosticReceipts(index) { return diagnosticStore().saveDiagnosticReceipts(index); }
 function persistDiagnosticOnce(report, { viewerId = report.viewerId, receivedAt = report.receivedAt, now } = {}) {
+  const safeReport = deidentifyPersistedReport(report, viewerId);
   return createDiagnosticStore({ dir: getDiagDir(), ...(now === undefined ? {} : { now: () => now }) })
-    .write({ ...report, viewerId, receivedAt });
+    .write({ ...safeReport, receivedAt });
 }
 function cleanupDiagLogs(logger = console) {
   try { return diagnosticStore().cleanup(); }
@@ -561,7 +578,7 @@ function dedupeDiagnosticsByAttempt(items = []) {
   const seenAttemptIds = new Set();
 
   items.forEach((item, index) => {
-    const rawAttemptId = String(item?.connectionAttemptId || '').trim();
+    const rawAttemptId = String(item?.attemptHash || item?.connectionAttemptId || '').trim();
     const attemptKey = rawAttemptId || `missing-attempt-${index}`;
     if (seenAttemptIds.has(attemptKey)) {
       return;
@@ -659,10 +676,10 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     event: 'diagnostic_uploaded',
     message: 'Viewer uploaded diagnostic bundle',
     correlation: {
-      browserSessionId: report.browserSessionId || null,
-      connectionAttemptId: report.connectionAttemptId || null,
-      viewerId: report.viewerId || null,
-      socketId: options.socketId || null,
+      browserSessionHash: identityHash(report.browserSessionHash || report.browserSessionId),
+      attemptHash: identityHash(report.attemptHash || report.connectionAttemptId),
+      viewerHash: identityHash(report.viewerHash || report.viewerId),
+      socketHash: identityHash(options.socketHash || options.socketId),
     },
     meta,
   };
@@ -794,7 +811,7 @@ function ingestDiagnosticPayload(options = {}) {
       if (report.diagnosticId) {
         ({ persisted, duplicate, eventIdHashes } = persistDiagnosticOnce(report, { viewerId, receivedAt }));
       } else {
-        ({ persisted, duplicate } = diagnosticStore().write(report));
+        ({ persisted, duplicate } = diagnosticStore().write(deidentifyPersistedReport(report, viewerId)));
       }
       // A duplicate reuses the canonical accepted receipt so retries remain
       // byte-for-byte stable; the outer result.duplicate flag carries replay.

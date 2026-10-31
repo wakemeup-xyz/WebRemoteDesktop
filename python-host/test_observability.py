@@ -325,6 +325,39 @@ def test_structured_lifecycle_correlation_hashes_raw_viewer_attempt_and_session_
         logger.handlers.clear()
 
 
+def test_structured_metadata_hashes_nested_lifecycle_identities():
+    import json
+    logger = logging.getLogger("wrd-test-metadata-correlation")
+    logger.handlers.clear()
+    records = []
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(json.loads(record.getMessage()))
+    handler = Capture()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        payload = observability.emit_host_event(
+            logger, event="media", message="safe",
+            meta={
+                "connectionAttemptId": "attempt-private",
+                "nested": [{"viewerId": "viewer-private", "browserSessionId": "session-private"}],
+                "safe": "value",
+            },
+        )
+        meta = payload["meta"]
+        assert "connectionAttemptId" not in json.dumps(payload)
+        assert "viewerId" not in json.dumps(payload)
+        assert "browserSessionId" not in json.dumps(payload)
+        assert len(meta["attemptHash"]) == 32
+        assert len(meta["nested"][0]["viewerHash"]) == 32
+        assert len(meta["nested"][0]["browserSessionHash"]) == 32
+        assert meta["safe"] == "value"
+        assert records[0] == payload
+    finally:
+        logger.handlers.clear()
+
+
 def test_host_terminal_finally_stops_owned_handler_after_run_and_fatal_log():
     import ast
     from pathlib import Path

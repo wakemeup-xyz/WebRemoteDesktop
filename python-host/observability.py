@@ -164,6 +164,37 @@ def redact_host_correlation(value):
     return clean
 
 
+_IDENTITY_META_KEYS = {
+    "viewerId": "viewerHash",
+    "previousViewerId": "previousViewerHash",
+    "connectionAttemptId": "attemptHash",
+    "browserSessionId": "browserSessionHash",
+}
+
+
+def redact_host_meta(value):
+    """Redact lifecycle identities anywhere inside structured event metadata.
+
+    Host metadata is diagnostic-only; preserving raw viewer/session/attempt IDs
+    there would defeat the deidentified correlation contract even when the
+    top-level ``correlation`` object is already hashed.
+    """
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            target = _IDENTITY_META_KEYS.get(key)
+            if target is not None:
+                hashed = hash_correlation(item)
+                if hashed:
+                    clean[target] = hashed
+                continue
+            clean[key] = redact_host_meta(item)
+        return redact_host_value(clean)
+    if isinstance(value, (list, tuple)):
+        return [redact_host_meta(item) for item in value]
+    return redact_host_value(value)
+
+
 def _valid_input_ids(input_ids):
     if not isinstance(input_ids, (list, tuple)) or not 1 <= len(input_ids) <= _MAX_INPUT_IDS:
         return None
@@ -289,7 +320,7 @@ def emit_host_event(logger, *, event, message, correlation=None, meta=None, leve
         "source": "python-host",
         "schemaVersion": 1,
         "correlation": redact_host_correlation(correlation or {}),
-        "meta": redact_host_value(meta or {}),
+        "meta": redact_host_meta(meta or {}),
         "redactionVersion": 1,
     }
     getattr(logger, level)(json.dumps(payload, ensure_ascii=True, separators=(",", ":")))

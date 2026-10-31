@@ -17,6 +17,36 @@ const knownCount = value => Number.isSafeInteger(value) && value >= 0 ? value : 
 const LOG_RECEIPT_STATES = new Set(['empty', 'valid', 'unknown', 'truncated', 'failed']);
 const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 const FRAME_TRACE_LOSS_FIELDS = ['droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount'];
+function deidentifyNested(value) {
+  if (Array.isArray(value)) return value.map(item => deidentifyNested(item));
+  if (!value || typeof value !== 'object') return value;
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'viewerId') { result.viewerHash = digest(item) || (typeof item === 'string' && item ? identity(item) : null); continue; }
+    if (key === 'connectionAttemptId') { result.attemptHash = digest(item) || (typeof item === 'string' && item ? identity(item) : null); continue; }
+    if (key === 'browserSessionId') { result.browserSessionHash = digest(item) || (typeof item === 'string' && item ? identity(item) : null); continue; }
+    if (key === 'viewerHash') { result.viewerHash = digest(item) || (typeof item === 'string' && item ? identity(item) : null); continue; }
+    if (key === 'attemptHash') { result.attemptHash = digest(item) || (typeof item === 'string' && item ? identity(item) : null); continue; }
+    if (key === 'browserSessionHash') { result.browserSessionHash = digest(item) || (typeof item === 'string' && item ? identity(item) : null); continue; }
+    result[key] = deidentifyNested(item);
+  }
+  return result;
+}
+function deidentifyReport(value) {
+  let report;
+  try { report = JSON.parse(JSON.stringify(value || {})); }
+  catch (_error) { report = { ...(value || {}) }; }
+  const stableHash = (existing, raw) => digest(existing)
+    || (typeof existing === 'string' && existing.length > 0 ? identity(existing)
+      : (typeof raw === 'string' && raw.length > 0 ? identity(raw) : null));
+  report.viewerHash = stableHash(report.viewerHash, report.viewerId || 'unknown');
+  report.attemptHash = stableHash(report.attemptHash, report.connectionAttemptId);
+  report.browserSessionHash = stableHash(report.browserSessionHash, report.browserSessionId);
+  delete report.viewerId;
+  delete report.connectionAttemptId;
+  delete report.browserSessionId;
+  return deidentifyNested(report);
+}
 function getDiagDir() { return process.env.WRD_DIAG_DIR?.trim() ? path.resolve(process.env.WRD_DIAG_DIR.trim()) : '/tmp/wrd-diag'; }
 function ensureDirectory(dir) {
   fs.mkdirSync(dir,{recursive:true});
@@ -304,6 +334,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
   }
   function write(report) {
     init();
+    report = deidentifyReport(report);
     const at=now(); const index=loadDiagnosticReceipts(at);
     const text=JSON.stringify(report);
     if(Buffer.byteLength(text)>128*1024)throw Error('diagnostic-too-large');
@@ -359,7 +390,7 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
       retainedFrom:new Date(cutoff).toISOString(),dedupe:{maxEntries:RECEIPT_MAX_ENTRIES,ttlMs:RECEIPT_TTL_MS}}};
   }
   function recent(limit=50) {return readRaw({mutate:false}).sort((a,b)=>b.receivedAtMs-a.receivedAtMs || b.name.localeCompare(a.name)).slice(0,Math.max(0,Number(limit)||0)).map(e=>e.report);}
-  function persistLegacy(filename,report) {ensureDirectory(dir);atomicJson(path.join(dir,path.basename(filename)),report);}
+  function persistLegacy(filename,report) {ensureDirectory(dir);atomicJson(path.join(dir,path.basename(filename)),deidentifyReport(report));}
   return {
     write: report => withWriter(() => write(report)),
     listSummary,

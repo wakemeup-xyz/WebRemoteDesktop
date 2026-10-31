@@ -222,10 +222,10 @@ test('diagnostic ingestion strips nested input secrets but preserves final gate 
   assert.equal(clean.inputState.pendingMouseReset, true);
   assert.equal(clean.inputTrace.counters.droppedEvents, 4);
   assert.equal(clean.inputTrace.events[0].status, 'applied');
-  assert.equal(clean.inputTrace.events[0].connectionAttemptId, 'attempt-safe-a');
+  assert.equal(clean.inputTrace.events[0].attemptHash, '25b473236be3a90d28a1bec98ede053a');
   assert.equal(clean.inputTrace.events[0].seq, 9);
   assert.equal(clean.inputTrace.events[0].leaseEpoch, 12);
-  assert.equal(clean.inputTrace.events[1].connectionAttemptId, 'attempt-safe-b');
+  assert.equal(clean.inputTrace.events[1].attemptHash, 'b760603faa90f8de674089cf236b5163');
   for (const secret of ['GATE_CANARY', 'TEXT_CANARY', 'LEASE_CANARY', 'VIEWPORT_CANARY', 'TRACE_CANARY']) {
     assert.equal(JSON.stringify(clean).includes(secret), false);
   }
@@ -327,7 +327,9 @@ test('persistDiagnostic writes only into the isolated diagnostic directory', () 
   const report = { ok: true };
   persistDiagnostic(filename, report);
   const written = JSON.parse(fs.readFileSync(path.join(dir, filename), 'utf8'));
-  assert.deepEqual(written, report);
+  assert.equal(written.ok, true);
+  assert.match(written.viewerHash, /^[0-9a-f]{32}$/);
+  assert.equal(written.viewerId, undefined);
   fs.unlinkSync(path.join(dir, filename));
 });
 
@@ -419,10 +421,10 @@ test('ingestDiagnosticPayload returns a shared redacted diagnostic report shape'
     event: 'diagnostic_uploaded',
     message: 'Viewer uploaded diagnostic bundle',
     correlation: {
-      browserSessionId: 'browser-1',
-      connectionAttemptId: 'attempt-unit-1',
-      viewerId: 'viewer-1',
-      socketId: null,
+      browserSessionHash: '5e26d7146bd0f49c8b40a10b95dcdd2d',
+      attemptHash: '8d1d0c513da41c853d9fcb3d42efab1c',
+      viewerHash: '63a9e8a8c2d8dae19cffc606f5c788cb',
+      socketHash: null,
     },
     meta: {
       trigger: 'manual',
@@ -627,7 +629,7 @@ test('GET /api/admin/connection-summary returns recent failure buckets and sugge
     assert.equal(body.failures['relay-failed-suggest-tunnel'], 1);
     assert.equal(body.nextSuggestions.relay, 1);
     assert.equal(body.nextSuggestions.tunnel, 1);
-    assert.equal(body.latestAttempt.connectionAttemptId, 'attempt-summary-2');
+    assert.equal(body.latestAttempt.attemptHash, 'a2dd1a6f6172b8aaa47bb68d05aea0ef');
   } finally {
     resetDiagnosticTestDirectory();
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
@@ -693,7 +695,7 @@ test('GET /api/admin/connection-summary deduplicates repeated reports from the s
     assert.equal(body.total, 1);
     assert.equal(body.failures['direct-failed-suggest-relay'], 1);
     assert.equal(body.nextSuggestions.relay, 1);
-    assert.equal(body.latestAttempt.connectionAttemptId, 'attempt-dup-1');
+    assert.equal(body.latestAttempt.attemptHash, '4c2988d5bab85f84ddf9ff57aee39136');
     assert.equal(body.latestAttempt.receivedAt, '2026-07-08T00:00:01.000Z');
   } finally {
     resetDiagnosticTestDirectory();
@@ -754,7 +756,7 @@ test('GET /api/admin/connection-attempts respects limit and returns newest attem
 
     assert.equal(response.status, 200);
     assert.equal(body.items.length, 1);
-    assert.equal(body.items[0].connectionAttemptId, 'attempt-list-2');
+    assert.equal(body.items[0].attemptHash, 'ab60499edf184126d2fbee547c59ce6f');
   } finally {
     resetDiagnosticTestDirectory();
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
@@ -811,7 +813,7 @@ test('GET /api/admin/connection-attempts ignores malformed diagnostic files', as
 
     assert.equal(response.status, 200);
     assert.equal(body.items.length, 1);
-    assert.equal(body.items[0].connectionAttemptId, 'attempt-ok-1');
+    assert.equal(body.items[0].attemptHash, '6783744d201ed5cc25a13639bb12787f');
   } finally {
     resetDiagnosticTestDirectory();
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
@@ -896,8 +898,10 @@ test('admin observability summary and recent endpoints return structured diagnos
     assert.equal(recent.items.length, 1);
     assert.equal(recent.items[0].domain, 'viewer');
     assert.equal(recent.items[0].event, 'diagnostic_uploaded');
-    assert.equal(recent.items[0].correlation.browserSessionId, 'browser-summary-1');
-    assert.equal(recent.items[0].correlation.connectionAttemptId, 'attempt-summary-runtime-1');
+    assert.equal(recent.items[0].correlation.browserSessionHash, '88f106b130be3ae5167251b3fc2dd1a6');
+    assert.equal(recent.items[0].correlation.attemptHash, '0276fbe5ceba39be39e90ad3ee950fef');
+    assert.equal(Object.hasOwn(recent.items[0].correlation, 'browserSessionId'), false);
+    assert.equal(Object.hasOwn(recent.items[0].correlation, 'connectionAttemptId'), false);
   } finally {
     await new Promise((resolve, reject) => runtime.server.close((err) => (err ? reject(err) : resolve())));
   }
@@ -1272,6 +1276,11 @@ test('ingress persists only redacted runtime raw and summary and merges one inci
     const stored=fs.readdirSync(path.join(dir,'raw')).filter(n=>n.startsWith('runtime_')).map(n=>JSON.parse(fs.readFileSync(path.join(dir,'raw',n),'utf8')))[0];
     assert.equal(stored.reportedLogCount,1);assert.equal(stored.retainedLogCount,0);
     assert.equal(stored.redactedLogCount,1);assert.equal(stored.inputTraceEventCount,1);
+    assert.match(stored.viewerHash, /^[0-9a-f]{32}$/);
+    assert.equal(stored.viewerId, undefined);
+    assert.equal(stored.connectionAttemptId, undefined);
+    assert.equal(stored.browserSessionId, undefined);
+    assert.match(stored.attemptHash, /^[0-9a-f]{32}$/);
     const records=createDiagnosticStore({dir}).listSummary({from:0,to:Date.now()+1}).records;
     assert.equal(records.length,1);assert.equal(records[0].rawAvailable,true);assert.equal(records[0].sampleCount,3);
     assert.equal(summary.includes(payload.diagnosticId),false);
