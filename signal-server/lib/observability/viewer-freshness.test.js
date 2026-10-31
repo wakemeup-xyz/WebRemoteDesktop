@@ -9,6 +9,7 @@ function fixture(staleAfterMs = 30000, activeRecoveryAfterMs = undefined) {
   const events = [];
   const snapshots = new Map();
   let releaseCount = 0;
+  let recoveryCount = 0;
   const registry = createViewerFreshnessRegistry({
     now: () => now,
     staleAfterMs,
@@ -18,6 +19,7 @@ function fixture(staleAfterMs = 30000, activeRecoveryAfterMs = undefined) {
     clearIntervalFn() {},
     onEvent: event => events.push(event),
     onSnapshot: (id, snapshot) => snapshots.set(id, snapshot),
+    onActiveStall: () => { recoveryCount += 1; return true; },
     onStale: () => { releaseCount += 1; return true; },
   });
   return {
@@ -25,6 +27,7 @@ function fixture(staleAfterMs = 30000, activeRecoveryAfterMs = undefined) {
     events,
     snapshots,
     get releaseCount() { return releaseCount; },
+    get recoveryCount() { return recoveryCount; },
     advance(ms) { now += ms; registry.tick(); },
   };
 }
@@ -94,6 +97,7 @@ test('active stall records recovery then releases only after a second bounded wi
   assert.deepEqual(h.events.map(event => event.event), ['media_stalled']);
   h.advance(60000);
   assert.equal(h.events.at(-1).event, 'media_stall_recovery_requested');
+  assert.equal(h.recoveryCount, 1);
   assert.equal(h.releaseCount, 0);
   h.advance(29999);
   assert.equal(h.releaseCount, 0);

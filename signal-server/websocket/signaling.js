@@ -368,6 +368,30 @@ function setupSignaling(io, options = {}) {
         ...observation.meta,
       });
     },
+    onActiveStall({ viewerId }) {
+      const progress = mediaActivityProgress.get(viewerId);
+      const lease = desktopLease.getActiveLease(viewerId);
+      if (!connections.host || !progress || !lease
+        || !isValidConnectionAttemptId(progress.connectionAttemptId)
+        || !isValidConnectionAttemptSequence(progress.connectionAttemptSequence)
+        || !isValidConnectionAttemptSequence(progress.generation)
+        || progress.generation < 1) return false;
+      const requestSequence = isValidConnectionAttemptSequence(progress.recoveryRequestSequence)
+        ? progress.recoveryRequestSequence + 1 : 1;
+      progress.recoveryRequestSequence = requestSequence;
+      connections.host.emit('request-keyframe', {
+        schemaVersion: 2,
+        viewerId,
+        reason: 'media-stalled-recovery',
+        leaseId: lease.leaseId,
+        leaseEpoch: lease.leaseEpoch,
+        connectionAttemptId: progress.connectionAttemptId,
+        connectionAttemptSequence: progress.connectionAttemptSequence,
+        generation: progress.generation,
+        requestSequence,
+      });
+      return true;
+    },
     onStale({ viewerId, reason }) {
       const viewer = connections.viewers.get(viewerId);
       if (!viewer || !isActiveViewerSocket(viewer)) return false;
@@ -987,6 +1011,7 @@ function setupSignaling(io, options = {}) {
       connectionAttemptId,
       connectionAttemptSequence: sequence,
       generation: 0,
+      recoveryRequestSequence: 0,
       profileSequence: 0,
       profileFingerprint: null,
       profile: null,

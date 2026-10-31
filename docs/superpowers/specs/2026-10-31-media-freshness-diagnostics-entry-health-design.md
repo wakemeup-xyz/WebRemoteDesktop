@@ -32,6 +32,8 @@
 
 `page-hidden` 本身不立即断开会话。它在超过有界 grace 且没有新的 active request、media ACK、frame/decode 或控制 heartbeat 时进入 `session_stale_detected`；持续无媒体进展进入 `media_stalled`。只有经过现有身份和 lease 清理路径才记录 `slot_released`。恢复到 visible/active 或新 attempt 时清除 stale episode，但保留闭合摘要。
 
+对 `active` 但长期没有新 decoded/received/frame 进展的会话，先记录 `media_stalled`，在第二个有界恢复窗口记录 `media_stall_recovery_requested`，再经过一个 `staleAfterMs` 且仍无任何 progress 后，才允许以 `active-media-stale` 原因进入 `session_stale_detected` 和 `slot_released`。默认恢复窗口为 240 秒或 `2 * staleAfterMs` 中较大者；该策略不能把一次短暂的媒体暂停直接当作死会话。`progressAgeMs` 同时由最近 media request、applied media ACK、received/decoded frame 和 control heartbeat 推导，不能只看 heartbeat。
+
 `/api/status` 和 admin summary 公开 `viewerMediaFresh`、`mediaState`、`mediaStateAgeMs`、`lastFrameAgeMs`、`pageVisibility` 和 `staleCount`，不把 `viewerCount` 与 `hostOnline` 单独当作可用性结论。
 
 ## 诊断 receipt

@@ -177,3 +177,12 @@
 当前日志系统已经足够发现“网页/信令断开、媒体停滞、Host 抓帧长尾、诊断通道拥塞、输入 ACK/重置失败和资源压力”等主要症状；还不足以单凭生产摘要完成自动根因归类或宣布远程控制稳定可用。Goal 继续保持 `active`，不能标记完成。
 
 下一步优先级仍是：把全局 summary/lifecycle gap 和 ring drop 统一成可查询的 `observed/unknown/nonzero` 状态；为诊断通道拥塞建立窗口级告警；为 active-stall 设计可审计的安全恢复策略；完成一次真实输入到可见效果的脱敏闭环；再决定是否需要独立抓屏后端 A/B。当前服务保持在线，未执行重启或 tunnel 操作。
+
+## 本轮补强结果（2026-10-31 17:00）
+
+- `39e566f` 将 active-stall 从“只记录 `media_stalled`”补为二阶段安全恢复：首次无新帧记录 `media_stalled`，超过恢复窗口记录 `media_stall_recovery_requested`，再经过一个 `staleAfterMs` 且 `progressAgeMs` 仍无进展才进入 `session_stale_detected`/`slot_released`，释放原因为 `active-media-stale`。
+- hidden-suspended stale 判定不再只看 control heartbeat，而是综合最近 media request、applied media ACK、received/decoded frame 和 heartbeat；snapshot/Signal meta 同时暴露 `progressAgeMs`、`lastMediaAckAgeMs`、`activeStallAgeMs` 和恢复状态。
+- `dd5a1ec` 将全局 summary coverage 的 `gapTotalCount` 和 `coverageSignals` 接入管理员 observability evidence，明确 `observed`、`nonzero`、`unknown` 三种状态，保留兼容的旧 count 字段。
+- freshness/signaling 定向回归 138/138 通过；diagnostic-store/runtime-evidence 定向回归 37/37 通过。当前服务保持 `hostOnline=true`、`viewerCount=0`，本轮未重启服务、未操作 tunnel。
+
+这两项补强解决了日志和 freshness 的已知 P1 缺口，但不改变 Goal 的最终边界：真实输入到 visible effect/physical display、reset fault injection、capture backend A/B、诊断拥塞长会话和 tunnel SIGTERM 根因仍未完成或缺少强证据。
