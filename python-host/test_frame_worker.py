@@ -63,6 +63,7 @@ def bare_track(*, max_width=2, max_height=2):
     track._pending_input_ids = set()
     track._pending_input_data = []
     track._timing_seq = 0
+    track._frame_timing_sample_seq = 0
     track.frame_count = 0
     track.last_time = time.monotonic()
     track._ps_count = 0

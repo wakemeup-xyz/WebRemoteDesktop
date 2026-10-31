@@ -1495,6 +1495,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._pending_input_data = []
         self._pending_input_lock = threading.Lock()
         self._timing_seq = 0
+        # Frame timing is diagnostic-only. Preserve every input-associated
+        # timing row, while sampling idle media rows so the observation stream
+        # cannot congest the same reliable SCTP channel used for control.
+        self._frame_timing_sample_seq = 0
         self._process_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="imgproc")
         self._timing_totals = {
             "sleep": 0.0,
@@ -2058,14 +2062,22 @@ class ScreenCaptureTrack(VideoStreamTrack):
             })
             logger.info("DC_DIAGNOSTIC_ADMISSION %s", self._diagnostic_admission.snapshot())
 
-        self._send_frame_timing(
-            capture_prepare_ms=worker_timing["prepare"] * 1000,
-            frame_convert_ms=convert_time * 1000,
-            imgproc_queue_ms=worker_timing["queue"] * 1000,
-            imgproc_build_ms=worker_timing["build"] * 1000,
-        )
+        if self._should_send_frame_timing():
+            self._send_frame_timing(
+                capture_prepare_ms=worker_timing["prepare"] * 1000,
+                frame_convert_ms=convert_time * 1000,
+                imgproc_queue_ms=worker_timing["queue"] * 1000,
+                imgproc_build_ms=worker_timing["build"] * 1000,
+            )
 
         return frame
+
+    def _should_send_frame_timing(self):
+        with self._pending_input_lock:
+            input_pending = bool(self._pending_input_ids or self._pending_input_data)
+        sample_idle_timing = (self._frame_timing_sample_seq % 5) == 0
+        self._frame_timing_sample_seq += 1
+        return input_pending or sample_idle_timing
 
     def _send_disposable_diagnostic(self, payload):
         # One event-loop turn: no await, retries, retained payloads or fallback.

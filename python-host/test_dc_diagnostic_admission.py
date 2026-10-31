@@ -16,7 +16,8 @@ from aiortc.rtcsctptransport import RTCSctpTransport
 def track_for(dc):
     tree = ast.parse(Path(__file__).with_name('host.py').read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ScreenCaptureTrack')
-    names = {'_send_frame_timing', '_send_frame_trace_batch', '_send_disposable_diagnostic'}
+    names = {'_send_frame_timing', '_send_frame_trace_batch', '_send_disposable_diagnostic',
+             '_should_send_frame_timing'}
     methods = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in names]
     ns = dict(json=json, time=time, logger=logging.getLogger(__name__))
     try:
@@ -31,11 +32,22 @@ def track_for(dc):
     track._pending_input_ids = set()
     track._pending_input_data = []
     track._timing_seq = 0
+    track._frame_timing_sample_seq = 0
     return track
 
 
 def timing(track):
     track._send_frame_timing(capture_prepare_ms=1, frame_convert_ms=2)
+
+
+def test_frame_timing_sampling_preserves_input_rows_and_bounds_idle_rows():
+    track = track_for(Channel())
+    assert [track._should_send_frame_timing() for _ in range(10)] == [True, False, False, False, False,
+                                                                      True, False, False, False, False]
+    track._pending_input_ids.add('input-hash')
+    assert track._should_send_frame_timing() is True
+    track._pending_input_ids.clear()
+    assert track._should_send_frame_timing() is False
 
 
 @pytest.mark.asyncio
