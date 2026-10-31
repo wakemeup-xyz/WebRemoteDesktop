@@ -872,6 +872,7 @@ async def run(args, *, manager_factory=None, limits=None):
     capture_status = 'not-started'
     write_status = 'ok'
     cleanup_failed = False
+    last_checkpoint_elapsed = -60.0
     stages = frozenset(('not-started','manager-start','browser-start','browser-context','entry',
         'ui-login','observer-install','start-ui','media-start','startup-summary','sampling','cancelled','cleanup'))
     reasons = ADMISSION_FAILURES | {'entry-unavailable','media-start-deadline',
@@ -955,6 +956,20 @@ async def run(args, *, manager_factory=None, limits=None):
                 fail(RuntimeError('evidence-write-failed'))
         return committed
 
+    def checkpoint(elapsed):
+        """Keep the live summary useful while the long session is running.
+
+        The final summary remains authoritative, but a process that is still
+        sampling should not leave the startup placeholder at elapsed=0 and
+        samples=0 for hours. Checkpoints are intentionally sparse and use the
+        same atomic writer as the final evidence.
+        """
+        nonlocal last_checkpoint_elapsed
+        if elapsed - last_checkpoint_elapsed < 60.0:
+            return
+        last_checkpoint_elapsed = elapsed
+        persist()
+
     async def tracked(key, operation, cap):
         record = python_state[key]
         record.update(startedMs=now(),status='not-started')
@@ -983,6 +998,11 @@ async def run(args, *, manager_factory=None, limits=None):
         if isinstance(value,dict) and 'diagnostics' in value:
             diagnostic = diagnostic_from_delta(diagnostic,value['diagnostics'])
         return value
+
+    def on_progress(elapsed):
+        print(json.dumps({'stage':stage,'elapsedSeconds':round(elapsed),
+            'samples':summary.samples,'missing':summary.missing}),flush=True)
+        checkpoint(elapsed)
 
     async def cleanup():
         nonlocal diagnostic, capture_status, cleanup_failed, cooperation_failure
@@ -1094,8 +1114,7 @@ async def run(args, *, manager_factory=None, limits=None):
             start = time.monotonic()
             await collect_samples(sample_once,EvidenceWriter(stream),summary,salt,
                 start=start,duration_s=args.duration_seconds,
-                progress=lambda elapsed: print(json.dumps({'stage':stage,'elapsedSeconds':round(elapsed),
-                    'samples':summary.samples,'missing':summary.missing}),flush=True))
+                progress=on_progress)
             interrupted = False
         except asyncio.CancelledError as exc:
             cancellation = exc
