@@ -2102,7 +2102,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
             if now_ns - getattr(self, "_last_frame_timing_send_ns", 0) < 100_000_000:
                 self._frame_timing_sample_seq += 1
                 return False
-        sample_idle_timing = (self._frame_timing_sample_seq % 5) == 0
+        # Idle timing is diagnostic context, not a media clock. Two samples
+        # per second are enough to detect stage drift while leaving headroom
+        # for input-associated rows on the same disposable DataChannel.
+        sample_idle_timing = (self._frame_timing_sample_seq % 10) == 0
         self._frame_timing_sample_seq += 1
         return input_pending or sample_idle_timing
 

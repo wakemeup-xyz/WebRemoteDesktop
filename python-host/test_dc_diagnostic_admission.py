@@ -43,8 +43,7 @@ def timing(track):
 
 def test_frame_timing_sampling_preserves_input_rows_and_bounds_idle_rows():
     track = track_for(Channel())
-    assert [track._should_send_frame_timing() for _ in range(10)] == [True, False, False, False, False,
-                                                                      True, False, False, False, False]
+    assert [track._should_send_frame_timing() for _ in range(20)] == ([True] + [False] * 9 + [True] + [False] * 9)
     track._pending_input_ids.add('input-hash')
     assert track._should_send_frame_timing() is True
     track._pending_input_ids.clear()
