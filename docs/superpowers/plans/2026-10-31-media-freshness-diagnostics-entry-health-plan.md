@@ -55,5 +55,6 @@
 - freshness 追补已加入 active-stall 二阶段恢复：首次无新帧记录 `media_stalled`，恢复窗口后记录 `media_stall_recovery_requested`，再经第二个有界窗口且 `progressAgeMs` 仍无进展才按 `active-media-stale` 释放；hidden-suspended 判定同时考虑 media request、applied ACK、received/decoded frame 和 heartbeat。定向 freshness/signaling 138/138 通过。
 - active-stall recovery event 在当前 ACTIVE lease 和有效 attempt/generation 下会向 Host 发一次受身份约束的 keyframe request；旧 attempt、无 lease 和失效 generation 均被拒绝。新增 signaling 回归覆盖该路径。
 - 结构化 Signal/Host lifecycle correlation 已统一为有界 hash；FrameTrace 追加固定阶段 coverage 计数并保留 `correlation.complete` 的严格缺测语义。Node signaling/admission 164/164、Node diagnostic/runtime/frame 262/262、Python observability 15/15 通过。
+- durable daily summary 已同步保留 `frameTrace.stageCoverage`，并新增 summary 投影回归，避免 raw/runtime 与日摘要字段不一致。
 - coverage 追补已加入管理员 evidence：`coverageSignals.summaryGap`/`ringDrop` 明确为 `observed`、`nonzero` 或 `unknown`，并保留原始 count；`diagnostic-store.listSummary()` 增加 `gapTotalCount`。定向 diagnostic/store/runtime evidence 37/37 通过。
 - 计划阶段 1–4 的实现和离线测试可视为完成；阶段 5 只完成被动连续性和协议层子集，整体 Goal 继续保持 `active`，不能标记完成。
