@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import weakref
 from dataclasses import dataclass
 from typing import Iterable
 
 from media_stage_metrics import FrameTraceRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 EXPECTED_AIORCTC_VERSION = "1.14.0"
@@ -88,6 +92,8 @@ class RtpFrameObserver:
         self.ignored_rtcp_count = 0
         self.ignored_empty_count = 0
         self.ignored_rtx_count = 0
+        self._first_encoded_logged = False
+        self._first_packet_logged = False
         self._origin_by_stream: dict[tuple[str, int, str, int], int] = {}
 
     def observe_encoded_frame(self, sender, *, encoder_timestamp: int, ssrc: int | None = None) -> bool:
@@ -104,6 +110,12 @@ class RtpFrameObserver:
             int(encoder_timestamp), attempt_id=getattr(context, "attempt_id", None),
             generation=getattr(context, "generation", None), stream_id=getattr(context, "stream_id", None),
         ) if registry is not None else None
+        if not self._first_encoded_logged:
+            logger.info(
+                "WRD_FRAME_TRACE_OBSERVER encoded_frame_observed=true context=%s registry=%s key=%s",
+                bool(context), bool(registry), bool(key),
+            )
+            self._first_encoded_logged = True
         task = asyncio.current_task()
         previous = self._pending_by_task.pop(task, None)
         if previous is not None:
@@ -164,6 +176,9 @@ class RtpFrameObserver:
             self.unmatched_count += 1
             if pending.registry is not None: pending.registry.note_unmatched_wire()
             return False
+        if not self._first_packet_logged:
+            logger.info("WRD_FRAME_TRACE_OBSERVER rtp_packet_observed=true")
+            self._first_packet_logged = True
         return (task, pending, packet_ssrc, timestamp, sequence)
 
     def commit_outgoing_rtp(self, token):

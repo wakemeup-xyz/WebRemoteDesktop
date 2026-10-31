@@ -1585,7 +1585,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             raise
 
         logger.info(
-            "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s, capture_backend=%s, requested_backend=%s",
+            "ScreenCaptureTrack initialized: %s, target_fps=%s, max_resolution=%sx%s, cv2=%s, capture_backend=%s, requested_backend=%s, frame_trace=%s",
             self.monitor,
             target_fps,
             max_width,
@@ -1593,6 +1593,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
             HAS_CV2,
             self._capture_backend_name,
             self._capture_backend_requested,
+            bool(self._frame_trace_context),
         )
 
     def _capture_loop(self):
@@ -2507,7 +2508,7 @@ class WebRemoteHost:
             policy_digest=str(getattr(policy, "policy_id", "") or ""),
         )
 
-    def _create_screen_track(self):
+    def _create_screen_track(self, frame_trace_context=None):
         """Create a bounded Relay capture pipeline.
 
         Capturing twice as fast as the negotiated media rate wasted work while
@@ -2516,7 +2517,7 @@ class WebRemoteHost:
         """
         return ScreenCaptureTrack(target_fps=self.media_profile["target_fps"],
                                   max_width=self.media_profile["width"], max_height=self.media_profile["height"],
-                                  frame_trace_context=self._frame_trace_context,
+                                  frame_trace_context=self._frame_trace_context if frame_trace_context is None else frame_trace_context,
                                   capture_strategy=CaptureExperiment(1.0, 1))
 
     async def authenticate(self):
@@ -4189,7 +4190,12 @@ class WebRemoteHost:
                 # Add video track
                 policy = self._h264_policy_provider.current_policy()
                 frame_trace_context = self._frame_trace_context_for_policy(policy)
-                offer_track = self._create_screen_track()
+                offer_track = self._create_screen_track(frame_trace_context)
+                # The track is constructed before the offer sender owns the
+                # policy context. Bind the same immutable context explicitly;
+                # otherwise the Encoder/RTP observer can see a trace context
+                # while the Track never registers capture frames.
+                offer_track._frame_trace_context = frame_trace_context
                 offer_track._host_ref = self
                 offer_sender = offer_pc.addTrack(offer_track)
                 offer_sender._wrd_h264_policy = policy

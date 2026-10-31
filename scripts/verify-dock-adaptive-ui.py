@@ -204,6 +204,13 @@ def main() -> int:
                 "candidate": candidate,
                 "adaptiveStorage": page.evaluate("() => localStorage.getItem('wrdAdaptiveResolution')"),
             }
+            result["checks"]["frameTrace"] = page.evaluate("""() => {
+              const frameTrace = typeof WebRTC !== 'undefined' && typeof WebRTC.getFrameTraceDiagnostics === 'function'
+                ? WebRTC.getFrameTraceDiagnostics() : null;
+              const latencyTrace = typeof LatencyMonitor !== 'undefined' && typeof LatencyMonitor.snapshot === 'function'
+                ? LatencyMonitor.snapshot() : null;
+              return { frameTrace, latencyTrace };
+            }""")
 
             # Pass criteria
             ok = True

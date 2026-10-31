@@ -332,6 +332,7 @@ class H264VideoToolboxEncoder(Encoder):
         # Sender-owned immutable context avoids attaching mutable state to a
         # PyAV frame, which may cross aiortc's executor boundary.
         self._frame_trace_context = frame_trace_context
+        self._frame_trace_context_logged = False
         if not self._scenario_id:
             raise ValueError("scenario_id is required for encoder construction evidence")
         self._codec_creation_records: list[CodecCreationRecord] = []
@@ -1027,6 +1028,9 @@ class H264VideoToolboxEncoder(Encoder):
         started_ns = time.monotonic_ns()
         timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
         trace_context = self._frame_trace_context
+        if trace_context is not None and not self._frame_trace_context_logged:
+            logger.info("WRD_FRAME_TRACE_ENCODER_CONTEXT enabled=true")
+            self._frame_trace_context_logged = True
         trace_key = None
         if trace_context is not None:
             # captureSeq is resolved from the registry by output timestamp; it

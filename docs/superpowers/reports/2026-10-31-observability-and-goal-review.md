@@ -565,3 +565,11 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 当前服务恢复为 Signal PID `23895`、Host PID `37619`，`/health=ok`、`hostOnline=true`、`viewerCount=0`；详细 trace 不常驻开启。该结果不把 ACK 或像素差异冒充 marker-backed `inputToVisibleEffectMs`，严格端到端仍保持未完成。
 
 这次复核把剩余问题进一步收窄为：需要单独修复/验证 RTP frame observer 与详细 trace 的生产关联，再做严格输入到画面时序；输入处理本身、ACK、Host 执行和浏览器画面连续性已经有真实样本。
+
+### Frame trace context 绑定修复与短窗口结果（2026-11-01 03:07–03:13）
+
+- 低频运行证据显示：详细 trace context 已到达 Encoder/RTP observer，但 Track 初始化时仍为 `None`，因此 observer 看到 `registry=true,key=false`，Host 从未注册 capture frame。这是此前 `frame_trace_batch=0` 的直接代码原因。
+- `host.py` 已在创建 `ScreenCaptureTrack` 时显式传入同一个 immutable `frame_trace_context`，并保留一次性边界日志；定向 Python 回归 **71/71** 通过。
+- 修复后的短真实 Viewer 会话中，observer 日志变为 `context=true,registry=true,key=true` 和 `rtp_packet_observed=true`；Host `frame_trace_batch` 实际发送约 **38–49 行/窗口**。Viewer 端一次短窗口得到 `sampleCount=78–98`、`matchedCount=36–39`，所有阶段 `grab/age_at_recv/worker_queue/prepare/build/encode/packetize/encode_total` 均有覆盖，`inputToPostApplyFrameMs` 约 **193–240ms**，ACK RTT 约 **67–103ms**，Host apply 约 **57–84ms**。
+- 详细 trace 继续发送全部视频帧时，会在约 5 秒后与 frame timing/capture stats 争用同一可靠诊断通道；日志出现 `frame_trace_batch` dropped 和整体 `congested` 增长，Viewer `droppedTraceCount` 也会上升。因此详细 trace 仍只作为维护窗口短采样，不能常驻生产；默认 `WRD_FRAME_TRACE_DETAIL` 已关闭。
+- 该修复让严格 frame identity join 和 `inputToPostApplyFrameMs` 真正可观测，但没有伪造 `inputToVisibleEffectMs`：当前正式页面没有 controlled marker，光学可见效果仍使用独立像素差异样本（此前 5 次 p95/max **839.9ms**）记录。
