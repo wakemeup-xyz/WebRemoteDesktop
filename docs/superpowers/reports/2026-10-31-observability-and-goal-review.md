@@ -250,3 +250,5 @@
 对实际输入/visible effect 自动验收的最终只读复核确认：当前 `turn_controlled_scene_runtime` 和 `turn_lab_input_guard` 会在 Host-private native probe 没有同时证明 dedicated macOS desktop、专用 fixture window、MSS/捕获目标和连续 proof epoch 时 fail-closed；现有 `turn_lab_host` probe 固定返回 `isolated=false/foreground=false/fixtureWindow=false`。因此不能用浏览器协议输入、CLI flag 或 ACK 冒充物理可见效果，真实输入、visible effect 和 physical display 继续保持 `NOT_RUN`。要解除该边界，需要在隔离 macOS desktop/fixture 进程中新增原子绑定和连续复核 API，不能在共享用户桌面生产 Host 上临时打开。
 
 追加 after-grace 验收 runner 后，新的 root-attested 正式入口实测 **PASS**：故障注入触发 1 次、拦截 2 个 WebSocket 请求；页面在 lease 释放后只通过现有 `#requestControlBtn` 发起一次显式控制请求，约 20.01 秒恢复，稳定 30.03 秒，300.28 秒连续采样无缺测，server coverage complete。该结果证明“断线超过 grace 后，用户重新请求控制可以恢复”，不代表系统自动 takeover，也不包含桌面业务输入/物理显示。
+
+为收尾剩余真实输入验收，本轮新增 [隔离 Lab visible-effect spec](../specs/2026-10-31-isolated-visible-effect-acceptance-design.md) 和 [执行计划](../plans/2026-10-31-isolated-visible-effect-acceptance-plan.md)。它把 native desktop/window/capture 原子 probe、proofEpoch、Host claim、RTP/rVFC marker 和负例门禁写成可执行任务；在该隔离环境建立前，生产共享桌面相关指标继续保持 `NOT_RUN`。
