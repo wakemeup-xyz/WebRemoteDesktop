@@ -165,6 +165,8 @@ test('a missing counterpart is removed after two seconds', () => {
   now = 2001;
   assert.equal(collector.diagnostics().acceptanceState, 'UNALIGNED');
   assert.equal(collector.diagnostics().pendingFrames, 0);
+  assert.equal(collector.diagnostics().expiredFrameCount, 1);
+  assert.equal(collector.diagnostics().ringDropCount, 0);
   now = 120001;
   assert.equal(collector.diagnostics().pendingFrames, 0);
 });
@@ -276,6 +278,25 @@ test('ordinary detailed trace drains matched rows when no marker consumer is con
   }
   assert.equal(collector.diagnostics().matchedCount, 0);
   assert.equal(collector.diagnostics().droppedTraceCount, 0);
+  assert.equal(collector.diagnostics().ringDropCount, 0);
+});
+
+test('frame trace loss counters distinguish Host drops, expired joins, and local ring eviction', () => {
+  let now = 0;
+  const Collector = loadCollector(() => now);
+  const collector = new Collector({ now: () => now, capacity: 1, lateWaitMs: 2000 });
+  collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1, droppedTraceCount: 2, traces: [] });
+  collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1,
+    traces: [validTrace({ wireTimestamp: 1, captureSeq: 1 })] });
+  collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1,
+    traces: [validTrace({ wireTimestamp: 2, captureSeq: 2 })] });
+  now = 2001;
+  collector.expire();
+  const diagnostics = collector.diagnostics();
+  assert.equal(diagnostics.hostDroppedTraceCount, 2);
+  assert.equal(diagnostics.expiredTraceCount, 1);
+  assert.equal(diagnostics.ringDropCount, 1);
+  assert.equal(diagnostics.droppedTraceCount, 4);
 });
 
  test('stale scope and absent SSRC cannot poison current joins or create marker evidence', () => {

@@ -641,3 +641,17 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 新增回归覆盖 200 条无 marker 详细 trace，确认 `matchedCount=0`、`droppedTraceCount=0`；完整 `web-client/js/webrtc.test.js` 为 **426/426 PASS**，`webrtc.frame-trace.test.js` 为 **26/26 PASS**，诊断/LatencyMonitor 相关测试为 **263/263 PASS**，Host frame trace/admission 相关 Python 测试为 **51/51 PASS**。
 
 这修复了诊断 ring 的一个真实误报源，但仍不替代 marker-backed 可见效果验收；后续维护窗口应重新观察 `droppedTraceCount`，若仍非零，再按 Host pending、DataChannel admission、scope 过期三类来源分别定位。
+
+### 详细 trace 丢失分类与维护窗口证据
+
+随后在 03:45 左右开启一次临时详细 trace 维护窗口。Host 侧 `frame_trace_batch` 发送 **16** 批、`dropped=0`、`congested=0`；Host trace summary 的 `droppedTraceCount=0`，`sourceToWireCoverage≈0.976`，说明 Host registry 和诊断 DataChannel 没有丢 trace。Viewer 侧旧字段仍观察到约 **5** 个 drop，且有少量 pending frame；结合 Host summary，来源是部分 rVFC 帧没有对应 Host trace，等待 late-join 窗口到期，而不是本地 ring 淘汰。
+
+为避免以后再把三种情况混为一个数，Viewer frame-trace diagnostics 现在同时输出：
+
+- `ringDropCount`：本地 bounded map/queue 容量淘汰；
+- `expiredFrameCount`：Viewer 帧先到、等待 Host trace 超时；
+- `expiredTraceCount`：Host trace 先到、等待 Viewer 帧超时；
+- `hostDroppedTraceCount`：Host batch 显式上报的 drop；
+- 旧 `droppedTraceCount` 保留为兼容性的总损失计数。
+
+这些字段已通过 Viewer runtime storage、Signal 脱敏、diagnostic store 和 runtime evidence summary；新增测试验证 Host drop、过期 join 和本地 ring eviction 可以分别计数。下一次详细 trace 窗口会以这四个分项作为故障归因依据，不再把 `UNALIGNED` 自动解释成传输丢失。

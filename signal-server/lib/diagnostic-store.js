@@ -263,6 +263,9 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
           invalidBatchCount: knownCount(r.traceSummary.frameTrace.invalidBatchCount),
           staleTraceCount: knownCount(r.traceSummary.frameTrace.staleTraceCount),
           conflictingTraceCount: knownCount(r.traceSummary.frameTrace.conflictingTraceCount),
+          ...Object.fromEntries(['ringDropCount', 'expiredFrameCount', 'expiredTraceCount', 'hostDroppedTraceCount']
+            .filter(key => Object.hasOwn(r.traceSummary.frameTrace, key))
+            .map(key => [key, knownCount(r.traceSummary.frameTrace[key])])),
           ...(r.traceSummary.frameTrace.stageCoverage && typeof r.traceSummary.frameTrace.stageCoverage === 'object'
             ? { stageCoverage: {
               sampleCount: knownCount(r.traceSummary.frameTrace.stageCoverage.sampleCount),

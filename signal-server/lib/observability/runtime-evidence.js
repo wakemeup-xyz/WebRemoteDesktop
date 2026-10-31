@@ -89,6 +89,9 @@ function projectFrameTrace(report) {
   for (const key of ['pendingFrames', 'pendingTraces', 'matchedCount', ...FRAME_TRACE_LOSS_FIELDS]) {
     result[key] = boundedCount(frameTrace[key]);
   }
+  for (const key of ['ringDropCount', 'expiredFrameCount', 'expiredTraceCount', 'hostDroppedTraceCount']) {
+    if (Object.hasOwn(frameTrace, key)) result[key] = boundedCount(frameTrace[key]);
+  }
   const stageCoverage = frameTrace.stageCoverage;
   if (stageCoverage && typeof stageCoverage === 'object') {
     const sampleCount = boundedCount(stageCoverage.sampleCount);
@@ -296,6 +299,8 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const correlationReports = projected.filter(row => row.correlation).length;
     const frameTraceLoss = Object.fromEntries(FRAME_TRACE_LOSS_FIELDS.map(key => [key,
       projected.reduce((total, row) => total + (row.frameTrace?.[key] ?? 0), 0)]));
+    const frameTraceCoverageLoss = Object.fromEntries(['ringDropCount', 'expiredFrameCount', 'expiredTraceCount', 'hostDroppedTraceCount']
+      .map(key => [key, projected.reduce((total, row) => total + (row.frameTrace?.[key] ?? 0), 0)]));
     const diagnosticAdmission = {
       types: Object.fromEntries(['frame_timing', 'capture_stats', 'frame_trace_batch', 'loss_lab_host_trace_batch']
         .map(kind => [kind, {
@@ -349,6 +354,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
         inputTraceEventCount: sumKnown('inputTraceEventCount'),
         inputTraceLoss,
         frameTraceLoss,
+        frameTraceCoverageLoss,
         diagnosticAdmission,
         metadataOnlyReports: projected.filter(row => row.metadataOnly).length,
         summaryGapCount,

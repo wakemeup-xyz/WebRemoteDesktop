@@ -173,6 +173,9 @@
       ...Object.fromEntries(['pendingFrames', 'pendingTraces', 'seenIdentities', 'matchedCount',
         'droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount']
         .map(key => [key, safeNumber(rawFrameTrace[key])])),
+      ...Object.fromEntries(['ringDropCount', 'expiredFrameCount', 'expiredTraceCount', 'hostDroppedTraceCount']
+        .filter(key => Object.hasOwn(rawFrameTrace, key))
+        .map(key => [key, safeNumber(rawFrameTrace[key])])),
       ...(rawFrameTrace.stageCoverage && typeof rawFrameTrace.stageCoverage === 'object' ? {
         stageCoverage: {
           sampleCount: safeNumber(rawFrameTrace.stageCoverage.sampleCount),

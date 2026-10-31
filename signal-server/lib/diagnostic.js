@@ -19,6 +19,7 @@ const OUTCOME_NAMES = ['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancell
 const LOG_RECEIPT_STATES = new Set(['empty', 'valid', 'unknown', 'truncated', 'failed']);
 const INPUT_TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 const FRAME_TRACE_LOSS_FIELDS = ['droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount'];
+const FRAME_TRACE_COVERAGE_FIELDS = ['ringDropCount', 'expiredFrameCount', 'expiredTraceCount', 'hostDroppedTraceCount'];
 function redactLatency(snapshot) {
   if (!isRecord(snapshot) || snapshot.schemaVersion !== 3) return null;
   const metrics = {};
@@ -97,6 +98,11 @@ function sanitizeFrameTrace(value) {
   const state = safeEnum(value.acceptanceState, new Set(['PENDING', 'UNALIGNED']));
   const result = { acceptanceState: state || 'PENDING' };
   for (const key of ['pendingFrames', 'pendingTraces', 'seenIdentities', 'matchedCount', ...FRAME_TRACE_LOSS_FIELDS]) {
+    const count = safeInteger(value[key], Number.MAX_SAFE_INTEGER);
+    if (count !== null) result[key] = count;
+  }
+  for (const key of ['ringDropCount', 'expiredFrameCount', 'expiredTraceCount', 'hostDroppedTraceCount']) {
+    if (!Object.hasOwn(value, key)) continue;
     const count = safeInteger(value[key], Number.MAX_SAFE_INTEGER);
     if (count !== null) result[key] = count;
   }
@@ -665,6 +671,7 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     if (frameTrace) {
       meta.frameTrace = frameTrace;
       meta.frameTraceLoss = Object.fromEntries(FRAME_TRACE_LOSS_FIELDS.map(key => [key, frameTrace[key] ?? null]));
+      meta.frameTraceCoverageLoss = Object.fromEntries(FRAME_TRACE_COVERAGE_FIELDS.map(key => [key, frameTrace[key] ?? null]));
     }
     const diagnosticAdmission = sanitizeDiagnosticAdmission(report.traceSummary?.diagnosticAdmission);
     if (diagnosticAdmission) meta.diagnosticAdmission = diagnosticAdmission;

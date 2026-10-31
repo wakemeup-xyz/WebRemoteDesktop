@@ -80,6 +80,10 @@ class FrameTraceCollector {
     this.unaligned = false;
     this.terminalUnaligned = false;
     this.droppedTraceCount = 0;
+    this.ringDropCount = 0;
+    this.expiredFrameCount = 0;
+    this.expiredTraceCount = 0;
+    this.hostDroppedTraceCount = 0;
     this.invalidBatchCount = 0;
     this.staleTraceCount = 0;
     this.conflictingTraceCount = 0;
@@ -102,6 +106,10 @@ class FrameTraceCollector {
     this.unaligned = false;
     this.terminalUnaligned = false;
     this.droppedTraceCount = 0;
+    this.ringDropCount = 0;
+    this.expiredFrameCount = 0;
+    this.expiredTraceCount = 0;
+    this.hostDroppedTraceCount = 0;
     this.invalidBatchCount = 0;
     this.staleTraceCount = 0;
     this.conflictingTraceCount = 0;
@@ -178,7 +186,12 @@ class FrameTraceCollector {
     for (const [id, entry] of map) {
       if (entry.at <= deadline) {
         map.delete(id);
-        if (map !== this.seen) { this.unaligned = true; this.droppedTraceCount += 1; }
+        if (map !== this.seen) {
+          this.unaligned = true;
+          this.droppedTraceCount += 1;
+          if (map === this.frames) this.expiredFrameCount += 1;
+          else if (map === this.traces) this.expiredTraceCount += 1;
+        }
       }
     }
   }
@@ -203,7 +216,7 @@ class FrameTraceCollector {
 
   appendMatch(value) {
     if (this.matched.length >= Math.min(128, this.capacity)) {
-      this.matched.shift(); this.droppedTraceCount += 1;
+      this.matched.shift(); this.droppedTraceCount += 1; this.ringDropCount += 1;
     }
     this.matched.push({ at: value.viewerClockMs, value });
     this.matched.sort((a, b) => a.at - b.at);
@@ -258,7 +271,7 @@ class FrameTraceCollector {
       return true;
     }
     if (this.frames.size >= this.capacity) {
-      this.frames.delete(this.frames.keys().next().value); this.droppedTraceCount += 1;
+      this.frames.delete(this.frames.keys().next().value); this.droppedTraceCount += 1; this.ringDropCount += 1;
     }
     this.frames.set(id, { at: callbackAtMs, value: { identity, roi } });
     return false;
@@ -288,7 +301,9 @@ class FrameTraceCollector {
       identities.add(id);
     }
 
-    this.droppedTraceCount += Math.max(0, Number(batch.droppedTraceCount) || 0);
+    const hostDropped = Math.max(0, Number(batch.droppedTraceCount) || 0);
+    this.droppedTraceCount += hostDropped;
+    this.hostDroppedTraceCount += hostDropped;
     if (this.droppedTraceCount) this.unaligned = true;
     let joined = 0;
     for (const trace of batch.traces) if (this.isInScope(trace)) {
@@ -300,7 +315,7 @@ class FrameTraceCollector {
 
   joinTrace(trace) {
     const id = this.identity(trace);
-    while (this.seen.size >= 2048) { this.seen.delete(this.seen.keys().next().value); this.droppedTraceCount += 1; }
+    while (this.seen.size >= 2048) { this.seen.delete(this.seen.keys().next().value); this.droppedTraceCount += 1; this.ringDropCount += 1; }
     this.seen.set(id, { at: Number(this.now()) });
     const frame = this.frames.get(id);
     if (frame) {
@@ -309,7 +324,7 @@ class FrameTraceCollector {
       return 1;
     }
     if (this.traces.size >= this.capacity) {
-      this.traces.delete(this.traces.keys().next().value); this.droppedTraceCount += 1;
+      this.traces.delete(this.traces.keys().next().value); this.droppedTraceCount += 1; this.ringDropCount += 1;
     }
     this.traces.set(id, { at: Number(this.now()), value: trace });
     return 0;
@@ -378,6 +393,10 @@ class FrameTraceCollector {
       seenIdentities: this.seen.size,
       matchedCount: this.matched.length,
       droppedTraceCount: this.droppedTraceCount,
+      ringDropCount: this.ringDropCount,
+      expiredFrameCount: this.expiredFrameCount,
+      expiredTraceCount: this.expiredTraceCount,
+      hostDroppedTraceCount: this.hostDroppedTraceCount,
       invalidBatchCount: this.invalidBatchCount,
       staleTraceCount: this.staleTraceCount,
       conflictingTraceCount: this.conflictingTraceCount,
