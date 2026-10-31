@@ -52,6 +52,8 @@ expiredPendingAcks: integer or null
 
 `empty` 只表示收集器已启动且明确收集到 0 条；`unknown` 表示未启动、字段缺失或采集失败；`truncated` 必须同时保留 dropped 计数。日摘要必须从 raw runtime report 复制输入 trace 丢失和 ring drop 计数，不能只保留 `inputTraceEventCount=256`。receipt horizon 的 gap 必须出现在汇总，而不是只留在私有状态文件。
 
+上传层继续保留兼容的 `accepted`/`duplicate` 布尔字段，并增加有界 `receipt.status`：持久化成功和重复重试返回稳定的 `accepted` canonical receipt；写入异常返回 `write-failed`；未启用持久化返回 `rejected`。重复信息由外层 `duplicate` 字段表达，避免同一诊断重试得到不稳定的 receipt。
+
 ## 端到端帧关联
 
 同一 scope 内允许保存有限数量的 frame binding：`captureSeq`、`encoderTimestamp`、`wireTimestamp`、`ssrc`、`captureFresh`、`captureAfterApplied` 和最多 64 个 input ID hash。对外诊断只保留 bounded frame trace 状态（`PENDING`/`UNALIGNED`、pending/matched 计数及 dropped/stale/conflict 计数），不保留逐帧原值。成功完成的阶段按以下顺序产生事件：

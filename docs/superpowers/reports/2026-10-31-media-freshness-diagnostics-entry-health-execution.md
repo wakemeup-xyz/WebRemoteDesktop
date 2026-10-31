@@ -9,6 +9,7 @@
 - **媒体 freshness 门禁**：新增有界 Viewer freshness registry，观测 media activity、Viewer stats 和 control heartbeat。`page-hidden + suspended` 超过 `WRD_VIEWER_MEDIA_STALE_MS`（默认 120 秒，范围 30 秒至 1 小时）且无控制 heartbeat 时，按 `media_stalled → session_stale_detected → remove/disconnect → slot_released` 顺序处理；清理失败记录 `slot_release_failed`。清理复用现有 Viewer 身份检查、lease reset barrier 和幂等删除路径。
 - **可用性状态**：`/api/status` 增加 `viewerFreshness`、`mediaFresh`、`mediaState`、`mediaStateAgeMs`、`pageVisibility` 和 `lastFrameAgeMs`。Viewer 槽位存在不再单独等价于媒体可用。
 - **诊断 receipt**：统一 `empty`、`unknown`、`valid`、`truncated`、`failed`；保留有界 reported/retained/redacted/dropped 计数，并把 input trace 的 dropped events、hash drop、pending ACK eviction、expired ACK 和 timeout 计数写入日摘要/runtime evidence。
+- **上传 receipt**：保留兼容的 `accepted`/`duplicate` 字段，并返回稳定的 `receipt.status`；持久化异常显式为 `write-failed`，未启用持久化为 `rejected`。
 - **端到端关联**：runtime evidence 分别报告 ACK、Host apply、capture、encode、RTP、decode、present 阶段的 available 状态；scope 缺失时不标记 complete。frame trace 只保留 `PENDING/UNALIGNED`、pending/matched 与 dropped/stale/conflict 计数，不保存逐帧原值；重试和 localStorage replay 继续保留这些有界计数。
 - **入口 watcher**：生产探测改为 `/index.html`、`/viewer.html` 和 manifest core asset；资产异常记为 `entry-degraded`，不授权 tunnel recovery。增加有界 loopback `/api/status` passive runtime probe；无数据保持 unknown，环境代理和资产失败不能触发 connector restart。
 
