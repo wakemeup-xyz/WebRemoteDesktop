@@ -158,6 +158,24 @@ def test_tunnel_relay_blocks_capture_when_inflight_window_is_full():
     assert relay.should_wait_before_capture() is False
 
 
+def test_tunnel_relay_prefetch_fits_current_and_sent_window():
+    relay = TunnelRelayStreamer(FakeSio())
+    relay.max_in_flight_frames = 2
+
+    # With no sent frame, current + one speculative capture fits the window.
+    assert relay._can_prefetch_frame() is True
+
+    # Once one frame is already awaiting ACK, starting another speculative
+    # capture would create a third effective slot while the current frame is
+    # still being delivered.
+    relay.inflight_frames[1] = {"sent_at_ms": 1000.0}
+    assert relay._can_prefetch_frame() is False
+
+    relay.max_in_flight_frames = 1
+    relay.inflight_frames.clear()
+    assert relay._can_prefetch_frame() is False
+
+
 def test_tunnel_relay_timeout_drops_stale_inflight_slots_for_latest_frame():
     relay = TunnelRelayStreamer(FakeSio())
     relay.inflight_frames = {
@@ -188,7 +206,6 @@ def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback(monkeypatch):
     relay.ack(1, latency_ms=0)
     assert relay.profile_name == "low"
     assert relay.max_in_flight_frames == 1
-
     relay.inflight_frames[2] = {"sent_at_ms": 500, "generation": relay.production_generation}
     relay.ack(2, latency_ms=0)
     assert relay.profile_name == "survival"
@@ -199,6 +216,24 @@ def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback(monkeypatch):
     relay.ack(3, latency_ms=9999)
 
     assert relay.profile_name == "low"
+
+
+def test_tunnel_relay_backpressure_timeout_requires_two_consecutive_samples():
+    relay = TunnelRelayStreamer(FakeSio())
+
+    assert relay.note_ack_timeout("pre-capture-backpressure") is False
+    assert relay.profile_name == "medium"
+    assert relay.backpressure_timeout_streak == 1
+
+    # A successful ACK clears the transient episode before it can downshift.
+    relay._record_ack_feedback(20)
+    assert relay.backpressure_timeout_streak == 0
+    assert relay.profile_name == "medium"
+
+    assert relay.note_ack_timeout("pre-capture-backpressure") is False
+    assert relay.note_ack_timeout("pre-capture-backpressure") is True
+    assert relay.profile_name == "low"
+    assert relay.backpressure_timeout_streak == 0
 
 
 def test_tunnel_relay_capture_latency_sets_a_floor_until_capture_recovers():

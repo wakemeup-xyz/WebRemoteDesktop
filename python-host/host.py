@@ -748,6 +748,7 @@ class TunnelRelayStreamer:
         self.stats_ack_samples = 0
         self.stats_timeout_count = 0
         self.good_ack_streak = 0
+        self.backpressure_timeout_streak = 0
         self.last_ack_latency_ms = None
         self.capture_slow_streak = 0
         self.capture_fast_streak = 0
@@ -876,6 +877,20 @@ class TunnelRelayStreamer:
 
     def should_wait_before_capture(self):
         return self.pending_frame_count() >= self.max_in_flight_frames
+
+    def _can_prefetch_frame(self):
+        """Allow one speculative capture only when it fits the send window.
+
+        The current frame is not in ``inflight_frames`` until its JPEG has
+        finished.  Starting a prefetch while one frame is already pending
+        therefore creates a third effective slot for a two-frame window.  A
+        slow ACK then leaves that detached capture waiting behind the full
+        delivery window and turns a short backpressure episode into repeated
+        coalescing/profile downshifts.  Keep the worker bounded to the actual
+        in-flight budget: current frame plus prefetch must fit alongside the
+        already sent frames.
+        """
+        return self.pending_frame_count() + 1 < max(1, int(self.max_in_flight_frames))
 
     @property
     def relay_scope(self):
@@ -1039,6 +1054,9 @@ class TunnelRelayStreamer:
             return
 
         self.last_ack_latency_ms = max(0.0, latency_ms)
+        # A successful ACK closes a transient queue episode. Do not carry one
+        # old timeout into a later, unrelated backpressure window.
+        self.backpressure_timeout_streak = 0
         self.stats_ack_latency_ms += self.last_ack_latency_ms
         self.stats_ack_samples += 1
 
@@ -1082,6 +1100,7 @@ class TunnelRelayStreamer:
         self.stats_ack_samples = 0
         self.stats_timeout_count = 0
         self.good_ack_streak = 0
+        self.backpressure_timeout_streak = 0
         self.last_ack_latency_ms = None
         self.capture_slow_streak = 0
         self.capture_fast_streak = 0
@@ -1199,7 +1218,15 @@ class TunnelRelayStreamer:
         self.stats_timeout_count += 1
         self._increment('timeout_count')
         self.good_ack_streak = 0
-        self.step_down_profile(reason)
+        self.backpressure_timeout_streak += 1
+        # One writer/ACK timeout is often a transient queue turn. Keep the
+        # current profile until the same bounded episode produces two
+        # consecutive timeouts; sustained pressure still steps down one level
+        # at a time and remains visible through timeout_count.
+        if self.backpressure_timeout_streak < 2:
+            return False
+        self.backpressure_timeout_streak = 0
+        return self.step_down_profile(reason)
 
     def should_wait_for_ack(self):
         return (self.frame_id - self.last_acked_frame_id) > self.max_in_flight_frames
@@ -1302,6 +1329,7 @@ class TunnelRelayStreamer:
                 # preserves the current frame while its encode is claimed.
                 if (prefetch_future is None
                         and getattr(self._jpeg_worker, 'pipeline_enabled', False)
+                        and self._can_prefetch_frame()
                         and self._transport_token_is_current(token)):
                     prefetch_token = token
                     prefetch_future = submit_request(relay_request(token))

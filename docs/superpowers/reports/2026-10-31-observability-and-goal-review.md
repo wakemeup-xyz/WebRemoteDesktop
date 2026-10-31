@@ -741,3 +741,13 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 复测期间 Host 曾记录 `event_loop.maxLagMs≈130ms`、`p99≈130ms`、当前 `lagMs` 已恢复到约 0–4ms，`schedulerLoadRatio≈0.39–0.48` 为 normal。该长尾发生在浏览器/Peer 清理和重绑定窗口，当前证据不足以归因于 CPU 饱和；应继续保留 max/p99 与 capture non-CPU 字段联合观察。
 
 本轮仍不把浏览器协议样本替代物理键鼠、严格 marker-backed visible effect、reset fault injection 或真实用户长会话；Goal 继续为 `active`。
+
+## 2026-11-01 05:26–05:30 tunnel backpressure 修复上线复测
+
+- 针对上一轮发现的 relay 在途槽位问题，Host 已部署两项修复：prefetch 只有在“已发送帧 + 当前帧 + 预取帧”仍不超过 `max_in_flight_frames` 时才启动；ACK/backpressure timeout 需要连续两次才触发一次 profile 降档，任一成功 ACK 会清除该连续计数。
+- 离线回归：tunnel/worker **54/54 PASS**，连接诊断/媒体边界/frame worker **59/59 PASS**。新增测试覆盖两帧窗口、单帧 survival 窗口和连续 timeout 滞回。
+- 重新启动本地 Signal/Host 后，正式协议验收再次通过：恢复 **20/20 PASS**，p50 **432ms**、p95 **759ms**、max **765ms**；暂停期间 payload/帧增量均为 **0**；键盘、鼠标、single-desktop 接管均 **PASS**；tunnel 媒体恢复 **20/20 PASS**，p50 **442ms**、p95 **447ms**。
+- 新 Host 日志显示多数窗口 profile 保持 medium，单次 backpressure 不再立即降档；在持续 writer/ACK 排队下仍会出现 `pre-capture-backpressure`，最终进入 low/survival，capture p95 约 **135ms**、max **154ms**，encode p95 约 **13ms**。因此本次修复解决了过度反应和隐式第三槽位，尚未消除 tunnel 的真实传输吞吐瓶颈；下一步应补充 transport admission wait 的独立 p95/max 观测，再决定是否调整 Socket.IO writer admission，而不是继续盲目调低画质。
+- 验收浏览器退出后 Viewer 槽位已回收为 `viewerCount=0`；Signal/Host 保持健康，quick tunnel 未操作。
+
+本轮仍不把自动化浏览器协议样本当作物理键鼠、严格 marker-backed visible effect、reset fault injection 或真实用户长会话证据；Goal 继续为 `active`。
