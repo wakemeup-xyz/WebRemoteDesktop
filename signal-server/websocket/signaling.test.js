@@ -3127,14 +3127,20 @@ test('active media stall requests a current-attempt keyframe before any release'
     connectionAttemptId: 'active-stall-attempt', connectionAttemptSequence: 1, generation: 1,
     decodedDelta: 1, receivedDelta: 1,
   });
+  now = 5000;
+  viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
+  now = 10000;
+  viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
+  now = 20000;
+  viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
   now = 30000;
   tick();
   assert.equal(host.sent.some(event => event.event === 'request-keyframe'), false);
-  viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
   now = 260000;
   viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
   now = 270000;
   tick();
+  console.log('DEBUG_ACTIVE_STALL_2', events.map(event => event.event), host.sent.map(event => event.event), getConnectionStatus().viewerFreshness);
   const request = host.sent.filter(event => event.event === 'request-keyframe').at(-1)?.data;
   assert.equal(request.reason, 'media-stalled-recovery');
   assert.equal(request.viewerId, viewer.id);
