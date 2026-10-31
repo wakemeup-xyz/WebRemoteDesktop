@@ -441,3 +441,7 @@ watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-s
 ### 当前诊断摘要的权威读数
 
 本地 admin observability summary 在本轮读取到：`summaryGapCount=81`，原因聚合为 `receipt-horizon`；`ringDropCount=0` 且 `coverageSignals.ringDrop.state=observed`，说明当前 ring 没有确认丢弃；诊断摘要窗口当时没有新的 diagnostic report，因此 `logCount`、FPS、丢帧和 `inputToVisibleEffectMs` 仍按缺测处理。这比把 `unknown` 当成零更安全，也证明日志系统现在能够区分“已观察为 0”“确认非零”和“本窗口没有诊断样本”。
+
+### page-hidden 应用路径复测
+
+通过真实 Viewer 的 `WebRTC.setMediaActivityReason('page-hidden', true)` 触发生产协议后，Signal 日志出现同一 attempt 的 `media_activity_requested(state=suspended,reasons=[page-hidden])`，约 0.6 秒后页面可见性守护自动发送 `media_activity_requested(state=active,reasons=[])`，说明短暂隐藏会恢复媒体，不会误释放正常会话。headless 浏览器无法保持真实后台页状态，因此没有形成 120 秒 `session_stale_detected → slot_released` 样本；这项仍保持未验收。该会话随后被中断，仍按 grace/reset 路径完成带 attemptHash 的槽位释放。
