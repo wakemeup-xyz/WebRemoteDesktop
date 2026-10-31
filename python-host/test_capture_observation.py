@@ -1,6 +1,7 @@
 """Pure scalar and AST-only capture accounting tests: no Host/native imports."""
 import ast
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -514,6 +515,7 @@ class CaptureLoopTest(unittest.TestCase):
         selected = ast.ClassDef(name='ScreenCaptureTrack', bases=[ast.Name(id='VideoStreamTrack', ctx=ast.Load())],
             keywords=[], body=[n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in names], decorator_list=[])
         namespace = dict(VideoStreamTrack=type('Base', (), {}), CaptureExperiment=type('Experiment', (), {}),
+            os=os,
             MSS=lambda: SimpleNamespace(monitors=[], grab=grab, close=lambda: None),
             select_capture_monitor=lambda *a, **k: {}, get_screeninfo_monitors=lambda: [],
             RtpFrameClock=lambda: None, HAS_CV2=False,

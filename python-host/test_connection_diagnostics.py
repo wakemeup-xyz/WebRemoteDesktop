@@ -708,6 +708,9 @@ def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
                       "swapInBytesPerSec": None, "swapOutBytesPerSec": None,
                       "memoryPressure": "unknown"},
         "systemLoad1": 2.5,
+        "logicalCpuCount": host_module.os.cpu_count(),
+        "schedulerLoadRatio": round(2.5 / host_module.os.cpu_count(), 3),
+        "schedulerLoadClass": "normal",
     }
     assert "payload" not in context
 

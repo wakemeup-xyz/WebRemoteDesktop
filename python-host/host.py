@@ -3219,6 +3219,17 @@ class WebRemoteHost:
             system_load_1 = round(float(os.getloadavg()[0]), 3)
         except (AttributeError, OSError):
             system_load_1 = None
+        try:
+            logical_cpu_count = max(1, int(os.cpu_count() or 0))
+        except (AttributeError, TypeError, ValueError):
+            logical_cpu_count = None
+        scheduler_load_ratio = (
+            round(system_load_1 / logical_cpu_count, 3)
+            if system_load_1 is not None and logical_cpu_count else None)
+        scheduler_load_class = (
+            "unknown" if scheduler_load_ratio is None else
+            "critical" if scheduler_load_ratio >= 2.0 else
+            "elevated" if scheduler_load_ratio >= 1.0 else "normal")
         last_input_at = getattr(self, "_last_input_at_monotonic", None)
         last_input_age_ms = None
         if isinstance(last_input_at, (int, float)):
@@ -3270,6 +3281,12 @@ class WebRemoteHost:
             **runtime_context,
             "resources": resources,
             "systemLoad1": system_load_1,
+            # This is runnable-work pressure per logical CPU, not CPU
+            # utilization. Keep the raw load for correlation and make the
+            # interpretation explicit so high-load windows are reviewable.
+            "logicalCpuCount": logical_cpu_count,
+            "schedulerLoadRatio": scheduler_load_ratio,
+            "schedulerLoadClass": scheduler_load_class,
         }
 
     def _should_process_offer(self, viewer_id, offer_epoch):
