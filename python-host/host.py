@@ -2733,6 +2733,18 @@ class WebRemoteHost:
         if data.get('schemaVersion') == 2:
             lease_ok = isinstance(binding, dict) and all(
                 data.get(field) == binding.get(field) for field in ('viewerId', 'leaseId', 'leaseEpoch'))
+            if lease_ok and isinstance(binding.get('connectionAttemptId'), str):
+                supplied_attempt = data.get('connectionAttemptId')
+                if supplied_attempt is not None and supplied_attempt != binding.get('connectionAttemptId'):
+                    self._emit_input_observation('host_input_rejected', data,
+                                                 status='stale-lease', reason='stale-attempt')
+                    return completed_future(AdmissionResult('cancelled', None))
+                if supplied_attempt is None:
+                    # Older Viewer builds did not carry the attempt in the wire
+                    # envelope. Stamp the current Host authority before queueing
+                    # so ACK and Host observations remain attributable.
+                    data = dict(data)
+                    data['connectionAttemptId'] = binding['connectionAttemptId']
             if not lease_ok:
                 # Retain the existing same-viewer safety release, but it must
                 # never change admission state when a transition/overload blocks it.
@@ -3001,7 +3013,7 @@ class WebRemoteHost:
                 return False
             mirror = {key: ack[key] for key in (
                 "type", "schemaVersion", "inputType", "leaseEpoch", "appliedSeq", "status",
-                "pressedKeyCount", "modifierMask", "inputIds", "hostExecuteMs", "transport",
+                "pressedKeyCount", "modifierMask", "inputIds", "connectionAttemptId", "hostExecuteMs", "transport",
                 "timingSchemaVersion", "hostAdapterAwaitMs", "hostQueueMs", "hostApplyMs",
             ) if key in ack}
             serialized = json.dumps({**mirror, "resetAckMirrorVersion": 1})
@@ -3049,6 +3061,8 @@ class WebRemoteHost:
                 **({"appliedSeq": result["appliedSeq"]} if result.get("appliedSeq") is not None else {}),
                 "status": "applied" if result.get("status") == "unordered" else (result.get("status") or "applied"),
                 "inputIds": list(input_ids),
+                **({"connectionAttemptId": data.get("connectionAttemptId")}
+                   if isinstance(data.get("connectionAttemptId"), str) else {}),
                 "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }
@@ -3074,6 +3088,8 @@ class WebRemoteHost:
                 "pressedKeyCount": max(0, pressed_key_count),
                 "modifierMask": max(0, modifier_mask),
                 "inputIds": list(input_ids),
+                **({"connectionAttemptId": data.get("connectionAttemptId")}
+                   if isinstance(data.get("connectionAttemptId"), str) else {}),
                 "hostExecuteMs": local_execute_ms if relay_ack_duration_ms(0, local_execute_ms) is not None else None,
                 "transport": transport,
             }

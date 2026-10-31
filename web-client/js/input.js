@@ -2571,8 +2571,10 @@ const Input = {
     if (!lease) return null;
     if (!this._viewportInputSupported && !isMouseSafetyRelease && !isAcceptedGestureMove) return null;
     if (type !== 'command' && !isMouseSafetyRelease && !this.isActive) return null;
-    // Keep the v2 desktop-write envelope lean: lease + type/action/payload + inputIds.
-    // Do not attach free-form metadata here; transport is added only for the path used.
+    const connectionAttemptId = this._currentConnectionAttemptId();
+    // Keep the v2 desktop-write envelope bounded: lease + current attempt +
+    // type/action/payload + inputIds. The attempt is the authoritative media
+    // scope used to correlate Signal/Host ACKs; it is not user content.
     const data = {
       type,
       action,
@@ -2581,6 +2583,7 @@ const Input = {
       schemaVersion: 2,
       leaseId: lease.leaseId,
       leaseEpoch: lease.leaseEpoch,
+      ...(connectionAttemptId ? { connectionAttemptId } : {}),
     };
     const reliableWrite = type !== 'mouse' || action !== 'move';
     if (reliableWrite && this._desktopWriteRecovery?.state === 'reacquire-required') return null;
@@ -2617,7 +2620,6 @@ const Input = {
       });
       this._scheduleDesktopWriteDeadline();
     };
-    const connectionAttemptId = this._currentConnectionAttemptId();
     let dataChannelAccepted = false;
     if (typeof WebRTC !== 'undefined' && typeof WebRTC.sendInput === 'function') {
       try {

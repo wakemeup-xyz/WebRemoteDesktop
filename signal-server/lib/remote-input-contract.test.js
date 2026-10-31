@@ -62,6 +62,16 @@ test('requires a bounded array of safe input identifiers', () => {
   assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_INPUT_IDS' });
 });
 
+test('accepts a bounded connection attempt scope and rejects unsafe values', () => {
+  const input = clone(fixtures.valid[0].input);
+  input.connectionAttemptId = 'wrd-attempt-1';
+  assert.equal(validateRemoteInput(input).ok, true);
+  input.connectionAttemptId = 'contains space';
+  assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_CONNECTION_ATTEMPT_ID' });
+  input.connectionAttemptId = 'x'.repeat(129);
+  assert.deepEqual(validateRemoteInput(input), { ok: false, code: 'INVALID_CONNECTION_ATTEMPT_ID' });
+});
+
 test('rejects unknown envelope and payload fields', () => {
   const input = clone(fixtures.valid[0].input);
   input.extra = true;

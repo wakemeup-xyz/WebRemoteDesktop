@@ -19,7 +19,8 @@ function incrementBoundedCount(value, coverage) {
 
 // Only fixed enums and numbers leave this module. No emitter arguments are retained.
 function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow = Date.now,
-  logger = console, runtimeSnapshot, onSnapshot } = {}) {
+  logger = console, runtimeSnapshot, onSnapshot, setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval, snapshotIntervalMs = 60000 } = {}) {
   const records = new Set();
   const sockets = new WeakSet();
   const engines = new WeakSet();
@@ -35,6 +36,8 @@ function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow 
     let finalized = false;
     let terminal = null;
     let queued = false;
+    let snapshotTimer = null;
+    let lastSnapshotRingDropped = 0;
     let coverage = { state: 'partial', engine: false, flushScanLimited: false,
       valueInvalid: false, counterClipped: false };
     const counts = { pingCreated: 0, pingInFlush: 0, pongReceived: 0,
@@ -91,6 +94,7 @@ function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow 
         ringDropped = incrementBoundedCount(ringDropped, coverage);
       }
       ring.push({ t, n: sequence, k: kind });
+      if (ringDropped > 0 && lastSnapshotRingDropped === 0) emitLiveSnapshot();
     }
     function packet(packet, incoming) {
       if (finalized) return;
@@ -159,6 +163,23 @@ function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow 
       }
       if (!queued) { queued = true; queueMicrotask(() => finish()); }
     }
+    function emitLiveSnapshot() {
+      if (finalized) return;
+      const live = capture('live', 'online');
+      const data = { v: 1, event: 'viewer-heartbeat-snapshot', wallMs: live.wallMs,
+        durationMs: elapsed(live.at, started), source: live.source, reason: live.reason,
+        current: live.current, proof, coverage,
+        ages: { pingCreatedMs: elapsed(live.at, last.pingCreated),
+          pingInFlushMs: elapsed(live.at, last.pingInFlush), pongReceivedMs: elapsed(live.at, last.pongReceived) },
+        counts, transport: live.transport, node: nodeState(), ringDropped, ring };
+      lastSnapshotRingDropped = ringDropped;
+      try {
+        const projected = JSON.stringify(data);
+        if (Buffer.byteLength(projected) > 4096 || /[^\x20-\x7e]/.test(projected)) return;
+        try { logger?.log?.(PREFIX + projected); } catch { /* Diagnostic-only emitter. */ }
+        try { onSnapshot?.(data); } catch { /* Evidence aggregation cannot affect input. */ }
+      } catch { /* Bounded serialization failure is ignored. */ }
+    }
     function finish(mode) {
       if (finalized) return;
       if (!terminal) terminal = capture('shutdown', 'server-shutdown');
@@ -175,6 +196,10 @@ function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow 
           pingInFlushMs: elapsed(terminal.at, last.pingInFlush), pongReceivedMs: elapsed(terminal.at, last.pongReceived) },
         counts, transport: terminal.transport, node, ringDropped, ring };
       // Cleanup precedes serialization/logging; even a hostile logger cannot retain authority callbacks.
+      if (snapshotTimer !== null) {
+        try { clearIntervalFn(snapshotTimer); } catch { /* best effort */ }
+        snapshotTimer = null;
+      }
       for (const remove of removals) { try { remove(); } catch { /* Diagnostic-only emitter. */ } }
       removals.length = 0;
       owner = null; engine = null; predicate = null; ring = []; terminal = null;
@@ -211,6 +236,13 @@ function createViewerHeartbeatRegistry({ now = () => performance.now(), wallNow 
     coverage.engine = enrolled.every(Boolean);
     const namespaceEnrolled = enroll(owner, 'disconnect', reason => terminalEvent('namespace', reason));
     if (!coverage.engine || !namespaceEnrolled) coverage.state = 'unavailable';
+    if (typeof setIntervalFn === 'function' && Number.isFinite(snapshotIntervalMs)
+        && snapshotIntervalMs > 0 && snapshotIntervalMs <= 3600000) {
+      try {
+        snapshotTimer = setIntervalFn(() => emitLiveSnapshot(), snapshotIntervalMs);
+        snapshotTimer?.unref?.();
+      } catch { snapshotTimer = null; }
+    }
   }
   return { attach, stop() {
     if (stopped) return;

@@ -32,7 +32,7 @@ class CoordinatorTest(unittest.TestCase):
         fingerprint = watcher_source_fingerprint()
         self.assertEqual(fingerprint, WATCHER_SOURCE_FINGERPRINT)
         self.assertRegex(fingerprint, r"^[0-9a-f]{24}$")
-        self.assertEqual(WATCHER_SCHEMA_VERSION, 2)
+        self.assertEqual(WATCHER_SCHEMA_VERSION, 3)
 
     def test_coordinator_persists_loaded_source_identity(self):
         with tempfile.TemporaryDirectory() as d:

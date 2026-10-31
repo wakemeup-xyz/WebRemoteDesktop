@@ -11,11 +11,24 @@ else:
     from wrd_entry_health import sanitize_probe, LAYERS, RECOVERABLE
 
 
+LATENCY_HISTORY_LIMIT = 120
+DEFAULT_LATENCY_BUDGETS_MS = {
+    'origin-health': 2000.0,
+    'formal-health': 3000.0,
+    'login-html': 3000.0,
+    'viewer-html': 3000.0,
+    'core-asset': 4000.0,
+    'passive-runtime': 1500.0,
+}
+
+
 class WatchRuntime:
     def __init__(self, *, state=None, clock_epoch, fail_s=180, cooldown_s=300,
-                 window_s=3600, max_recoveries=2):
+                 window_s=3600, max_recoveries=2, latency_budgets_ms=None):
         self.fail_s, self.cooldown_s = fail_s, cooldown_s
         self.window_s, self.max_recoveries = window_s, max_recoveries
+        self.latency_budgets_ms = {**DEFAULT_LATENCY_BUDGETS_MS,
+                                   **(latency_budgets_ms or {})}
         self.state = copy.deepcopy(state) if isinstance(state, dict) else {}
         self.state.setdefault("version", 1)
         self.state.setdefault("operation", None)
@@ -26,6 +39,9 @@ class WatchRuntime:
         self.state.setdefault("quarantinedCount", 0)
         self.state.setdefault("lastMono", None)
         self.state.setdefault("assetsObserved", False)
+        self.state.setdefault("latencyHistory", {})
+        self.state.setdefault("latency", {})
+        self.state.setdefault("slowLayers", [])
         old_epoch = self.state.get("clockEpoch")
         if old_epoch != clock_epoch and state:
             self.state["quarantinedCount"] = max(self.state["quarantinedCount"], len(self.state["recoveries"]))
@@ -70,6 +86,7 @@ class WatchRuntime:
                     rows.append(sanitize_probe(matches[0], layer))
             self.state['probeLayers'] = rows
             by_layer = {row['layer']: row for row in rows}
+            self._observe_latency(rows)
             def health_value(layer):
                 row = by_layer.get(layer)
                 if not row or row['outcome'] == 'unknown':
@@ -136,6 +153,8 @@ class WatchRuntime:
                     self.state["status"] = "entry-degraded"
                 elif self.state.get("assetsObserved") and self.state["observations"].get("assets") is None:
                     self.state["status"] = "entry-unknown"
+                elif self.state.get("slowLayers"):
+                    self.state["status"] = "entry-slow"
                 else:
                     self.state["status"] = "entry-healthy" if layered else "healthy"
             else:
@@ -157,6 +176,46 @@ class WatchRuntime:
                 else:
                     self.state["action"] = "restart"
         return self.snapshot()
+
+    @staticmethod
+    def _percentile(values, fraction):
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = max(0, min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1))
+        return round(float(ordered[index]), 3)
+
+    def _observe_latency(self, rows):
+        history = self.state.setdefault("latencyHistory", {})
+        stats = {}
+        slow_layers = []
+        for row in rows:
+            layer = row.get('layer') if isinstance(row, dict) else None
+            elapsed = row.get('elapsedMs') if isinstance(row, dict) else None
+            if layer not in LAYERS or type(elapsed) not in (int, float) or not math.isfinite(elapsed):
+                continue
+            values = history.get(layer)
+            if not isinstance(values, list):
+                values = []
+            values = [value for value in values[-LATENCY_HISTORY_LIMIT + 1:]
+                      if type(value) in (int, float) and math.isfinite(value) and value >= 0]
+            values.append(round(float(elapsed), 3))
+            history[layer] = values
+            budget = self.latency_budgets_ms.get(layer)
+            p50 = self._percentile(values, 0.50)
+            p95 = self._percentile(values, 0.95)
+            p99 = self._percentile(values, 0.99)
+            maximum = round(max(values), 3) if values else None
+            slow = bool(budget is not None and p95 is not None and p95 > float(budget))
+            if slow:
+                slow_layers.append(layer)
+            stats[layer] = {
+                'sampleCount': len(values), 'budgetMs': budget,
+                'p50Ms': p50, 'p95Ms': p95, 'p99Ms': p99, 'maxMs': maximum,
+                'slow': slow,
+            }
+        self.state['latency'] = stats
+        self.state['slowLayers'] = sorted(set(slow_layers))
 
     def begin_recovery(self, operation_id, *, worker_pid=None, worker_start=None):
         if not isinstance(operation_id, str) or not operation_id or len(operation_id) > 128:

@@ -56,8 +56,17 @@ const V2_INPUT_ACK_STATUSES = new Set([
   'execution-failed',
 ]);
 
+function isValidConnectionAttemptId(value) {
+  return typeof value === 'string'
+    && value.length >= 1
+    && value.length <= 128
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
+}
+
 function validV2InputAckShape(data) {
   if (data.schemaVersion !== 2) return false;
+  if (data.connectionAttemptId !== undefined
+      && !isValidConnectionAttemptId(data.connectionAttemptId)) return false;
   const independentAck = data.inputType === 'mouse';
   return Number.isSafeInteger(data.leaseEpoch) && data.leaseEpoch >= 0
     && ['keyboard', 'mouse', 'command'].includes(data.inputType)
@@ -247,8 +256,8 @@ function setupSignaling(io, options = {}) {
         domain: 'input',
         event: 'signal_reset_ack_observed',
         message: 'Signal reset request to ACK outcome (includes Host processing)',
-        ...(attemptHash ? { correlation: { attemptHash } } : {}),
-        meta,
+        ...(attemptHash ? { correlation: { attemptHash } } : { correlation: {} }),
+        meta: { ...meta, correlationMissing: !attemptHash },
       };
       // Each sink is optional and must never become part of ACK delivery.
       try { structuredLogger?.info?.(payload); } catch (_error) {}
@@ -458,7 +467,8 @@ function setupSignaling(io, options = {}) {
         ...(hashCorrelation(socket?.id) ? { viewerHash: hashCorrelation(socket.id) } : {}),
         ...(attemptHash ? { attemptHash } : {}),
       },
-      meta: summarizeInputEvent(observedData, overrides),
+      meta: { ...summarizeInputEvent(observedData, overrides),
+        correlationMissing: !attemptHash },
     };
     recentEventStore?.append?.(payload);
     structuredLogger?.info?.(payload);
@@ -1721,6 +1731,17 @@ function setupSignaling(io, options = {}) {
           return;
         }
       }
+      const currentAttempt = data?.schemaVersion === 2
+        ? currentViewerConnectionAttempt(socket.id) : null;
+      if (data?.schemaVersion === 2 && data.connectionAttemptId !== undefined
+          && data.connectionAttemptId !== currentAttempt) {
+        logger.warn?.(`[INPUT] rejected viewer=${socket.id} wrong-attempt`);
+        emitInputEvent('signal_input_rejected', socket, data,
+          { status: 'rejected', reason: 'wrong-attempt' });
+        return;
+      }
+      const forwardedInput = data?.schemaVersion === 2 && currentAttempt
+        ? { ...data, connectionAttemptId: currentAttempt } : data;
       const highFrequency = isHighFrequencyInput(data);
       if (!highFrequency) {
         const summary = summarizeInputEvent(data, { status: 'accepted' });
@@ -1728,7 +1749,7 @@ function setupSignaling(io, options = {}) {
       }
       if (connections.host) {
         connections.host.emit('input', {
-          ...data,
+          ...forwardedInput,
           transport: 'socket',
           viewerId: socket.id
         });
@@ -1737,10 +1758,10 @@ function setupSignaling(io, options = {}) {
           resetAckObserver.noteForwarded({
             schemaVersion: data.schemaVersion, type: data.type, action: data.action,
             leaseEpoch: data.leaseEpoch, inputIds: data.inputIds, viewerId: socket.id,
-            connectionAttemptId: data.connectionAttemptId,
+            connectionAttemptId: forwardedInput.connectionAttemptId,
           });
         }
-        emitInputEvent('signal_input_relayed', socket, data, { status: 'accepted' });
+        emitInputEvent('signal_input_relayed', socket, forwardedInput, { status: 'accepted' });
       } else {
         console.warn('[INPUT] No host connected, dropping input');
         emitInputEvent('signal_input_rejected', socket, data, { status: 'rejected', reason: 'host-unavailable' });
@@ -1784,6 +1805,7 @@ function setupSignaling(io, options = {}) {
           status: data.status,
           ...(independentAck ? {} : { pressedKeyCount: data.pressedKeyCount, modifierMask: data.modifierMask }),
           inputIds,
+          ...(data.connectionAttemptId ? { connectionAttemptId: data.connectionAttemptId } : {}),
           hostExecuteMs,
           ...timing,
           transport: 'socket',

@@ -313,3 +313,35 @@ Host 轮转日志在最近窗口有 7190 个可解析事件循环样本：`lagMs
 6. 完成隔离 macOS Lab 的真实输入、可见效果、物理显示、reset fault injection 和 capture backend A/B，再更新 Goal 状态。
 
 因此，本轮没有新增 Goal 通过项；当前服务进程在线，但目标仍未完成。
+
+## 核心 Goal 实施进展（2026-10-31 23:40 Asia/Shanghai）
+
+本轮开始按“核心服务可用性”继续实施，仍未把隔离 Lab 作为前置条件。代码尚未重载 Signal/Host；watcher 已单独重载，固定域名 connector 未触碰。
+
+### 已落地的实现
+
+- Viewer v2 输入 envelope、Socket fallback、DataChannel 和 KeyboardTransport 现在都携带当前 `connectionAttemptId`；Signal 只接受当前权威 attempt，并把缺失的旧客户端输入补上当前 Host binding。旧 attempt 会以 `stale-attempt`/`wrong-attempt` 失败关闭。
+- Host 在入队前校验并补齐 attempt，ACK 和 reset ACK mirror 回传该 attempt；Signal 的 `signal_input_relayed`、`signal_reset_ack_observed` 现在可以生成 `attemptHash`，缺失时明确写 `correlationMissing=true`，不再把空 correlation 当成完整关联。
+- heartbeat 增加 60 秒 bounded online snapshot，并在诊断 ring 第一次 eviction 时立即上报；`ringDropped` 仍明确表示诊断环 eviction，不表示网络或视频丢包。关闭时会清理周期计时器。
+- watcher schema 升为 3，按层保存最多 120 个延迟样本，输出 p50/p95/p99/max 和预算超限的 `slowLayers`；慢入口只产生 `entry-slow`/通知，不触发 tunnel 重启。
+- 新增 `scripts/benchmark-capture-backends.py`，只测本机 MSS/CoreGraphics 原生抓屏调用，不改变生产默认后端，也不启动 Host、浏览器或 tunnel。
+
+### 当前实测证据
+
+- watcher 已加载新 fingerprint `446a539ad1b361ce204a971a` 和 schema 3。一次生产入口只读窗口记录 `formal-health` p95 约 3310.5 ms、p99 约 3310.5 ms、预算 3000 ms，`slowLayers=[formal-health]`；该窗口因 viewer-html/core-asset deadline 仍是 `entry-unknown`，action 为 `none`。固定域名 connector PID 保持不变。
+- MSS/CoreGraphics 本机 A/B（每种后端 20 次、空闲和 1 个受控 CPU worker）均成功返回 1792×1120。空闲时 MSS wall p95/max 约 26.7/26.8 ms、thread CPU p95 约 9.1 ms；CoreGraphics wall p95/max 约 17.5/18.2 ms、thread CPU p95 约 0.55 ms。一个 CPU worker 下 MSS wall p95/max 约 40.1/46.0 ms，CoreGraphics 约 33.7/35.5 ms；两者非 CPU 等待仍占主要部分。该结果支持后续在相同负载下继续评估 CoreGraphics，但还不足以切换生产默认后端，因为 resize、编码、RTP 和 Viewer 可见帧尚未纳入同一窗口。
+
+### 本轮验证
+
+- Node signaling/remote input/reset ACK/heartbeat 定向集：166/166 通过。
+- Web input/keyboard transport 定向集：269/269 通过；Python Host input/ACK/causality 定向集：45 passed、34 subtests passed。
+- watcher/runtime/entry 定向集：21/21 通过；Python/Node 语法检查通过。
+
+### 仍需完成
+
+- 需要在 Signal/Host 维护窗口重载新代码，确认真实 `signal_input_relayed`、Host input observation、`signal_reset_ack_observed` 全部带同一 `attemptHash`；当前还没有新的真实用户输入到画面样本。
+- 需要用真实 Viewer 验证 `page-hidden`、active media stall 的 `session_stale_detected → slot_released` 生产事件，以及槽位释放后新 Viewer 能进入。
+- 需要补全 `summaryGap`、diagnostic ring eviction、lifecycle dropped events 到单会话 daily alert 的汇总，并区分“未观测”和“确认零”。
+- 需要在实际会话里测 Viewer→Signal、Signal→Host、Host apply、ACK 回程、capture/encode/RTP/decode/present 的端到端 p95/max；当前 Signal→Host 局部 ACK 已有数据，但完整输入到画面仍缺测。
+- 需要在相同用户会话负载下将 MSS/CoreGraphics 与 Viewer FPS、fresh capture rate、RSS、CPU、framesDropped 和可见效果一起对比，再决定是否修改默认 backend。
+- 需要完成一次实际短断线、重连、持续控制和资源稳定性验收；当前服务仍在线，但尚未因本轮代码变更重载。

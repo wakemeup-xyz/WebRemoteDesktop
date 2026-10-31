@@ -32,7 +32,7 @@ else:
     from wrd_entry_health import probe_layers, probe_result, _NoRedirectHandler
 
 
-WATCHER_SCHEMA_VERSION = 2
+WATCHER_SCHEMA_VERSION = 3
 _SOURCE_FILES = (
     Path(__file__),
     Path(__file__).with_name("wrd_watch_runtime.py"),
@@ -338,7 +338,8 @@ def notify_status(status, *, popen=subprocess.Popen):
                 "recovery-in-flight": "Recovery in progress; observations continue.",
                 "clock-untrusted": "Recovery history needs a full observation window.",
                 "entry-degraded": "Entry assets degraded; tunnel recovery withheld.",
-                "entry-unknown": "Entry asset evidence unavailable; tunnel recovery withheld."}
+                "entry-unknown": "Entry asset evidence unavailable; tunnel recovery withheld.",
+                "entry-slow": "Entry latency exceeded its observation budget; tunnel recovery withheld."}
     if status not in messages:
         return "ignored"
     try:
@@ -430,6 +431,7 @@ def main(argv=None):
                       "watcherSchemaVersion": snapshot.get("watcherSchemaVersion", WATCHER_SCHEMA_VERSION),
                       "watcherSourceFingerprint": snapshot.get("watcherSourceFingerprint", WATCHER_SOURCE_FINGERPRINT),
                       "tick": snapshot.get("lastTick"), "observations": snapshot.get("observations"),
+                      "latency": snapshot.get("latency", {}), "slowLayers": snapshot.get("slowLayers", []),
                       "inFlight": bool(coordinator.worker), "probes": snapshot.get("probeLayers", []),
                       "restartActor": "watch-coordinator" if snapshot.get("operation") else None,
                       "decisionId": (snapshot.get("operation") or {}).get("id"),

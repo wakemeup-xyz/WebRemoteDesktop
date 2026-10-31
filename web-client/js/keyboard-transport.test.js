@@ -380,6 +380,7 @@ test('all outgoing inputs carry the RemoteInput v2 envelope', () => {
     schemaVersion: 2,
     leaseId: 'lease-for-test-0001',
     leaseEpoch: 7,
+    connectionAttemptId: 'attempt-1',
     seq: 1,
     inputIds: ['input-1'],
     payload: {

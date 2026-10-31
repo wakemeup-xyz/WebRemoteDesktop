@@ -22,7 +22,8 @@ const INPUT_REASONS = new Set([
   'INVALID_KEY_PHASE', 'INVALID_PHYSICAL_CODE', 'INVALID_LOCATION', 'INVALID_REPEAT', 'INVALID_MODIFIERS',
   'INVALID_LOCKS', 'INVALID_TEXT', 'TEXT_TOO_LONG', 'INVALID_BATCH', 'BATCH_TOO_LARGE', 'INVALID_INPUT_IDS',
   'INVALID_RESET_REASON', 'UNEXPECTED_SEQ', 'role-rejected', 'inactive-viewer', 'protocol-too-old',
-  'unauthorized', 'host-unavailable', 'stale-lease', 'invalid-input', 'invalid-envelope',
+  'unauthorized', 'host-unavailable', 'stale-lease', 'stale-attempt', 'wrong-attempt',
+  'invalid-input', 'invalid-envelope', 'INVALID_CONNECTION_ATTEMPT_ID',
 ]);
 
 function boundedInteger(value, maximum = 0x7fffffff) {

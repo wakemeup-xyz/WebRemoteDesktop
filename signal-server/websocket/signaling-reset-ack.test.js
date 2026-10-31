@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const crypto = require('node:crypto');
 const { createStructuredLogger } = require('../lib/observability/logger');
 const { hashInputIds } = require('../lib/observability/input');
 const { createRuntimeContext } = require('./runtime-context');
@@ -16,7 +17,7 @@ const { FakeSocket, makeIo, grantActiveLease } = require('./signaling-test-fixtu
 const OBSERVED_EVENT = 'signal_reset_ack_observed';
 
 // Exercise the production handlers, with no sockets, service, or native input.
-function fixture({ throwLogger = false, throwStore = false } = {}) {
+function fixture({ throwLogger = false, throwStore = false, bindAttempt = true } = {}) {
   const context = createRuntimeContext();
   const io = makeIo(context);
   const events = [];
@@ -59,17 +60,25 @@ function fixture({ throwLogger = false, throwStore = false } = {}) {
   io.connect(viewer);
   const grant = grantActiveLease(io, host, viewer);
   const lease = { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch };
+  if (bindAttempt) {
+    viewer.trigger('connection-attempt-bind', {
+      ...lease, connectionAttemptId: 'RESET_ATTEMPT_CANARY', connectionAttemptSequence: 1,
+    });
+  }
   let seq = 0;
   const reset = (inputType = 'keyboard', inputId = 'RESET_INPUT_CANARY', overrides = {}) => {
     const input = { schemaVersion: 2, type: inputType, action: 'reset', ...lease,
-      seq: ++seq, inputIds: [inputId], payload: { reason: 'transport-change' }, ...overrides };
+      seq: ++seq, inputIds: [inputId],
+      ...(bindAttempt ? { connectionAttemptId: 'RESET_ATTEMPT_CANARY' } : {}),
+      payload: { reason: 'transport-change' }, ...overrides };
     viewer.trigger('input', input);
     return input;
   };
   const ack = (input, overrides = {}) => host.trigger('input-ack', {
     schemaVersion: 2, viewerId: viewer.id, inputType: input.type, leaseEpoch: lease.leaseEpoch,
     appliedSeq: input.seq, pressedKeyCount: 0, modifierMask: 0,
-    status: 'applied', inputIds: input.inputIds, hostExecuteMs: 1.5, ...overrides,
+    status: 'applied', inputIds: input.inputIds, connectionAttemptId: input.connectionAttemptId,
+    hostExecuteMs: 1.5, ...overrides,
   });
   return { context, io, host, viewer, events, stored, persisted, lease, reset, ack,
     advance(ms) { now += ms; } };
@@ -90,11 +99,13 @@ for (const inputType of ['keyboard', 'mouse']) {
     assert.deepEqual(h.events[0], {
       domain: 'input', event: OBSERVED_EVENT,
       message: 'Signal reset request to ACK outcome (includes Host processing)',
+      correlation: { attemptHash: crypto.createHash('sha256').update('RESET_ATTEMPT_CANARY').digest('hex').slice(0, 32) },
       meta: {
         inputIdHash: hashInputIds(input.inputIds), inputType, leaseEpoch: h.lease.leaseEpoch,
         status: 'applied', targetAvailable: true, shapeValid: true, forwarded: true,
         ackLeaseMatchesRequest: true, ackTypeMatchesRequest: true,
         signalRequestToAckMs: 125.5, durationScope: 'signal-forward-to-host-ack-including-host',
+        correlationMissing: false,
       },
     });
     assert.deepEqual(h.stored, h.events);
@@ -283,8 +294,17 @@ test('reset ACK observer emits only the fixed safe projection through actual str
   assert.deepEqual(Object.keys(h.events[0].meta).sort(), [
     'ackLeaseMatchesRequest', 'ackTypeMatchesRequest',
     'durationScope', 'forwarded', 'inputIdHash', 'inputType', 'leaseEpoch',
-    'shapeValid', 'signalRequestToAckMs', 'status', 'targetAvailable',
+    'shapeValid', 'signalRequestToAckMs', 'status', 'targetAvailable', 'correlationMissing',
   ].sort());
+});
+
+test('reset ACK observer marks legacy missing attempt correlation without inventing one', () => {
+  const h = fixture({ bindAttempt: false });
+  const input = h.reset();
+  h.advance(10);
+  h.ack(input);
+  assert.deepEqual(h.events[0].correlation, {});
+  assert.equal(h.events[0].meta.correlationMissing, true);
 });
 
 test('reset ACK observer logger and recent-store exceptions cannot block ACK forwarding', () => {

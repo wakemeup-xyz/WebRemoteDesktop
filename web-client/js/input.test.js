@@ -133,7 +133,7 @@ for (const site of ['desktop', 'keyboard-wrapper']) {
     const record = Input._recordInputTrace;
     Input._recordInputTrace = function(...args) { const result = record.apply(this, args); now = 200; return result; };
     const wire = { type, action, payload, inputIds: [reservation.inputId], schemaVersion: 2,
-      leaseId: 'lease', leaseEpoch: 4, seq: 1 };
+      leaseId: 'lease', leaseEpoch: 4, connectionAttemptId: 'attempt', seq: 1 };
     if (site === 'desktop') {
       assert.equal(Input.dispatchPreparedLabInput(reservation), reservation.inputId);
       assert.equal(Input.dispatchPreparedLabInput(reservation), null);

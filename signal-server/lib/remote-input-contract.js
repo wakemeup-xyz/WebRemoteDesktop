@@ -7,6 +7,7 @@ const MAX_INPUT_ID_LENGTH = 128;
 
 const ENVELOPE_FIELDS = new Set([
   'schemaVersion', 'type', 'action', 'leaseId', 'leaseEpoch', 'seq', 'inputIds', 'payload',
+  'connectionAttemptId',
 ]);
 const KEY_FIELDS = new Set(['phase', 'code', 'location', 'repeat', 'modifiers', 'locks']);
 const MODIFIER_FIELDS = new Set(['altKey', 'ctrlKey', 'metaKey', 'shiftKey']);
@@ -20,6 +21,14 @@ const RESET_REASONS = new Set([
   'signal-disconnect', 'webrtc-disconnected', 'datachannel-closed', 'viewer-disconnect',
   'host-reconnect', 'host-stop', 'batch-failed', 'pending-reset', 'manual', 'unspecified',
 ]);
+
+const SAFE_CONNECTION_ATTEMPT = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+
+function validateConnectionAttemptId(value) {
+  return value === undefined
+    || (typeof value === 'string' && value.length >= 1 && value.length <= 128
+      && SAFE_CONNECTION_ATTEMPT.test(value));
+}
 
 function failed(code) {
   return { ok: false, code };
@@ -72,6 +81,7 @@ function validateDesktopEnvelope(data) {
   if (!isRecord(data)) return failed('INVALID_ENVELOPE');
   if (!hasOnlyFields(data, ENVELOPE_FIELDS)) return failed('UNKNOWN_FIELD');
   if (data.schemaVersion !== 2) return failed('INVALID_SCHEMA_VERSION');
+  if (!validateConnectionAttemptId(data.connectionAttemptId)) return failed('INVALID_CONNECTION_ATTEMPT_ID');
   if (!['mouse', 'command'].includes(data.type)) return failed('INVALID_TYPE');
   if (typeof data.leaseId !== 'string' || data.leaseId.length < 16) return failed('INVALID_LEASE_ID');
   if (!Number.isSafeInteger(data.leaseEpoch) || data.leaseEpoch < 1) return failed('INVALID_LEASE_EPOCH');
@@ -133,6 +143,7 @@ function validateRemoteInput(data) {
     if (!isRecord(data)) return failed('INVALID_ENVELOPE');
     if (!hasOnlyFields(data, ENVELOPE_FIELDS)) return failed('UNKNOWN_FIELD');
     if (data.schemaVersion !== 2) return failed('INVALID_SCHEMA_VERSION');
+    if (!validateConnectionAttemptId(data.connectionAttemptId)) return failed('INVALID_CONNECTION_ATTEMPT_ID');
     if (data.type !== 'keyboard') return failed('INVALID_TYPE');
     if (!ACTIONS.has(data.action)) return failed('UNKNOWN_ACTION');
     if (data.leaseId === undefined) return failed('MISSING_LEASE_ID');
@@ -200,4 +211,5 @@ module.exports = {
   MAX_TEXT_SCALARS,
   MAX_BATCH_STEPS,
   MAX_INPUT_IDS,
+  validateConnectionAttemptId,
 };

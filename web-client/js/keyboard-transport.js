@@ -246,6 +246,7 @@
         leaseEpoch,
         seq,
         inputIds: [inputId],
+        ...(connectionAttemptId ? { connectionAttemptId } : {}),
       };
       capacityRejected = false;
       if (!budget.reserve(inputId, serializedBytes(payload))) {

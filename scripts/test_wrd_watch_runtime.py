@@ -67,6 +67,31 @@ class WatchRuntimeTest(unittest.TestCase):
         self.assertEqual(state["observations"]["assets"], False)
         self.assertEqual(state["action"], "none")
 
+    def test_latency_window_records_p95_p99_and_marks_entry_slow_without_recovery(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(clock_epoch="a", latency_budgets_ms={"formal-health": 100})
+        rows = [probe_result("origin-health", outcome="ok", reason="ok", elapsed=0.01),
+                probe_result("formal-health", outcome="ok", reason="ok", elapsed=0.25),
+                probe_result("login-html", outcome="ok", reason="ok", elapsed=0.01),
+                probe_result("viewer-html", outcome="ok", reason="ok", elapsed=0.01),
+                probe_result("core-asset", outcome="ok", reason="ok", elapsed=0.01)]
+        state = r.tick(0, {"probes": rows})
+        self.assertEqual(state["status"], "entry-slow")
+        self.assertEqual(state["action"], "none")
+        self.assertEqual(state["latency"]["formal-health"]["sampleCount"], 1)
+        self.assertEqual(state["latency"]["formal-health"]["p95Ms"], 250.0)
+        self.assertEqual(state["latency"]["formal-health"]["p99Ms"], 250.0)
+        self.assertEqual(state["slowLayers"], ["formal-health"])
+
+    def test_latency_history_is_bounded_across_ticks(self):
+        from scripts.wrd_entry_health import probe_result
+        r = WatchRuntime(clock_epoch="a")
+        for tick in range(200):
+            r.tick(tick, {"probes": [probe_result("formal-health", outcome="ok", reason="ok", elapsed=0.001)]})
+        state = r.snapshot()
+        self.assertEqual(len(state["latencyHistory"]["formal-health"]), 120)
+        self.assertEqual(state["latency"]["formal-health"]["sampleCount"], 120)
+
     def test_asset_observation_is_retained_between_asset_rounds(self):
         from scripts.wrd_entry_health import probe_result
         r = WatchRuntime(clock_epoch="a")
