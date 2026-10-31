@@ -677,3 +677,10 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 ### 调度负载分类运行证明
 
 最新 Host 被动窗口已加载调度负载分类字段：`logicalCpuCount=12`、`schedulerLoadRatio=4.107–4.925`、`schedulerLoadClass=critical`。同窗抓帧最大约 **1081ms**、最大非 CPU 等待约 **1044ms**、fresh cadence 约 **3Hz**，与高负载污染表现一致。该字段只描述 runnable-work pressure，不被解释为 CPU 使用率，也不改变媒体策略；它现在可以直接作为验收证据的 contamination 标记。
+
+## 2026-11-01 04:29 回归复核
+
+- 本轮定向回归首次发现 `signal-server/test/viewer-heartbeat.test.js` 仍假设 ring eviction 只在 close 时输出一条日志；当前实现会在首次 eviction 立即输出一条 bounded live snapshot，导致该测试读取了中间 snapshot（`ringDropped=1`）而不是最终 close（`ringDropped=68`）。
+- 测试已改为分别校验一条 live snapshot 和最终 close 记录，并确认最终 ring 保留 32 条、首条序号为 69、累计 eviction 为 68；这与运行时“首次丢失立即留证、关闭时给出最终窗口”的契约一致。
+- 修复后的定向集合全部通过：Signal/诊断 **102/102**、Viewer frame-trace/diagnostic **213/213**、Host capture/diagnostic worker **98/98**、controlled-scene/collector **84/84**。该修正只同步测试断言，没有改变生产输入、媒体或诊断行为。
+- 当前服务仍为 `/health=ok`、`hostOnline=true`、`viewerCount=0`；本机 load average 约 `12.47/18.67/19.49`，Codex/WindowServer 等外部进程仍占用较高调度资源，因此本窗口不启动活动性能验收，也不把高负载数据混入产品基线。
