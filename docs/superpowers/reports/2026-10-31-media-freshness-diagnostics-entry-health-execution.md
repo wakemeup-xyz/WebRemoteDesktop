@@ -50,3 +50,4 @@
 - `c983575` 同时把 `summaryGapCount`、`ringDropCount`、`coverageStatus` 和 input trace loss 接入诊断接收、daily summary 与 runtime evidence。
 - 本轮验证：watcher/runtime 19/19、entry probe 17/17、Signal signaling 131/131、diagnostic/runtime/store/reset ACK 107/107、Host observability/admission 46/46。Host rotating writer 首次并行运行时出现一次已有时序抖动，单测及完整 Python 定向集重跑通过。
 - 三小时 passive 会话仍在运行，当前约 68 分钟、4090 个采样，connected/active、约 20 FPS、丢帧 0；无业务输入、visible effect 或物理显示证据。未重启 Signal/Host，未操作 tunnel。
+- 长会话期间 `CAPTURE_STATS` 输出约 18–19.5 FPS，但每 5 秒复用缓存帧约 17–56 个；Host cadence 实际约 9–13 Hz，lifetime 抓帧 max 约 1296 ms、非 CPU约 1263 ms、线程 CPU约 33 ms。`c4a6888` 已增加 fresh capture/reuse 观测字段；Host 重载和 backend A/B 仍待维护窗口。

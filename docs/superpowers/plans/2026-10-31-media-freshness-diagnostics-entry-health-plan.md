@@ -43,3 +43,5 @@
 执行事实（2026-10-31）：freshness/Signal 141 tests、viewer-freshness 4 tests、diagnostic/runtime-evidence/store 72 tests、Viewer diagnostic/runtime-diagnostic 63 tests和 frame-trace/latency 286 tests通过；watcher/entry 定向 Python 17 tests、watch shell 26 tests通过，前端构建通过。当前构建产物 buildId `006ff0c9024b1e27` 已被本地与正式入口 manifest 同时提供。维护窗口已开始，三小时 passive 会话仍在运行。
 
 追补事实（2026-10-31）：`4a3e92e` 已为 watcher 增加加载源码 fingerprint，并已按 runbook 重载验证；当前 watcher PID 51489 的 fingerprint 为 `33ddf5011fe34f827b8e9918`，页面、core asset 和 loopback passive runtime 均成功。`c983575` 已将输入/reset ACK 关联脱敏并把 summary gap、ring drop、coverage 和 input trace loss 接入 runtime evidence。定向验证为 watcher/runtime 19/19、entry probe 17/17、Signal 131/131、diagnostic/runtime/store/reset ACK 107/107、Host observability/admission 46/46；三小时 passive 会话仍未结束。
+
+抓帧追补事实（2026-10-31）：长会话证据显示 output FPS 被缓存帧复用掩盖，Host 新抓帧约 9–13 Hz；`c4a6888` 已把 fresh capture/reuse/age 观测接入 Host capture snapshot，待维护窗口重载 Host 后验证。

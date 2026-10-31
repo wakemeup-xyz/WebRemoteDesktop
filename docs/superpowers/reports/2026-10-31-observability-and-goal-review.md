@@ -100,3 +100,5 @@
 本轮定向验证结果：watcher/runtime 19/19、entry probe 17/17、Signal signaling 131/131、诊断/runtime evidence/store/reset ACK 107/107、Host observability/admission 46/46；一次 Host rotating writer 测试首跑出现已有时序抖动，单测重跑和完整 Python 定向集均通过。未重启 Signal/Host、未操作 tunnel。
 
 当前三小时 passive 会话仍在运行，约 68 分钟、4090 个采样，持续 connected/active，约 20 FPS，丢帧为 0；它仍不包含真实业务输入、visible effect 或物理显示证据。因此 Goal 仍保持 `active`，阶段 5 的短断线、真实输入、可见效果、物理显示和 3 小时长会话仍未闭环。
+
+长会话继续暴露出抓屏语义缺口：`CAPTURE_STATS` 输出约 18–19.5 FPS，但每 5 秒复用缓存帧约 17–56 个；Host cadence 实际约 9–13 Hz。当前 lifetime 最大抓帧约 1296 ms，其中非 CPU 约 1263 ms、线程 CPU 约 33 ms，不能把它归因成 Python CPU 卡顿。`c4a6888` 已增加 `freshCaptureCount`、`reuseRatio`、`lastFreshCaptureAgeMs` 和连续复用计数；Host 尚未重载，因此这些字段待维护窗口结束后验证。
