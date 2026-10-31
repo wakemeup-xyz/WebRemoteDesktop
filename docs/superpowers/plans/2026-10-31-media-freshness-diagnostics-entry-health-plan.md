@@ -41,3 +41,5 @@
 - [~] 已更新实施报告并完成当前 git/service/privacy review；长会话结束后再做最终 completion audit。
 
 执行事实（2026-10-31）：freshness/Signal 141 tests、viewer-freshness 4 tests、diagnostic/runtime-evidence/store 72 tests、Viewer diagnostic/runtime-diagnostic 63 tests和 frame-trace/latency 286 tests通过；watcher/entry 定向 Python 17 tests、watch shell 26 tests通过，前端构建通过。当前构建产物 buildId `006ff0c9024b1e27` 已被本地与正式入口 manifest 同时提供。维护窗口已开始，三小时 passive 会话仍在运行。
+
+追补事实（2026-10-31）：`4a3e92e` 已为 watcher 增加加载源码 fingerprint，`c983575` 已将输入/reset ACK 关联脱敏并把 summary gap、ring drop、coverage 和 input trace loss 接入 runtime evidence。定向验证为 watcher/runtime 19/19、entry probe 17/17、Signal 131/131、diagnostic/runtime/store/reset ACK 107/107、Host observability/admission 46/46；常驻 watcher 尚未重载，三小时 passive 会话仍未结束。

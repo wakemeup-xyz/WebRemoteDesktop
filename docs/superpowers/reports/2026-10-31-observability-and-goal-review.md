@@ -66,7 +66,7 @@
 
 ## Goal 完成度
 
-当前线程的系统 Goal 返回状态为 `blocked`，不能按“已完成”处理。仓库中最近几个计划的状态如下：
+本报告早期版本曾把线程 Goal 误记为 `blocked`。当前系统 Goal 实际状态为 `active`；目标仍未完成，不能按“已完成”处理。仓库中最近几个计划的状态如下：
 
 | 范围 | 已完成 | 未完成或证据不足 |
 |---|---|---|
@@ -88,4 +88,15 @@
 
 ## 结论边界
 
-当前可以确认“日志系统已经能发现残留 Viewer 和媒体停滞”，不能确认“远程服务已经稳定可用”，也不能确认“频繁断连和输入中断已经彻底解决”。在 P0 的会话可用性、诊断接收证据和端到端帧关联补齐并完成真实验收前，Goal 应保持 blocked/未完成。
+当前可以确认“日志系统已经能发现残留 Viewer 和媒体停滞”，不能确认“远程服务已经稳定可用”，也不能确认“频繁断连和输入中断已经彻底解决”。在会话可用性、诊断接收证据和端到端帧关联补齐并完成真实验收前，Goal 应保持 active/未完成。
+
+## 追补复核与本轮落地（2026-10-31 13:20 后）
+
+上一版审查发现的两个运行态问题已经分别补强：
+
+- `4a3e92e` 为 watcher 增加 `watcherSchemaVersion=2` 和源码 fingerprint。启动状态与每次 tick 都记录该指纹，使常驻进程是否加载当前代码可以被直接证明。当前 PID 2284 仍是 10 月 30 日启动的旧实例，`/tmp/wrd-fixed-watch-state.json` 尚无新字段，因此本轮没有把代码提交误报成线上已加载。
+- `c983575` 将输入事件和 reset ACK 的关联改为 `viewerHash`、`attemptHash`、`inputIdHash`、lease/generation 等有界脱敏字段；诊断 raw、daily summary 和 runtime evidence 现在保留 `summaryGapCount`、`ringDropCount`、`coverageStatus` 与 input trace loss。原始 viewer、attempt、输入文本和坐标不进入这些关联字段。
+
+本轮定向验证结果：watcher/runtime 19/19、entry probe 17/17、Signal signaling 131/131、诊断/runtime evidence/store/reset ACK 107/107、Host observability/admission 46/46；一次 Host rotating writer 测试首跑出现已有时序抖动，单测重跑和完整 Python 定向集均通过。未重启 Signal/Host、未操作 tunnel。
+
+当前三小时 passive 会话仍在运行，约 53 分钟、3222 个采样，持续 connected/active，约 20 FPS，丢帧为 0；它仍不包含真实业务输入、visible effect 或物理显示证据。因此 Goal 仍保持 `active`，阶段 5 的短断线、真实输入、可见效果、物理显示、3 小时长会话和 watcher 重载仍未闭环。

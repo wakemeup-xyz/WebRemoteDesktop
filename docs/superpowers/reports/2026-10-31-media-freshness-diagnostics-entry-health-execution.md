@@ -42,3 +42,11 @@
 - scope/frame correlation：`21a3b1c`、`c8002af`、`5a9f529`
 - watcher 入口与 passive runtime：`5303252`
 - 设计、计划和本实施记录：后续随维护窗口验收结果继续更新。
+
+## 追补实施（2026-10-31 13:20 后）
+
+- `4a3e92e` 为 watcher 增加 `watcherSchemaVersion=2` 与源码 fingerprint，启动状态和每次 tick 都写入该身份。当前常驻 watcher 仍是旧 PID，尚未重载，因此运行态尚未出现新 fingerprint；这被保留为部署验收缺口。
+- `c983575` 将 Host/Signal 输入与 reset ACK 关联改为脱敏 `viewerHash`、`attemptHash`、`inputIdHash`、lease/generation 字段；高频 move/wheel 路径继续不读取 payload、不计算 hash。
+- `c983575` 同时把 `summaryGapCount`、`ringDropCount`、`coverageStatus` 和 input trace loss 接入诊断接收、daily summary 与 runtime evidence。
+- 本轮验证：watcher/runtime 19/19、entry probe 17/17、Signal signaling 131/131、diagnostic/runtime/store/reset ACK 107/107、Host observability/admission 46/46。Host rotating writer 首次并行运行时出现一次已有时序抖动，单测及完整 Python 定向集重跑通过。
+- 三小时 passive 会话仍在运行，当前约 53 分钟、3222 个采样，connected/active、约 20 FPS、丢帧 0；无业务输入、visible effect 或物理显示证据。未重启 Signal/Host，未操作 tunnel。
