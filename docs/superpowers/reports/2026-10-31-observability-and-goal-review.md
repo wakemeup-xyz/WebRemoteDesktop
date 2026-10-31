@@ -761,3 +761,10 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 验收退出后 Viewer 槽位在 grace 内回收为 `viewerCount=0`；服务健康，quick tunnel 未操作。
 
 本轮仍不把自动化样本替代物理键鼠、严格 marker-backed visible effect、reset fault injection 或真实用户长会话；Goal 继续为 `active`。
+
+## 2026-11-01 05:33–05:36 transport admission telemetry 上线验证
+
+- 新 telemetry 已随本地 Signal/Host 重启加载；相关回归为 tunnel/worker **55/55 PASS**、连接诊断/媒体边界/frame worker **59/59 PASS**。
+- 正式协议复测：恢复 **20/20 PASS**，p50 **541ms**、p95 **773ms**、max **875ms**；暂停期间 payload/帧增量均为 **0**；键盘、鼠标、single-desktop 接管 **PASS**；tunnel 媒体 **20/20 PASS**，p50 **445.5ms**、p95 **457ms**。
+- 连续 relay 统计中，`transport_admit_p95_ms` 约 **0.4–0.9ms**、`transport_admit_max_ms` 约 **5.9ms**、`transport_admit_timeouts=0`。这进一步确认 writer admission 没有造成 2 FPS 现象；现有低 FPS 样本与自动化 pause/resume 交界和 capture/调度窗口重叠，不能作为连续 active 基线。
+- 复测退出后 `viewerCount=0`，Signal/Host 健康；quick tunnel 未操作。Goal 继续为 `active`，下一轮应使用独立连续 active tunnel soak，而不是重复 pause/resume 矩阵。
