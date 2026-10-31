@@ -16,7 +16,7 @@
 ## 验证
 
 - Signal freshness、signaling 和 runtime context：141 tests passed；独立 freshness：4 tests passed。
-- Signal diagnostic、diagnostic-store、runtime-evidence：74 tests passed；frame trace correlation 和 receipt retry tests passed。
+- Signal diagnostic、diagnostic-store、runtime-evidence：72 tests passed；frame trace correlation、receipt status 和 retry tests passed。
 - Viewer diagnostic/runtime-diagnostic：63 tests passed；Viewer frame-trace/latency suite：286 tests passed。
 - watcher/entry 定向 Python tests：17 route/runtime tests passed；watch shell fixture：26 tests passed。
 - 前端生产 dist 已重新原子构建；本地和正式入口 manifest 均返回 buildId `006ff0c9024b1e27`，desktop asset 为 `assets/desktop-core.c131225e94ec4c33.js`。
