@@ -1513,6 +1513,10 @@ class ScreenCaptureTrack(VideoStreamTrack):
         self._capture_seq = 0
         self._capture_bounds_ns = {}
         self._last_consumed_seq = -1
+        self._last_fresh_capture_ns = None
+        self._fresh_capture_count = 0
+        self._output_count = 0
+        self._reused_output_count = 0
         self._capture_running = True
         self._activity_condition = threading.Condition()
         self._suspended = False
@@ -1669,6 +1673,8 @@ class ScreenCaptureTrack(VideoStreamTrack):
                             continue
                         self._capture_buffer = shot
                         self._capture_seq += 1
+                        self._last_fresh_capture_ns = grab_finished_ns
+                        self._fresh_capture_count = int(getattr(self, '_fresh_capture_count', 0) or 0) + 1
                         self._capture_bounds_ns[self._capture_seq] = (grab_started_ns, grab_finished_ns)
                         captured = True
                         while len(self._capture_bounds_ns) > 2048:
@@ -1805,6 +1811,20 @@ class ScreenCaptureTrack(VideoStreamTrack):
             result['cadence'] = cadence.snapshot(now_ns) if cadence is not None else unavailable_capture_cadence()
         except Exception:
             result['cadence'] = unavailable_capture_cadence()
+        if hasattr(self, '_last_fresh_capture_ns'):
+            fresh_age = None
+            if isinstance(now_ns, int) and isinstance(self._last_fresh_capture_ns, int):
+                fresh_age = round(max(0, now_ns - self._last_fresh_capture_ns) / 1_000_000, 3)
+            outputs = max(0, int(getattr(self, '_output_count', 0) or 0))
+            reused = max(0, int(getattr(self, '_reused_output_count', 0) or 0))
+            result['freshness'] = {
+                'freshCaptureCount': max(0, int(getattr(self, '_fresh_capture_count', 0) or 0)),
+                'outputCount': outputs,
+                'reusedOutputCount': reused,
+                'reuseRatio': round(min(1.0, reused / outputs), 4) if outputs else None,
+                'lastFreshCaptureAgeMs': fresh_age,
+                'consecutiveReuseCount': max(0, int(getattr(self, '_reuse_count', 0) or 0)),
+            }
         return result
 
     def resource_snapshot(self) -> dict:
@@ -1914,6 +1934,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 max_height,
                 queued_at,
             )
+            self._output_count = int(getattr(self, '_output_count', 0) or 0) + 1
+            if reused:
+                self._reused_output_count = int(getattr(self, '_reused_output_count', 0) or 0) + 1
         except RuntimeError:
             # shutdown(wait=False) may win before a new executor task is submitted.
             if not self._capture_running:

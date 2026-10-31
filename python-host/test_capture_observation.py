@@ -747,6 +747,22 @@ class CaptureAdapterTest(unittest.TestCase):
             _capture_cadence=SimpleNamespace(snapshot=lambda _: (_ for _ in ()).throw(ValueError('canary'))))
         self.assertEqual(reader(failing, 0)['cadence'], unavailable_capture_cadence())
 
+    def test_track_adapter_exposes_fresh_capture_and_reuse_evidence(self):
+        reader = method('ScreenCaptureTrack', 'capture_observation_snapshot',
+            unavailable_capture_observation=unavailable_capture_observation,
+            unavailable_capture_cadence=unavailable_capture_cadence)
+        track = SimpleNamespace(
+            _capture_observation=CaptureObservation(), _capture_running=True, _suspended=False,
+            _capture_thread=None, _capture_cadence=None,
+            _last_fresh_capture_ns=1_000_000_000, _fresh_capture_count=12,
+            _output_count=20, _reused_output_count=8, _reuse_count=3,
+        )
+        freshness = reader(track, 2_000_000_000)['freshness']
+        self.assertEqual(freshness, {
+            'freshCaptureCount': 12, 'outputCount': 20, 'reusedOutputCount': 8,
+            'reuseRatio': .4, 'lastFreshCaptureAgeMs': 1000, 'consecutiveReuseCount': 3,
+        })
+
     def test_context_current_track_once_missing_legacy_throw_and_replacement(self):
         context = method('WebRemoteHost', 'build_event_loop_lag_context',
             RuntimeObservability=RuntimeObservability,
