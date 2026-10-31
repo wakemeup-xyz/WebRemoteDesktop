@@ -585,3 +585,8 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 已清除 `WRD_FRAME_TRACE_DETAIL`，只保留默认 MSS；恢复后的 10 秒正式 Relay passive smoke **PASS**：11 个采样、无缺测/晚到/身份变化、`hasPaintedFrame=true`。
 - 当前本地服务为 Signal PID `23895`、Host PID `41097`，`/health=ok`、`hostOnline=true`、`viewerCount=0`；cloudflared 未操作，公网地址文件未改变。
 - Goal 继续保持 `active`，未修改目标范围。新增的生产证据已把第 5 项和输入链路关联推进为完成/大部分完成；剩余硬门槛仍是严格 `inputToVisibleEffectMs`、诊断详细 trace 的低拥塞生产策略，以及真实用户物理输入/长时间持续控制验收。
+
+### 限流修复后的常态恢复
+
+- 详细 trace 通道限流代码已提交为 `1bde4cc`；随后清除 `WRD_FRAME_TRACE_DETAIL` 并重启 Host，恢复普通 MSS/diagnostic 模式。
+- 当前 PID 为 Signal `23895`、Host `43230`；`/health=ok`、`hostOnline=true`、`viewerCount=0`。恢复后的 10 秒正式 Relay passive smoke **PASS**：11 个采样、无缺测/晚到/身份变化，最大无进展约 **99.9ms**。
