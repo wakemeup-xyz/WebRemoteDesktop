@@ -129,6 +129,7 @@ function projectDiagnostic(report = {}) {
     report.coverage?.summaryGapCount,
   );
   const ringDropCount = firstCount(
+    report.ringDropCount,
     report.ringDropped,
     report.heartbeat?.ringDropped,
     report.runtime?.heartbeat?.ringDropped,

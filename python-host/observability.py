@@ -36,6 +36,40 @@ DEFAULT_LOG_BACKUP_COUNT = 3
 _LOG_CONFIGURATION_LOCK = threading.Lock()
 
 
+def hash_correlation(value, *, maximum=128):
+    """Return a stable bounded correlation hash without retaining the raw ID."""
+    if not isinstance(value, str) or not 1 <= len(value) <= maximum:
+        return None
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+
+
+def input_event_correlation(data):
+    """Project only deidentified input/session identities for log correlation."""
+    if not isinstance(data, dict):
+        return {}
+    correlation = {}
+    for source, target in (("viewerId", "viewerHash"),
+                           ("connectionAttemptId", "attemptHash"),
+                           ("inputIdHash", "inputIdHash")):
+        value = data.get(source)
+        if source == "inputIdHash":
+            if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{16,64}", value):
+                correlation[target] = value
+        else:
+            hashed = hash_correlation(value)
+            if hashed:
+                correlation[target] = hashed
+    if isinstance(data.get("leaseEpoch"), int) and data["leaseEpoch"] >= 0:
+        correlation["leaseEpoch"] = min(data["leaseEpoch"], 0x7FFFFFFF)
+    for source, target in (("generation", "generation"),
+                           ("mediaGeneration", "mediaGeneration"),
+                           ("connectionAttemptSequence", "attemptSequence")):
+        value = data.get(source)
+        if isinstance(value, int) and value >= 0:
+            correlation[target] = min(value, 0x7FFFFFFF)
+    return correlation
+
+
 def _bounded_int(value, default, *, minimum):
     try:
         return max(minimum, int(value))
@@ -188,6 +222,10 @@ def summarize_input_event(
         "leaseEpoch": bounded_lease_epoch,
         "appliedSeq": bounded_applied_seq,
     }
+    for source, target in (("generation", "generation"), ("mediaGeneration", "mediaGeneration")):
+        value = data.get(source) if isinstance(data, dict) else None
+        if isinstance(value, int) and value >= 0:
+            summary[target] = min(value, 0x7FFFFFFF)
     raw_reason = reason if reason is not None else (data.get("reason") if isinstance(data, dict) else None)
     summary["reason"] = _safe_enum(raw_reason, _SAFE_INPUT_REASONS, None)
     # Nullable observation only: reject coerced/invalid/unbounded durations

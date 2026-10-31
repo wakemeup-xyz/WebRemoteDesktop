@@ -2763,6 +2763,9 @@ test('v2 input validation and authorization emit safe correlation events while r
   const rejected = events.filter((event) => event.event === 'signal_input_rejected');
   assert.ok(relay);
   assert.equal(relay.domain, 'input');
+  assert.equal(relay.correlation.viewerHash,
+    crypto.createHash('sha256').update('viewer-input-events').digest('hex').slice(0, 32));
+  assert.equal(Object.hasOwn(relay.correlation, 'viewerId'), false);
   assert.equal(relay.meta.inputIdHash, '3e9fd6a21afbb55b');
   assert.equal(relay.meta.inputIdCount, 1);
   assert.equal(relay.meta.transport, 'socket');

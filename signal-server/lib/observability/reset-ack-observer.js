@@ -2,6 +2,7 @@
 
 const { performance } = require('node:perf_hooks');
 const { hashInputIds, validInputIds } = require('./input');
+const crypto = require('node:crypto');
 
 const MAX_ENTRIES = 32;
 const TTL_MS = 10000;
@@ -14,6 +15,12 @@ const DURATION_SCOPE = 'signal-forward-to-host-ack-including-host';
 function validViewer(value) {
   return typeof value === 'string' && value.length >= 1 && value.length <= 128
     && /^[A-Za-z0-9._:-]+$/.test(value);
+}
+
+function hashAttempt(value) {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 128
+    ? crypto.createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 32)
+    : null;
 }
 
 // Diagnostic correlation only. Call noteForwarded after the actual Host emit;
@@ -62,7 +69,7 @@ function createResetAckObserver({
         if (pending.has(key)) continue;
         if (pending.size >= capacity) pending.delete(pending.keys().next().value);
         pending.set(key, {
-          type, epoch, id, viewer, startedAt: at,
+          type, epoch, id, viewer, attemptHash: hashAttempt(data.connectionAttemptId), startedAt: at,
         });
       }
     } catch { /* Optional evidence must never affect the input path. */ }
@@ -100,6 +107,7 @@ function createResetAckObserver({
             inputIdHash: hashInputIds([entry.id]),
             inputType: entry.type,
             leaseEpoch: entry.epoch,
+            ...(entry.attemptHash ? { attemptHash: entry.attemptHash } : {}),
             status,
             ...flags,
             ackLeaseMatchesRequest: data.leaseEpoch === entry.epoch,

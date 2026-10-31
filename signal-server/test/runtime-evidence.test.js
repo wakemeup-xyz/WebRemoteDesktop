@@ -167,6 +167,23 @@ test('receipt reports logCount, summary gaps, ring drops and missing evidence wi
   assert.equal(receipt.coverage.complete, true);
 });
 
+test('receipt preserves explicit production summary gap and ring-drop fields', () => {
+  const row = projectDiagnostic({ schemaVersion: 3, logContentPolicy: 'metadata-only',
+    reportedLogCount: 1, summaryGapCount: 3, ringDropCount: 4,
+    coverage: { status: 'partial' }, inputTraceLoss: { droppedEvents: 2 } });
+  assert.equal(row.summaryGapCount, 3);
+  assert.equal(row.ringDropCount, 4);
+  assert.deepEqual(row.inputTraceLoss.droppedEvents, 2);
+  const evidence = createRuntimeEvidenceRecorder();
+  evidence.observeDiagnostic({ schemaVersion: 3, logContentPolicy: 'metadata-only',
+    reportedLogCount: 1, summaryGapCount: 3, ringDropCount: 4,
+    coverage: { status: 'partial' }, inputTraceLoss: { droppedEvents: 2 } });
+  const receipt = evidence.receipt();
+  assert.equal(receipt.diagnostics.summaryGapCount, 3);
+  assert.equal(receipt.diagnostics.ringDropCount, 4);
+  assert.equal(receipt.coverage.complete, false);
+});
+
 test('bounded recorder evicts old reports and never retains untrusted event objects', () => {
   let time = 0;
   const evidence = createRuntimeEvidenceRecorder({ now: () => time, maxReports: 2 });

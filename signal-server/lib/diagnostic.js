@@ -106,6 +106,15 @@ function redactRuntimeDiagnostic(payload) {
     }
   }
   const inputState = redactInputState(payload.inputState);
+  const summaryGapCount = safeInteger(
+    payload.summaryGapCount ?? payload.summaryGaps?.count ?? payload.coverage?.summaryGapCount,
+    Number.MAX_SAFE_INTEGER,
+  );
+  const ringDropCount = safeInteger(
+    payload.ringDropCount ?? payload.ringDropped ?? payload.heartbeat?.ringDropped,
+    Number.MAX_SAFE_INTEGER,
+  );
+  const coverageStatus = safeEnum(payload.coverage?.status, new Set(['complete', 'partial', 'unavailable'])) || null;
   if (inputState) for (const event of inputState.recentInputEvents) {
     if (event.connectionAttemptId) { event.attemptHash = hashIdentity(event.connectionAttemptId); delete event.connectionAttemptId; }
   }
@@ -133,6 +142,9 @@ function redactRuntimeDiagnostic(payload) {
     logReceipt,
     inputTraceLoss: inputTraceLoss(inputTrace),
     inputTraceEventCount: Array.isArray(inputTrace?.events) ? inputTrace.events.length : null,
+    summaryGapCount,
+    ringDropCount,
+    coverageStatus,
     traceSummary: {},
   };
   for (const key of ['receivedDelta', 'decodedDelta', 'derivedFps', 'bytesDelta', 'framesDroppedDelta', 'packetsReceivedDelta',
@@ -596,6 +608,9 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     }
     if (isRecord(report.logReceipt)) meta.logReceipt = sanitizeLogReceipt(report.logReceipt);
     if (isRecord(report.inputTraceLoss)) meta.inputTraceLoss = inputTraceLoss(report.inputTraceLoss);
+    meta.summaryGapCount = safeInteger(report.summaryGapCount, Number.MAX_SAFE_INTEGER);
+    meta.ringDropCount = safeInteger(report.ringDropCount, Number.MAX_SAFE_INTEGER);
+    if (report.coverageStatus) meta.coverageStatus = report.coverageStatus;
     const frameTrace = sanitizeFrameTrace(report.traceSummary?.frameTrace);
     if (frameTrace) {
       meta.frameTrace = frameTrace;
@@ -724,7 +739,7 @@ function ingestDiagnosticPayload(options = {}) {
   if (redacted.diagnosticId && redacted.captured) {
     for (const key of ['diagnosticId', 'captured', 'build', 'latencyStatus', 'latency', 'startup', 'resources', 'scopeEnded', 'truncation',
     'logContentPolicy', 'reportedLogCount', 'retainedLogCount', 'redactedLogCount', 'inputTraceEventCount',
-    'logReceipt', 'inputTraceLoss']) report[key] = redacted[key];
+    'logReceipt', 'inputTraceLoss', 'summaryGapCount', 'ringDropCount', 'coverageStatus']) report[key] = redacted[key];
   }
 
   if (redacted.failureCategory != null) {

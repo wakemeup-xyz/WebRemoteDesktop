@@ -14,6 +14,7 @@ from input_admission_queue import (
 from input_timing import relay_ack_duration_ms
 from observability import (
     emit_host_event, summarize_high_frequency_input_event, summarize_input_event,
+    input_event_correlation,
 )
 
 
@@ -44,6 +45,7 @@ def fixture(*, entered_ns=41_000_000, queued_source=input_queued_ns):
         completed_future=completed_future, relay_ack_duration_ms=relay_ack_duration_ms,
         summarize_input_event=summarize_input_event,
         summarize_high_frequency_input_event=summarize_high_frequency_input_event,
+        input_event_correlation=input_event_correlation,
         emit_host_event=emit_host_event,
         V2_INPUT_ACK_STATUSES={'applied', 'duplicate', 'execution-failed'})
     exec(compile(ast.fix_missing_locations(ast.Module(body=[selected], type_ignores=[])),
@@ -115,6 +117,10 @@ async def test_real_submit_to_drain_wait_is_separate_from_adapter_and_ack(monkey
     events = h.log.events()
     assert [row['event'] for row in events] == ['host_input_received', 'host_input_result', 'host_input_ack_sent']
     assert events[0]['meta']['hostAdmissionWaitMs'] == 40
+    assert len(events[0]['correlation']['viewerHash']) == 32
+    assert events[0]['correlation']['leaseEpoch'] == 4
+    assert 'VIEWER_PRIVATE_CANARY' not in json.dumps(events[0])
+    assert 'LEASE_PRIVATE_CANARY' not in json.dumps(events[0])
     assert all('hostAdmissionWaitMs' not in row['meta'] for row in events[1:])
     ack = h.acks[0][1]
     assert ack['hostQueueMs'] == 17.5

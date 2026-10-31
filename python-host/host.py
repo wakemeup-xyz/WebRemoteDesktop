@@ -60,6 +60,7 @@ from input_frame_causality import InputFrameCausality
 from observability import (
     configure_host_logging,
     emit_host_event,
+    input_event_correlation,
     summarize_high_frequency_input_event,
     summarize_input_event,
 )
@@ -2612,6 +2613,7 @@ class WebRemoteHost:
             and isinstance(data.get("action"), str)
             and data.get("action") in {"move", "wheel"}
         )
+        correlation = input_event_correlation(data)
         if high_frequency:
             # Move/wheel traffic is count-only: do not inspect payload or input
             # IDs before aggregation, so this path never computes a hash.
@@ -2655,6 +2657,7 @@ class WebRemoteHost:
                 logger,
                 event="host_input_aggregate",
                 message="High-frequency input aggregated",
+                correlation=correlation,
                 meta=aggregate_meta,
             )
             return True
@@ -2667,6 +2670,7 @@ class WebRemoteHost:
                 "host_input_result": "Remote input result",
                 "host_input_ack_sent": "Remote input ACK enqueue result",
             }.get(event, "Remote input observed"),
+            correlation=correlation,
             meta=summary,
         )
         return True

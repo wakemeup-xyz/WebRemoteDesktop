@@ -1,4 +1,5 @@
 const { loadConfig } = require('../lib/config');
+const crypto = require('node:crypto');
 const { verifyAccessToken } = require('../lib/auth');
 const { performance } = require('node:perf_hooks');
 const { ingestDiagnosticPayload } = require('../lib/diagnostic');
@@ -21,6 +22,12 @@ const { createViewerFreshnessRegistry } = require('../lib/observability/viewer-f
 
 function validRelayNonce(value, limit) {
   return typeof value === 'string' && value.length > 0 && value.length <= limit && !(/[^\x20-\x7e]/.test(value));
+}
+
+function hashCorrelation(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
+    ? crypto.createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 32)
+    : null;
 }
 
 function validRelayScope(scope) {
@@ -234,11 +241,13 @@ function setupSignaling(io, options = {}) {
   // ten seconds. No lease token, input payload, socket, or timer is retained.
   const resetAckObserver = createResetAckObserver({
     now: options.resetAckNow,
-    onObservation(meta) {
+    onObservation(observation) {
+      const { attemptHash, ...meta } = observation || {};
       const payload = {
         domain: 'input',
         event: 'signal_reset_ack_observed',
         message: 'Signal reset request to ACK outcome (includes Host processing)',
+        ...(attemptHash ? { correlation: { attemptHash } } : {}),
         meta,
       };
       // Each sink is optional and must never become part of ACK delivery.
@@ -395,20 +404,27 @@ function setupSignaling(io, options = {}) {
         domain: 'input',
         event: 'signal_input_aggregate',
         message: 'Aggregated high-frequency input outcome',
-        correlation: { viewerId: socket?.id || null },
+        // Keep the high-frequency path count-only. It intentionally performs
+        // no hashing or payload inspection; low-frequency input carries the
+        // deidentified correlation fields below.
+        correlation: {},
         meta: summary,
       };
       recentEventStore?.append?.(aggregate);
       structuredLogger?.info?.(aggregate);
       return aggregate;
     }
+    const attemptHash = hashCorrelation(data.connectionAttemptId);
     const payload = {
       domain: 'input',
       event,
       message: event === 'signal_input_relayed'
         ? 'Signal relayed remote input'
         : 'Signal rejected remote input',
-      correlation: { viewerId: socket?.id || null },
+      correlation: {
+        ...(hashCorrelation(socket?.id) ? { viewerHash: hashCorrelation(socket.id) } : {}),
+        ...(attemptHash ? { attemptHash } : {}),
+      },
       meta: summarizeInputEvent(observedData, overrides),
     };
     recentEventStore?.append?.(payload);
@@ -1687,6 +1703,7 @@ function setupSignaling(io, options = {}) {
           resetAckObserver.noteForwarded({
             schemaVersion: data.schemaVersion, type: data.type, action: data.action,
             leaseEpoch: data.leaseEpoch, inputIds: data.inputIds, viewerId: socket.id,
+            connectionAttemptId: data.connectionAttemptId,
           });
         }
         emitInputEvent('signal_input_relayed', socket, data, { status: 'accepted' });

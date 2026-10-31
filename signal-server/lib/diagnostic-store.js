@@ -211,6 +211,9 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
           redacted: knownCount(r.redactedLogCount), dropped: null },
       inputTraceEventCount:Array.isArray(r.inputTrace?.events)?r.inputTrace.events.length:knownCount(r.inputTraceEventCount),
       inputTraceLoss: Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key, knownCount(r.inputTraceLoss?.[key] ?? r.inputTrace?.counters?.[key])])),
+      summaryGapCount: knownCount(r.summaryGapCount ?? r.summaryGaps?.count ?? r.coverage?.summaryGapCount),
+      ringDropCount: knownCount(r.ringDropCount ?? r.ringDropped ?? r.heartbeat?.ringDropped),
+      coverageStatus: enumValue(r.coverageStatus ?? r.coverage?.status, ['complete', 'partial', 'unavailable']),
       frameTrace: r.traceSummary?.frameTrace && typeof r.traceSummary.frameTrace === 'object'
         ? { acceptanceState: enumValue(r.traceSummary.frameTrace.acceptanceState, ['PENDING', 'UNALIGNED']) || 'PENDING',
           pendingFrames: knownCount(r.traceSummary.frameTrace.pendingFrames), pendingTraces: knownCount(r.traceSummary.frameTrace.pendingTraces),

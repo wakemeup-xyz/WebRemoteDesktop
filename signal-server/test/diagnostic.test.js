@@ -958,6 +958,19 @@ test('runtime diagnostic counts received logs before redaction without retaining
   assert.equal(data.logs.length, 2);
 });
 
+test('runtime diagnostic preserves bounded summary gap and ring-drop evidence', () => {
+  const data = { ...runtimeFixture(), summaryGapCount: 3, ringDropCount: 4,
+    coverage: { status: 'partial', summaryGapCount: 9 } };
+  const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data,
+    config: { enableDiagPersist: false } });
+  assert.equal(result.report.summaryGapCount, 3);
+  assert.equal(result.report.ringDropCount, 4);
+  assert.equal(result.report.coverageStatus, 'partial');
+  assert.equal(result.summaryEvent.meta.summaryGapCount, 3);
+  assert.equal(result.summaryEvent.meta.ringDropCount, 4);
+  assert.equal(result.summaryEvent.meta.coverageStatus, 'partial');
+});
+
 test('runtime diagnostic receipt distinguishes empty and failed collection states', () => {
   const empty = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit',
     data: { ...runtimeFixture(), logs: [] }, config: { enableDiagPersist: false } });
