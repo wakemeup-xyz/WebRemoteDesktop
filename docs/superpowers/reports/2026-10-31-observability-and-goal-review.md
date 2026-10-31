@@ -232,3 +232,12 @@
 3. **端到端时序尚未有真实生产样本**：输入 ACK、Host apply、capture、encode、RTP、decode、paint 字段存在，但当前 frame trace 没有有效样本，不能计算输入到画面 p95/max，也不能证明用户可见效果。
 
 因此 Goal 继续保持 `active`。本轮没有新增通过项：代码/离线测试和 3 小时 passive continuity 可算完成，真实业务输入、visible effect/physical display、reset fault injection、capture backend A/B、双 Viewer 语义、完整 receipt/gap/ring 生产证据和 tunnel SIGTERM 根因仍未完成或没有足够证据。
+
+## 脱敏修复与受控恢复复测（2026-10-31 18:35–18:56 Asia/Shanghai）
+
+- `8bb42f9` 已把 `diagnostic_uploaded`、诊断 raw/legacy 持久化、嵌套 input/scope 和 Host structured meta 统一收敛到 `viewerHash`、`attemptHash`、`browserSessionHash` 等字段；原始身份只保留在业务握手/Socket payload，不再进入诊断存储和结构化日志。`a88f5a5` 让 guarded recovery runner 严格拒绝 raw correlation，同时匹配生产无盐 SHA-256/32 与旧测试的私有 salted/16 投影。Signal diagnostic/store 65/65、Host observability 16/16、runner 95/95、capture benchmark 6/6 通过。
+- 本轮按 runbook 仅重启本地 Signal/Host：Signal PID `23232`、Host PID `23272`，`/health` 和 `/api/status` 均正常，`hostOnline=true`、`viewerCount=0`；cloudflared PID `26104` 未变化，`/tmp/wrd-safe-current-url.txt` 仍为空。新进程写入的 lifecycle 日志已使用 hash correlation，历史轮转文件中的 raw 身份仍属于旧部署证据，不能倒推为当前新代码行为。
+- 新建 root-attested manifest 后，`within-grace` 正式入口 relay 实测 **PASS**：300.24 秒采样、301 个样本、无缺测/迟到/Host 断开；native-direct fault 触发 1 次，约 3.00 秒恢复，稳定 30.02 秒，server coverage complete。该验收仍是无业务输入的恢复证据，`businessInput/visibleEffect/physical=NOT_RUN`。
+- `after-grace` 受控路由实测 **INCOMPLETE**：fault capability available、触发 1 次、拦截 2 个 WebSocket 请求，startup verified，但 60 秒恢复窗口内未恢复。日志显示 10:52:47Z 断开、10:52:57Z lease expired/reset completed、10:53:07Z 新 connection attempt；随后没有 `viewer_reconnected` 或 `viewer_rebind_confirmed`，因此新连接没有重新获得控制租约，最终为 `recovery-deadline`。这说明长于 grace 的恢复需要显式的重新控制/重新 admission 验收，当前 passive runner 不能把新连接当成已恢复控制。
+
+本轮把“统一脱敏”和“within-grace 短断线”推进到可复核证据，但没有把 after-grace、实际业务输入、可见效果或物理显示误报为通过。Goal 仍保持 `active`。

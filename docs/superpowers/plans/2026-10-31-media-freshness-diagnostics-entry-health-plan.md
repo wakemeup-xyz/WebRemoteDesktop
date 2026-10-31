@@ -58,3 +58,11 @@
 - durable daily summary 已同步保留 `frameTrace.stageCoverage`，并新增 summary 投影回归，避免 raw/runtime 与日摘要字段不一致。
 - coverage 追补已加入管理员 evidence：`coverageSignals.summaryGap`/`ringDrop` 明确为 `observed`、`nonzero` 或 `unknown`，并保留原始 count；`diagnostic-store.listSummary()` 增加 `gapTotalCount`。定向 diagnostic/store/runtime evidence 37/37 通过。
 - 计划阶段 1–4 的实现和离线测试可视为完成；阶段 5 只完成被动连续性和协议层子集，整体 Goal 继续保持 `active`，不能标记完成。
+
+## 追加执行记录（2026-10-31 18:56）
+
+- [x] 统一诊断 `diagnostic_uploaded`、Signal/Host structured correlation 和诊断持久化的脱敏字段；raw `viewerId`/`connectionAttemptId`/`browserSessionId` 不再进入诊断存储，管理端按 `attemptHash` 查询和去重。
+- [x] 同步 guarded recovery runner 的 hash schema：只接受 `viewerHash`/`previousViewerHash`/`browserSessionHash`，拒绝 raw correlation；兼容生产 32-hex hash 与测试私有投影。Node diagnostic/store 65/65、Host observability 16/16、runner 95/95 通过。
+- [x] 本地 Signal/Host 已重载并保持在线；cloudflared 未重启、URL 文件未变化。within-grace 正式入口 relay 维护窗口 PASS（300s continuity、3s recovery、30s stable）。
+- [~] after-grace fault injection 已真实触发，但 lease expiry 后新 connection attempt 没有 `viewer_reconnected`/`viewer_rebind_confirmed`，结果 `recovery-deadline`；需补“重新 admission/重新获取控制”路径和对应真实验收，不能把新连接当成控制恢复。
+- [~] 实际业务输入、输入到可见效果、物理显示、reset fault injection 的端到端样本仍未运行；捕获后端 A/B、诊断拥塞长会话和 tunnel SIGTERM 根因仍未闭环。
