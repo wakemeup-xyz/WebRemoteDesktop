@@ -32,6 +32,36 @@ else:
     from wrd_entry_health import probe_layers, probe_result, _NoRedirectHandler
 
 
+WATCHER_SCHEMA_VERSION = 2
+_SOURCE_FILES = (
+    Path(__file__),
+    Path(__file__).with_name("wrd_watch_runtime.py"),
+    Path(__file__).with_name("wrd_entry_health.py"),
+)
+
+
+def watcher_source_fingerprint():
+    """Return a bounded identity for the code loaded by this watcher process.
+
+    The watcher is long lived and is commonly upgraded without restarting the
+    local Signal/Host services. Persisting a digest of the loaded source makes
+    that deployment boundary explicit in state and per-tick evidence without
+    invoking git or recording filesystem paths.
+    """
+    digest = hashlib.sha256()
+    for source in _SOURCE_FILES:
+        try:
+            data = source.read_bytes()
+        except OSError:
+            data = b"<unreadable>"
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()[:24]
+
+
+WATCHER_SOURCE_FINGERPRINT = watcher_source_fingerprint()
+
+
 def atomic_state(path, state):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -358,6 +388,12 @@ def main(argv=None):
         cooldown_s=float(os.environ.get("WRD_FIXED_WATCH_COOLDOWN_SEC", 300)),
         window_s=float(os.environ.get("WRD_FIXED_WATCH_WINDOW_SEC", 3600)),
         max_recoveries=int(os.environ.get("WRD_FIXED_WATCH_MAX_RESTARTS", 2)))
+    # Record the exact code identity loaded by this process. This is metadata
+    # only and is intentionally independent of the tunnel/service lifecycle.
+    runtime.state.update({
+        "watcherSchemaVersion": WATCHER_SCHEMA_VERSION,
+        "watcherSourceFingerprint": WATCHER_SOURCE_FINGERPRINT,
+    })
     restart = directory / "restart-fixed-domain-tunnel.sh"
     passive_url = os.environ.get('WRD_FIXED_PASSIVE_RUNTIME_URL', 'http://127.0.0.1:8080')
     sample = LayeredSampler(
@@ -391,6 +427,8 @@ def main(argv=None):
         if snapshot.get("lastTick") != before_tick:
             # Fixed fields only; never argv, credentials, request content or URL.
             record = {"at": time.time(), "status": snapshot.get("status"), "action": snapshot.get("action"),
+                      "watcherSchemaVersion": snapshot.get("watcherSchemaVersion", WATCHER_SCHEMA_VERSION),
+                      "watcherSourceFingerprint": snapshot.get("watcherSourceFingerprint", WATCHER_SOURCE_FINGERPRINT),
                       "tick": snapshot.get("lastTick"), "observations": snapshot.get("observations"),
                       "inFlight": bool(coordinator.worker), "probes": snapshot.get("probeLayers", []),
                       "restartActor": "watch-coordinator" if snapshot.get("operation") else None,

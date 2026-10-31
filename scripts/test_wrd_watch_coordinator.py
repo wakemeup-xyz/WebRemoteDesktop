@@ -1,10 +1,20 @@
 import tempfile
 import subprocess
 import unittest
+import json
 from unittest.mock import patch
 from pathlib import Path
 
-from scripts.wrd_watch_coordinator import WatchCoordinator, RecoveryWorker, notify_status, load_state, OwnedWatchLock
+from scripts.wrd_watch_coordinator import (
+    WATCHER_SCHEMA_VERSION,
+    WATCHER_SOURCE_FINGERPRINT,
+    WatchCoordinator,
+    RecoveryWorker,
+    notify_status,
+    load_state,
+    OwnedWatchLock,
+    watcher_source_fingerprint,
+)
 from scripts.wrd_watch_runtime import WatchRuntime
 
 
@@ -18,6 +28,31 @@ class FakeWorker:
 
 
 class CoordinatorTest(unittest.TestCase):
+    def test_loaded_source_identity_is_bounded_and_stable(self):
+        fingerprint = watcher_source_fingerprint()
+        self.assertEqual(fingerprint, WATCHER_SOURCE_FINGERPRINT)
+        self.assertRegex(fingerprint, r"^[0-9a-f]{24}$")
+        self.assertEqual(WATCHER_SCHEMA_VERSION, 2)
+
+    def test_coordinator_persists_loaded_source_identity(self):
+        with tempfile.TemporaryDirectory() as d:
+            runtime = WatchRuntime(clock_epoch="a")
+            runtime.state.update({
+                "watcherSchemaVersion": WATCHER_SCHEMA_VERSION,
+                "watcherSourceFingerprint": WATCHER_SOURCE_FINGERPRINT,
+            })
+            coordinator = WatchCoordinator(
+                runtime=runtime,
+                state_path=Path(d) / "state",
+                sample=lambda: {"origin": True, "formal": True},
+                preflight=lambda: False,
+                start_worker=lambda: self.fail("must not launch"),
+                now=lambda: 0,
+            )
+            state = json.loads((Path(d) / "state").read_text())
+            self.assertEqual(state["watcherSchemaVersion"], WATCHER_SCHEMA_VERSION)
+            self.assertEqual(state["watcherSourceFingerprint"], WATCHER_SOURCE_FINGERPRINT)
+
     def test_missing_and_corrupt_history_keep_full_conservative_window(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d)/"s"
