@@ -62,3 +62,5 @@
 - 自动协议验收：resume 20/20，p95=800 ms、max=800 ms；媒体停止、浏览器键鼠、tunnel 媒体恢复 p95=493 ms 通过；双 Viewer FAIL，物理键盘、OS reserved、reset fault injection 未运行，正式入口 BLOCKED。
 
 最终状态：代码和离线测试已完成，三小时被动连续性及 freshness 生产字段已验证；真实输入到可见效果、物理显示、reset fault injection、receipt/loss 日汇总、诊断通道拥塞处理和 capture backend A/B 仍待完成。
+
+受控手动诊断上报随后验证了生产 receipt 路径：当天 summary 新增一条 `logReceipt.state=valid`、`reported=46`、`retained=0`、`redacted=46`、`dropped=0` 的记录，`inputTraceEventCount=9`，input trace loss 全部为 0，frame trace 为 `PENDING`。这证明有效上报字段已落盘；非零 gap/ring-drop 仍只在长会话 lifecycle 和 Host admission 证据中可见。

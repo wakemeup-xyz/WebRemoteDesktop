@@ -126,3 +126,7 @@
 - 自动验收结果：暂停恢复 20/20，p95=800 ms、max=800 ms；15 秒媒体停止、浏览器协议键盘、鼠标、tunnel 媒体恢复（p95=493 ms）通过。双 Viewer 语义为 FAIL；物理键盘、OS reserved、reset fault injection 未运行，正式入口在该协议运行中为 BLOCKED。
 
 因此 Goal 仍保持 `active`：三小时连续性和 freshness 生产字段已有证据，但诊断 receipt/loss 常用汇总、真实输入到 visible effect、物理显示、reset fault injection、capture backend A/B、诊断通道拥塞处理和 tunnel 根因仍未闭环。
+
+## 诊断 receipt 生产路径补证（2026-10-31 15:37）
+
+受控手动诊断上报已成功写入当天 summary：`logReceipt.state=valid`、`reported=46`、`retained=0`、`redacted=46`、`dropped=0`，`inputTraceEventCount=9`，`inputTraceLoss` 的 dropped/hash/evicted/expired/timeout 全部为 0，`frameTrace.acceptanceState=PENDING` 且各丢失计数为 0。该证据确认当前版本的 receipt 和 input trace loss 字段已能进入生产 daily summary；gap/ring 在无丢失时保持 `null`，非零丢失仍需从 lifecycle/Host admission 证据关联进入常用告警。
