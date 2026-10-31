@@ -3095,12 +3095,15 @@ test('page-hidden media freshness records stale lifecycle and releases the viewe
 test('active media stall requests a current-attempt keyframe before any release', () => {
   resetConnections();
   const io = makeIo();
+  const { DesktopControlLease } = require('../lib/desktop-control-lease');
   let now = 0;
   let tick = null;
   const events = [];
   setupSignaling(io, {
     now: () => now,
     config: { viewerMediaStaleMs: 30000 },
+    desktopControlLease: new DesktopControlLease({ now: () => now,
+      makeLeaseId: () => 'lease-active-stall', expiresAfterMs: 1000000 }),
     logger: { log() {}, warn() {}, info() {}, error() {} },
     structuredLogger: { info(event) { events.push(event); } },
     recentEventStore: { append() {} },
@@ -3140,7 +3143,6 @@ test('active media stall requests a current-attempt keyframe before any release'
   viewer.trigger('control-heartbeat', { leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch });
   now = 270000;
   tick();
-  console.log('DEBUG_ACTIVE_STALL_2', events.map(event => event.event), host.sent.map(event => event.event), getConnectionStatus().viewerFreshness);
   const request = host.sent.filter(event => event.event === 'request-keyframe').at(-1)?.data;
   assert.equal(request.reason, 'media-stalled-recovery');
   assert.equal(request.viewerId, viewer.id);
