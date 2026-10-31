@@ -284,7 +284,8 @@ Host 轮转日志在最近窗口有 7190 个可解析事件循环样本：`lagMs
 2. **诊断收据仍有缺测。** 2026-10-31 summary 中手动窗口可以得到 `logReceipt=valid`（reported 约 45–63、retained=0、redacted=reported、dropped=0），但连接失败窗口多为 `unknown` 或 `empty`；`summaryGap`、`ringDrop` 多为 `unknown`，不是零。它们没有统一带上 collector 状态、起止游标、传输接收数和丢失原因，因此仍不能区分未采集、未传输、被裁剪和写入失败。
 3. **帧关联仍无真实生产样本。** 最新 summary 的 `frameTrace.acceptanceState=PENDING`、`matchedCount=0`、`stageCoverage.sampleCount=0`；因此可以看到 ACK、Host apply 或媒体统计的局部数据，却不能计算 `input → Host apply → capture → encode → RTP → decode → paint` 的 p95/max。
 4. **健康门禁仍可误报。** `hostOnline` 和 `viewerCount` 只能证明进程与连接对象存在；没有把最近 fresh capture、received/decode/present、输入 heartbeat 和 active stall 统一纳入可用性状态。`session_stale_detected`、`media_stalled`、`slot_released` 在最近两天生产日志仍没有真实触发样本。
-5. **日志隐私和格式仍处于迁移态。** 新结构化 lifecycle 事件使用 hash correlation，但历史轮转日志仍含 raw viewer/socket/attempt 字段；Host 高频纯文本统计也未完全统一脱敏和降频。新的结构化 JSONL 与旧的 `/tmp/signal-server.log` 不能混合作为同一事实源。
+5. **ACK 与重连尝试的关联仍不完整。** 最近生产 `signal_reset_ack_observed` 事件虽然有 `inputIdHash`、`leaseEpoch` 和耗时字段，但多数缺少 `attemptHash`；`signal_input_relayed` 也常只有 viewer 级关联。ACK 长尾因此无法稳定归因到具体连接尝试或重绑定周期，缺失时应显式记录 `correlationMissing`，不能把它当作完整链路。
+6. **日志隐私和格式仍处于迁移态。** 新结构化 lifecycle 事件使用 hash correlation，但历史轮转日志仍含 raw viewer/socket/attempt 字段；Host 高频纯文本统计也未完全统一脱敏和降频。新的结构化 JSONL 与旧的 `/tmp/signal-server.log` 不能混合作为同一事实源。
 
 ### Goal 当前未完成项
 
