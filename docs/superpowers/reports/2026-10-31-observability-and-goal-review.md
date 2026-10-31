@@ -428,3 +428,12 @@ watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-s
 ### Goal 状态
 
 本次修复完成了 reset completion 的关联缺口，但 Goal 仍保持 `active`。尚缺：真实 `page-hidden`/active-media-stale 生产触发、真实业务输入到画面的 p95/max、用户短断线后的持续控制与资源联合采样，以及同一 relay 会话中的 MSS/CoreGraphics 全链路 A/B。当前没有足够证据调用 `update_goal(complete)`。
+
+## watcher 延迟窗口与 Viewer 槽位释放复测（2026-11-01 00:46 Asia/Shanghai）
+
+- 提交 `3924158` 让 watcher 的延迟历史按 `proxyMode` 隔离；从 environment proxy 切到 direct 时清空旧 p95/p99 窗口，并增加 `latencyMode` 状态字段。watcher 重载后 source fingerprint 为 `fe9cb07adfb4804749e05b7c`，定向 watcher 集 **22/22** 通过。
+- 新 direct 窗口中 formal-health 曾回落到 p95 约 1.2 秒；随后出现一次约 3.16 秒样本，当前 `entry-slow` 只表示 direct formal 入口偶发慢，origin-health p95 约 24 ms、passive-runtime 为 0 ms。它不授权重启 tunnel，后续仍需按 DNS/TCP/TLS/TTFB 分段定位。
+- 两次真实 headless Viewer 进程退出后，Signal 短暂保留 Viewer 连接并最终自动清理：`viewer_disconnect_grace_started → control_reset_completed → viewer_disconnect_grace_expired`，`viewerCount` 最终为 0，reset completion 均带原 attemptHash 且 `correlationMissing=false`。这证明正常传输断开后的 grace/槽位释放闭环可用。
+- headless Playwright 无法把 `document.hidden`/`visibilityState` 变为真实后台页；本轮没有把伪造属性当成 `page-hidden` 生产触发。`page-hidden`、active-media-stale 的代码和离线测试仍通过，但真实生产事件仍为缺测。
+
+本轮新增 watcher 模式隔离、reset completion 生产关联和正常断开槽位释放证据；Goal 继续 `active`，不修改目标范围，也不调用 `complete`。
