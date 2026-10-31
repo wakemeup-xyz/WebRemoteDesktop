@@ -37,6 +37,7 @@ PHASES = ('preflight', 'startup', 'baseline', 'fault', 'recovering', 'recovered-
 EVENTS = {'viewer_disconnect_grace_started': 'grace-started',
           'viewer_disconnect_grace_expired': 'grace-expired',
           'viewer_rebind_confirmed': 'rebind-confirmed', 'viewer_rebind_failed': 'rebind-failed',
+          'connection_attempt_bound': 'attempt-bound',
           'control_reset_completed': 'reset-completed', 'signal_socket_disconnected': 'host-disconnected'}
 
 
@@ -261,6 +262,7 @@ class ServerRecoveryEvidence:
         socket_hashes = {h for raw in socket_values for h in (hash_identity(raw, self._salt), production_hash_identity(raw))}
         session_hashes = {h for h in (hash_identity(session, self._salt), production_hash_identity(session)) if h is not None}
         rebind = name in ('viewer_rebind_confirmed', 'viewer_rebind_failed')
+        attempt_bound = name == 'connection_attempt_bound'
         direct_rebind_match = False
         if rebind:
             try:
@@ -283,8 +285,9 @@ class ServerRecoveryEvidence:
         # Reject raw or otherwise unknown correlation keys even when the
         # event belongs to another session. Silently skipping a malformed raw
         # line would make the guarded evidence look complete.
-        if type(correlation) is not dict or not set(correlation) <= {
-            'viewerHash', 'previousViewerHash', 'browserSessionHash'}:
+        allowed_correlation = {'viewerHash', 'previousViewerHash', 'browserSessionHash'}
+        if attempt_bound: allowed_correlation.add('attemptHash')
+        if type(correlation) is not dict or not set(correlation) <= allowed_correlation:
             self._fail('server-log-schema')
         try:
             for value_hash in correlation.values(): _hash(value_hash)
@@ -297,6 +300,8 @@ class ServerRecoveryEvidence:
         reset = name == 'control_reset_completed'
         if rebind:
             if not direct_rebind_match: return
+        elif attempt_bound:
+            if correlation.get('viewerHash') not in socket_hashes: return
         elif not host and not reset:
             if type(correlation) is not dict: self._fail('server-log-schema')
             if not (correlation.get('viewerHash') in socket_hashes or session is not None and correlation.get('browserSessionHash') in session_hashes): return
@@ -305,11 +310,13 @@ class ServerRecoveryEvidence:
                 return
         try:
             _keys(value, ('ts', 'level', 'domain', 'event', 'message', 'source', 'schemaVersion', 'correlation', 'meta', 'redactionVersion'))
-            if type(correlation) is not dict or not set(correlation) <= {'viewerHash', 'previousViewerHash', 'browserSessionHash'}: raise ValueError()
+            if type(correlation) is not dict or not set(correlation) <= allowed_correlation: raise ValueError()
             for value_hash in correlation.values(): _hash(value_hash)
             if host or reset: _keys(correlation, ())
             elif name in ('viewer_disconnect_grace_started', 'viewer_disconnect_grace_expired'):
                 _keys(correlation, ('viewerHash', 'browserSessionHash'))
+            elif attempt_bound:
+                _keys(correlation, ('viewerHash', 'attemptHash'))
             else:
                 _keys(correlation, ('viewerHash', 'previousViewerHash', 'browserSessionHash'))
             if value['schemaVersion'] != 1 or type(value['schemaVersion']) is not int or type(value['redactionVersion']) is not int or value['redactionVersion'] != 1: raise ValueError()
@@ -328,6 +335,10 @@ class ServerRecoveryEvidence:
                 _keys(meta, ('leaseEpoch',)); epoch = meta['leaseEpoch']
             elif name == 'viewer_rebind_failed':
                 _keys(meta, ('reason',)); _enum(meta['reason'], ('rebind-timeout', 'rebind-rejected', 'rebind-cancelled'))
+            elif attempt_bound:
+                _keys(meta, ('connectionAttemptSequence', 'rebound'))
+                _int(meta['connectionAttemptSequence'], 0x7fffffff)
+                if type(meta['rebound']) is not bool: raise ValueError()
             elif reset:
                 _keys(meta, ('leaseEpoch', 'status', 'state')); _enum(meta['status'], ('applied',)); _enum(meta['state'], ('FREE',))
                 epoch, state = meta['leaseEpoch'], meta['state']
@@ -349,8 +360,8 @@ class ServerRecoveryEvidence:
         viewer_hash = None
         session_hash = None
         if not host:
-            session_hash = next((hash_identity(session, self._salt) for _ in (0,)
-                if session is not None and correlation.get('browserSessionHash') in session_hashes), correlation.get('browserSessionHash'))
+            session_hash = (hash_identity(session, self._salt) if attempt_bound and session is not None else next((hash_identity(session, self._salt) for _ in (0,)
+                if session is not None and correlation.get('browserSessionHash') in session_hashes), correlation.get('browserSessionHash')))
             viewer_hash = next((hash_identity(raw, self._salt) for raw in socket_values
                 if _matches_identity_hash(correlation.get('viewerHash'), raw, self._salt)), correlation.get('viewerHash'))
         row = {'n': len(self._events)+1, 'event': EVENTS[name], 'serverTimestampMs': timestamp,
@@ -827,7 +838,8 @@ class OrdinaryRecoverySummary:
         if sample['buildId']!=self.expected_build: self.fail('deployment-build-mismatch')
         if sample['inputGate']['superseded']: self.fail('human-priority')
         identity=row['identity']; self.latest_sample=sample
-        if self.triggered is None and (sample['diagnostics']['firstDisconnectEvent'] is not None or row['serverEvents']):
+        if self.triggered is None and (sample['diagnostics']['firstDisconnectEvent'] is not None
+            or any(event['event'] != 'attempt-bound' for event in row['serverEvents'])):
             self.fail('baseline-failed',product=True)
         if self.identity is not None and any(identity[k]!=self.identity[k] for k in ('sessionHash','admissionHash')):
             self.fail('ordinary-owner-changed')
@@ -886,6 +898,8 @@ class OrdinaryRecoverySummary:
             self.fail('recovery-gates-unmet',product=self.server_coverage=='complete'); return
         expiry=next((e for e in self._events if e['event']=='grace-expired' and e['n']>start['n'] and e['sessionHash']==self.identity['sessionHash'] and e['viewerHash']==self.identity['socketHash']),None)
         rebind=next((e for e in self._events if e['event']=='rebind-confirmed' and e['n']>start['n'] and e['viewerHash']==identity['socketHash'] and e['sessionHash']==self.identity['sessionHash']),None)
+        attempt=next((e for e in self._events if e['event']=='attempt-bound' and e['n']>start['n']
+            and e['viewerHash']==identity['socketHash'] and e['sessionHash']==self.identity['sessionHash']),None)
         if expiry:
             self.classification='after-grace-reset'
             reset=next((e for e in self._events if e['event']=='reset-completed' and e['n']>expiry['n'] and e['leaseEpoch']==expiry['leaseEpoch'] and e['state']=='FREE'),None)
@@ -893,6 +907,10 @@ class OrdinaryRecoverySummary:
         elif rebind:
             self.classification='within-grace-rebind'
             matched=rebind['leaseEpoch']==self.baseline_sample['leaseEpoch']==sample['leaseEpoch']
+        elif attempt and self.scenario=='after-grace':
+            self.classification='after-grace-reset'
+            matched=sample['leaseEpoch'] is not None and self.baseline_sample['leaseEpoch'] is not None \
+                and sample['leaseEpoch']>self.baseline_sample['leaseEpoch']
         else: return
         expected='within-grace-rebind' if self.scenario=='within-grace' else 'after-grace-reset'
         if self.classification!=expected: self.fail('wrong-grace-class',product=True); return
@@ -1086,6 +1104,23 @@ async def start_guarded_via_ui(page,*,timeout_s=30,monotonic=time.monotonic,slee
         raise ValueError(reason)
     finally:
         if owned: observer.detach()
+
+
+async def request_control_after_grace_if_needed(page, sample):
+    """Perform one explicit UI control request after a lease-expiry fault.
+
+    This is an acceptance-only user-equivalent action. It never synthesizes
+    desktop input and never bypasses the production control gate; the caller
+    still has to observe a later ACTIVE/input gate and fresh media sample.
+    """
+    gate = sample.get('inputGate') if isinstance(sample, dict) else None
+    if not isinstance(gate, dict) or gate.get('hasActiveControl') is not False or gate.get('allowed') is not False:
+        return False
+    button = page.locator('#requestControlBtn')
+    if not await button.is_visible() or not await button.is_enabled():
+        return False
+    await button.click(timeout=1000)
+    return True
 
 
 async def _observation_pair(page_once,status_reader,*,on_status_failure=None,on_status_complete=None):
@@ -1450,6 +1485,7 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
         await tick()
         model.startup=await _observe_start(start_guarded_via_ui(page),tick)
         startup_deadline=time.monotonic()+45
+        control_reacquire_attempted=False
         while model.failure is None:
             at=time.monotonic(); await tick()
             if model.phase=='startup' and time.monotonic()>=startup_deadline: raise ValueError('baseline-incomplete')
@@ -1461,6 +1497,10 @@ async def run(args,*,manager_factory=None,status_reader=None,limits=None):
                 model.fault=validate_fault(fault.snapshot(),args.scenario)
                 if model.fault['triggerCount']!=1 or model.fault['status']!='triggered': raise ValueError('fault-trigger-unconfirmed')
                 model.confirm_fault(time.monotonic()-began); model.transition('recovering')
+            if (args.scenario=='after-grace' and model.triggered is not None
+                and not control_reacquire_attempted and model.latest_sample is not None):
+                if await request_control_after_grace_if_needed(page, model.latest_sample):
+                    control_reacquire_attempted=True
             if model.recovered is not None and model.stable>=30: break
             await asyncio.sleep(max(0,1-(time.monotonic()-at)))
     except asyncio.CancelledError as exc:

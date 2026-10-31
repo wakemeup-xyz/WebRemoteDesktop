@@ -907,6 +907,19 @@ class FakePage:
 
 
 class GuardedUiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_after_grace_reacquire_uses_only_explicit_control_button(self):
+        class ControlPage(FakePage):
+            def __init__(self):
+                super().__init__(); self.control_clicks=0
+            async def click(self,**kwargs):
+                self.control_clicks+=1
+        page=ControlPage()
+        sample={'inputGate': {'hasActiveControl': False, 'allowed': False}}
+        self.assertTrue(await runner.request_control_after_grace_if_needed(page,sample))
+        self.assertEqual(page.control_clicks,1)
+        self.assertFalse(await runner.request_control_after_grace_if_needed(page,{'inputGate': {'hasActiveControl': True, 'allowed': True}}))
+        self.assertEqual(page.control_clicks,1)
+
     async def test_one_click_waits_for_delayed_core_and_auth(self):
         first=ui_state(); first.update(coreInstalled=False,authVerified=False,authCaptured=False,authCurrent=False)
         page=FakePage([first,ui_state()])
