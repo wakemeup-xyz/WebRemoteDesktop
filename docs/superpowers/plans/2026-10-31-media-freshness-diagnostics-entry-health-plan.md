@@ -68,3 +68,4 @@
 - [x] 本地 Signal/Host 已重载并保持在线；cloudflared 未重启、URL 文件未变化。within-grace 正式入口 relay 维护窗口 PASS（300s continuity、3s recovery、30s stable）。
 - [~] after-grace fault injection 已真实触发，但 lease expiry 后新 connection attempt 没有 `viewer_reconnected`/`viewer_rebind_confirmed`，结果 `recovery-deadline`；需补“重新 admission/重新获取控制”路径和对应真实验收，不能把新连接当成控制恢复。
 - [~] 实际业务输入、输入到可见效果、物理显示、reset fault injection 的端到端样本仍未运行；捕获后端 A/B、诊断拥塞长会话和 tunnel SIGTERM 根因仍未闭环。
+- [~] 复核确认真实输入验收当前被 Host-private native fixture probe 设计性阻断：生产 Host 没有 dedicated desktop/window + capture target 的原子绑定 API，安全边界要求继续 NOT_RUN；后续必须在隔离 macOS desktop/fixture 中补齐，不得用 ACK 或浏览器协议替代。

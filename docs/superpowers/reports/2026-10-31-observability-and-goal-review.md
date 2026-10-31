@@ -246,3 +246,5 @@
 `1d4d591` 进一步把 `coverageSignals` 写入每份 durable summary 和 `diagnostic_uploaded` 摘要事件。当前新进程已再次重载为 Signal PID `30530`、Host PID `30565`，本地健康和 Host 在线正常，cloudflared PID `26104` 与 URL 文件保持不变；该改动尚需下一次真实诊断上传后再核对生产 summary 中的三个状态字段。
 
 随后完成了一个不含业务输入的本地生产诊断上传：`/tmp/wrd-diag/summary/2026-10-31.ndjson` 最新行和 Signal `diagnostic_uploaded` 同时出现 `coverageSignals`，其中 `inputTrace={state:observed,count:0}`、`summaryGap={state:unknown,count:null}`、`ringDrop={state:unknown,count:null}`，`logReceipt.state=empty`，摘要 correlation 全为 hash。此证据证明字段已经进入生产接收、结构化事件和 durable daily summary；它仍不等价于真实业务输入或帧关联覆盖。
+
+对实际输入/visible effect 自动验收的最终只读复核确认：当前 `turn_controlled_scene_runtime` 和 `turn_lab_input_guard` 会在 Host-private native probe 没有同时证明 dedicated macOS desktop、专用 fixture window、MSS/捕获目标和连续 proof epoch 时 fail-closed；现有 `turn_lab_host` probe 固定返回 `isolated=false/foreground=false/fixtureWindow=false`。因此不能用浏览器协议输入、CLI flag 或 ACK 冒充物理可见效果，真实输入、visible effect 和 physical display 继续保持 `NOT_RUN`。要解除该边界，需要在隔离 macOS desktop/fixture 进程中新增原子绑定和连续复核 API，不能在共享用户桌面生产 Host 上临时打开。
