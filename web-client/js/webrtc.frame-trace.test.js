@@ -259,6 +259,25 @@ test('schema v1 rejects every missing, extra, or incoherent Host row field', () 
   assert.equal(matched, 18000);
 });
 
+test('ordinary detailed trace drains matched rows when no marker consumer is configured', () => {
+  const Collector = loadCollector();
+  const runtime = Collector.runtime;
+  const w = runtime.__WebRTC;
+  const collector = new Collector();
+  w.frameTraceCollector = collector;
+  w._controlledSceneMarkerRoi = null;
+  w.LatencyMonitor = undefined;
+  for (let i = 0; i < 200; i += 1) {
+    collector.observeVideoFrame({ attemptId: 'a', generation: 1, streamId: 'video', ssrc: 7,
+      rtpTimestamp: i }, {}, i);
+    collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1,
+      traces: [validTrace({ captureSeq: i, wireTimestamp: i })] });
+    w.consumeControlledVisibleEffects();
+  }
+  assert.equal(collector.diagnostics().matchedCount, 0);
+  assert.equal(collector.diagnostics().droppedTraceCount, 0);
+});
+
  test('stale scope and absent SSRC cannot poison current joins or create marker evidence', () => {
   const Collector = loadCollector(), c = new Collector();
   c.setScope({ attemptId: 'a', generation: 1, streamId: 'video' });
@@ -317,14 +336,15 @@ for (const traceFirst of [true, false]) {
     const marker = { runNonce: '72623859790382856', sceneId: 7, tick: 3, actionId: 9 };
     const binding = { type: 'input_frame_binding', schemaVersion: 1, scope, streamId: 'video', captureSeq: 7,
       encoderTimestamp: 9000, wireTimestamp: 44, ssrc: 7, captureFresh: true, captureAfterApplied: true, inputIds: ['one'] };
-    const postApply = [];
+    const postApply = [], visualEffects = [];
     runtime.LatencyMonitor = { hasPendingFrameInputs: () => true, onVideoFrame() {},
-      onPostApplyFrame: row => postApply.push(row) };
+      onPostApplyFrame: row => postApply.push(row), onVisibleEffect: row => visualEffects.push(row) };
     const video = { videoWidth: 256, srcObject: { getVideoTracks: () => [{ id: 'v' }] },
       requestVideoFrameCallback(fn) { callback = fn; return 1; } };
     runtime.document.getElementById = () => video;
     w.currentConnectionAttemptId = 'a'; w.connectionAttemptSequence = 1;
     w.serverConfig = { inputFrameCorrelationVersion: 1 }; w._frameTraceEnabled = true;
+    w._controlledSceneMarkerRoi = { x: 1, y: 1, width: 256, height: 128 };
     w.pc = { getReceivers() { clock += 10; return [{ track: { kind: 'video', id: 'v' },
       getSynchronizationSources: () => [{ source: 7 }] }]; } };
     w.decodeControlledMarkerFromVideo = () => { clock += 20; return marker; };
@@ -341,10 +361,9 @@ for (const traceFirst of [true, false]) {
     w.startVideoFrameTracking();
     callback(100, { rtpTimestamp: 44 });
     assert.equal(clock, 130);
-    if (!traceFirst) { clock = 800; accept(); w.consumeInputFrameMatches(); }
-    const visual = detailed.takeControlledVisualEvidence();
-    assert.equal(visual.length, 1);
-    assert.equal(visual[0].viewerClockMs, 100);
+    if (!traceFirst) { clock = 800; accept(); w.consumeInputFrameMatches(); w.consumeControlledVisibleEffects(); }
+    assert.equal(visualEffects.length, 1);
+    assert.equal(visualEffects[0].viewerClockMs, 100);
     assert.equal(postApply.length, 1);
     assert.equal(postApply[0].viewerClockMs, 100);
   });

@@ -627,3 +627,17 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 3. 完成一次真实用户物理键鼠和持续控制的长会话验收，并同时记录 RSS、CPU、FPS、丢帧、fresh capture cadence 与可见效果；当前自动化交替控制不能替代该项。
 
 这些是同一可靠性目标的未完成验收门槛，不是新增需求。完成后再把 Goal 从 `active` 改为 `complete`；在此之前不应为了“代码和离线测试已通过”提前收口。
+
+### 详细 trace ring 误淘汰修复（2026-11-01 后续）
+
+复核了此前短窗口 `droppedTraceCount=22` 的来源：当维护窗口只开启详细 frame trace、没有配置 controlled marker ROI 时，Viewer 仍会完成 Host trace 与 rVFC 的身份匹配，但没有 visible-effect 消费者去清空 `matched` 队列；队列达到 128 条后，已成功匹配的行被本地 ring 淘汰，最终把健康的 trace 窗口标成 `UNALIGNED`。该计数不是 Host capture 丢帧，也不是 DataChannel admission 丢弃。
+
+修复内容：
+
+- `web-client/js/webrtc.js` 在无 marker 消费者时主动 drain 已匹配行；
+- 详细 trace DataChannel 批次到达后立即执行同一 drain，避免等待下一次视频回调；
+- 保留 marker ROI 存在时的严格 visible-effect 路径，不改变 marker-backed 指标语义。
+
+新增回归覆盖 200 条无 marker 详细 trace，确认 `matchedCount=0`、`droppedTraceCount=0`；完整 `web-client/js/webrtc.test.js` 为 **426/426 PASS**，`webrtc.frame-trace.test.js` 为 **26/26 PASS**，诊断/LatencyMonitor 相关测试为 **263/263 PASS**，Host frame trace/admission 相关 Python 测试为 **51/51 PASS**。
+
+这修复了诊断 ring 的一个真实误报源，但仍不替代 marker-backed 可见效果验收；后续维护窗口应重新观察 `droppedTraceCount`，若仍非零，再按 Host pending、DataChannel admission、scope 过期三类来源分别定位。

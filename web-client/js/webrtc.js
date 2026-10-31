@@ -5449,6 +5449,10 @@ const WebRTC = {
         }
         if (data.type === 'frame_trace_batch') {
           this.acceptFrameTraceBatch(data);
+          // A trace may arrive after its rVFC counterpart.  Drain the
+          // bounded join immediately so ordinary detailed tracing does not
+          // retain already-matched rows until the next video callback.
+          this.consumeControlledVisibleEffects();
           return;
         }
         if (data.type === 'loss_lab_host_selected_pair') {
@@ -6779,7 +6783,15 @@ if (this.tunnelLastObjectUrl) {
   },
 
   consumeControlledVisibleEffects() {
-    if (!this._controlledSceneMarkerRoi || typeof LatencyMonitor === 'undefined') return;
+    // Detailed frame tracing can be enabled for a maintenance window without
+    // enabling the controlled-scene marker.  Matched T3 rows are still useful
+    // for diagnostics, but there is no visible-effect consumer in that mode.
+    // Drain them here so the bounded `matched` ring does not evict otherwise
+    // valid joins and turn a healthy trace window into a false UNALIGNED one.
+    if (!this._controlledSceneMarkerRoi || typeof LatencyMonitor === 'undefined') {
+      this.frameTraceCollector?.takeMatched?.();
+      return;
+    }
     for (const row of this.frameTraceCollector?.takeControlledVisualEvidence() || []) {
       LatencyMonitor.onVisibleEffect?.(row, { scope: this.latencyScope() });
     }

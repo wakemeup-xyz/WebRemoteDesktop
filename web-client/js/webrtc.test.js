@@ -428,6 +428,7 @@ for (const transport of ['datachannel', 'socket']) {
       assert.equal(f.dispatch(), null);
       assert.deepEqual(f.sent, [{ type: 'mouse', action: 'down', payload: f.payload,
         inputIds: [f.reservation.inputId], schemaVersion: 2, leaseId: 'lease', leaseEpoch: 4, seq: 1,
+        connectionAttemptId: 'attempt',
         ...(transport === 'datachannel' ? { transport: 'datachannel' } : {}) }]);
       assert.equal(f.row().send.viewerClockMs, 110);
       assert.equal(f.observedSends.length, 1);
@@ -846,10 +847,12 @@ test('frame trace uses the same attempt sequence sent to Host instead of media s
     }],
   }) });
 
-  const matched = WebRTC.frameTraceCollector.takeMatched();
+  const diagnostics = WebRTC.getFrameTraceDiagnostics();
   assert.equal(WebRTC.connectionAttemptSequence, 1);
-  assert.equal(matched.length, 1);
-  assert.equal(matched[0].captureSeq, 4);
+  assert.equal(diagnostics.matchedCount, 0);
+  assert.equal(diagnostics.pendingFrames, 0);
+  assert.equal(diagnostics.pendingTraces, 0);
+  assert.equal(diagnostics.droppedTraceCount, 0);
   cleanup();
 });
 
