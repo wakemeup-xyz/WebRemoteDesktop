@@ -465,3 +465,9 @@ watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-s
 因此 stale 自动释放这一项已经从“未验收”推进为“生产通过”，但 Goal 整体仍不能完成，原因集中在真实可见效果、完整资源长会话、生产 capture A/B 和诊断窗口的完整指标覆盖。
 
 stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 **PASS**：21 个采样、无缺测/晚到/身份变化，`pcState=connected`、`hasPaintedFrame=true`、`progressAfterBaseline=true`，首帧约 7.83 秒。说明 stale 自动释放没有破坏后续新 Viewer 的正常连接和出帧。
+
+### 真实输入到远程画面差异样本
+
+补做了一条生产 Viewer `showDock` command：DataChannel 发送记录了 inputId 和当前 attempt；Host 日志显示 `host_input_received → host_input_result → host_input_ack_sent`，`attemptHash` 一致，`hostAdmissionWaitMs` 约 0.18 ms，`localExecuteMs` 约 71.6 ms。对 `remoteVideo` 连续截图做前后差异检测，首次超过视觉变化阈值约 **818 ms**，最大平均像素差约 **124/255**；随后发送 Escape 并确认会话正常清理。
+
+该样本证明“输入确实改变了远端桌面画面”，但它是独立的画面差异测量，不等价于现有 marker-backed `inputToVisibleEffectMs`：没有受控 frame marker、captureSeq/RTP join，因此仍不能把它写入严格端到端 p95/max。严格指标仍需 controlled scene/marker 生产证据。
