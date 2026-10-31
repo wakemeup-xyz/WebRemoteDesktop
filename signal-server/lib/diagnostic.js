@@ -77,6 +77,21 @@ function inputTraceLoss(inputTrace) {
   return result;
 }
 
+function coverageSignal(count) {
+  return { state: count === null ? 'unknown' : count > 0 ? 'nonzero' : 'observed', count };
+}
+
+function diagnosticCoverageSignals({ summaryGapCount = null, ringDropCount = null, inputTraceLoss: loss = {} } = {}) {
+  const lossValues = INPUT_TRACE_LOSS_FIELDS.map(key => loss?.[key]);
+  const lossKnown = lossValues.every(value => Number.isSafeInteger(value) && value >= 0);
+  const lossCount = lossKnown ? lossValues.reduce((total, value) => total + value, 0) : null;
+  return {
+    summaryGap: coverageSignal(summaryGapCount),
+    ringDrop: coverageSignal(ringDropCount),
+    inputTrace: coverageSignal(lossCount),
+  };
+}
+
 function sanitizeFrameTrace(value) {
   if (!isRecord(value)) return null;
   const state = safeEnum(value.acceptanceState, new Set(['PENDING', 'UNALIGNED']));
@@ -640,6 +655,11 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     if (isRecord(report.inputTraceLoss)) meta.inputTraceLoss = inputTraceLoss(report.inputTraceLoss);
     meta.summaryGapCount = safeInteger(report.summaryGapCount, Number.MAX_SAFE_INTEGER);
     meta.ringDropCount = safeInteger(report.ringDropCount, Number.MAX_SAFE_INTEGER);
+    meta.coverageSignals = diagnosticCoverageSignals({
+      summaryGapCount: meta.summaryGapCount,
+      ringDropCount: meta.ringDropCount,
+      inputTraceLoss: meta.inputTraceLoss || {},
+    });
     if (report.coverageStatus) meta.coverageStatus = report.coverageStatus;
     const frameTrace = sanitizeFrameTrace(report.traceSummary?.frameTrace);
     if (frameTrace) {

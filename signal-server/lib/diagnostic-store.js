@@ -218,6 +218,12 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
   function summaryRow(entry) {
     const r=entry.report;
     const metrics=r.latency?.metrics;
+    const inputTraceLoss=Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key, knownCount(r.inputTraceLoss?.[key] ?? r.inputTrace?.counters?.[key])]));
+    const summaryGapCount=knownCount(r.summaryGapCount ?? r.summaryGaps?.count ?? r.coverage?.summaryGapCount);
+    const ringDropCount=knownCount(r.ringDropCount ?? r.ringDropped ?? r.heartbeat?.ringDropped);
+    const lossValues=TRACE_LOSS_FIELDS.map(key => inputTraceLoss[key]);
+    const lossCount=lossValues.every(value => value !== null) ? lossValues.reduce((total,value) => total + value, 0) : null;
+    const coverageSignal=count => ({state:count === null ? 'unknown' : count > 0 ? 'nonzero' : 'observed',count});
     return {diagnosticIdHash:identity(r.diagnosticId || entry.rawSha),rawSha:entry.rawSha,
       receivedAt:new Date(entry.receivedAtMs).toISOString(),receivedAtSource:entry.receivedAtSource,
       captured:{wallTime:time(r.captured?.wallTime)===null?null:r.captured.wallTime,
@@ -240,9 +246,14 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
         : { state: 'unknown', reported: knownCount(r.reportedLogCount), retained: knownCount(r.retainedLogCount),
           redacted: knownCount(r.redactedLogCount), dropped: null },
       inputTraceEventCount:Array.isArray(r.inputTrace?.events)?r.inputTrace.events.length:knownCount(r.inputTraceEventCount),
-      inputTraceLoss: Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key, knownCount(r.inputTraceLoss?.[key] ?? r.inputTrace?.counters?.[key])])),
-      summaryGapCount: knownCount(r.summaryGapCount ?? r.summaryGaps?.count ?? r.coverage?.summaryGapCount),
-      ringDropCount: knownCount(r.ringDropCount ?? r.ringDropped ?? r.heartbeat?.ringDropped),
+      inputTraceLoss,
+      summaryGapCount,
+      ringDropCount,
+      coverageSignals: {
+        summaryGap: coverageSignal(summaryGapCount),
+        ringDrop: coverageSignal(ringDropCount),
+        inputTrace: coverageSignal(lossCount),
+      },
       coverageStatus: enumValue(r.coverageStatus ?? r.coverage?.status, ['complete', 'partial', 'unavailable']),
       frameTrace: r.traceSummary?.frameTrace && typeof r.traceSummary.frameTrace === 'object'
         ? { acceptanceState: enumValue(r.traceSummary.frameTrace.acceptanceState, ['PENDING', 'UNALIGNED']) || 'PENDING',

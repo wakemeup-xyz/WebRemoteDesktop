@@ -67,6 +67,11 @@ test('durable summaries retain only console counts and input trace counts after 
   assert.equal(row.redactedLogCount,2);assert.equal(row.inputTraceEventCount,1);
   assert.deepEqual(row.logReceipt, { state:'truncated', reported:2, retained:0, redacted:2, dropped:1 });
   assert.deepEqual(row.inputTraceLoss, { droppedEvents:4, droppedHashCount:null, evictedPendingAcks:null, expiredPendingAcks:null, ackTimeoutCount:2 });
+  assert.deepEqual(row.coverageSignals, {
+    summaryGap: { state:'unknown', count:null },
+    ringDrop: { state:'unknown', count:null },
+    inputTrace: { state:'unknown', count:null },
+  });
   for(const key of ['logs','inputTrace','events','keyboardDebug'])assert.equal(Object.hasOwn(row,key),false);
 });
 

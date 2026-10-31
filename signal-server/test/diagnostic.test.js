@@ -973,6 +973,11 @@ test('runtime diagnostic preserves bounded summary gap and ring-drop evidence', 
   assert.equal(result.summaryEvent.meta.summaryGapCount, 3);
   assert.equal(result.summaryEvent.meta.ringDropCount, 4);
   assert.equal(result.summaryEvent.meta.coverageStatus, 'partial');
+  assert.deepEqual(result.summaryEvent.meta.coverageSignals, {
+    summaryGap: { state: 'nonzero', count: 3 },
+    ringDrop: { state: 'nonzero', count: 4 },
+    inputTrace: { state: 'unknown', count: null },
+  });
 });
 
 test('runtime diagnostic receipt distinguishes empty and failed collection states', () => {
