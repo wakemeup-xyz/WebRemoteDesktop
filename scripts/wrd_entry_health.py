@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import gzip
 import json
 from pathlib import Path
 import re
@@ -14,6 +15,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 if __package__:
     from .wrd_deadline import Deadline, run_owned_probe
@@ -137,7 +139,7 @@ def _http_fetch(target, *, layer, deadline, limit, proxy_mode, opener=None):
         # Match the real Viewer fetch path so asset latency measures the
         # compressed Cloudflare/browser response rather than an uncompressed
         # 500+ KiB diagnostic transfer.
-        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Encoding': 'gzip, deflate',
         'User-Agent': 'WRD-Entry-Health/2.0',
     })
     response = request_opener.open(request, timeout=deadline.remaining())
@@ -145,6 +147,11 @@ def _http_fetch(target, *, layer, deadline, limit, proxy_mode, opener=None):
         status = int(response.status if hasattr(response, 'status') else response.getcode())
         # limit+1 detects truncation instead of treating the prefix as complete.
         body = response.read(limit + 1)
+        encoding = str(response.headers.get('Content-Encoding', '')).lower()
+        if 'gzip' in encoding:
+            body = gzip.decompress(body)
+        elif 'deflate' in encoding:
+            body = zlib.decompress(body)
         return status, body, getattr(response, 'headers', {})
     finally:
         response.close()

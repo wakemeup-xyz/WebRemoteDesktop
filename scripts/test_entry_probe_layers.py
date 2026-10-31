@@ -160,6 +160,26 @@ class ProbeBoundariesTest(unittest.TestCase):
                 self.assertIsInstance(build.call_args.args[0], _NoRedirectHandler)
         self.assertEqual(sizes, [65537, 65537])
 
+    def test_http_fetch_decodes_compressed_health_body_before_classification(self):
+        import gzip
+        from unittest.mock import patch
+        from scripts.wrd_entry_health import _http_fetch
+        class Response:
+            status, headers = 200, {'Content-Encoding': 'gzip'}
+            def read(self, _size):
+                return gzip.compress(b'{"status":"ok"}')
+            def close(self):
+                pass
+        class Opener:
+            def open(self, request, timeout):
+                return Response()
+        with patch('scripts.wrd_entry_health.urllib.request.build_opener', return_value=Opener()):
+            status, body, _headers = _http_fetch(
+                'https://fixture.invalid', layer='formal-health',
+                deadline=Deadline(15, lambda: 0), limit=65536, proxy_mode='direct')
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b'{"status":"ok"}')
+
 class ProductionSamplerTest(unittest.TestCase):
     def test_production_entry_paths_match_served_assets(self):
         from scripts.wrd_watch_coordinator import DEFAULT_ENTRY_PATHS, LayeredSampler
