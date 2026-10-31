@@ -661,3 +661,9 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 恢复后的默认负载又完成一次短被动会话：Host 新建 `ScreenCaptureTrack` 日志明确为 `frame_trace=False`，Viewer 保持 `pcState=connected`、约 20 FPS paint，详细 trace 诊断保持 `PENDING` 且所有 loss counters 为 0。当前服务已回到普通生产观测模式。
 
 当前部署再次完成 10 轮正式域名 `showDock → Escape` 交替控制：两类动作均为 10/10 画面变化，Host 日志同一 `attemptHash` 下全部经过 `received → result → ack_sent`。本窗口 `showDock` ACK p95 **77.3ms**、Host apply p95 **72.4ms**、`inputToPostApplyFrameMs` p95 **258.6ms**；`Escape` ACK p95 **14.5ms**、Host apply p95 **7.3ms**、`inputToPostApplyFrameMs` p95 **147.7ms**。浏览器关闭后的 grace 清理也已闭环：`control_reset_completed → viewer_disconnect_grace_expired`，`viewerCount` 从 1 回到 0。
+
+### 诊断通道争用优化与复测
+
+30 轮活动控制的资源窗口显示：Host fresh capture cadence 约 **18.98Hz**，RSS 约 **423–444MiB**、峰值约 **452MiB**，event loop p95 约 **3.9ms**，抓帧最大非 CPU 等待约 **114ms**。输入和画面均通过，但共享诊断 DataChannel 出现 `frame_timing` 丢 **10**、`capture_stats` 丢 **1**、`congested=11`；这属于诊断观测争用，不是输入丢失。
+
+为此在 Host 增加两级有界节流：输入关联 `frame_timing` 最短间隔 100ms，idle `frame_timing` 从每 5 帧降为每 10 帧。当前部署复测 10 轮交替控制仍为 10/10 画面变化，`showDock` ACK/Host apply/post-apply frame p95 约 **83.4/73.0/254.1ms**，`Escape` 约 **12.0/1.6/161.6ms**；同一窗口诊断 admission 为 `frame_timing 68/0`、`capture_stats 7/0`、`congested=0`。说明节流降低了诊断争用，没有改变输入协议或 Host apply 语义。
