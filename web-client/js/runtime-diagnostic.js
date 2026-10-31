@@ -122,7 +122,7 @@
       const retained = Number.isSafeInteger(previous.retained) ? previous.retained : 0;
       const redacted = Number.isSafeInteger(previous.redacted) ? previous.redacted : reported;
       const dropped = Number.isSafeInteger(result.truncation?.dropped) ? result.truncation.dropped : 0;
-      const state = dropped > 0 ? 'truncated' : (reported === null ? 'unknown' : reported === 0 ? 'empty' : 'received');
+      const state = dropped > 0 ? 'truncated' : (reported === null ? 'unknown' : reported === 0 ? 'empty' : 'valid');
       result.logReceipt = { state, reported, retained, redacted, dropped };
     }
     return result;
@@ -149,7 +149,7 @@
     } : null;
     const trace = payload.inputTrace || {};
     const rawReceipt = payload.logReceipt && typeof payload.logReceipt === 'object' ? payload.logReceipt : null;
-    const receiptStates = ['empty', 'received', 'unknown', 'truncated', 'failed'];
+    const receiptStates = ['empty', 'valid', 'unknown', 'truncated', 'failed'];
     const logReceipt = rawReceipt && receiptStates.includes(rawReceipt.state) ? {
       state: rawReceipt.state,
       reported: safeNumber(rawReceipt.reported), retained: safeNumber(rawReceipt.retained),

@@ -14,7 +14,7 @@ const time = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\
 const enumValue = (value, allowed) => allowed.includes(value) ? value : null;
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const knownCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
-const LOG_RECEIPT_STATES = new Set(['empty', 'received', 'unknown', 'truncated', 'failed']);
+const LOG_RECEIPT_STATES = new Set(['empty', 'valid', 'unknown', 'truncated', 'failed']);
 const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 function getDiagDir() { return process.env.WRD_DIAG_DIR?.trim() ? path.resolve(process.env.WRD_DIAG_DIR.trim()) : '/tmp/wrd-diag'; }
 function ensureDirectory(dir) {

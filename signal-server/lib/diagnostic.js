@@ -11,7 +11,7 @@ const countValue = value => Number.isSafeInteger(value) && value >= 0 ? value : 
 const digestValue = value => typeof value === 'string' && /^[0-9a-f]{16,64}$/.test(value) ? value : null;
 const isRuntimeDiagnostic = value => Number.parseInt(value?.schemaVersion, 10) === 3;
 const OUTCOME_NAMES = ['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'];
-const LOG_RECEIPT_STATES = new Set(['empty', 'received', 'unknown', 'truncated', 'failed']);
+const LOG_RECEIPT_STATES = new Set(['empty', 'valid', 'unknown', 'truncated', 'failed']);
 const INPUT_TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 function redactLatency(snapshot) {
   if (!isRecord(snapshot) || snapshot.schemaVersion !== 3) return null;
@@ -77,7 +77,7 @@ function redactRuntimeDiagnostic(payload) {
   const reportedLogCount = Array.isArray(payload.logs) ? payload.logs.length : null;
   const logReceipt = sanitizeLogReceipt(payload.logReceipt, {
     state: Array.isArray(payload.logs)
-      ? (payload.logs.length === 0 ? 'empty' : (safeInteger(payload.truncation?.dropped, Number.MAX_SAFE_INTEGER) > 0 ? 'truncated' : 'received'))
+      ? (payload.logs.length === 0 ? 'empty' : (safeInteger(payload.truncation?.dropped, Number.MAX_SAFE_INTEGER) > 0 ? 'truncated' : 'valid'))
       : 'unknown',
     reported: reportedLogCount,
     retained: 0,

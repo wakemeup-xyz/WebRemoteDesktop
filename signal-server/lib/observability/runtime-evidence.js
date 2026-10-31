@@ -8,7 +8,7 @@
 const MAX_COUNT = 999999999;
 const MAX_SAMPLES = 256;
 const MAX_MISSING = 32;
-const LOG_RECEIPT_STATES = ['empty', 'received', 'unknown', 'truncated', 'failed'];
+const LOG_RECEIPT_STATES = ['empty', 'valid', 'unknown', 'truncated', 'failed'];
 const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 const CORRELATION_STAGES = ['ack', 'hostApply', 'capture', 'encode', 'rtp', 'decode', 'present'];
 
@@ -69,7 +69,7 @@ function projectLogReceipt(report, metadataOnly) {
     if (reported === null) state = 'unknown';
     else if (dropped !== null && dropped > 0) state = 'truncated';
     else if (reported === 0) state = 'empty';
-    else state = metadataOnly ? 'received' : 'received';
+    else state = 'valid';
   }
   return { state, reported, retained, redacted, dropped };
 }

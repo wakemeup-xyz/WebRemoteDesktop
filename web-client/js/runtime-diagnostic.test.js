@@ -142,7 +142,7 @@ test('runtime, cache and oversized clipping retain signaling evidence alongside 
 test('pending diagnostic storage preserves bounded log receipt state without log content', () => {
   const { runtimeDiagnosticForStorage } = require('./runtime-diagnostic');
   const report = fixture()({ reason: 'input-ack-timeout' });
-  report.logReceipt = { state: 'received', reported: 12, retained: 0, redacted: 12, dropped: 0 };
+  report.logReceipt = { state: 'valid', reported: 12, retained: 0, redacted: 12, dropped: 0 };
   report.logs = ['PRIVATE_LOG_CANARY'];
   const cached = runtimeDiagnosticForStorage(report);
   assert.deepEqual(cached.logReceipt, report.logReceipt);
@@ -153,7 +153,7 @@ test('pending diagnostic storage preserves bounded log receipt state without log
 test('runtime clipping upgrades a log receipt to truncated', () => {
   const { boundRuntimeDiagnostic } = require('./runtime-diagnostic');
   const clipped = boundRuntimeDiagnostic({ schemaVersion: 3, diagnosticId: 'a'.repeat(32), logs: ['x'],
-    logReceipt: { state: 'received', reported: 1, retained: 0, redacted: 1, dropped: 0 },
+    logReceipt: { state: 'valid', reported: 1, retained: 0, redacted: 1, dropped: 0 },
     truncation: { dropped: 2 } });
   assert.deepEqual(clipped.logReceipt, { state: 'truncated', reported: 1, retained: 0, redacted: 1, dropped: 2 });
 });

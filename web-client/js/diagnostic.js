@@ -288,7 +288,7 @@
     payload.screen = `${window.screen.width}x${window.screen.height}`;
     payload.logs = this.logs.slice(-120);
     payload.logReceipt = {
-      state: payload.logs.length ? 'received' : 'empty',
+      state: payload.logs.length ? 'valid' : 'empty',
       reported: payload.logs.length,
       retained: 0,
       redacted: payload.logs.length,

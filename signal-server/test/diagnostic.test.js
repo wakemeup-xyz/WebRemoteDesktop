@@ -952,8 +952,8 @@ test('runtime diagnostic counts received logs before redaction without retaining
   assert.equal(result.summaryEvent.meta.redactedLogCount, 2);
   assert.equal(result.summaryEvent.meta.inputTraceEventCount, 1);
   assert.equal(result.summaryEvent.meta.logContentPolicy, 'metadata-only');
-  assert.equal(result.report.logReceipt.state, 'received');
-  assert.equal(result.summaryEvent.meta.logReceipt.state, 'received');
+  assert.equal(result.report.logReceipt.state, 'valid');
+  assert.equal(result.summaryEvent.meta.logReceipt.state, 'valid');
   assert.equal(JSON.stringify(result).includes('PRIVATE_LOG_CANARY'), false);
   assert.equal(data.logs.length, 2);
 });
