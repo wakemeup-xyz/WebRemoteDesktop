@@ -21,7 +21,11 @@ IDS = {'sessionId': 'session-canary', 'socketId': 'socket-new', 'previousSocketI
 def event(name='viewer_disconnect_grace_started', *, viewer='socket-old', session='session-canary', meta=None, ts='2026-10-18T01:00:00.000Z'):
     return {'ts': ts, 'level': 'info', 'domain': 'control', 'event': name, 'message': name,
             'source': 'signal-server', 'schemaVersion': 1, 'correlation': {
-                'viewerHash': hash_identity(viewer, SALT), 'browserSessionHash': hash_identity(session, SALT)},
+                # Production structured logs use the unsalted 32-hex identity;
+                # ServerRecoveryEvidence projects it to its private evidence
+                # hash after matching. Unit tests still cover legacy salted
+                # hashes through explicit fixtures below.
+                'viewerHash': production_hash_identity(viewer), 'browserSessionHash': production_hash_identity(session)},
             'meta': meta if meta is not None else {'graceMs': 8000}, 'redactionVersion': 1}
 
 
