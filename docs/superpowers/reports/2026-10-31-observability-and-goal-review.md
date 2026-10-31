@@ -526,3 +526,9 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 使用正式域名和 Relay 模式完成 120 秒被动真实 Viewer 会话：121 个样本，`missing=0`、`late=0`、`failedObservations=0`、身份/路径变化均为 0，`pcState=connected`、`hasPaintedFrame=true`、`progressAfterBaseline=true`，最大无进展约 **416.7 ms**。
 - 同一窗口 Host active capture 统计：抓帧耗时 p50/p95/max 约 **53.9/119.2/119.2 ms**，线程 CPU p95 约 **14.7 ms**，非 CPU p95 约 **104.7 ms**，滚动最大抓帧约 **159.1 ms**、最大非 CPU 约 **143.3 ms**；RSS p95 约 **461.4 MiB**，窗口 system load p95 约 **8.58**。长会话没有断流，但高负载下抓帧长尾仍主要由非 CPU 等待构成。
 - 会话结束后槽位自动回收，`viewerCount=0`；该样本证明短断线/长会话的媒体连续性和租约清理保持稳定，但还不能替代真实用户物理操作或严格 marker-backed 可见效果验收。
+
+### 短断线与同会话 rebind
+
+- 新页面短断线后重新连接：重连准备约 **5354 ms**，控制恢复，PeerConnection 为 `connected`，视频尺寸 1152×720，帧序列持续增长。
+- 复用原 `viewerSessionId` 的同会话 rebind：重连准备约 **11731 ms**，`sameSession=true`，重连后控制权、PeerConnection、画面和帧增长均正常。
+- 管理员事件确认 grace start/expire、reset completion 与当前 attempt 关联一致；会话结束等待 grace 后 `viewerCount=0`。这把“连接重新建立”和“槽位最终释放”都推进到真实生产会话证据。
