@@ -149,3 +149,11 @@ test('pending diagnostic storage preserves bounded log receipt state without log
   assert.equal('logs' in cached, false);
   assert.equal(JSON.stringify(cached).includes('PRIVATE_LOG_CANARY'), false);
 });
+
+test('runtime clipping upgrades a log receipt to truncated', () => {
+  const { boundRuntimeDiagnostic } = require('./runtime-diagnostic');
+  const clipped = boundRuntimeDiagnostic({ schemaVersion: 3, diagnosticId: 'a'.repeat(32), logs: ['x'],
+    logReceipt: { state: 'received', reported: 1, retained: 0, redacted: 1, dropped: 0 },
+    truncation: { dropped: 2 } });
+  assert.deepEqual(clipped.logReceipt, { state: 'truncated', reported: 1, retained: 0, redacted: 1, dropped: 2 });
+});

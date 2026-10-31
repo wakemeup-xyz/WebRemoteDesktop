@@ -116,6 +116,15 @@
     if (bytes(result) > MAX_REPORT_BYTES) {
       result.latency = null; result.latencyStatus = 'collector-unavailable'; result.truncation.dropped++;
     }
+    if (Array.isArray(result.logs) || (result.logReceipt && typeof result.logReceipt === 'object')) {
+      const previous = result.logReceipt && typeof result.logReceipt === 'object' ? result.logReceipt : {};
+      const reported = Number.isSafeInteger(previous.reported) ? previous.reported : result.logs?.length ?? null;
+      const retained = Number.isSafeInteger(previous.retained) ? previous.retained : 0;
+      const redacted = Number.isSafeInteger(previous.redacted) ? previous.redacted : reported;
+      const dropped = Number.isSafeInteger(result.truncation?.dropped) ? result.truncation.dropped : 0;
+      const state = dropped > 0 ? 'truncated' : (reported === null ? 'unknown' : reported === 0 ? 'empty' : 'received');
+      result.logReceipt = { state, reported, retained, redacted, dropped };
+    }
     return result;
   }
   const storageIdentities = new Map();
