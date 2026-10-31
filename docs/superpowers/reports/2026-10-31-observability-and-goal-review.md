@@ -537,3 +537,13 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 
 - 诊断 store 现在同时保留累计 `gapTotalCount/gaps` 和查询窗口内的 `gapTotalCountInWindow/gapsInWindow`，runtime evidence/admin summary 透传这两组字段；旧字段保持兼容。
 - 重载后 admin summary 实测同时返回 `summaryGapCount=81`、`summaryGapCountInWindow=81` 和 `receipt-horizon` 明细，证明当前 7 天保留窗口确实包含这些历史缺口；新进程尚未产生 heartbeat 时，`ringDropCount` 正确为 `null/unknown`，不会把“未采集”误报为零。
+
+## CoreGraphics 生产 A/B 收尾（2026-11-01 02:35–02:37 Asia/Shanghai）
+
+- 为完成此前未闭环的同一 Relay/编码/浏览器 A/B，临时通过 `WRD_CAPTURE_BACKEND=coregraphics` 启动 Host，并运行 30 秒正式域名 Relay passive session。会话本身 **PASS**：31 个采样、无缺测/晚到/身份变化，`pcState=connected`、`hasPaintedFrame=true`、最大无进展约 **316.8 ms**；这证明 CoreGraphics 路径能出画，但不代表它适合上线。
+- CoreGraphics 窗口的抓帧统计约为：active rate **17.68 Hz**（窗口最大 17.75 Hz），抓帧 `lastDuration` p50 **28.4 ms**、滚动 `maxDuration` **65.1 ms**，`maxDurationNonCpuMs` **53.0 ms**、`maxDurationThreadCpuMs` **12.0 ms**，事件循环 p95 最大约 **6.1 ms**。这些数字没有明显优于当前 MSS。
+- 关键反例是内存：Host RSS 从会话初段约 **175 MiB** 持续增长到约 **5.38 GiB**（进程重启前仍保持在 GiB 级）。该结果视为 CoreGraphics 实现存在严重 native/对象生命周期泄漏或未界定复制成本，**禁止切换生产默认后端**，也不能把该路径作为当前稳定性优化方案。
+- 随即清除 `WRD_CAPTURE_BACKEND` 并按 runbook 只重启 Host，恢复默认 `capture_backend=mss, requested_backend=mss`。恢复后的 20 秒正式 Relay passive smoke **PASS**：21 个采样、无缺测/晚到/身份变化，`hasPaintedFrame=true`；MSS 窗口 RSS 约 **146–364 MiB**，抓帧 `lastDuration` p50 **25.0 ms**、`maxDuration` **35.6 ms**，`maxDurationNonCpuMs` **22.2 ms**，明显没有 CoreGraphics 的内存增长。
+- 当前本地状态：Signal PID `23895`、Host PID `27476`，`/health=ok`、`hostOnline=true`、`viewerCount=0`；cloudflared 未重启，公网地址文件未修改。Viewer 密码为 `WSGkdvmeUEU2bzTE8Tc04zcL`，Terminal admin 密码为 `JoMKcyouKHqJAegq1q`。
+
+该 A/B 结果把“是否切换抓屏后端”从未验证推进为**有反证的决策**：保留 MSS 为生产默认，CoreGraphics 只作为隔离失败实验。后续若要继续，只能先单独修复并证明 CoreGraphics 的 native 资源释放和有界内存，再重新做同负载 A/B；当前没有理由修改 goal 的目标范围。
