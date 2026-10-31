@@ -21,10 +21,17 @@
 - watcher/entry 定向 Python tests：17 route/runtime tests passed；watch shell fixture：26 tests passed。
 - 前端生产 dist 已重新原子构建；本地和正式入口 manifest 均返回 buildId `006ff0c9024b1e27`，desktop asset 为 `assets/desktop-core.c131225e94ec4c33.js`。
 
+## 维护窗口实测（进行中）
+
+- 已按本地 runbook 重启 Signal/Host：Signal PID 31381、Host PID 31415；cloudflared PID 未变化，safe URL 文件保持为空，未执行 tunnel 操作。
+- 重启后 `/api/status` 已加载 freshness 聚合字段，初始 Viewer 槽位为空，`mediaState=unknown`。
+- 浏览器协议验收报告 `/tmp/wrd-acceptance/task9-final-report-2026-10-31T04-16-22Z.json`，SHA-256 `b16fb13485e4a149ab3ee501b3a5b847b904503a944f07e87059310ef55e0d4d`：媒体恢复 20/20，p50=212ms、p95=420ms、max=739ms；15 秒停流期间 frame/byte delta 均为0；键盘和鼠标浏览器协议输入通过；正式双 Viewer 项因单 Viewer admission 迁移语义记为 FAIL，旧控制器本地写 gate 已拒绝；物理键盘、光学 visible effect、formal entry/TryCloudflare 和 fault injection 按边界为 `NOT RUN/BLOCKED`。
+- 三小时 passive continuity 已启动，输出目录 `/tmp/wrd-acceptance/soak-20261031T0417`，session handle 仍在运行。开始后约 173 秒已有 173 个采样、`missing=0`、`pcState=connected`、`mediaPhase=active`、约20 FPS、`framesDropped=0`；该会话不发送业务输入，不证明 visible effect/physical display。
+
 ## 尚未完成的真实验收
 
-- 尚未在维护窗口重启本地 Signal/Host，因此当前运行进程仍未加载 freshness 后端代码。
-- 尚未完成真实短断线、实际键鼠、首帧、可见效果、RSS/CPU/FPS/丢帧和 3 小时长会话。当前 Viewer 槽位未确认归属，不能强制中断它执行维护验收。
+- 可用的短断线/媒体恢复、浏览器协议键鼠、首帧、FPS/丢帧证据已完成；三小时长会话仍在运行，最终状态未定。
+- 物理键盘、光学 visible effect 和 reset fault injection 仍为 `NOT RUN`；当前 passive 会话不发送业务输入。
 - `inputToVisibleEffectMs` 仍需真实 controlled marker/visible effect 证据；ACK 或 frame notice 不能替代该项。
 - tunnel 未重启；历史 SIGTERM 最终发送者仍未完成因果闭环。
 

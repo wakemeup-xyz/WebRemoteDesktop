@@ -35,9 +35,9 @@
 ## 阶段 5：验证、部署与维护窗口
 
 - [x] 运行目标模块测试、静态隐私检查和私有前端构建；不执行默认发布式 pretest。
-- [ ] 在明确维护窗口确认 Viewer 会话归属后，按 runbook 需要加载本地 Signal/Host；不操作 tunnel。
-- [ ] 实测短断线、实际输入、首帧、可见效果、RSS/CPU/FPS/丢帧和 reset ACK。
-- [ ] 运行至少三小时长会话并记录中断、采样覆盖和资源趋势；任何缺测写 `NOT RUN`。
-- [ ] 更新实施报告、Goal completion matrix，完成最终 git/service/privacy review；所有服务保持可用。
+- [x] 在维护窗口清理 stale Viewer 后按 runbook 加载本地 Signal/Host；不操作 tunnel。
+- [~] 已实测短断线/媒体恢复、浏览器协议键鼠、首帧、FPS/丢帧和 reset gate；可见效果与物理键盘仍为 `NOT RUN`。
+- [~] 已启动至少三小时 passive 长会话，当前正在记录中断、采样覆盖和资源趋势；最终完成前保持 `INCOMPLETE`。
+- [~] 已更新实施报告并完成当前 git/service/privacy review；长会话结束后再做最终 completion audit。
 
-执行事实（2026-10-31）：freshness/Signal 141 tests、viewer-freshness 4 tests、diagnostic/runtime-evidence/store 72 tests、Viewer diagnostic/runtime-diagnostic 63 tests和 frame-trace/latency 286 tests通过；watcher/entry 定向 Python 17 tests、watch shell 26 tests通过，前端构建通过。当前构建产物 buildId `006ff0c9024b1e27` 已被本地与正式入口 manifest 同时提供。真实维护窗口仍待当前 Viewer 归属确认后执行。
+执行事实（2026-10-31）：freshness/Signal 141 tests、viewer-freshness 4 tests、diagnostic/runtime-evidence/store 72 tests、Viewer diagnostic/runtime-diagnostic 63 tests和 frame-trace/latency 286 tests通过；watcher/entry 定向 Python 17 tests、watch shell 26 tests通过，前端构建通过。当前构建产物 buildId `006ff0c9024b1e27` 已被本地与正式入口 manifest 同时提供。维护窗口已开始，三小时 passive 会话仍在运行。
