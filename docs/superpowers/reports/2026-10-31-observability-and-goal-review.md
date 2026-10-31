@@ -751,3 +751,13 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 验收浏览器退出后 Viewer 槽位已回收为 `viewerCount=0`；Signal/Host 保持健康，quick tunnel 未操作。
 
 本轮仍不把自动化浏览器协议样本当作物理键鼠、严格 marker-backed visible effect、reset fault injection 或真实用户长会话证据；Goal 继续为 `active`。
+
+## 2026-11-01 05:33–05:35 transport admission 证据复测
+
+- 为区分 relay writer admission 与 native capture/调度长尾，Host 新增有界 `transport_admit_count`、`transport_admit_p95_ms`、`transport_admit_max_ms`、`transport_admit_timeouts` 运行字段；不记录数据包或用户内容。
+- 现版本正式协议验收仍为：恢复 **20/20 PASS**，p50 **541ms**、p95 **773ms**、max **875ms**；暂停期间 payload/帧增量均为 **0**；键盘、鼠标、single-desktop 接管 **PASS**；tunnel 媒体 **20/20 PASS**，p50 **445.5ms**、p95 **457ms**。
+- tunnel 日志显示 transport admission p95 约 **0.4–0.9ms**、max 约 **5.9ms**、timeout **0**，而 capture p95 约 **135ms**、max 约 **154ms**；这排除了本窗口 Socket.IO writer admission 是主要瓶颈。`TUNNEL_RELAY_STATS` 中约 2 FPS 的窗口与自动化反复 pause/resume 交界重叠，不能直接作为持续 active FPS 基线。
+- 结论更新：下一轮应做单独的连续 active tunnel window，并把 pause/resume 生命周期从吞吐统计中剥离；同时继续把 capture non-CPU、event-loop p95/p99 和 scheduler load 对齐分析。当前没有证据支持继续修改 writer admission。
+- 验收退出后 Viewer 槽位在 grace 内回收为 `viewerCount=0`；服务健康，quick tunnel 未操作。
+
+本轮仍不把自动化样本替代物理键鼠、严格 marker-backed visible effect、reset fault injection 或真实用户长会话；Goal 继续为 `active`。

@@ -6,6 +6,7 @@ Captures screen using MSS and streams via aiortc (WebRTC)
 
 import asyncio
 import uuid
+from collections import deque
 from input_timing import relay_ack_duration_ms
 import contextvars
 import hashlib
@@ -750,6 +751,9 @@ class TunnelRelayStreamer:
         self.good_ack_streak = 0
         self.backpressure_timeout_streak = 0
         self.last_ack_latency_ms = None
+        self._transport_admission_waits_ms = deque(maxlen=120)
+        self._transport_admission_wait_ms = None
+        self._transport_admission_timeout_count = 0
         self.capture_slow_streak = 0
         self.capture_fast_streak = 0
         self.max_in_flight_frames = 2
@@ -1035,17 +1039,44 @@ class TunnelRelayStreamer:
         if not self._transport_token_is_current(token):
             await asyncio.sleep(0.25)
             return False
+        started = time.monotonic()
         try:
             await asyncio.wait_for(token[5].join(), timeout=0.25)
         except asyncio.TimeoutError:
+            self._record_transport_admission_wait(
+                max(0.0, (time.monotonic() - started) * 1000), timed_out=True)
             return False
         except Exception:
+            self._record_transport_admission_wait(
+                max(0.0, (time.monotonic() - started) * 1000), timed_out=True)
             await asyncio.sleep(0.25)
             return False
+        self._record_transport_admission_wait(
+            max(0.0, (time.monotonic() - started) * 1000), timed_out=False)
         if not self._transport_token_is_current(token):
             await asyncio.sleep(0.25)
             return False
         return True
+
+    def _record_transport_admission_wait(self, wait_ms, *, timed_out=False):
+        try:
+            value = float(wait_ms)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(value) or value < 0:
+            return
+        self._transport_admission_wait_ms = value
+        self._transport_admission_waits_ms.append(value)
+        if timed_out:
+            self._transport_admission_timeout_count = min(
+                RELAY_SAFE_INTEGER, self._transport_admission_timeout_count + 1)
+
+    def _transport_admission_stats(self):
+        values = sorted(self._transport_admission_waits_ms)
+        if not values:
+            return None, None, 0
+        index = max(0, min(len(values) - 1, int(round(0.95 * len(values))) - 1))
+        return values[index], values[-1], len(values)
 
     def _record_ack_feedback(self, latency_ms):
         try:
@@ -1102,6 +1133,9 @@ class TunnelRelayStreamer:
         self.good_ack_streak = 0
         self.backpressure_timeout_streak = 0
         self.last_ack_latency_ms = None
+        self._transport_admission_waits_ms.clear()
+        self._transport_admission_wait_ms = None
+        self._transport_admission_timeout_count = 0
         self.capture_slow_streak = 0
         self.capture_fast_streak = 0
         self.suspended = False
@@ -1402,8 +1436,10 @@ class TunnelRelayStreamer:
                 avg_kb = (self.stats_bytes / max(1, self.stats_frames)) / 1024
                 avg_encode = self.stats_encode_ms / max(1, self.stats_frames)
                 avg_ack_latency = self.stats_ack_latency_ms / max(1, self.stats_ack_samples)
+                transport_admission_p95, transport_admission_max, transport_admission_count = (
+                    self._transport_admission_stats())
                 logger.info(
-                    "TUNNEL_RELAY_STATS viewer=%s profile=%s fps=%.1f sent=%s acked=%s pending=%s timeouts=%s avg_kb=%.1f avg_encode_ms=%.1f avg_ack_ms=%.1f size=%sx%s quality=%s max_in_flight=%s",
+                    "TUNNEL_RELAY_STATS viewer=%s profile=%s fps=%.1f sent=%s acked=%s pending=%s timeouts=%s avg_kb=%.1f avg_encode_ms=%.1f avg_ack_ms=%.1f transport_admit_count=%s transport_admit_p95_ms=%s transport_admit_max_ms=%s transport_admit_timeouts=%s size=%sx%s quality=%s max_in_flight=%s",
                     self.viewer_id,
                     self.profile_name,
                     self.stats_frames / duration,
@@ -1414,6 +1450,10 @@ class TunnelRelayStreamer:
                     avg_kb,
                     avg_encode,
                     avg_ack_latency,
+                    transport_admission_count,
+                    None if transport_admission_p95 is None else round(transport_admission_p95, 1),
+                    None if transport_admission_max is None else round(transport_admission_max, 1),
+                    self._transport_admission_timeout_count,
                     self.width,
                     self.height,
                     self.jpeg_quality,

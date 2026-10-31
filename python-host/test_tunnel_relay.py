@@ -176,6 +176,22 @@ def test_tunnel_relay_prefetch_fits_current_and_sent_window():
     assert relay._can_prefetch_frame() is False
 
 
+def test_tunnel_relay_transport_admission_stats_are_bounded_and_percentiled():
+    relay = TunnelRelayStreamer(FakeSio())
+    for value in (3.0, 9.0, 5.0):
+        relay._record_transport_admission_wait(value)
+    relay._record_transport_admission_wait(250.0, timed_out=True)
+
+    p95, maximum, count = relay._transport_admission_stats()
+    assert count == 4
+    # The bounded nearest-rank p95 uses the top sample for a four-row window.
+    assert p95 == 250.0
+    assert maximum == 250.0
+    assert relay._transport_admission_wait_ms == 250.0
+    assert relay._transport_admission_timeout_count == 1
+    assert len(relay._transport_admission_waits_ms) <= 120
+
+
 def test_tunnel_relay_timeout_drops_stale_inflight_slots_for_latest_frame():
     relay = TunnelRelayStreamer(FakeSio())
     relay.inflight_frames = {
