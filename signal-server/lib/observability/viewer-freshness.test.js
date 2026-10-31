@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createViewerFreshnessRegistry } = require('./viewer-freshness');
 
-function fixture(staleAfterMs = 30000) {
+function fixture(staleAfterMs = 30000, activeRecoveryAfterMs = undefined) {
   let now = 0;
   const events = [];
   const snapshots = new Map();
@@ -12,6 +12,7 @@ function fixture(staleAfterMs = 30000) {
   const registry = createViewerFreshnessRegistry({
     now: () => now,
     staleAfterMs,
+    ...(activeRecoveryAfterMs === undefined ? {} : { activeRecoveryAfterMs }),
     tickMs: 1000,
     setIntervalFn: () => ({ unref() {} }),
     clearIntervalFn() {},
@@ -57,6 +58,20 @@ test('a renewing control heartbeat delays stale release', () => {
   assert.equal(h.releaseCount, 1);
 });
 
+test('a recent media activity ACK delays hidden stale release', () => {
+  const h = fixture();
+  h.registry.register('viewer-a');
+  h.registry.observeMedia('viewer-a', { state: 'suspended', reasons: ['page-hidden'] });
+  h.advance(29000);
+  h.registry.observeMedia('viewer-a', { state: 'suspended', reasons: ['page-hidden'], applied: true });
+  h.advance(1000);
+  assert.equal(h.events.some(event => event.event === 'session_stale_detected'), false);
+  h.advance(28999);
+  assert.equal(h.releaseCount, 0);
+  h.advance(1000);
+  assert.equal(h.releaseCount, 1);
+});
+
 test('fresh decoded frames clear an active media stall episode', () => {
   const h = fixture();
   h.registry.register('viewer-a');
@@ -68,6 +83,39 @@ test('fresh decoded frames clear an active media stall episode', () => {
   const snapshot = h.registry.get('viewer-a');
   assert.equal(snapshot.lastFrameAgeMs, 1000);
   assert.equal(snapshot.mediaState, 'active');
+});
+
+test('active stall records recovery then releases only after a second bounded window', () => {
+  const h = fixture(30000, 60000);
+  h.registry.register('viewer-a');
+  h.registry.observeMedia('viewer-a', { state: 'active', generation: 1 });
+  h.registry.observeStats('viewer-a', { decodedDelta: 1, receivedDelta: 1 });
+  h.advance(30000);
+  assert.deepEqual(h.events.map(event => event.event), ['media_stalled']);
+  h.advance(60000);
+  assert.equal(h.events.at(-1).event, 'media_stall_recovery_requested');
+  assert.equal(h.releaseCount, 0);
+  h.advance(29999);
+  assert.equal(h.releaseCount, 0);
+  h.advance(1);
+  assert.deepEqual(h.events.map(event => event.event), [
+    'media_stalled', 'media_stall_recovery_requested', 'session_stale_detected', 'slot_released',
+  ]);
+  assert.equal(h.releaseCount, 1);
+});
+
+test('active recovery window starts when a resumed session is first observed stalled', () => {
+  const h = fixture(30000, 60000);
+  h.registry.register('viewer-a');
+  h.registry.observeStats('viewer-a', { decodedDelta: 1, receivedDelta: 1 });
+  h.advance(120000);
+  h.registry.observeMedia('viewer-a', { state: 'active', generation: 2 });
+  h.registry.observeStats('viewer-a', { decodedDelta: 0, receivedDelta: 0 });
+  assert.equal(h.events.at(-1).event, 'media_stalled');
+  h.advance(59999);
+  assert.equal(h.events.some(event => event.event === 'media_stall_recovery_requested'), false);
+  h.advance(1);
+  assert.equal(h.events.at(-1).event, 'media_stall_recovery_requested');
 });
 
 test('rebind preserves freshness state under the new viewer identity', () => {

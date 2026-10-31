@@ -8,6 +8,8 @@ const MAX_COUNT = 999999999;
 const DEFAULT_STALE_AFTER_MS = 120000;
 const MIN_STALE_AFTER_MS = 30000;
 const MAX_STALE_AFTER_MS = 3600000;
+const DEFAULT_ACTIVE_RECOVERY_AFTER_MS = 240000;
+const MAX_ACTIVE_RECOVERY_AFTER_MS = 7200000;
 
 function finiteTime(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -31,9 +33,19 @@ function normalizeStaleAfter(value) {
   return Math.max(MIN_STALE_AFTER_MS, Math.min(MAX_STALE_AFTER_MS, Math.floor(parsed)));
 }
 
+function normalizeActiveRecoveryAfter(value, staleAfterMs) {
+  const parsed = Number(value);
+  const fallback = Math.max(DEFAULT_ACTIVE_RECOVERY_AFTER_MS, staleAfterMs * 2);
+  if (!Number.isFinite(parsed)) return Math.min(MAX_ACTIVE_RECOVERY_AFTER_MS, fallback);
+  return Math.max(staleAfterMs, Math.min(MAX_ACTIVE_RECOVERY_AFTER_MS, Math.floor(parsed)));
+}
+
 function createViewerFreshnessRegistry(options = {}) {
   const now = typeof options.now === 'function' ? options.now : Date.now;
   const staleAfterMs = normalizeStaleAfter(options.staleAfterMs);
+  const activeRecoveryAfterMs = normalizeActiveRecoveryAfter(options.activeRecoveryAfterMs, staleAfterMs);
+  const activeReleaseAfterMs = Math.min(MAX_ACTIVE_RECOVERY_AFTER_MS,
+    activeRecoveryAfterMs + staleAfterMs);
   const tickMs = Math.max(1000, Math.min(60000, boundedNonnegative(options.tickMs, 1000)));
   const setIntervalFn = options.setIntervalFn || setInterval;
   const clearIntervalFn = options.clearIntervalFn || clearInterval;
@@ -50,6 +62,10 @@ function createViewerFreshnessRegistry(options = {}) {
     const lastActivityAt = [viewer.lastStatsAt, viewer.lastHeartbeatAt, viewer.lastMediaAt]
       .filter(value => finiteTime(value) !== null)
       .reduce((latest, value) => Math.max(latest, value), null);
+    const lastProgressAt = [viewer.lastMediaAt, viewer.lastMediaAckAt, viewer.lastDecodedAt,
+      viewer.lastReceivedAt, viewer.lastHeartbeatAt]
+      .filter(value => finiteTime(value) !== null)
+      .reduce((latest, value) => Math.max(latest, value), null);
     return {
       state: viewer.mediaState,
       mediaState: viewer.mediaState,
@@ -62,9 +78,14 @@ function createViewerFreshnessRegistry(options = {}) {
       lastReceivedAgeMs: boundedAge(at, viewer.lastReceivedAt),
       lastStatsAgeMs: boundedAge(at, viewer.lastStatsAt),
       lastHeartbeatAgeMs: boundedAge(at, viewer.lastHeartbeatAt),
+      lastMediaAckAgeMs: boundedAge(at, viewer.lastMediaAckAt),
       mediaStateAgeMs: boundedAge(at, viewer.lastMediaAt),
       activityAgeMs: boundedAge(at, lastActivityAt),
+      progressAgeMs: boundedAge(at, lastProgressAt),
       suspendedAgeMs: boundedAge(at, viewer.suspendedSince),
+      activeStallAgeMs: boundedAge(at, viewer.activeStallSince),
+      activeRecoveryAfterMs,
+      activeRecoveryRequested: viewer.activeRecoveryEmitted,
       staleAfterMs,
     };
   }
@@ -84,6 +105,7 @@ function createViewerFreshnessRegistry(options = {}) {
         lastMediaAt: at, lastStatsAt: null, lastHeartbeatAt: null,
         lastDecodedAt: null, lastReceivedAt: null, suspendedSince: null,
         mediaStalledEmitted: false, staleEmitted: false, released: false,
+        activeStallSince: null, activeRecoveryEmitted: false, lastMediaAckAt: null,
       };
       viewers.set(viewerId, viewer);
     }
@@ -100,6 +122,11 @@ function createViewerFreshnessRegistry(options = {}) {
     const frameAge = boundedAge(at, viewer.lastDecodedAt);
     const statsAge = boundedAge(at, viewer.lastStatsAt);
     const heartbeatAge = boundedAge(at, viewer.lastHeartbeatAt);
+    const progressAt = [viewer.lastMediaAt, viewer.lastMediaAckAt, viewer.lastDecodedAt,
+      viewer.lastReceivedAt, viewer.lastHeartbeatAt]
+      .filter(value => finiteTime(value) !== null)
+      .reduce((latest, value) => Math.max(latest, value), null);
+    const progressAge = boundedAge(at, progressAt);
     const hiddenSuspended = viewer.mediaState === 'suspended'
       && viewer.pageVisibility === 'hidden'
       && suspendedAge !== null
@@ -110,25 +137,61 @@ function createViewerFreshnessRegistry(options = {}) {
 
     if ((hiddenSuspended || activeStalled) && !viewer.mediaStalledEmitted) {
       viewer.mediaStalledEmitted = true;
+      if (activeStalled && viewer.activeStallSince === null) viewer.activeStallSince = at;
       event(viewer, 'media_stalled', {
         reason: hiddenSuspended ? 'page-hidden' : 'no-fresh-frame',
         lastFrameAgeMs: frameAge,
+        lastProgressAgeMs: progressAge,
         suspendedAgeMs: suspendedAge,
       });
+    }
+    if (activeStalled && viewer.activeStallSince === null) viewer.activeStallSince = at;
+    const activeStallAge = boundedAge(at, viewer.activeStallSince);
+    if (activeStalled && activeStallAge !== null && activeStallAge >= activeRecoveryAfterMs
+      && !viewer.activeRecoveryEmitted) {
+      viewer.activeRecoveryEmitted = true;
+      event(viewer, 'media_stall_recovery_requested', {
+        reason: 'no-fresh-frame', lastFrameAgeMs: frameAge, lastProgressAgeMs: progressAge,
+        recoveryAfterMs: activeRecoveryAfterMs,
+      });
+      try { options.onActiveStall?.({ viewerId: viewer.viewerId, snapshot: snapshot(viewer) }); }
+      catch { /* Recovery observation must not affect socket or lease operations. */ }
+    }
+    // Active media is released only after a recovery opportunity and a second
+    // bounded window with no progress. This avoids treating a transient pause
+    // as a dead session.
+    if (activeStalled && activeStallAge !== null && activeStallAge >= activeReleaseAfterMs
+      && viewer.activeRecoveryEmitted && !viewer.staleEmitted
+      && (progressAge === null || progressAge >= staleAfterMs)) {
+      viewer.staleEmitted = true;
+      event(viewer, 'session_stale_detected', {
+        reason: 'active-no-fresh-frame', lastFrameAgeMs: frameAge,
+        lastProgressAgeMs: progressAge, recoveryAfterMs: activeRecoveryAfterMs,
+      });
+      let released = false;
+      try { released = options.onStale?.({ viewerId: viewer.viewerId, reason: 'active-no-fresh-frame', snapshot: snapshot(viewer) }) === true; }
+      catch { released = false; }
+      if (released) {
+        viewer.released = true;
+        event(viewer, 'slot_released', { reason: 'active-media-stale', release: 'applied' });
+      } else {
+        event(viewer, 'slot_release_failed', { reason: 'active-media-stale', release: 'not-applied' });
+      }
     }
     // A page-hidden session is eligible for cleanup only after the bounded
     // grace period and when its control heartbeat is no longer alive. This
     // preserves a live hidden tab that is still renewing its authority.
     if (hiddenSuspended && !viewer.staleEmitted
-      && (heartbeatAge === null || heartbeatAge >= staleAfterMs)) {
+      && (progressAge === null || progressAge >= staleAfterMs)) {
       viewer.staleEmitted = true;
       event(viewer, 'session_stale_detected', {
         reason: 'page-hidden',
         lastFrameAgeMs: frameAge,
+        lastProgressAgeMs: progressAge,
         lastHeartbeatAgeMs: heartbeatAge,
       });
       let released = false;
-      try { released = options.onStale?.({ viewerId: viewer.viewerId, snapshot: snapshot(viewer) }) === true; }
+      try { released = options.onStale?.({ viewerId: viewer.viewerId, reason: 'page-hidden', snapshot: snapshot(viewer) }) === true; }
       catch { released = false; }
       if (released) {
         viewer.released = true;
@@ -186,7 +249,10 @@ function createViewerFreshnessRegistry(options = {}) {
       viewer.suspendedSince = null;
       viewer.mediaStalledEmitted = false;
       viewer.staleEmitted = false;
+      viewer.activeStallSince = null;
+      viewer.activeRecoveryEmitted = false;
     }
+    if (typeof data.applied === 'boolean' && at !== null) viewer.lastMediaAckAt = at;
     if (Number.isSafeInteger(data.generation) && data.generation >= 1) viewer.generation = data.generation;
     publish(viewer);
     return snapshot(viewer);
@@ -205,6 +271,8 @@ function createViewerFreshnessRegistry(options = {}) {
       viewer.lastDecodedAt = at;
       viewer.mediaState = 'active';
       viewer.mediaStalledEmitted = false;
+      viewer.activeStallSince = null;
+      viewer.activeRecoveryEmitted = false;
     }
     evaluate(viewer, at);
     return snapshot(viewer);
@@ -243,7 +311,7 @@ function createViewerFreshnessRegistry(options = {}) {
   start();
   return {
     register, unregister, rebind, observeMedia, observeStats, observeHeartbeat,
-    get, snapshots, tick, start, stop, staleAfterMs,
+    get, snapshots, tick, start, stop, staleAfterMs, activeRecoveryAfterMs,
   };
 }
 
@@ -251,5 +319,7 @@ module.exports = {
   DEFAULT_STALE_AFTER_MS,
   MIN_STALE_AFTER_MS,
   MAX_STALE_AFTER_MS,
+  DEFAULT_ACTIVE_RECOVERY_AFTER_MS,
+  MAX_ACTIVE_RECOVERY_AFTER_MS,
   createViewerFreshnessRegistry,
 };

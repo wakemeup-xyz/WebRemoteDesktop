@@ -332,7 +332,9 @@ function setupSignaling(io, options = {}) {
       'rebound', 'schemaVersion', 'state', 'reasons', 'generation', 'status',
       'mediaState', 'pageVisibility', 'pageHidden', 'stale', 'released',
       'lastFrameAgeMs', 'lastReceivedAgeMs', 'lastStatsAgeMs', 'lastHeartbeatAgeMs',
-      'mediaStateAgeMs', 'activityAgeMs', 'suspendedAgeMs', 'staleAfterMs', 'release',
+      'lastProgressAgeMs', 'progressAgeMs', 'lastMediaAckAgeMs', 'activeStallAgeMs',
+      'activeRecoveryAfterMs', 'activeRecoveryRequested', 'mediaStateAgeMs', 'activityAgeMs',
+      'suspendedAgeMs', 'staleAfterMs', 'recoveryAfterMs', 'release',
     ]) {
       if (Object.prototype.hasOwnProperty.call(fields, key)) meta[key] = fields[key];
     }
@@ -366,10 +368,11 @@ function setupSignaling(io, options = {}) {
         ...observation.meta,
       });
     },
-    onStale({ viewerId }) {
+    onStale({ viewerId, reason }) {
       const viewer = connections.viewers.get(viewerId);
       if (!viewer || !isActiveViewerSocket(viewer)) return false;
-      const removed = removeDesktopViewer(viewer, 'media-stale');
+      const removed = removeDesktopViewer(viewer, reason === 'active-no-fresh-frame'
+        ? 'active-media-stale' : 'media-stale');
       if (!removed) return false;
       try { viewer.disconnect(true); } catch (_error) {}
       return true;
