@@ -573,3 +573,9 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 修复后的短真实 Viewer 会话中，observer 日志变为 `context=true,registry=true,key=true` 和 `rtp_packet_observed=true`；Host `frame_trace_batch` 实际发送约 **38–49 行/窗口**。Viewer 端一次短窗口得到 `sampleCount=78–98`、`matchedCount=36–39`，所有阶段 `grab/age_at_recv/worker_queue/prepare/build/encode/packetize/encode_total` 均有覆盖，`inputToPostApplyFrameMs` 约 **193–240ms**，ACK RTT 约 **67–103ms**，Host apply 约 **57–84ms**。
 - 详细 trace 继续发送全部视频帧时，会在约 5 秒后与 frame timing/capture stats 争用同一可靠诊断通道；日志出现 `frame_trace_batch` dropped 和整体 `congested` 增长，Viewer `droppedTraceCount` 也会上升。因此详细 trace 仍只作为维护窗口短采样，不能常驻生产；默认 `WRD_FRAME_TRACE_DETAIL` 已关闭。
 - 该修复让严格 frame identity join 和 `inputToPostApplyFrameMs` 真正可观测，但没有伪造 `inputToVisibleEffectMs`：当前正式页面没有 controlled marker，光学可见效果仍使用独立像素差异样本（此前 5 次 p95/max **839.9ms**）记录。
+
+### 本轮结束状态
+
+- 已清除 `WRD_FRAME_TRACE_DETAIL`，只保留默认 MSS；恢复后的 10 秒正式 Relay passive smoke **PASS**：11 个采样、无缺测/晚到/身份变化、`hasPaintedFrame=true`。
+- 当前本地服务为 Signal PID `23895`、Host PID `41097`，`/health=ok`、`hostOnline=true`、`viewerCount=0`；cloudflared 未操作，公网地址文件未改变。
+- Goal 继续保持 `active`，未修改目标范围。新增的生产证据已把第 5 项和输入链路关联推进为完成/大部分完成；剩余硬门槛仍是严格 `inputToVisibleEffectMs`、诊断详细 trace 的低拥塞生产策略，以及真实用户物理输入/长时间持续控制验收。
