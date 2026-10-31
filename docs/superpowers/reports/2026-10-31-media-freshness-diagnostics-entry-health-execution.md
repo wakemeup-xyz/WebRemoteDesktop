@@ -64,3 +64,5 @@
 最终状态：代码和离线测试已完成，三小时被动连续性及 freshness 生产字段已验证；真实输入到可见效果、物理显示、reset fault injection、receipt/loss 日汇总、诊断通道拥塞处理和 capture backend A/B 仍待完成。
 
 受控手动诊断上报随后验证了生产 receipt 路径：当天 summary 新增一条 `logReceipt.state=valid`、`reported=46`、`retained=0`、`redacted=46`、`dropped=0` 的记录，`inputTraceEventCount=9`，input trace loss 全部为 0，frame trace 为 `PENDING`。这证明有效上报字段已落盘；非零 gap/ring-drop 仍只在长会话 lifecycle 和 Host admission 证据中可见。
+
+`32cfc92` 的 Host 诊断降频优化已实测：无待关联输入时每 5 帧采样，输入关联帧仍逐帧保留。重载后 30 秒会话 `frame_timing` dropped 从此前 113 降到 9，`capture_stats` dropped 为 0；但同一窗口 fresh capture rate 约 4.9 Hz、缓存复用约 73%、抓帧最大 833 ms，后端抓帧长尾仍未解决。

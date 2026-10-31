@@ -130,3 +130,9 @@
 ## 诊断 receipt 生产路径补证（2026-10-31 15:37）
 
 受控手动诊断上报已成功写入当天 summary：`logReceipt.state=valid`、`reported=46`、`retained=0`、`redacted=46`、`dropped=0`，`inputTraceEventCount=9`，`inputTraceLoss` 的 dropped/hash/evicted/expired/timeout 全部为 0，`frameTrace.acceptanceState=PENDING` 且各丢失计数为 0。该证据确认当前版本的 receipt 和 input trace loss 字段已能进入生产 daily summary；gap/ring 在无丢失时保持 `null`，非零丢失仍需从 lifecycle/Host admission 证据关联进入常用告警。
+
+## 诊断通道降频优化复核（2026-10-31 15:49）
+
+`32cfc92` 已加载到 Host：无待关联输入时 `frame_timing` 每 5 帧采样一次；存在待关联输入时仍逐帧发送。重载后 30 秒 passive 会话中，`frame_timing` 为 sent=140/dropped=9，`capture_stats` 为 sent=8/dropped=0；相比上一版本的 frame_timing dropped=113，诊断拥塞明显下降，但尚未归零。
+
+同一窗口暴露出独立的抓帧长尾：active capture rate 约 4.9 Hz、`reuseRatio` 约 0.73、`maxDurationMs=833`、`maxDurationNonCpuMs=792`，system load1 约 9–11。说明降频只改善了诊断通道占用，不能替代 MSS/CoreGraphics 后端 A/B；当前 Goal 仍不能宣称抓帧性能达标。
