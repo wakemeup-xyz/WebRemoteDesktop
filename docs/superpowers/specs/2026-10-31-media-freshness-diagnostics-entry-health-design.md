@@ -48,7 +48,6 @@ summaryGapCount: integer or null
 ringDropCount: integer or null
 inputTraceDroppedEvents: integer or null
 expiredPendingAcks: integer or null
-receipt: accepted | rejected | duplicate | write-failed
 ```
 
 `empty` 只表示收集器已启动且明确收集到 0 条；`unknown` 表示未启动、字段缺失或采集失败；`truncated` 必须同时保留 dropped 计数。日摘要必须从 raw runtime report 复制输入 trace 丢失和 ring drop 计数，不能只保留 `inputTraceEventCount=256`。receipt horizon 的 gap 必须出现在汇总，而不是只留在私有状态文件。

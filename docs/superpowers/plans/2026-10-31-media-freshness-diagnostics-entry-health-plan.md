@@ -40,4 +40,4 @@
 - [ ] 运行至少三小时长会话并记录中断、采样覆盖和资源趋势；任何缺测写 `NOT RUN`。
 - [ ] 更新实施报告、Goal completion matrix，完成最终 git/service/privacy review；所有服务保持可用。
 
-执行事实（2026-10-31）：freshness/Signal 141 tests、viewer-freshness 4 tests、diagnostic/runtime-evidence/store 74 tests、Viewer diagnostic/runtime-diagnostic 63 tests通过；watcher/entry 33 个 Python 测试和前端构建通过。构建产物 buildId `846e0eea4f742d68` 已被本地与正式入口 manifest 同时提供。真实维护窗口仍待当前 Viewer 归属确认后执行。
+执行事实（2026-10-31）：freshness/Signal 141 tests、viewer-freshness 4 tests、diagnostic/runtime-evidence/store 74 tests、Viewer diagnostic/runtime-diagnostic 63 tests通过；watcher/entry 定向 Python 测试通过，前端构建通过。当前构建产物 buildId `006ff0c9024b1e27` 已被本地与正式入口 manifest 同时提供。真实维护窗口仍待当前 Viewer 归属确认后执行。
