@@ -363,3 +363,41 @@ Host 轮转日志在最近窗口有 7190 个可解析事件循环样本：`lagMs
 - 会话结束后观察到 `transport close → viewer_disconnect_grace_started → lease-expired → control_reset_completed → viewer_disconnect_grace_expired`，随后 `/api/status` 为 `viewerCount=0`。这证明正常被动断线后的租约清理和槽位释放在新版本中实际生效；它仍不是 `page-hidden` 或 active-media-stale 的生产触发样本。
 
 这次复测把“新版本能建立稳定媒体、带 attemptHash、结束后释放槽位”推进到生产证据，但核心 Goal 的真实业务输入、输入 ACK、输入到画面、active-stall stale 释放和短断线后持续控制仍未闭环。
+
+## 最新 Goal 审查与扩展验收（2026-10-31 23:58 Asia/Shanghai）
+
+### 当前 Goal 是否需要修改
+
+当前线程 Goal 仍保持 `active`，目标范围不需要替换：它仍然准确覆盖 stale Viewer、输入链路关联、诊断完整性、入口慢请求、抓帧长尾和真实会话验收。之前报告中“Goal 元数据仍是 `blocked`”属于更早一轮的历史状态；当前 Goal 元数据已经恢复为 `active`，本节结论以当前元数据和最新证据为准。
+
+不把 Goal 提前标记完成的原因是仍有四个可验证缺口：
+
+1. 没有真实 `page-hidden` 或 active-media-stale 触发的 `session_stale_detected → slot_released` 生产样本。
+2. 没有业务输入与应用后帧/可见效果绑定的端到端 p95/max；当前 ACK 证据只覆盖协议和 Host apply。
+3. 没有真实用户短断线后持续控制、RSS/CPU/FPS/framesDropped/可见效果联合验收。
+4. capture A/B 仍是本机原生抓帧调用级结果，尚未在同一 relay/编码/浏览器会话中比较。
+
+因此无需新建或替换 Goal；应继续沿用当前 Goal，并把上述四项作为完成门槛。`update_goal` 只能改变状态，当前证据不足以改为 `complete`，也不存在连续三轮同一外部阻塞来改为 `blocked` 的条件。
+
+### 扩展验收结果
+
+修复了 `scripts/runtime_reliability_acceptance_ext.py` 在 `/tmp/wrd-safe-current-url.txt` 不存在时的汇总崩溃，并重新执行扩展验收。结果写入 `/tmp/wrd-acceptance/task9-extended-report.json`：
+
+- `9B_suspend_15s_no_media_growth`、`9B_resume_latency`、`9C_keyboard_browser_protocol_matrix`、`9B_mouse_double_click_drag`、`9C_terminal_open_and_pause_coexistence`、`9D_formal_entry_media_smoke` 均 **PASS**。
+- `9D_trycloudflare_safe_url` 为 **BLOCKED**，原因是当前 safe URL 文件为空；遵守 runbook 未重建 tunnel。
+- 物理键盘、OS reserved、reset fault injection、20 次 resume P95 仍为 **NOT RUN**，不能用浏览器合成事件替代。
+
+扩展验收期间没有留下 Viewer；当前 `/health` 为 `ok`，`/api/status` 为 `hostOnline=true`、`viewerCount=0`。Signal PID `2631`、Host PID `2664` 在线，cloudflared PID `26104` 未变。
+
+### 当前运行时信号与优化空间
+
+watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-slow`，唯一超预算层是 `formal-health`：31 个样本的 p50/p95/p99/max 约为 2135/4216/4429/4429 ms，预算 3000 ms；origin-health p95 约 24 ms，passive-runtime 无延迟。这个信号说明固定域名入口仍存在网络或 tunnel 路径长尾，但不会触发 tunnel 重启，也不能归因成 Signal/Host 内部故障。后续应把入口分段 TTFB、connector 日志和浏览器首帧按同一时间窗口对齐，再决定是否需要优化入口或仅调整告警预算。
+
+### 下一步排序
+
+1. 在用户可用的维护窗口做一次短断线、重连、持续控制和资源联合采样，优先得到真实 input-to-visible-effect 缺测的第一条生产证据。
+2. 对 `formal-health` 长尾按入口 DNS/TCP/TLS/首字节/完整响应拆分，并与 cloudflared 保持只读关联；没有明确因果前不改 tunnel。
+3. 增加单会话 summary 的 `summaryGap`、ring eviction、collector cursor 和 received/retained/dropped 的统一聚合，减少 `unknown`。
+4. 在同一 relay/浏览器会话中复测 MSS/CoreGraphics 的 capture、encode、RTP、decode、paint、RSS、CPU、FPS 和 framesDropped，再决定生产后端切换。
+
+当前服务保持可用态，Goal 继续 `active`；完成上述证据后再重新审查是否可以更新为 `complete`。

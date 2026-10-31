@@ -542,7 +542,8 @@ def main():
         report["gates"]["9D_trycloudflare_safe_url"] = {
             "status": "BLOCKED",
             "reason": "safe URL health http-invalid/404; tunnel not rebuilt by policy",
-            "safe_url_file": Path("/tmp/wrd-safe-current-url.txt").read_text().strip(),
+            "safe_url_file": Path("/tmp/wrd-safe-current-url.txt").read_text().strip()
+            if Path("/tmp/wrd-safe-current-url.txt").is_file() else "",
         }
         page_f.screenshot(path=str(OUT / "ext-formal-final.png"), full_page=True)
         ctx_f.close()
