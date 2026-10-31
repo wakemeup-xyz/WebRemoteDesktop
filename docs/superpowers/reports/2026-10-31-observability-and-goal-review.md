@@ -720,3 +720,14 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 前半段输入 ACK/Host apply 约 100–200ms；后半段 `showDock` ACK 约 300–380ms、`inputToPostApplyFrameMs` 最高约 1030ms。对应 Host 结构化日志显示 `localExecuteMs` 约 325–342ms、抓帧最大非 CPU 等待约 **305–332ms**、RSS 约 **470–480MiB**、`schedulerLoadRatio` 约 **1.7**（`elevated`）。
 - 该窗口没有 Signal/Host 输入丢失、DataChannel admission 丢弃或 attempt 关联缺失；退化与 WindowServer/外部调度负载和抓帧 native 等待同步出现，属于 **contaminated high-load window**，不能把它误判为输入协议故障或低负载产品基线。
 - 验收浏览器退出后再次经过 grace，`/api/status` 回到 `viewerCount=0`；服务保持健康。
+
+## 2026-11-01 05:10 当前运行复核与日志覆盖结论
+
+- 当前本地服务复核：Signal PID `75057`、Host PID `75092` 均存活；`/health=ok`、`hostOnline=true`、`viewerCount=0`。当前没有占用中的 Viewer 会话，槽位已释放。
+- 最近运行时管理摘要中，Signal/Host 的 reset 观测都带有同一 `attemptHash`；最近一条 `signal_reset_ack_observed` 的 `signalRequestToAckMs` 约 **196.5ms**，`forwarded=true`、`ackLeaseMatchesRequest=true`、`ackTypeMatchesRequest=true`、`correlationMissing=false`。本轮没有发现 ACK 缺少 attempt 关联。
+- 最近的 `page-hidden` 媒体停滞样本仍按 `media_stalled → session_stale_detected → slot_released → control_reset_completed` 收口；该链路的 `released=true` 和后续 `viewerCount=0` 均已在日志/状态中得到验证。
+- 持久诊断摘要当前保留窗口报告 **83** 条 `receipt-horizon` gap，`ringDropCount=0`。这表示旧摘要已按保留策略退出可关联窗口，不能解释为当前输入丢失；当前 ring eviction 没有证据。后续仍应扩大摘要留存或建立按天的外部归档，否则跨多日审计只能看到 gap 数而不能回看原始摘要。
+- 当前管理摘要没有新的诊断报告（`reportCount=0`），因此 FPS、丢帧、visible-effect 和完整输入链路在这一个新窗口内保持缺测；系统没有用 ACK 或历史样本填充这些指标。当前机器 load average 约 `6.19/10.33/9.81`，仍可见外部 Python/WindowServer 负载，本轮不把它作为低负载产品基线。
+- 本轮复核测试：Node 诊断/运行时/入口集合 **87/87 PASS**，受控场景/采集器 **79/79 PASS**，Python 隧道/双阶段 worker/连接诊断 **11/11 PASS**。首次 Python 命令因缺少 `PYTHONPATH=python-host` 未执行测试，随后按项目环境重跑并通过；该命令环境问题不计入产品失败。
+
+本节只更新当前运行和覆盖证据，不改变 Goal 的完成边界。严格 marker-backed `inputToVisibleEffectMs`、物理键鼠/OS reserved、reset fault injection 和真实用户长会话仍保持未验收；Goal 继续为 `active`。
