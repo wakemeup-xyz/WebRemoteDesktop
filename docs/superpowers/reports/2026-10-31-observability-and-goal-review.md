@@ -206,3 +206,5 @@
 - 本轮定向验证：Node signaling/admission 164/164、Node diagnostic/runtime/frame 262/262、Python observability 15/15；这些仍是离线和结构化日志证据，不能替代真实 visible effect。
 
 `87a42e3` 已构建并重载到本地：Signal PID `8638`、Host PID `8667`，cloudflared PID `26104` 未变化；`/health`、`/api/status` 均正常，Viewer 槽位为 0。结构化日志现在只保留 lifecycle hash，业务 Socket payload 未改变；Host 高频纯文本标识仍作为后续 P1 清理范围。
+
+`5b8478f` 重载后再次做 12 秒诊断窗口，最新 daily summary 同时保留了 `frameTrace.stageCoverage`（`sampleCount=0`、各阶段 observed=0）和 Host `diagnosticAdmission`（frame_timing sent=39、capture_stats sent=1、dropped=0）。这证明 raw、runtime evidence 与 durable summary 三层字段已经一致；sampleCount 为 0 仍诚实表示本次没有 frame-trace batch，不代表媒体链路没有视频帧。
