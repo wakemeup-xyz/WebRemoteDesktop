@@ -657,3 +657,5 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 这些字段已通过 Viewer runtime storage、Signal 脱敏、diagnostic store 和 runtime evidence summary；新增测试验证 Host drop、过期 join 和本地 ring eviction 可以分别计数。下一次详细 trace 窗口会以这四个分项作为故障归因依据，不再把 `UNALIGNED` 自动解释成传输丢失。
 
 最新一次加载新 Viewer 构建的 detail trace 复测结果：`sampleCount=172`，`ringDropCount=0`，`hostDroppedTraceCount=0`，`expiredFrameCount=0`，`expiredTraceCount=2`，`droppedTraceCount=2`，`pendingFrames=4`，`pendingTraces=0`。因此本窗口的 `UNALIGNED` 原因已被精确归类为 **2 条 Host trace 等待对应 rVFC 超时**；没有本地 ring 淘汰，也没有 Host/DataChannel 显式丢弃。详细 trace 环境已清除，Host 已恢复默认 MSS/普通诊断负载。
+
+恢复后的默认负载又完成一次短被动会话：Host 新建 `ScreenCaptureTrack` 日志明确为 `frame_trace=False`，Viewer 保持 `pcState=connected`、约 20 FPS paint，详细 trace 诊断保持 `PENDING` 且所有 loss counters 为 0。当前服务已回到普通生产观测模式。
