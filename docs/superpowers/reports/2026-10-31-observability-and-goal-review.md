@@ -713,3 +713,10 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 修正后的扩展验收结果：20 次恢复 **PASS**（p50 **314.5ms**、p95 **324ms**、max **329ms**），键盘/鼠标协议 **PASS**，single-desktop supersede/接管 **PASS**，隧道媒体恢复 20/20 **PASS**（p50 **322ms**、p95 **426ms**）。
 - 浏览器退出后再次经过 disconnect grace，`/api/status` 回到 `viewerCount=0`；Signal/Host 保持在线，未操作 tunnel。
 - 物理键盘、OS reserved、fault injection、严格 marker-backed visible effect 仍不能由自动化替代，继续保持 **NOT RUN/BLOCKED**。
+
+## 2026-11-01 05:00 30 轮持续控制退化归因
+
+- 新版本完成 30/30 轮正式域名 `showDock → Escape` 画面变化，Host 输入事件均带同一 `attemptHash`，诊断 admission 的 `frame_timing`、`capture_stats` drop 均为 0。
+- 前半段输入 ACK/Host apply 约 100–200ms；后半段 `showDock` ACK 约 300–380ms、`inputToPostApplyFrameMs` 最高约 1030ms。对应 Host 结构化日志显示 `localExecuteMs` 约 325–342ms、抓帧最大非 CPU 等待约 **305–332ms**、RSS 约 **470–480MiB**、`schedulerLoadRatio` 约 **1.7**（`elevated`）。
+- 该窗口没有 Signal/Host 输入丢失、DataChannel admission 丢弃或 attempt 关联缺失；退化与 WindowServer/外部调度负载和抓帧 native 等待同步出现，属于 **contaminated high-load window**，不能把它误判为输入协议故障或低负载产品基线。
+- 验收浏览器退出后再次经过 grace，`/api/status` 回到 `viewerCount=0`；服务保持健康。
