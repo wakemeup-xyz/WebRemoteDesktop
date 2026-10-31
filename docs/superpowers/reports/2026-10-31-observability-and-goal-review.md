@@ -254,3 +254,61 @@
 为收尾剩余真实输入验收，本轮新增 [隔离 Lab visible-effect spec](../specs/2026-10-31-isolated-visible-effect-acceptance-design.md) 和 [执行计划](../plans/2026-10-31-isolated-visible-effect-acceptance-plan.md)。它把 native desktop/window/capture 原子 probe、proofEpoch、Host claim、RTP/rVFC marker 和负例门禁写成可执行任务；在该隔离环境建立前，生产共享桌面相关指标继续保持 `NOT_RUN`。
 
 隔离 Lab guard 测试路径也已自包含化（`f53a678`），不再依赖外部 `PYTHONPATH`；Lab/scene/runtime/guard 集合当前 **124/124** 通过，且仍保持自动输入在 native probe 缺失时 `BLOCKED`。
+
+## 本轮日志系统与 Goal 复核（2026-10-31 21:28 Asia/Shanghai）
+
+本轮只读复核使用当前运行进程、`/tmp/wrd-structured/signal-server.jsonl`、轮转后的 `back-debug.log*`、`/tmp/wrd-diag/summary` 和 watcher state；没有修改代码、没有重启服务、没有操作 tunnel。
+
+### 当前运行边界
+
+- `/health` 返回 `ok`，`/api/status` 为 `hostOnline=true`、`viewerCount=0`、`mediaState=unknown`；这表示本地 Signal/Host 在线，但当前没有 Viewer，不能用本窗口证明视频、输入或呈现可用。
+- `cloudflared` 进程未变化，`/tmp/wrd-safe-current-url.txt` 为空；当前没有可用的 safe quick tunnel URL 证据，不能把本地健康扩展成公网可达结论。
+- watcher 当前为 `entry-healthy`，origin/formal/passive-runtime/assets 均为 `ok`，但最近一次 formal probe 的 `elapsedMs` 约 5945 ms。近两天 formal-health p50/p95/p99/max 约 1305/3676/7732/12529 ms，login/viewer/core asset 的 p95 约 3201/3262/3892 ms；现有 watcher 只保存单次耗时和状态，没有 p95/p99、分段 TTFB 或连续慢请求告警，网页“偶发打不开/很慢”仍可能被单次 200 掩盖。
+
+### 最近两天已经能发现的故障
+
+以单行结构化 JSONL 为机器事实源（覆盖 2026-10-30 02:41Z 至 2026-10-31 13:25Z）统计：
+
+- `signal_socket_disconnected` 98 次：`transport close` 49、`server namespace disconnect` 33、`ping timeout` 14、`transport error` 2。
+- `viewer_disconnect_grace_started` 57 次、`viewer_disconnect_grace_expired` 30 次；`control_transition_failed_closed` 83 次，其中 `controller-disconnect` 41、`lease-expired` 39、`transition-timeout` 1；`control_reset_completed` 82 次。
+- `viewer_reconnected`/`viewer_rebind_confirmed` 各 10 次，`signal_input_rejected` 5 次且均为 unauthorized；说明断连后的控制租约失效和重置是真实运行问题，不是单纯前端提示。
+- `diagnostic_uploaded` 28 次，其中 `signal-connect-error` 16 次；这证明连接故障路径确实会触发诊断上报。
+
+合并原始轮转文本日志后计数会更高，因为该文件是多行 `console.inspect`，包含重复/跨轮转边界，不能作为机器关联事实源。它仍然说明当前 `/tmp/signal-server.log` 的格式本身是诊断缺口：7 MB 混合文本无法稳定按事件、会话和时间窗口查询。
+
+Host 轮转日志在最近窗口有 7190 个可解析事件循环样本：`lagMs` p50/p95/max 约 1.21/7.97/676.24 ms，RSS p95/max 约 619/673.8 MiB；抓帧 `lastDurationMs` p95/max 约 178.9/1296.0 ms，`maxDurationNonCpuMs` 最大约 1263.0 ms，而 `maxDurationThreadCpuMs` 最大约 47.0 ms。该证据仍支持“抓帧长尾主要是等待/阻塞，不是 Python 线程 CPU 饱和”，但当前没有在线 Viewer 时，capture `unavailable` 不能证明媒体健康。
+
+### 日志系统仍不足以闭环的部分
+
+1. **Heartbeat 证据丢失只能在 close 时看到。** `ringDropped` 和 `coverage=partial/proof=false` 由 heartbeat close snapshot 输出，在线会话期间没有周期性 bounded snapshot 或立即告警。因此诊断环溢出可以发生，但直到断线后才进入日志；这里的 `ringDropped` 是本地诊断事件环 eviction，不是 WebSocket/WebRTC 数据包丢失，也不是视频 `framesDropped`。最近的 heartbeat close 已出现非零 ring drop，不能宣称诊断环时序完整。
+2. **诊断收据仍有缺测。** 2026-10-31 summary 中手动窗口可以得到 `logReceipt=valid`（reported 约 45–63、retained=0、redacted=reported、dropped=0），但连接失败窗口多为 `unknown` 或 `empty`；`summaryGap`、`ringDrop` 多为 `unknown`，不是零。它们没有统一带上 collector 状态、起止游标、传输接收数和丢失原因，因此仍不能区分未采集、未传输、被裁剪和写入失败。
+3. **帧关联仍无真实生产样本。** 最新 summary 的 `frameTrace.acceptanceState=PENDING`、`matchedCount=0`、`stageCoverage.sampleCount=0`；因此可以看到 ACK、Host apply 或媒体统计的局部数据，却不能计算 `input → Host apply → capture → encode → RTP → decode → paint` 的 p95/max。
+4. **健康门禁仍可误报。** `hostOnline` 和 `viewerCount` 只能证明进程与连接对象存在；没有把最近 fresh capture、received/decode/present、输入 heartbeat 和 active stall 统一纳入可用性状态。`session_stale_detected`、`media_stalled`、`slot_released` 在最近两天生产日志仍没有真实触发样本。
+5. **日志隐私和格式仍处于迁移态。** 新结构化 lifecycle 事件使用 hash correlation，但历史轮转日志仍含 raw viewer/socket/attempt 字段；Host 高频纯文本统计也未完全统一脱敏和降频。新的结构化 JSONL 与旧的 `/tmp/signal-server.log` 不能混合作为同一事实源。
+
+### Goal 当前未完成项
+
+线程 Goal 元数据当前仍是 `blocked`（这是此前缺少隔离原生 Lab 的阻塞状态），本轮复核没有把它误判为完成。按目标逐项判断：
+
+| Goal | 当前结论 |
+|---|---|
+| freshness、`page-hidden` stale 门禁 | 代码、离线测试和部分 freshness 运行字段已完成；最近两天没有真实 `session_stale_detected → slot_released` 生产样本，仍未完成生产验收。 |
+| receipt、summary gap、ring drop、input trace loss | receipt 状态和 input loss 已能进入新 summary；heartbeat ring 仍 close-only，全局 gap 没有统一进入单会话告警，`unknown` 仍很多，部分完成。 |
+| 输入 ACK 到呈现的统一脱敏关联 | 字段契约和缺测语义已完成；没有真实业务输入到 visible effect/physical display 的完整样本，未完成。 |
+| watcher 实际路由与 passive runtime | 当前运行态各探测层为 `ok`，代码已完成；入口延迟没有分位数门禁，历史 tunnel SIGTERM 最终发送者仍不可证，部分完成。 |
+| 维护窗口验收 | 3 小时 passive continuity、within-grace、after-grace 显式重新请求控制、媒体恢复和浏览器协议键鼠已有通过证据；双 Viewer 失败，真实业务输入、可见效果、物理键盘、OS reserved、reset fault injection、capture backend A/B 仍 NOT RUN 或未达标。 |
+
+另外，reset ACK 真实长会话的 200 ms 目标仍未证明；历史 405–496 ms 长尾虽不再是当前样本的普遍水平，但尚无端到端输入到可见效果证据。抓帧 A/B、诊断通道拥塞长会话和 tunnel SIGTERM 因果也没有完成。
+
+### 结论与优先级
+
+当前日志系统对“发现主要症状”已经足够，对“自动归因、会话可用性判定和性能验收”仍不够。最优先的补强顺序是：
+
+1. 把 Signal 输出统一为单行 JSONL，固定轮转边界和查询索引；保留原始文本只作人工旁证。
+2. 将 heartbeat ring/summary gap 改成周期 bounded snapshot，并在首次非零时立即产生会话级告警。
+3. 强制每份诊断报告带 collector 状态、游标、reported/received/retained/redacted/dropped 和 gap/ring 原因，避免 `null` 被误读成零。
+4. 在真实维护窗口采集一条完整 frame trace，并把 `inputToVisibleEffect` 与业务输入/可见 marker 绑定；没有这条证据就不能宣布控制稳定。
+5. 给 watcher 增加入口分段延迟和 p95/p99 门禁，同时把慢入口与 viewer attempt 关联。
+6. 完成隔离 macOS Lab 的真实输入、可见效果、物理显示、reset fault injection 和 capture backend A/B，再更新 Goal 状态。
+
+因此，本轮没有新增 Goal 通过项；当前服务进程在线，但目标仍未完成。
