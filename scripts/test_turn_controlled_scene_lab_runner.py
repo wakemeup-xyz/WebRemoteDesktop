@@ -6,6 +6,9 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT / "python-host"), str(ROOT / "scripts"), str(ROOT / "scripts" / "turn-loss-fixture")]
+
 SCRIPT = Path(__file__).with_name("turn_controlled_scene_lab_runner.py")
 SPEC = importlib.util.spec_from_file_location("turn_controlled_scene_lab_runner", SCRIPT)
 runner = importlib.util.module_from_spec(SPEC)
