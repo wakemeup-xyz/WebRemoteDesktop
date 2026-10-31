@@ -208,3 +208,25 @@
 `87a42e3` 已构建并重载到本地：Signal PID `8638`、Host PID `8667`，cloudflared PID `26104` 未变化；`/health`、`/api/status` 均正常，Viewer 槽位为 0。结构化日志现在只保留 lifecycle hash，业务 Socket payload 未改变；Host 高频纯文本标识仍作为后续 P1 清理范围。
 
 `5b8478f` 重载后再次做 12 秒诊断窗口，最新 daily summary 同时保留了 `frameTrace.stageCoverage`（`sampleCount=0`、各阶段 observed=0）和 Host `diagnosticAdmission`（frame_timing sent=39、capture_stats sent=1、dropped=0）。这证明 raw、runtime evidence 与 durable summary 三层字段已经一致；sampleCount 为 0 仍诚实表示本次没有 frame-trace batch，不代表媒体链路没有视频帧。
+
+## 当前运行窗口复核（2026-10-31 17:59 Asia/Shanghai）
+
+本节以本轮实际读取到的文件为准，修正早先报告中已经滞后的部署版本和统计数字；本轮没有重启 Signal/Host，也没有操作 tunnel。
+
+- 结构化 Signal 日志 `/tmp/wrd-structured/signal-server.jsonl` 的可解析覆盖为 `2026-10-30T02:41:35Z` 至 `2026-10-31T09:55:56Z`，共 2,997 行、无坏行。窗口内有 `signal_socket_disconnected=87`、`control_reset_completed=75`、`control_reset_retry=5`、`signal_input_rejected=5`、`viewer_disconnect_grace_expired=26`、`viewer_rebind_confirmed=9`、`diagnostic_uploaded=24`。这些数字足以确认控制/信令异常仍在发生，但不能由事件总数直接推出每次断连的同一根因。
+- reset ACK 的已有运行样本为 p50 13.69 ms、p95 47.21 ms、p99 96.08 ms、max 361.22 ms；此前 405–496 ms 长尾不再是普遍水平，但仍未证明 200 ms 目标在真实长会话中满足，也没有完成 ACK→可见效果的因果样本。
+- 最新手动诊断的 `logReceipt` 均为 `valid`，报告数约 45–63，`retained=0`、`redacted=reported`、`dropped=0`，input trace loss 各项为 0；但 `summaryGapCount` 和 `ringDropCount` 仍为 `null`（语义是未观测，不是零），`frameTrace.acceptanceState=PENDING`、`matchedCount=0`，最新 `stageCoverage.sampleCount=0`。全局 `/tmp/wrd-diag/.summary-state` 仍有 `receipt-horizon` gap=80。也就是说，收据写入链路可用，常用摘要仍不能证明“没有 gap/ring 丢失”或“已完成帧关联”。
+- 同一批最新诊断可以证明媒体本身曾经正常：首帧约 823–987 ms、解码约 19–20 FPS、decode p95 约 0.68–0.72 ms、jitter 约 6–9.7 ms、candidate RTT 约 1–2 ms、`framesDropped=0`、`hasPaintedFrame=true`。但所有输入相关指标（`inputAck`、`hostQueue`、`hostApply`、`inputToFrameNotice`、`inputToVisibleEffect`）都是 `count=0/available=false`，所以不能从“有画面”推导“控制输入已生效”。
+- 日志隐私处于迁移态：当前新事件已有 hash correlation，但窗口内仍有 578 条历史结构化事件包含原始 viewer/session/attempt 字段，只有 7 条使用新的 hash 字段；这解释了为什么不能把“当前新代码已脱敏”扩展成“最近两天日志全量已脱敏”。`/tmp/signal-server.log` 仍是混合文本和结构化输出，不应作为机器解析或 guarded recovery 的事实源；受控读取应使用结构化 JSONL 并固定 inode。
+- Host 07:22–09:59Z 的聚合日志仍显示抓帧长尾以非 CPU 为主：单窗最大抓帧约 311、455、833 ms，对应非 CPU 最大约 93、422、792 ms，线程 CPU 最大约 41 ms；部分窗口 fresh rate 约 2.1–4.9 Hz，后续较好窗口约 16.7–18 Hz。事件循环大部分窗口 p95 约 2.3 ms，但曾有约 106–222 ms 的窗口峰值。现有日志能发现“采集等待/阻塞”和 event-loop 压力，仍没有 per-frame encode/RTP/decode/present 的生产时序。
+- 当前本地 `/health`、`/api/status` 返回成功，`hostOnline=true`、`viewerCount=0`、`mediaState=unknown`；watcher 的 origin/formal/passive-runtime 均为 `ok`，`entry-healthy`。当前实际 Viewer build 是 `25e0b46651956c6c`；报告中更早的 `6a137d3286eb3eb3` 只代表旧部署证据，不能用于当前状态判断。
+
+### 本轮判断
+
+日志系统对“发现症状”已经够用，对“自动归因和可用性门禁”仍不够用。当前最关键的三个缺口是：
+
+1. **会话健康缺少媒体进展门禁**：`health_ok`、`hostOnline` 和 `viewerCount` 仍可能同时为真，而 Viewer 实际没有解码帧或 Host 没有新鲜抓帧；需要把最近 received/decode/present 与 capture freshness 纳入按会话的可用性状态。
+2. **覆盖丢失没有统一告警路径**：单次诊断能记录 receipt，管理员接口能看到全局 gap 状态，但 lifecycle `droppedEvents`、summary gap、ring drop、Host admission congestion 尚未聚合到同一个会话告警和 daily summary。
+3. **端到端时序尚未有真实生产样本**：输入 ACK、Host apply、capture、encode、RTP、decode、paint 字段存在，但当前 frame trace 没有有效样本，不能计算输入到画面 p95/max，也不能证明用户可见效果。
+
+因此 Goal 继续保持 `active`。本轮没有新增通过项：代码/离线测试和 3 小时 passive continuity 可算完成，真实业务输入、visible effect/physical display、reset fault injection、capture backend A/B、双 Viewer 语义、完整 receipt/gap/ring 生产证据和 tunnel SIGTERM 根因仍未完成或没有足够证据。
