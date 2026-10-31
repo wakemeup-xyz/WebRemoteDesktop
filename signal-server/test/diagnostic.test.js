@@ -1031,9 +1031,9 @@ test('durable receipt ledger dedupes reports and scope events after raw eviction
   process.env.WRD_DIAG_DIR = dir;
   try {
     const payload = runtimeFixture(); const ingest = data => ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data, config: { enableDiagPersist: true }, logger: {} });
-    const first = ingest(payload); assert.equal(first.persisted, true); assert.equal(first.receipt.eventIdHashes.length, 1);
+    const first = ingest(payload); assert.equal(first.persisted, true); assert.equal(first.receipt.status, 'accepted'); assert.equal(first.receipt.eventIdHashes.length, 1);
     for (const name of fs.readdirSync(path.join(dir, 'raw')).filter(name => name.endsWith('.json'))) fs.unlinkSync(path.join(dir, 'raw', name));
-    const again = ingest(payload); assert.equal(again.duplicate, true); assert.equal(again.summaryEvent, null);
+    const again = ingest(payload); assert.equal(again.duplicate, true); assert.equal(again.receipt.status, 'accepted'); assert.equal(again.summaryEvent, null);
     assert.deepEqual(again.receipt, first.receipt); assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.endsWith('.json')).length, 0);
     const next = ingest({ ...payload, diagnosticId: 'f'.repeat(32) }); assert.equal(next.duplicate, false);
     assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 0); // already persisted, raw intentionally evicted
@@ -1051,9 +1051,10 @@ test('partial raw persistence failure returns no confirmation and retry complete
     const payload = runtimeFixture();
     fs.writeFileSync = function(file, ...args) { if (String(file).includes('runtime_')) throw Error('simulated-raw-write-failure'); return writeFile.call(this, file, ...args); };
     const options = { role: 'viewer', viewerId: 'unit', data: payload, config: { enableDiagPersist: true }, logger: {} };
-    const failed = ingestDiagnosticPayload(options); assert.equal(failed.persisted, false); assert.equal(failed.receipt.accepted, false); assert.deepEqual(failed.receipt.eventIdHashes, []);
+    const failed = ingestDiagnosticPayload(options); assert.equal(failed.persisted, false); assert.equal(failed.receipt.accepted, false);
+    assert.equal(failed.receipt.status, 'write-failed'); assert.deepEqual(failed.receipt.eventIdHashes, []);
     fs.writeFileSync = writeFile;
-    const retry = ingestDiagnosticPayload(options); assert.equal(retry.persisted, true); assert.equal(retry.receipt.eventIdHashes.length, 1);
+    const retry = ingestDiagnosticPayload(options); assert.equal(retry.persisted, true); assert.equal(retry.receipt.status, 'accepted'); assert.equal(retry.receipt.eventIdHashes.length, 1);
     assert.equal(fs.readdirSync(path.join(dir, 'raw')).filter(name => name.startsWith('scope-ended_')).length, 1);
     assert.equal(ingestDiagnosticPayload(options).duplicate, true);
   } finally { fs.writeFileSync = writeFile; if (previousDir === undefined) delete process.env.WRD_DIAG_DIR; else process.env.WRD_DIAG_DIR = previousDir; fs.rmSync(dir, { recursive: true, force: true }); }

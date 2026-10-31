@@ -588,6 +588,7 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     logCount: report.logCount || 0,
     persisted,
   };
+  if (options.receiptStatus === 'write-failed') meta.receiptStatus = 'write-failed';
   if (report.logContentPolicy === 'metadata-only') {
     meta.logContentPolicy = 'metadata-only';
     for (const key of ['reportedLogCount', 'retainedLogCount', 'redactedLogCount', 'inputTraceEventCount']) {
@@ -756,6 +757,7 @@ function ingestDiagnosticPayload(options = {}) {
 
   let persisted = false;
   let duplicate = false;
+  let receiptStatus = config.enableDiagPersist ? 'write-failed' : 'rejected';
   let eventIdHashes = [];
   if (config.enableDiagPersist) {
     try {
@@ -764,8 +766,12 @@ function ingestDiagnosticPayload(options = {}) {
       } else {
         ({ persisted, duplicate } = diagnosticStore().write(report));
       }
+      // A duplicate reuses the canonical accepted receipt so retries remain
+      // byte-for-byte stable; the outer result.duplicate flag carries replay.
+      receiptStatus = persisted ? 'accepted' : 'write-failed';
     } catch (error) {
       logger.error?.('[DIAGNOSTIC] Failed to write log file:', error.message);
+      receiptStatus = 'write-failed';
     }
   }
 
@@ -773,9 +779,10 @@ function ingestDiagnosticPayload(options = {}) {
     accepted: true,
     connectionAttemptId,
     persisted, duplicate,
-    receipt: { accepted: persisted, diagnosticId: persisted ? report.diagnosticId || null : null, eventIdHashes: persisted ? eventIdHashes : [] },
+    receipt: { accepted: persisted, status: receiptStatus,
+      diagnosticId: persisted ? report.diagnosticId || null : null, eventIdHashes: persisted ? eventIdHashes : [] },
     report,
-    summaryEvent: duplicate ? null : buildDiagnosticSummaryEvent(report, { persisted, socketId }),
+    summaryEvent: duplicate ? null : buildDiagnosticSummaryEvent(report, { persisted, socketId, receiptStatus }),
   };
 }
 
