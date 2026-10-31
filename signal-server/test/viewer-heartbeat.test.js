@@ -109,9 +109,14 @@ test('capacity bounds retained recorders and message flood does not grow heartbe
   for (let i = 0; i < 1000000; i++) flood.engine.emit('packet', { type: 'message' });
   for (let i = 0; i < 100; i++) { flood.at(i); flood.engine.emit('packetCreate', { type: 'ping' }); }
   flood.registry.stop();
-  assert.equal(flood.data().counts.messageIn, 1000000);
-  assert.equal(flood.data().ring.length, 32); assert.equal(flood.data().ringDropped, 68);
-  assert.equal(flood.data().ring[0].n, 69); assert.equal(flood.lines.length, 1);
+  const floodRows = flood.lines.map(line => JSON.parse(line.slice(prefix.length)));
+  const floodClose = floodRows.at(-1);
+  assert.equal(floodClose.event, 'viewer-heartbeat-close');
+  assert.equal(floodClose.counts.messageIn, 1000000);
+  assert.equal(floodClose.ring.length, 32); assert.equal(floodClose.ringDropped, 68);
+  assert.equal(floodClose.ring[0].n, 69);
+  assert.equal(floodRows.filter(row => row.event === 'viewer-heartbeat-snapshot').length, 1);
+  assert.equal(floodRows.length, 2);
 });
 
 test('privacy canaries and invalid getters never escape safe projection; incomplete flush is explicit', async () => {
