@@ -1002,6 +1002,19 @@ test('runtime frame correlation keeps bounded join counters and drops per-frame 
   });
 });
 
+test('runtime diagnostic preserves bounded Host admission counters without payloads', () => {
+  const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data: {
+    ...runtimeFixture(), logs: [], traceSummary: { diagnosticAdmission: {
+      types: { frame_timing: { sent: 10, dropped: 3 }, capture_stats: { sent: 2, dropped: 1 } },
+      reasons: { congested: 4 }, legacyDropped: { ids: 5, metadata: 6 }, payload: 'PRIVATE_CANARY',
+    } },
+  }, config: { enableDiagPersist: false } });
+  assert.equal(result.report.traceSummary.diagnosticAdmission.types.frame_timing.dropped, 3);
+  assert.equal(result.report.traceSummary.diagnosticAdmission.reasons.congested, 4);
+  assert.equal(result.summaryEvent.meta.diagnosticAdmission.legacyDropped.metadata, 6);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_CANARY'), false);
+});
+
 test('runtime diagnostic keeps absent or malformed console log counts unknown', () => {
   for (const logs of [undefined, null, 'PRIVATE_LOG_CANARY', { length: 99 }]) {
     const data = { ...runtimeFixture(), logs, reportedLogCount: 999 };

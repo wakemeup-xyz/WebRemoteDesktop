@@ -14,6 +14,18 @@
     try { return typeof getter === 'function' ? (getter(...args) ?? fallback) : fallback; }
     catch (_) { return fallback; }
   };
+  const DIAGNOSTIC_ADMISSION_TYPES = ['frame_timing', 'capture_stats', 'frame_trace_batch', 'loss_lab_host_trace_batch'];
+  const DIAGNOSTIC_ADMISSION_REASONS = ['unsupported', 'serialization', 'oversized', 'unavailable', 'replaced',
+    'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'send_error'];
+  function sanitizeDiagnosticAdmission(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const count = item => Number.isSafeInteger(item) && item >= 0 && item <= 999999999 ? item : null;
+    const typeValue = kind => ({ sent: count(value.types?.[kind]?.sent), dropped: count(value.types?.[kind]?.dropped) });
+    const types = Object.fromEntries(DIAGNOSTIC_ADMISSION_TYPES.map(kind => [kind, typeValue(kind)]));
+    const reasons = Object.fromEntries(DIAGNOSTIC_ADMISSION_REASONS.map(reason => [reason, count(value.reasons?.[reason])]));
+    return { types, reasons,
+      legacyDropped: { ids: count(value.legacyDropped?.ids), metadata: count(value.legacyDropped?.metadata) } };
+  }
   function sanitizeDataChannelWatchdog(value) {
     const fields = ['phase', 'timedOut', 'elapsedMs', 'remainingMs', 'extensions', 'pcState', 'iceState',
       'signalingState', 'sctpState', 'inputState', 'moveState', 'socketConnected', 'localDescriptionSet', 'remoteDescriptionSet'];
@@ -162,15 +174,17 @@
         'droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount']
         .map(key => [key, safeNumber(rawFrameTrace[key])])),
     } : undefined;
+    const diagnosticAdmission = sanitizeDiagnosticAdmission(payload.traceSummary?.diagnosticAdmission);
     return { schemaVersion: 3, diagnosticId: digest(payload.diagnosticId), reason: payload.reason,
       trigger: payload.trigger, connectionAttemptId: storageHash(payload.connectionAttemptId),
       captured: clone(payload.captured), build: clone(payload.build), latencyStatus: payload.latencyStatus,
       latency: latency(payload.latency), inputState: {},
       ...(logReceipt ? { logReceipt } : {}),
-      ...(payload.traceSummary?.controlHeartbeat || frameTrace ? { traceSummary: {
+      ...(payload.traceSummary?.controlHeartbeat || frameTrace || diagnosticAdmission ? { traceSummary: {
         ...(payload.traceSummary?.controlHeartbeat
           ? { controlHeartbeat: sanitizeControlHeartbeat(payload.traceSummary.controlHeartbeat) } : {}),
         ...(frameTrace ? { frameTrace } : {}),
+        ...(diagnosticAdmission ? { diagnosticAdmission } : {}),
       } } : {}),
       inputTrace: { schemaVersion: 3, traceNowMs: safeNumber(trace.traceNowMs),
         counters: Object.fromEntries(Object.entries(trace.counters || {}).filter(([key, value]) => /^[a-zA-Z]{1,40}$/.test(key) && Number.isSafeInteger(value) && value >= 0)),
@@ -243,7 +257,9 @@
     };
     return build;
   }
-  const api = { sanitizeControlHeartbeat, sanitizeSignalingFailure, sanitizeDataChannelWatchdog, createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic, runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
+  const api = { sanitizeControlHeartbeat, sanitizeSignalingFailure, sanitizeDataChannelWatchdog,
+    sanitizeDiagnosticAdmission, createRuntimeDiagnosticBuilder, boundRuntimeDiagnostic,
+    runtimeDiagnosticForStorage, runtimeDiagnosticBytes: bytes };
   Object.assign(global, api);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this));

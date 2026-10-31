@@ -2052,6 +2052,9 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self.last_time = current_time
             self._total_reuse = 0
             # Send capture stats to viewer via DataChannel for FPS/latency display
+            if not hasattr(self, "_diagnostic_admission"):
+                self._diagnostic_admission = DiagnosticAdmission()
+            diagnostic_admission = self._diagnostic_admission.snapshot()
             self._send_disposable_diagnostic({
                 "type": "capture_stats",
                 "fps": round(fps, 1),
@@ -2059,6 +2062,7 @@ class ScreenCaptureTrack(VideoStreamTrack):
                 "height": frame.height,
                 "reuse": interval_reuse,
                 "frames": interval_frames,
+                "diagnosticAdmission": diagnostic_admission,
             })
             logger.info("DC_DIAGNOSTIC_ADMISSION %s", self._diagnostic_admission.snapshot())
 

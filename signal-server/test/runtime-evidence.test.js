@@ -184,6 +184,21 @@ test('receipt preserves explicit production summary gap and ring-drop fields', (
   assert.equal(receipt.coverage.complete, false);
 });
 
+test('receipt aggregates bounded Host diagnostic admission counters', () => {
+  const admission = { types: { frame_timing: { sent: 10, dropped: 3 }, capture_stats: { sent: 2, dropped: 1 } },
+    reasons: { congested: 4 }, legacyDropped: { ids: 5, metadata: 6 } };
+  const evidence = createRuntimeEvidenceRecorder();
+  const row = projectDiagnostic({ schemaVersion: 3, traceSummary: { diagnosticAdmission: admission } });
+  assert.equal(row.diagnosticAdmission.types.frame_timing.dropped, 3);
+  evidence.observeDiagnostic({ schemaVersion: 3, traceSummary: { diagnosticAdmission: admission } });
+  const receipt = evidence.receipt();
+  assert.equal(receipt.diagnostics.diagnosticAdmission.types.frame_timing.sent, 10);
+  assert.equal(receipt.diagnostics.diagnosticAdmission.types.frame_timing.dropped, 3);
+  assert.equal(receipt.diagnostics.diagnosticAdmission.reasons.congested, 4);
+  assert.equal(receipt.diagnostics.diagnosticAdmission.legacyDropped.metadata, 6);
+  assert.equal(receipt.diagnostics.diagnosticAdmission.reports, 1);
+});
+
 test('bounded recorder evicts old reports and never retains untrusted event objects', () => {
   let time = 0;
   const evidence = createRuntimeEvidenceRecorder({ now: () => time, maxReports: 2 });

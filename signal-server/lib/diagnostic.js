@@ -1,6 +1,7 @@
 const { createDiagnosticStore, getDiagDir } = require('./diagnostic-store');
 const { loadConfig } = require('./config');
-const { sanitizeDataChannelWatchdog, sanitizeSignalingFailure, sanitizeControlHeartbeat } = require('../../web-client/js/runtime-diagnostic');
+const { sanitizeDataChannelWatchdog, sanitizeSignalingFailure, sanitizeControlHeartbeat,
+  sanitizeDiagnosticAdmission } = require('../../web-client/js/runtime-diagnostic');
 
 const { LATENCY_METRIC_NAMES } = require('../../web-client/js/latency-monitor');
 const crypto = require('node:crypto');
@@ -161,6 +162,8 @@ function redactRuntimeDiagnostic(payload) {
   if (controlHeartbeat) clean.traceSummary.controlHeartbeat = controlHeartbeat;
   const frameTrace = sanitizeFrameTrace(payload.traceSummary?.frameTrace);
   if (frameTrace) clean.traceSummary.frameTrace = frameTrace;
+  const diagnosticAdmission = sanitizeDiagnosticAdmission(payload.traceSummary?.diagnosticAdmission);
+  if (diagnosticAdmission) clean.traceSummary.diagnosticAdmission = diagnosticAdmission;
   const elapsedMs = finiteNonnegative(interval?.elapsedMs);
   const sampleAgeMs = finiteNonnegative(interval?.sampleAgeMs);
   if (interval?.schemaVersion === 1 && interval.kind === 'webrtc-inbound-interval'
@@ -616,6 +619,8 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
       meta.frameTrace = frameTrace;
       meta.frameTraceLoss = Object.fromEntries(FRAME_TRACE_LOSS_FIELDS.map(key => [key, frameTrace[key] ?? null]));
     }
+    const diagnosticAdmission = sanitizeDiagnosticAdmission(report.traceSummary?.diagnosticAdmission);
+    if (diagnosticAdmission) meta.diagnosticAdmission = diagnosticAdmission;
   }
   if (safeInputState) {
     const gate = safeInputState.effectiveGate || {};

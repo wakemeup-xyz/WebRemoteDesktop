@@ -20,6 +20,21 @@ test('missing collector is explicit and getter failures cannot break diagnostics
   assert.equal(payload.latency, null); assert.equal(payload.latencyStatus, 'collector-unavailable'); assert.deepEqual(payload.startup.dataChannelWatchdog, require('./runtime-diagnostic').sanitizeDataChannelWatchdog(null));
 });
 
+test('diagnostic admission sanitizer keeps only bounded delivery counters', () => {
+  const { sanitizeDiagnosticAdmission } = require('./runtime-diagnostic');
+  const clean = sanitizeDiagnosticAdmission({
+    types: { frame_timing: { sent: 4, dropped: 2 }, capture_stats: { sent: 1, dropped: 0 } },
+    reasons: { congested: 2, send_error: 1 }, legacyDropped: { ids: 3, metadata: 4 },
+    privatePayload: 'CANARY',
+  });
+  assert.equal(clean.types.frame_timing.sent, 4);
+  assert.equal(clean.types.frame_timing.dropped, 2);
+  assert.equal(clean.reasons.congested, 2);
+  assert.deepEqual(clean.legacyDropped, { ids: 3, metadata: 4 });
+  assert.equal(JSON.stringify(clean).includes('CANARY'), false);
+  assert.equal(sanitizeDiagnosticAdmission({ types: { frame_timing: { sent: -1 } } }).types.frame_timing.sent, null);
+});
+
 test('closed scopes drain once into a bounded queue; failure replay retains IDs and cancelled outcomes', () => {
   let drains = 0; let now = 100;
   const old = [ { endedAtMs: 90, snapshot: { ...sample, outcomes: { ...sample.outcomes, cancelled: 2 } } },

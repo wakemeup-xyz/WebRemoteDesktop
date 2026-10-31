@@ -12,6 +12,7 @@ const LOG_RECEIPT_STATES = ['empty', 'valid', 'unknown', 'truncated', 'failed'];
 const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
 const FRAME_TRACE_LOSS_FIELDS = ['droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount'];
 const CORRELATION_STAGES = ['ack', 'hostApply', 'capture', 'encode', 'rtp', 'decode', 'present'];
+const { sanitizeDiagnosticAdmission } = require('../../../web-client/js/runtime-diagnostic');
 
 function boundedCount(value) {
   return Number.isSafeInteger(value) && value >= 0 ? Math.min(MAX_COUNT, value) : null;
@@ -137,6 +138,7 @@ function projectDiagnostic(report = {}) {
   const logReceipt = projectLogReceipt(report, metadataOnly);
   const inputTraceLoss = projectInputTraceLoss(report);
   const frameTrace = projectFrameTrace(report);
+  const diagnosticAdmission = sanitizeDiagnosticAdmission(report.traceSummary?.diagnosticAdmission);
   const sent = firstCount(outcomes.sent, report.inputTrace?.counters?.sent);
   const visible = metricCount(metrics, 'inputToVisibleEffectMs');
   const visibleCoverage = ratio(visible, sent);
@@ -180,6 +182,7 @@ function projectDiagnostic(report = {}) {
     logReceipt,
     inputTraceLoss,
     frameTrace,
+    diagnosticAdmission,
     correlation: projectCorrelation(report, metrics, outcomes),
     fps,
     dropped,
@@ -270,6 +273,21 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const correlationReports = projected.filter(row => row.correlation).length;
     const frameTraceLoss = Object.fromEntries(FRAME_TRACE_LOSS_FIELDS.map(key => [key,
       projected.reduce((total, row) => total + (row.frameTrace?.[key] ?? 0), 0)]));
+    const diagnosticAdmission = {
+      types: Object.fromEntries(['frame_timing', 'capture_stats', 'frame_trace_batch', 'loss_lab_host_trace_batch']
+        .map(kind => [kind, {
+          sent: projected.reduce((total, row) => total + (row.diagnosticAdmission?.types?.[kind]?.sent ?? 0), 0),
+          dropped: projected.reduce((total, row) => total + (row.diagnosticAdmission?.types?.[kind]?.dropped ?? 0), 0),
+        }])),
+      reasons: Object.fromEntries(['unsupported', 'serialization', 'oversized', 'unavailable', 'replaced',
+        'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'send_error']
+        .map(reason => [reason, projected.reduce((total, row) => total + (row.diagnosticAdmission?.reasons?.[reason] ?? 0), 0)])),
+      legacyDropped: {
+        ids: projected.reduce((total, row) => total + (row.diagnosticAdmission?.legacyDropped?.ids ?? 0), 0),
+        metadata: projected.reduce((total, row) => total + (row.diagnosticAdmission?.legacyDropped?.metadata ?? 0), 0),
+      },
+      reports: projected.filter(row => row.diagnosticAdmission !== null).length,
+    };
     const rss = sampleStats(resourceSamples.map(row => row.rssMiB));
     const cpu = sampleStats(resourceSamples.map(row => row.cpuPercent));
     if (!projected.length) recordMissing(missing, 'diagnostics');
@@ -296,6 +314,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
         inputTraceEventCount: sumKnown('inputTraceEventCount'),
         inputTraceLoss,
         frameTraceLoss,
+        diagnosticAdmission,
         metadataOnlyReports: projected.filter(row => row.metadataOnly).length,
         summaryGapCount: summaryCoverage.droppedSummaryCount + sum('summaryGapCount'),
         summaryGaps: summaryCoverage.gaps.slice(),

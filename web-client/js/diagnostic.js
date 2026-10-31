@@ -400,6 +400,9 @@
         ...(basePayload.traceSummary || snapshot.traceSummary || {}),
         controlHeartbeat: sanitizeControlHeartbeat(typeof WebRTC !== 'undefined'
           ? WebRTC.getControlHeartbeatSnapshot?.() : null),
+        diagnosticAdmission: (typeof WebRTC !== 'undefined' && typeof sanitizeDiagnosticAdmission === 'function')
+          ? sanitizeDiagnosticAdmission(WebRTC._hostDiagnosticAdmission)
+          : null,
         trigger: meta.trigger || basePayload.traceSummary?.trigger || 'manual',
         reason: meta.reason || basePayload.traceSummary?.reason || null,
         uiPhase: (typeof WebRTC !== 'undefined' && WebRTC.uiPhase) || null,

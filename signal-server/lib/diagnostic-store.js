@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { sanitizeControlHeartbeat } = require('../../web-client/js/runtime-diagnostic');
+const { sanitizeControlHeartbeat, sanitizeDiagnosticAdmission } = require('../../web-client/js/runtime-diagnostic');
 const DAY = 86400000;
 const RECEIPT_TTL_MS = DAY;
 const RECEIPT_MAX_ENTRIES = 10000;
@@ -223,7 +223,11 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
           staleTraceCount: knownCount(r.traceSummary.frameTrace.staleTraceCount),
           conflictingTraceCount: knownCount(r.traceSummary.frameTrace.conflictingTraceCount) }
         : null,
-      ...(r.traceSummary?.controlHeartbeat?{traceSummary:{controlHeartbeat:sanitizeControlHeartbeat(r.traceSummary.controlHeartbeat)}}:{}),
+      ...((r.traceSummary?.controlHeartbeat || r.traceSummary?.diagnosticAdmission) ? { traceSummary: {
+        ...(r.traceSummary?.controlHeartbeat ? { controlHeartbeat: sanitizeControlHeartbeat(r.traceSummary.controlHeartbeat) } : {}),
+        ...(sanitizeDiagnosticAdmission(r.traceSummary?.diagnosticAdmission)
+          ? { diagnosticAdmission: sanitizeDiagnosticAdmission(r.traceSummary.diagnosticAdmission) } : {}),
+      } } : {}),
       sampleCount:metrics && typeof metrics==='object'?Object.values(metrics).reduce((n,item)=>Math.min(Number.MAX_SAFE_INTEGER,n+count(item?.count)),0):0};
   }
   const dayStart=at=>Math.floor(at/DAY)*DAY;

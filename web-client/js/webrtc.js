@@ -516,6 +516,7 @@ const WebRTC = {
   // Viewer neither retains packet diagnostics nor calls getStats for this.
   _lossLabTrace: null,
   _hostCaptureFps: 0,
+  _hostDiagnosticAdmission: null,
   frameTraceCollector: null,
   adaptiveMediaEnabled: true,
   // When false, adaptive path may still change fps/bitrate, but never width/height.
@@ -5455,6 +5456,9 @@ const WebRTC = {
         if (data.type === 'capture_stats') {
           if (data.fps !== undefined) {
             this._hostCaptureFps = Number(data.fps) || 0;
+          }
+          if (typeof sanitizeDiagnosticAdmission === 'function') {
+            this._hostDiagnosticAdmission = sanitizeDiagnosticAdmission(data.diagnosticAdmission);
           }
           return;
         }
