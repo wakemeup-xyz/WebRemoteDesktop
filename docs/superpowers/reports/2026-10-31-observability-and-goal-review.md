@@ -463,3 +463,5 @@ watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-s
 | 短断线、重连、持续控制和资源稳定性 | **断线 grace/reset/释放通过**；真实用户长会话和资源联合验收仍缺。 |
 
 因此 stale 自动释放这一项已经从“未验收”推进为“生产通过”，但 Goal 整体仍不能完成，原因集中在真实可见效果、完整资源长会话、生产 capture A/B 和诊断窗口的完整指标覆盖。
+
+stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 **PASS**：21 个采样、无缺测/晚到/身份变化，`pcState=connected`、`hasPaintedFrame=true`、`progressAfterBaseline=true`，首帧约 7.83 秒。说明 stale 自动释放没有破坏后续新 Viewer 的正常连接和出帧。
