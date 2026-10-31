@@ -603,3 +603,9 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 
 - 独立临时验收脚本在正式域名完成 8 次 `showDock` 控制循环，8/8 命令均收到 ACK 并完成 Host apply；`ackP95` **69.2ms**、`hostApplyP95` **62.7ms**、`inputToPostApplyFrameP95` **221.0ms**，每次浏览器统计保持约 19–20 FPS。
 - `remoteVideo` 像素直方图变化在 3/8 次出现。重复 `showDock` 是幂等动作，后续点击不一定改变画面，因此这不是输入中断证据；下一轮视觉验收应使用 `showDock → Escape` 交替动作，避免把“动作无状态变化”误判为丢输入。
+
+### `showDock → Escape` 交替视觉验收（2026-11-01 03:30）
+
+- 正式域名完成 4 轮交替动作；Host 日志确认同一 `attemptHash` 下 `command/showDock` 与 `keyboard/batch` 均完整经过 `received → result → ack_sent`，没有中断或未授权拒绝。
+- `showDock`：ACK p95 **73.8ms**、Host apply p95 **68.6ms**、`inputToPostApplyFrameMs` p95 **202.1ms**，画面变化 3/4；`Escape`：ACK p95 **15.2ms**、Host apply p95 **11.9ms**、`inputToPostApplyFrameMs` p95 **140.7ms**，画面变化 4/4。
+- 这条结果证明“输入链路完成但画面无变化”可以由动作幂等性解释；Escape 交替动作提供了稳定的画面变化证据。它仍是独立像素变化测量，严格 marker-backed `inputToVisibleEffectMs` 继续保持缺测边界。
