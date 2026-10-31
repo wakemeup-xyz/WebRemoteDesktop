@@ -22,6 +22,7 @@ function createRuntimeContext(options = {}) {
   // A Lab context must bind the exact socket which consumed its one-use proof;
   // an epoch increase alone can be caused by an unrelated Viewer.
   const consumedProofViewers = new Map();
+  const viewerFreshness = new Map();
   const connections = {
     host: null,
     viewers: new Map(),
@@ -127,6 +128,18 @@ function createRuntimeContext(options = {}) {
     },
     viewerEpoch() {
       return viewerEpoch;
+    },
+    setViewerFreshnessSnapshot(viewerId, snapshot) {
+      if (typeof viewerId !== 'string' || viewerId.length === 0) return;
+      if (snapshot && typeof snapshot === 'object') viewerFreshness.set(viewerId, { ...snapshot });
+      else viewerFreshness.delete(viewerId);
+    },
+    getViewerFreshness(viewerId) {
+      const snapshot = viewerFreshness.get(viewerId);
+      return snapshot ? { ...snapshot } : null;
+    },
+    getViewerFreshnessSnapshots() {
+      return Object.fromEntries([...viewerFreshness].map(([id, snapshot]) => [id, { ...snapshot }]));
     },
     getViewerSnapshot() {
       return Array.from(connections.viewers.values()).map((socket) => ({

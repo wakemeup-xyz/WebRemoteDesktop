@@ -17,6 +17,7 @@ const {
   validateMediaActivityRequest,
   summarizeMediaActivity,
 } = require('../lib/media-activity-contract');
+const { createViewerFreshnessRegistry } = require('../lib/observability/viewer-freshness');
 
 function validRelayNonce(value, limit) {
   return typeof value === 'string' && value.length > 0 && value.length <= limit && !(/[^\x20-\x7e]/.test(value));
@@ -320,6 +321,9 @@ function setupSignaling(io, options = {}) {
     for (const key of [
       'reason', 'leaseEpoch', 'attempt', 'graceMs', 'connectionAttemptSequence',
       'rebound', 'schemaVersion', 'state', 'reasons', 'generation', 'status',
+      'mediaState', 'pageVisibility', 'pageHidden', 'stale', 'released',
+      'lastFrameAgeMs', 'lastReceivedAgeMs', 'lastStatsAgeMs', 'lastHeartbeatAgeMs',
+      'mediaStateAgeMs', 'activityAgeMs', 'suspendedAgeMs', 'staleAfterMs', 'release',
     ]) {
       if (Object.prototype.hasOwnProperty.call(fields, key)) meta[key] = fields[key];
     }
@@ -336,6 +340,36 @@ function setupSignaling(io, options = {}) {
     }
     recentEventStore?.append?.(payload);
   }
+
+  const viewerFreshness = createViewerFreshnessRegistry({
+    now: options.now || Date.now,
+    staleAfterMs: config.viewerMediaStaleMs,
+    // Keep the lease-expiry scheduler's callback identity stable. Tests and
+    // embedders may inject an isolated freshness scheduler explicitly.
+    setIntervalFn: options.viewerFreshnessScheduler?.setInterval,
+    clearIntervalFn: options.viewerFreshnessScheduler?.clearInterval,
+    onSnapshot(viewerId, snapshot) {
+      try { instanceRuntime.setViewerFreshnessSnapshot?.(viewerId, snapshot); } catch (_error) {}
+    },
+    onEvent(observation) {
+      emitControlEvent(observation.event, {
+        viewerId: observation.viewerId,
+        ...observation.meta,
+      });
+    },
+    onStale({ viewerId }) {
+      const viewer = connections.viewers.get(viewerId);
+      if (!viewer || !isActiveViewerSocket(viewer)) return false;
+      const removed = removeDesktopViewer(viewer, 'media-stale');
+      if (!removed) return false;
+      try { viewer.disconnect(true); } catch (_error) {}
+      return true;
+    },
+  });
+  // Socket.IO emits `close` when the owning server shuts down. Keep the
+  // bounded freshness timer from outliving an embedded/test signaling
+  // instance; production server shutdown remains independent of telemetry.
+  try { io.on?.('close', () => viewerFreshness.stop()); } catch (_error) {}
 
   function emitInputEvent(event, socket, data = {}, overrides = {}) {
     const observedData = data && typeof data === 'object' && !Array.isArray(data)
@@ -568,6 +602,7 @@ function setupSignaling(io, options = {}) {
     const reboundLease = desktopLease.rebindViewer(previousId, nextId);
     connections.viewers.delete(previousId);
     connections.viewers.set(nextId, socket);
+    viewerFreshness.rebind(previousId, nextId);
 
     const priorProgress = mediaActivityProgress.get(previousId);
     if (priorProgress) {
@@ -753,6 +788,7 @@ function setupSignaling(io, options = {}) {
     clearViewerSessionBinding(socket);
     clearLegacyRelayCompanion(socket.id, { stop: true });
     connections.viewers.delete(socket.id);
+    viewerFreshness.unregister(socket.id);
     clearPendingInputs(socket.id);
     mediaActivityProgress.delete(socket.id);
     pendingOffers.delete(socket.id);
@@ -1283,6 +1319,7 @@ function setupSignaling(io, options = {}) {
         connections.viewers.set(socket.id, socket);
         supersedeOtherDesktopViewers(socket);
       }
+      if (!rebound) viewerFreshness.register(socket.id);
       if (connections.viewers.size > 1) clearAllLegacyRelayCompanions({ stop: true });
       try {
         options.observeViewerHeartbeat?.(socket, () => connections.viewers.get(socket.id) === socket);
@@ -1412,6 +1449,7 @@ function setupSignaling(io, options = {}) {
         leaseId: data.leaseId,
         leaseEpoch: data.leaseEpoch,
       }));
+      viewerFreshness.observeHeartbeat(socket.id);
       const observation = observeControlHeartbeat(socket, data, result, ackScopeMatches);
       if (!result.ok && observation.rejected === 1) summarizeControlHeartbeat(socket, 'rejected');
       if (!result.ok) socket.emit('control-heartbeat-rejected', { reason: result.reason });
@@ -1765,6 +1803,7 @@ function setupSignaling(io, options = {}) {
       }
       const recoveryKey = resolveViewerRecoveryKey(socket.id, data);
       if (!recoveryKey) return;
+      viewerFreshness.observeStats(socket.id, data);
       const duration = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
       if (connections.host) {
         connections.host.emit('viewer-stats', {
@@ -1916,6 +1955,7 @@ function setupSignaling(io, options = {}) {
         return;
       }
       noteMediaGenerationProgress(socket.id, value.connectionAttemptId, value.generation);
+      viewerFreshness.observeMedia(socket.id, value);
       const summary = summarizeMediaActivity(value);
       emitControlEvent('media_activity_requested', {
         ...summary,
@@ -1937,6 +1977,7 @@ function setupSignaling(io, options = {}) {
       if (!viewerId) return;
       const viewerSocket = connections.viewers.get(viewerId);
       if (!isActiveViewerSocket(viewerSocket)) return;
+      viewerFreshness.observeMedia(viewerId, data);
       releaseRejectedMediaProgress(viewerId, data);
       viewerSocket.emit('media-activity-ack', {
         schemaVersion: 1,
@@ -2212,12 +2253,35 @@ function setupSignaling(io, options = {}) {
 }
 
 function getConnectionStatus(context = runtime) {
+  const allFreshness = typeof context.getViewerFreshnessSnapshots === 'function'
+    ? context.getViewerFreshnessSnapshots() : {};
+  const freshness = Object.fromEntries(Object.entries(allFreshness)
+    .filter(([viewerId]) => context.connections.viewers.has(viewerId)));
+  const freshnessRows = Object.values(freshness);
+  const primaryFreshness = freshnessRows[0] || null;
+  const mediaFresh = freshnessRows.length
+    ? freshnessRows.some(row => row.mediaState === 'active'
+      && row.lastFrameAgeMs !== null
+      && row.lastFrameAgeMs < row.staleAfterMs
+      && row.stale !== true)
+    : null;
+  const mediaState = freshnessRows.some(row => row.stale) ? 'stale'
+    : freshnessRows.some(row => row.mediaState === 'suspended') ? 'suspended'
+      : freshnessRows.some(row => row.mediaState === 'active') ? 'active' : 'unknown';
+  const pageVisibility = freshnessRows.length && freshnessRows.every(row => row.pageVisibility === freshnessRows[0].pageVisibility)
+    ? freshnessRows[0].pageVisibility : 'unknown';
   return {
     hostOnline: Boolean(context.connections.host),
     hostId: context.connections.host ? context.connections.host.id : null,
     viewerCount: context.connections.viewers.size,
     relayViewerCount: context.connections.relayViewers.size,
     viewers: getViewerSnapshot(context),
+    viewerFreshness: freshness,
+    mediaFresh,
+    mediaState,
+    mediaStateAgeMs: primaryFreshness?.mediaStateAgeMs ?? null,
+    pageVisibility,
+    lastFrameAgeMs: primaryFreshness?.lastFrameAgeMs ?? null,
     viewerEpoch: context.viewerEpoch(),
   };
 }

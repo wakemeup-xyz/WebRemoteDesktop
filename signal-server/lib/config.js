@@ -84,6 +84,9 @@ function loadConfig() {
     logMaxBytes: Math.max(1, Number(process.env.WRD_LOG_MAX_BYTES || 10 * 1024 * 1024)),
     logBackupCount: Math.max(0, Number(process.env.WRD_LOG_BACKUP_COUNT || 3)),
     hostVerboseDiagnostics: process.env.WRD_HOST_VERBOSE_DIAGNOSTICS === '1',
+    viewerMediaStaleMs: Math.max(30000, Math.min(3600000,
+      Number.isFinite(Number(process.env.WRD_VIEWER_MEDIA_STALE_MS))
+        ? Math.floor(Number(process.env.WRD_VIEWER_MEDIA_STALE_MS)) : 120000)),
     enableTerminal: terminal.enabled,
     terminalAdminPassword: terminal.adminPassword,
     terminalShell: terminal.shell,

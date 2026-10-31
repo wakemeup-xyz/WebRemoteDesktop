@@ -15,6 +15,7 @@ const {
   connections,
   clearHostCapabilities,
   getHostCapabilities,
+  getConnectionStatus,
   issueProofAdmission,
 } = require('./signaling');
 
@@ -3035,6 +3036,57 @@ test('media-activity-change requires active lease and monotonic generation', () 
   assert.equal(ack.applied, true);
   assert.equal(ack.generation, 1);
   assert.equal(Object.hasOwn(ack, 'leaseId'), false);
+});
+
+test('page-hidden media freshness records stale lifecycle and releases the viewer slot', () => {
+  resetConnections();
+  const io = makeIo();
+  let now = 0;
+  let tick = null;
+  const events = [];
+  setupSignaling(io, {
+    now: () => now,
+    config: { viewerMediaStaleMs: 30000 },
+    logger: { log() {}, warn() {}, info() {}, error() {} },
+    structuredLogger: { info(event) { events.push(event); } },
+    recentEventStore: { append() {} },
+    scheduler: {
+      setTimeout,
+      clearTimeout,
+    },
+    viewerFreshnessScheduler: {
+      setInterval(fn) { tick = fn; return { unref() {} }; },
+      clearInterval() {},
+    },
+  });
+  const host = new FakeSocket('freshness-host', 'host');
+  const viewer = new FakeSocket('freshness-viewer', 'viewer');
+  host.handshake.auth.inputProtocolVersion = 2;
+  viewer.handshake.auth.inputProtocolVersion = 2;
+  io.connect(host); io.connect(viewer);
+  const grant = grantActiveLease(io, host, viewer, 'freshness-grant');
+  viewer.trigger('connection-attempt-bind', {
+    schemaVersion: 1, connectionAttemptId: 'freshness-attempt', connectionAttemptSequence: 1,
+    leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch,
+  });
+  viewer.trigger('media-activity-change', {
+    schemaVersion: 1, state: 'suspended', reasons: ['page-hidden'], generation: 1,
+    connectionAttemptId: 'freshness-attempt', leaseId: grant.leaseId, leaseEpoch: grant.leaseEpoch,
+  });
+  const before = getConnectionStatus();
+  assert.equal(before.viewerFreshness[viewer.id].mediaState, 'suspended');
+  assert.equal(before.viewerFreshness[viewer.id].pageVisibility, 'hidden');
+  assert.equal(before.mediaFresh, false);
+  assert.equal(before.mediaState, 'suspended');
+  assert.equal(before.pageVisibility, 'hidden');
+  now = 30000;
+  tick();
+  assert.equal(viewer.disconnected, true);
+  const names = events.map(event => event.event);
+  assert.equal(names.includes('media_stalled'), true);
+  assert.equal(names.includes('session_stale_detected'), true);
+  assert.equal(names.includes('slot_released'), true);
+  assert.equal(getConnectionStatus().viewerCount, 0);
 });
 
 function mediaRejectionRouteFixture() {
