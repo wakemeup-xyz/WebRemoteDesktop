@@ -252,3 +252,5 @@
 追加 after-grace 验收 runner 后，新的 root-attested 正式入口实测 **PASS**：故障注入触发 1 次、拦截 2 个 WebSocket 请求；页面在 lease 释放后只通过现有 `#requestControlBtn` 发起一次显式控制请求，约 20.01 秒恢复，稳定 30.03 秒，300.28 秒连续采样无缺测，server coverage complete。该结果证明“断线超过 grace 后，用户重新请求控制可以恢复”，不代表系统自动 takeover，也不包含桌面业务输入/物理显示。
 
 为收尾剩余真实输入验收，本轮新增 [隔离 Lab visible-effect spec](../specs/2026-10-31-isolated-visible-effect-acceptance-design.md) 和 [执行计划](../plans/2026-10-31-isolated-visible-effect-acceptance-plan.md)。它把 native desktop/window/capture 原子 probe、proofEpoch、Host claim、RTP/rVFC marker 和负例门禁写成可执行任务；在该隔离环境建立前，生产共享桌面相关指标继续保持 `NOT_RUN`。
+
+隔离 Lab guard 测试路径也已自包含化（`f53a678`），不再依赖外部 `PYTHONPATH`；Lab/scene/runtime/guard 集合当前 **124/124** 通过，且仍保持自动输入在 native probe 缺失时 `BLOCKED`。
