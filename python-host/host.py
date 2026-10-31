@@ -2142,15 +2142,22 @@ class ScreenCaptureTrack(VideoStreamTrack):
             self._diagnostic_admission.note_legacy_drop(len(input_ids), len(input_data_list))
 
     def _send_frame_trace_batch(self):
-        """Best-effort diagnostics every 100ms; media never waits for this channel."""
+        """Best-effort bounded diagnostics; media never waits for this channel.
+
+        Detailed trace is a maintenance-only path and shares the input
+        DataChannel with frame timing.  Sending 64 rows every 100ms can fill
+        the channel before the browser drains it, which then drops both trace
+        and ordinary timing evidence.  A 250ms/6-row envelope stays below the
+        disposable admission budget while still covering a 20fps stream.
+        """
         context = getattr(self, "_frame_trace_context", None)
         if context is None:
             return
         now_ns = time.monotonic_ns()
-        if now_ns - self._last_trace_send_ns < 100_000_000:
+        if now_ns - self._last_trace_send_ns < 250_000_000:
             return
         self._last_trace_send_ns = now_ns
-        batch = context.registry.take_frame_trace_batch(limit=64)
+        batch = context.registry.take_frame_trace_batch(limit=6)
         loss_batch = context.registry.take_loss_lab_trace_batch(limit=64)
         batch["droppedTraceCount"] = context.registry.snapshot()["droppedTraceCount"]
         if batch["traces"] and not self._send_disposable_diagnostic(batch):

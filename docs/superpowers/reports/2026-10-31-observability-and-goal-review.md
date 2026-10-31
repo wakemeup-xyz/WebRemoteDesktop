@@ -574,6 +574,12 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 详细 trace 继续发送全部视频帧时，会在约 5 秒后与 frame timing/capture stats 争用同一可靠诊断通道；日志出现 `frame_trace_batch` dropped 和整体 `congested` 增长，Viewer `droppedTraceCount` 也会上升。因此详细 trace 仍只作为维护窗口短采样，不能常驻生产；默认 `WRD_FRAME_TRACE_DETAIL` 已关闭。
 - 该修复让严格 frame identity join 和 `inputToPostApplyFrameMs` 真正可观测，但没有伪造 `inputToVisibleEffectMs`：当前正式页面没有 controlled marker，光学可见效果仍使用独立像素差异样本（此前 5 次 p95/max **839.9ms**）记录。
 
+### 详细 trace 通道限流复测（2026-11-01 03:17–03:20）
+
+- 初始 500ms/12 行批次仍超过 4KiB admission budget，生产日志明确出现 `oversized`；已改为 **250ms/6 行**，单批约 3KiB，并保持 20fps 覆盖能力。
+- 新鲜 Host 进程的短真实 Viewer 会话中，`frame_trace_batch` 连续窗口发送 **18/38**、无 dropped；同一窗口的 `frame_timing`、`capture_stats` 也无 dropped/congested，证明诊断通道争用已明显下降。
+- Viewer 仍有 `matchedCount=39`、`inputToPostApplyFrameMs` p95 约 **162.9ms**，但 `droppedTraceCount=22` 使 `acceptanceState` 仍为 `UNALIGNED`。这部分是 trace ring/生命周期覆盖损失，不再是 DataChannel admission 拥塞；详细 trace 继续保持维护窗口专用。
+
 ### 本轮结束状态
 
 - 已清除 `WRD_FRAME_TRACE_DETAIL`，只保留默认 MSS；恢复后的 10 秒正式 Relay passive smoke **PASS**：11 个采样、无缺测/晚到/身份变化、`hasPaintedFrame=true`。
