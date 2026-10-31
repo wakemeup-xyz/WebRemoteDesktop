@@ -220,7 +220,10 @@ function createRuntimeEvidenceRecorder(options = {}) {
   let reports = [];
   let resourceSamples = [];
   let heartbeat = { samples: 0, ringDropped: 0 };
-  let summaryCoverage = { observed: false, gapTotalCount: null, droppedSummaryCount: 0, gaps: [] };
+  let summaryCoverage = {
+    observed: false, gapTotalCount: null, gapTotalCountInWindow: null,
+    droppedSummaryCount: 0, gaps: [], gapsInWindow: [],
+  };
 
   function start() { if (startedAt === null) startedAt = now(); endedAt = null; }
   function observeDiagnostic(report) {
@@ -243,11 +246,21 @@ function createRuntimeEvidenceRecorder(options = {}) {
     if (dropped !== null) summaryCoverage.droppedSummaryCount = dropped;
     const total = boundedCount(coverage.gapTotalCount);
     if (total !== null) summaryCoverage.gapTotalCount = total;
+    const windowTotal = boundedCount(coverage.gapTotalCountInWindow);
+    summaryCoverage.gapTotalCountInWindow = windowTotal !== null ? windowTotal : summaryCoverage.gapTotalCount;
     if (Array.isArray(coverage.gaps)) {
       summaryCoverage.gaps = coverage.gaps.slice(-MAX_MISSING).map(gap => ({
         reason: typeof gap?.reason === 'string' ? gap.reason.slice(0, 48) : 'unknown',
         count: boundedCount(gap?.count) ?? 0,
       }));
+    }
+    if (Array.isArray(coverage.gapsInWindow)) {
+      summaryCoverage.gapsInWindow = coverage.gapsInWindow.slice(-MAX_MISSING).map(gap => ({
+        reason: typeof gap?.reason === 'string' ? gap.reason.slice(0, 48) : 'unknown',
+        count: boundedCount(gap?.count) ?? 0,
+      }));
+    } else {
+      summaryCoverage.gapsInWindow = summaryCoverage.gaps.slice();
     }
   }
   function observeRuntime(runtime = {}) {
@@ -340,6 +353,8 @@ function createRuntimeEvidenceRecorder(options = {}) {
         metadataOnlyReports: projected.filter(row => row.metadataOnly).length,
         summaryGapCount,
         summaryGaps: summaryCoverage.gaps.slice(),
+        summaryGapCountInWindow: summaryCoverage.observed ? summaryCoverage.gapTotalCountInWindow : null,
+        summaryGapsInWindow: summaryCoverage.gapsInWindow.slice(),
         ringDropCount,
         coverageSignals: {
           summaryGap: { state: summaryGapState, count: summaryGapCount },

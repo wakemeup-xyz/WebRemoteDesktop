@@ -204,7 +204,9 @@ test('receipt exposes observed, nonzero and unknown coverage signals without tre
 
   const nonzero = createRuntimeEvidenceRecorder();
   nonzero.observeSummaryCoverage({ gapTotalCount: 80, droppedSummaryCount: 0,
-    gaps: [{ reason: 'receipt-horizon', count: 80 }] });
+    gapTotalCountInWindow: 7,
+    gaps: [{ reason: 'receipt-horizon', count: 80 }],
+    gapsInWindow: [{ reason: 'receipt-horizon', count: 7 }] });
   nonzero.observeHeartbeat({ ringDropped: 2 });
   const nonzeroReceipt = nonzero.receipt();
   assert.deepEqual(nonzeroReceipt.diagnostics.coverageSignals, {
@@ -213,6 +215,9 @@ test('receipt exposes observed, nonzero and unknown coverage signals without tre
     source: 'observed',
   });
   assert.equal(nonzeroReceipt.diagnostics.summaryGapCount, 80);
+  assert.equal(nonzeroReceipt.diagnostics.summaryGapCountInWindow, 7);
+  assert.deepEqual(nonzeroReceipt.diagnostics.summaryGapsInWindow,
+    [{ reason: 'receipt-horizon', count: 7 }]);
   assert.equal(nonzeroReceipt.diagnostics.ringDropCount, 2);
 });
 

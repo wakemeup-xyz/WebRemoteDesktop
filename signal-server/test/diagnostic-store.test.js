@@ -124,6 +124,9 @@ test('UTC seven-day retention and daily row eviction expose gaps and bounded ded
   let result=f.store.listSummary({from:0,to:Infinity});
   assert.equal(result.records.length,2); assert.equal(result.coverage.droppedSummaryCount,1);
   assert.equal(result.coverage.gapTotalCount,1);
+  assert.equal(result.coverage.gapTotalCountInWindow,1);
+  assert.equal(result.coverage.gapsInWindow.length,1);
+  assert.equal(result.coverage.queryWindow.to,null);
   assert.ok(result.coverage.gaps.some(g=>g.reason==='daily-capacity'));
   assert.equal(result.coverage.dedupe.maxEntries,10000); assert.equal(result.coverage.dedupe.ttlMs,DAY);
   f.tick(6*DAY); f.write('day7'); assert.equal(f.store.listSummary({from:0,to:Infinity}).records.length,3);

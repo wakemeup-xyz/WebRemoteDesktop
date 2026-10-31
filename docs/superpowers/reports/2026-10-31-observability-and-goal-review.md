@@ -532,3 +532,8 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 - 新页面短断线后重新连接：重连准备约 **5354 ms**，控制恢复，PeerConnection 为 `connected`，视频尺寸 1152×720，帧序列持续增长。
 - 复用原 `viewerSessionId` 的同会话 rebind：重连准备约 **11731 ms**，`sameSession=true`，重连后控制权、PeerConnection、画面和帧增长均正常。
 - 管理员事件确认 grace start/expire、reset completion 与当前 attempt 关联一致；会话结束等待 grace 后 `viewerCount=0`。这把“连接重新建立”和“槽位最终释放”都推进到真实生产会话证据。
+
+### Summary gap 窗口化
+
+- 诊断 store 现在同时保留累计 `gapTotalCount/gaps` 和查询窗口内的 `gapTotalCountInWindow/gapsInWindow`，runtime evidence/admin summary 透传这两组字段；旧字段保持兼容。
+- 重载后 admin summary 实测同时返回 `summaryGapCount=81`、`summaryGapCountInWindow=81` 和 `receipt-horizon` 明细，证明当前 7 天保留窗口确实包含这些历史缺口；新进程尚未产生 heartbeat 时，`ringDropCount` 正确为 `null/unknown`，不会把“未采集”误报为零。

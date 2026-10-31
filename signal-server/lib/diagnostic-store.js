@@ -396,7 +396,19 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
     const value=state();
     const gaps = [...value.gaps, ...issues];
     const gapTotalCount = gaps.reduce((total, item) => total + (knownCount(item?.count) ?? 0), 0);
-    return {records,coverage:{droppedSummaryCount:value.droppedSummaryCount,gapTotalCount,gaps,
+    const windowFrom = Number.isFinite(from) ? from : 0;
+    const windowTo = Number.isFinite(to) ? to : Infinity;
+    const gapsInWindow = gaps.filter(item => {
+      const gapFrom = Number.isFinite(item?.from) ? item.from : windowFrom;
+      const gapTo = Number.isFinite(item?.to) ? item.to : gapFrom;
+      return gapTo >= windowFrom && gapFrom < windowTo;
+    });
+    const gapTotalCountInWindow = gapsInWindow.reduce(
+      (total, item) => total + (knownCount(item?.count) ?? 0), 0,
+    );
+    return {records,coverage:{droppedSummaryCount:value.droppedSummaryCount,gapTotalCount,
+      gapTotalCountInWindow,gaps,gapsInWindow,
+      queryWindow:{from:windowFrom,to:Number.isFinite(windowTo)?windowTo:null},
       earliestRetainedAt:canonical.length?canonical.at(-1).receivedAt:null,
       retainedFrom:new Date(cutoff).toISOString(),dedupe:{maxEntries:RECEIPT_MAX_ENTRIES,ttlMs:RECEIPT_TTL_MS}}};
   }
