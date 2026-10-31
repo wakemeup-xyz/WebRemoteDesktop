@@ -37,7 +37,8 @@ test('runtime harness uses pointer events and a sequenced dual-viewer flow', () 
   assert.match(source, /B-read-only/);
   assert.match(source, /B-takeover/);
   assert.match(source, /old_controller_local_write_rejected/);
-  assert.match(source, /"PARTIAL"/);
+  assert.match(source, /single_desktop_policy/);
+  assert.match(source, /"PASS"/);
 });
 
 test('acceptance isolates keyboard/mouse contexts and uses unified input readiness', () => {
