@@ -139,10 +139,18 @@
         .map(name => [name, safeNumber(snapshot.outcomes?.[name]) || 0])),
     } : null;
     const trace = payload.inputTrace || {};
+    const rawReceipt = payload.logReceipt && typeof payload.logReceipt === 'object' ? payload.logReceipt : null;
+    const receiptStates = ['empty', 'received', 'unknown', 'truncated', 'failed'];
+    const logReceipt = rawReceipt && receiptStates.includes(rawReceipt.state) ? {
+      state: rawReceipt.state,
+      reported: safeNumber(rawReceipt.reported), retained: safeNumber(rawReceipt.retained),
+      redacted: safeNumber(rawReceipt.redacted), dropped: safeNumber(rawReceipt.dropped),
+    } : undefined;
     return { schemaVersion: 3, diagnosticId: digest(payload.diagnosticId), reason: payload.reason,
       trigger: payload.trigger, connectionAttemptId: storageHash(payload.connectionAttemptId),
       captured: clone(payload.captured), build: clone(payload.build), latencyStatus: payload.latencyStatus,
       latency: latency(payload.latency), inputState: {},
+      ...(logReceipt ? { logReceipt } : {}),
       ...(payload.traceSummary?.controlHeartbeat ? { traceSummary: {
         controlHeartbeat: sanitizeControlHeartbeat(payload.traceSummary.controlHeartbeat),
       } } : {}),

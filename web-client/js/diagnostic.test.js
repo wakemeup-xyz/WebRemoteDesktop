@@ -552,6 +552,9 @@ test('sendLogs includes keyboard mode, input state, and channel timeline', () =>
   assert.equal(emitted[0].payload.inputState.keyboard.lastResetReason, 'window-blur');
   assert.equal(emitted[0].payload.inputChannelTimeline.length, 3);
   assert.equal(emitted[0].payload.inputChannelTimeline[0].kind, 'open');
+  assert.deepEqual(JSON.parse(JSON.stringify(emitted[0].payload.logReceipt)), {
+    state: 'received', reported: 3, retained: 0, redacted: 3, dropped: 0,
+  });
 });
 
 test('manual and automatic diagnostics share the complete safe input snapshot and trace', () => {

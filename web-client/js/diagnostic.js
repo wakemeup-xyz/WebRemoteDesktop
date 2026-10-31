@@ -287,6 +287,13 @@
     payload.userAgent = navigator.userAgent;
     payload.screen = `${window.screen.width}x${window.screen.height}`;
     payload.logs = this.logs.slice(-120);
+    payload.logReceipt = {
+      state: payload.logs.length ? 'received' : 'empty',
+      reported: payload.logs.length,
+      retained: 0,
+      redacted: payload.logs.length,
+      dropped: Number.isSafeInteger(payload.truncation?.dropped) ? payload.truncation.dropped : 0,
+    };
     payload.network = payload.network || this.getNetworkSnapshot();
     payload.keyboardMode = payload.inputState?.keyboardMode || null;
     payload.terminal = terminalState || payload.terminal;

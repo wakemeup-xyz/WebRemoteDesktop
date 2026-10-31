@@ -138,3 +138,14 @@ test('runtime, cache and oversized clipping retain signaling evidence alongside 
   assert.equal(JSON.stringify([report, cached, clipped]).includes('CANARY'), false);
   assert.equal(fixture()({}).startup.signalingFailure, null);
 });
+
+test('pending diagnostic storage preserves bounded log receipt state without log content', () => {
+  const { runtimeDiagnosticForStorage } = require('./runtime-diagnostic');
+  const report = fixture()({ reason: 'input-ack-timeout' });
+  report.logReceipt = { state: 'received', reported: 12, retained: 0, redacted: 12, dropped: 0 };
+  report.logs = ['PRIVATE_LOG_CANARY'];
+  const cached = runtimeDiagnosticForStorage(report);
+  assert.deepEqual(cached.logReceipt, report.logReceipt);
+  assert.equal('logs' in cached, false);
+  assert.equal(JSON.stringify(cached).includes('PRIVATE_LOG_CANARY'), false);
+});
