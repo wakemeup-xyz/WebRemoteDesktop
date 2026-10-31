@@ -345,7 +345,9 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
     canonical.sort((a,b)=>Date.parse(b.receivedAt)-Date.parse(a.receivedAt));
     const records=canonical.filter(row=>{const at=Date.parse(row.receivedAt);return at>=from && at<to && at<dayStart(now())+DAY;});
     const value=state();
-    return {records,coverage:{droppedSummaryCount:value.droppedSummaryCount,gaps:[...value.gaps,...issues],
+    const gaps = [...value.gaps, ...issues];
+    const gapTotalCount = gaps.reduce((total, item) => total + (knownCount(item?.count) ?? 0), 0);
+    return {records,coverage:{droppedSummaryCount:value.droppedSummaryCount,gapTotalCount,gaps,
       earliestRetainedAt:canonical.length?canonical.at(-1).receivedAt:null,
       retainedFrom:new Date(cutoff).toISOString(),dedupe:{maxEntries:RECEIPT_MAX_ENTRIES,ttlMs:RECEIPT_TTL_MS}}};
   }

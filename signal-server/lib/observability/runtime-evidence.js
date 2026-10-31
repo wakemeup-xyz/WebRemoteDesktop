@@ -212,7 +212,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
   let reports = [];
   let resourceSamples = [];
   let heartbeat = { samples: 0, ringDropped: 0 };
-  let summaryCoverage = { observed: false, droppedSummaryCount: 0, gaps: [] };
+  let summaryCoverage = { observed: false, gapTotalCount: null, droppedSummaryCount: 0, gaps: [] };
 
   function start() { if (startedAt === null) startedAt = now(); endedAt = null; }
   function observeDiagnostic(report) {
@@ -233,6 +233,8 @@ function createRuntimeEvidenceRecorder(options = {}) {
     summaryCoverage.observed = true;
     const dropped = boundedCount(coverage.droppedSummaryCount);
     if (dropped !== null) summaryCoverage.droppedSummaryCount = dropped;
+    const total = boundedCount(coverage.gapTotalCount);
+    if (total !== null) summaryCoverage.gapTotalCount = total;
     if (Array.isArray(coverage.gaps)) {
       summaryCoverage.gaps = coverage.gaps.slice(-MAX_MISSING).map(gap => ({
         reason: typeof gap?.reason === 'string' ? gap.reason.slice(0, 48) : 'unknown',
@@ -290,6 +292,18 @@ function createRuntimeEvidenceRecorder(options = {}) {
     };
     const rss = sampleStats(resourceSamples.map(row => row.rssMiB));
     const cpu = sampleStats(resourceSamples.map(row => row.cpuPercent));
+    const reportSummaryGapCount = sumKnown('summaryGapCount');
+    const reportRingDropCount = sumKnown('ringDropCount');
+    const summaryGapCount = summaryCoverage.observed
+      ? (summaryCoverage.gapTotalCount !== null
+        ? summaryCoverage.gapTotalCount + (reportSummaryGapCount || 0)
+        : summaryCoverage.droppedSummaryCount + (reportSummaryGapCount || 0))
+      : reportSummaryGapCount;
+    const ringDropCount = heartbeat.samples
+      ? heartbeat.ringDropped + (reportRingDropCount || 0)
+      : reportRingDropCount;
+    const summaryGapState = summaryGapCount === null ? 'unknown' : summaryGapCount > 0 ? 'nonzero' : 'observed';
+    const ringDropState = ringDropCount === null ? 'unknown' : ringDropCount > 0 ? 'nonzero' : 'observed';
     if (!projected.length) recordMissing(missing, 'diagnostics');
     if (projected.every(row => row.logCount === null)) recordMissing(missing, 'logCount');
     if (!summaryCoverage.observed && projected.every(row => row.summaryGapCount === null)) recordMissing(missing, 'summaryGapCount');
@@ -316,9 +330,14 @@ function createRuntimeEvidenceRecorder(options = {}) {
         frameTraceLoss,
         diagnosticAdmission,
         metadataOnlyReports: projected.filter(row => row.metadataOnly).length,
-        summaryGapCount: summaryCoverage.droppedSummaryCount + sum('summaryGapCount'),
+        summaryGapCount,
         summaryGaps: summaryCoverage.gaps.slice(),
-        ringDropCount: heartbeat.ringDropped + sum('ringDropCount'),
+        ringDropCount,
+        coverageSignals: {
+          summaryGap: { state: summaryGapState, count: summaryGapCount },
+          ringDrop: { state: ringDropState, count: ringDropCount },
+          source: summaryCoverage.observed || heartbeat.samples ? 'observed' : 'unknown',
+        },
       },
       resources: { rssMiB: rss, cpuPercent: cpu },
       media: { fps: sampleStats(fps), droppedFrames: sampleStats(dropped),

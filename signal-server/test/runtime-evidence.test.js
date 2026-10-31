@@ -184,6 +184,38 @@ test('receipt preserves explicit production summary gap and ring-drop fields', (
   assert.equal(receipt.coverage.complete, false);
 });
 
+test('receipt exposes observed, nonzero and unknown coverage signals without treating null as zero', () => {
+  const unknown = createRuntimeEvidenceRecorder();
+  unknown.observeDiagnostic({ schemaVersion: 3, reportedLogCount: 1 });
+  assert.deepEqual(unknown.receipt().diagnostics.coverageSignals, {
+    summaryGap: { state: 'unknown', count: null },
+    ringDrop: { state: 'unknown', count: null },
+    source: 'unknown',
+  });
+
+  const observed = createRuntimeEvidenceRecorder();
+  observed.observeSummaryCoverage({ gapTotalCount: 0, droppedSummaryCount: 0, gaps: [] });
+  observed.observeHeartbeat({ ringDropped: 0 });
+  assert.deepEqual(observed.receipt().diagnostics.coverageSignals, {
+    summaryGap: { state: 'observed', count: 0 },
+    ringDrop: { state: 'observed', count: 0 },
+    source: 'observed',
+  });
+
+  const nonzero = createRuntimeEvidenceRecorder();
+  nonzero.observeSummaryCoverage({ gapTotalCount: 80, droppedSummaryCount: 0,
+    gaps: [{ reason: 'receipt-horizon', count: 80 }] });
+  nonzero.observeHeartbeat({ ringDropped: 2 });
+  const nonzeroReceipt = nonzero.receipt();
+  assert.deepEqual(nonzeroReceipt.diagnostics.coverageSignals, {
+    summaryGap: { state: 'nonzero', count: 80 },
+    ringDrop: { state: 'nonzero', count: 2 },
+    source: 'observed',
+  });
+  assert.equal(nonzeroReceipt.diagnostics.summaryGapCount, 80);
+  assert.equal(nonzeroReceipt.diagnostics.ringDropCount, 2);
+});
+
 test('receipt aggregates bounded Host diagnostic admission counters', () => {
   const admission = { types: { frame_timing: { sent: 10, dropped: 3 }, capture_stats: { sent: 2, dropped: 1 } },
     reasons: { congested: 4 }, legacyDropped: { ids: 5, metadata: 6 } };
