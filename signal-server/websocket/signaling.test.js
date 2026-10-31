@@ -3121,6 +3121,11 @@ test('page-hidden media freshness records stale lifecycle and releases the viewe
   assert.equal(names.includes('media_stalled'), true);
   assert.equal(names.includes('session_stale_detected'), true);
   assert.equal(names.includes('slot_released'), true);
+  for (const eventName of ['session_stale_detected', 'slot_released']) {
+    const event = events.find(row => row.event === eventName);
+    assert.equal(event.correlation.attemptHash, correlationHash('freshness-attempt'));
+    assert.equal(event.meta.correlationMissing, false);
+  }
   assert.equal(getConnectionStatus().viewerCount, 0);
 });
 

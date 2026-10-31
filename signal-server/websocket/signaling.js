@@ -329,6 +329,7 @@ function setupSignaling(io, options = {}) {
   // only bounded in-memory identity context until the matching Host ACK so
   // reset completion can be correlated without retaining lease/input data.
   const resetCorrelationByEpoch = new Map();
+  const freshnessCorrelationByViewer = new Map();
 
   function boundedResetCorrelation(context = {}) {
     const viewerId = typeof context.viewerId === 'string' && context.viewerId ? context.viewerId : null;
@@ -367,6 +368,22 @@ function setupSignaling(io, options = {}) {
     const correlation = leaseExpiryCorrelation();
     const effect = desktopLease.expire();
     dispatchLeaseEffect(effect, effect?.reason, correlation);
+  }
+
+  function rememberFreshnessCorrelation(viewerId, context = {}) {
+    const bounded = boundedResetCorrelation({ viewerId, ...context });
+    if (!bounded.viewerId && !bounded.connectionAttemptId) return;
+    freshnessCorrelationByViewer.set(viewerId, bounded);
+    while (freshnessCorrelationByViewer.size > 32) {
+      freshnessCorrelationByViewer.delete(freshnessCorrelationByViewer.keys().next().value);
+    }
+  }
+
+  function consumeFreshnessCorrelation(viewerId) {
+    const value = freshnessCorrelationByViewer.get(viewerId)
+      || { viewerId, connectionAttemptId: null };
+    freshnessCorrelationByViewer.delete(viewerId);
+    return value;
   }
 
   function emitControlEvent(type, fields = {}) {
@@ -421,9 +438,25 @@ function setupSignaling(io, options = {}) {
       try { instanceRuntime.setViewerFreshnessSnapshot?.(viewerId, snapshot); } catch (_error) {}
     },
     onEvent(observation) {
+      const progress = mediaActivityProgress.get(observation.viewerId);
+      const staleLifecycle = observation.event === 'session_stale_detected'
+        || observation.event === 'slot_released'
+        || observation.event === 'slot_release_failed';
+      const correlation = staleLifecycle
+        ? (observation.event === 'session_stale_detected'
+          ? boundedResetCorrelation({
+            viewerId: observation.viewerId,
+            connectionAttemptId: progress?.connectionAttemptId,
+          })
+          : consumeFreshnessCorrelation(observation.viewerId))
+        : { viewerId: observation.viewerId, connectionAttemptId: progress?.connectionAttemptId };
+      if (observation.event === 'session_stale_detected') {
+        rememberFreshnessCorrelation(observation.viewerId, correlation);
+      }
       emitControlEvent(observation.event, {
-        viewerId: observation.viewerId,
+        ...correlation,
         ...observation.meta,
+        ...(staleLifecycle ? { correlationMissing: !correlation.connectionAttemptId } : {}),
       });
     },
     onActiveStall({ viewerId }) {
