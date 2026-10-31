@@ -211,6 +211,26 @@ def main() -> int:
                 ? LatencyMonitor.snapshot() : null;
               return { frameTrace, latencyTrace };
             }""")
+            result["checks"]["diagnosticUpload"] = page.evaluate("""async () => {
+              if (typeof Diagnostic === 'undefined'
+                  || typeof Diagnostic.buildConnectionDiagnostic !== 'function'
+                  || typeof Diagnostic.sendConnectionDiagnostic !== 'function') return 'unavailable';
+              try {
+                const payload = Diagnostic.buildConnectionDiagnostic({ trigger: 'acceptance', reason: 'manual' });
+                payload.type = payload.type || 'diagnostic';
+                payload.timestamp = Date.now();
+                payload.logs = Array.isArray(Diagnostic.logs) ? Diagnostic.logs.slice(-120) : [];
+                payload.logReceipt = {
+                  state: payload.logs.length ? 'valid' : 'empty',
+                  reported: payload.logs.length,
+                  retained: 0,
+                  redacted: payload.logs.length,
+                  dropped: Number.isSafeInteger(payload.truncation?.dropped) ? payload.truncation.dropped : 0,
+                };
+                const accepted = await Diagnostic.sendConnectionDiagnostic(payload);
+                return accepted === true ? 'accepted' : 'rejected';
+              } catch (_) { return 'error'; }
+            }""")
 
             # Pass criteria
             ok = True

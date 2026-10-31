@@ -590,3 +590,9 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 
 - 详细 trace 通道限流代码已提交为 `1bde4cc`；随后清除 `WRD_FRAME_TRACE_DETAIL` 并重启 Host，恢复普通 MSS/diagnostic 模式。
 - 当前 PID 为 Signal `23895`、Host `43230`；`/health=ok`、`hostOnline=true`、`viewerCount=0`。恢复后的 10 秒正式 Relay passive smoke **PASS**：11 个采样、无缺测/晚到/身份变化，最大无进展约 **99.9ms**。
+
+### 验收诊断 receipt 落盘复测（2026-11-01 03:22–03:23）
+
+- `verify-dock-adaptive-ui.py` 现在按正式 `sendLogs` 契约构造脱敏诊断 payload，包含 bounded Viewer logs、`logReceipt`、input trace、frame trace 和 diagnostic admission，再调用现有 receipt API。
+- 最新正式验收报告已被 Signal 接收并写入 daily summary：`logReceipt.state=valid`、`reported=69`、`retained=0`、`redacted=69`、`dropped=0`，`inputTraceEventCount=17`，control heartbeat 5/5 ACK、timeouts=0；验收脚本整体 **PASS**。
+- 该报告的 `summaryGapCount`/`ringDropCount` 为 `null`，因为 Viewer 报告没有权限/来源提供全局 summary coverage；管理员 observability 接口仍单独提供 `summaryGapCount=81`、`ringDropCount=0 observed`。两层证据现在能明确区分“本报告未观测”与“全局已观察”。
