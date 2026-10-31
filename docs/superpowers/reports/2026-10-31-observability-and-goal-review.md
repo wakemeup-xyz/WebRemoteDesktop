@@ -136,3 +136,44 @@
 `32cfc92` 已加载到 Host：无待关联输入时 `frame_timing` 每 5 帧采样一次；存在待关联输入时仍逐帧发送。重载后 30 秒 passive 会话中，`frame_timing` 为 sent=140/dropped=9，`capture_stats` 为 sent=8/dropped=0；相比上一版本的 frame_timing dropped=113，诊断拥塞明显下降，但尚未归零。
 
 同一窗口暴露出独立的抓帧长尾：active capture rate 约 4.9 Hz、`reuseRatio` 约 0.73、`maxDurationMs=833`、`maxDurationNonCpuMs=792`，system load1 约 9–11。说明降频只改善了诊断通道占用，不能替代 MSS/CoreGraphics 后端 A/B；当前 Goal 仍不能宣称抓帧性能达标。
+
+## 当前日志系统复核（2026-10-31 16:35）
+
+本次复核覆盖最近两天可见的 Signal 结构化事件、Host 轮转日志、当天诊断 summary、watcher state 和当前本地健康状态；没有重启服务，也没有操作 tunnel。
+
+### 已经足够发现的问题
+
+- Signal 最近两天记录了 `signal_socket_disconnected=100`、`viewer_disconnect_grace_expired=32`、`signal_input_relayed=181`、`signal_reset_ack_observed=181`、`control_transition_failed_closed=89` 和 `diagnostic_uploaded=26`。断连、重连、输入转发、reset ACK 和控制状态失败都能被发现。
+- Host 最近日志能同时看到抓帧、非 CPU 时间、线程 CPU、事件循环、RSS、Viewer 解码 FPS/丢包，以及诊断通道准入计数。当前受控会话中曾出现 `frame_timing` `sent=48,dropped=10`、`capture_stats` `sent=2,dropped=1`，原因均为 `congested`；这类“诊断覆盖丢失”已经可见，不会再被误认为业务视频丢帧。
+- 当前本地状态为 `health_ok=true`、`hostOnline=true`、`viewerCount=0`；watcher 最新状态为 `entry-healthy`，实际 `/index.html`、`/viewer.html`、core asset 和 loopback `/api/status` 均成功，源码 fingerprint 仍为 `33ddf5011fe34f827b8e9918`。
+- 当天最新手动诊断已写入 summary：`logReceipt.state=valid`、`reported=48`、`retained=0`、`redacted=48`、`dropped=0`，`inputTraceLoss` 各项为 0，且 `traceSummary.diagnosticAdmission` 已包含 `frame_timing`/`capture_stats` 计数。这证明 receipt 和 Host admission 的生产传递路径已经加载并生效。
+
+### 仍不足以自动判定或完整归因的问题
+
+- `summaryGapCount`、`ringDropCount`、`coverageStatus` 在当前无对应上报时仍为 `null`。这在语义上代表 unknown，但 daily summary 查询没有单独的“未采集/未观察”状态；全局 `.summary-state` 仍有 receipt-horizon gap（最近一次管理员摘要观测为 80），不能把 null 当成 0。
+- lifecycle 长会话已经有 `coverage=partial`、`missingReferences=1`、`droppedEvents=34459` 的证据，但这些非零丢失还没有自动汇总到同一份按会话查询的 daily alert 中；Host admission 的拥塞也只在 Host 日志和下一次诊断快照中出现。
+- `input ACK → Host apply → capture → encode → RTP → decode → paint/visible effect` 的字段契约存在，但最近两天没有真实业务输入到可见效果的完整样本。当前只能证明 Host apply 很快、Viewer 统计可用，不能给出端到端输入到画面的 p95/max，也不能证明用户确实看到变化。
+- `media_stalled`、`session_stale_detected`、`slot_released` 的离线测试通过，但最近两天生产日志没有触发样本。因此 stale Viewer 门禁“代码存在”已确认，“真实残留会话能自动释放并留证”仍未完成实测。另一个边界是 active stalled 目前只记录 `media_stalled`，不直接释放仍有心跳的槽位，后续需要单独的安全恢复策略；当前 hidden-suspended 清理主要依据 control heartbeat，尚未把 media ACK、最近 received/decode/frame 进展全部纳入释放判据，需要补充安全边界测试。
+- Host 日志仍有部分原始 `viewer`/socket 标识和高频逐秒明细；Signal lifecycle/recent event 也仍可能记录原始 `viewerId`、`previousViewerId`、`connectionAttemptId` 或 `browserSessionId`。输入/reset ACK 关联已脱敏，但不能把这个结论泛化到所有 lifecycle 日志；这不阻断故障发现，却不符合统一脱敏 hash、异常窗口聚合的目标。
+
+### 最近两天性能信号
+
+- Host 抓帧长尾仍主要是非 CPU：轮转日志中 `maxDurationMs` 最大约 1296 ms、`maxDurationNonCpuMs` 最大约 1263 ms，而 `maxDurationThreadCpuMs` 最大约 47 ms；不能归因成 Python 线程 CPU 卡顿。`activeIntervalRateHz` 的中位数约 13.2，部分窗口约 4.9 Hz，缓存复用最高约 74%。
+- 事件循环大多数窗口 p95 在毫秒级，但历史窗口最高约 676 ms；RSS 在长会话中最高约 674 MiB。日志已经能发现压力和抓帧长尾，但还没有按维护窗口自动形成阈值告警或把“可见视频 FPS”和“新鲜抓帧率”分开作为健康门禁。
+- reset ACK 的协议顺序和失败分类已有证据，但此前 405–496 ms 长尾的根因仍未被新的端到端样本闭环，200 ms 目标不能宣称达标。
+
+## Goal 当前完成度（本轮复核后）
+
+| Goal | 状态 | 证据与未完成项 |
+|---|---|---|
+| 媒体 freshness、page-hidden stale 门禁和释放事件 | **实现完成，生产验收未闭环** | 状态字段、阈值、幂等释放和离线测试已完成；最近两天没有真实 `session_stale_detected → slot_released` 生产样本。 |
+| receipt 状态与 gap/ring/input loss 汇总 | **大部分完成** | `empty/unknown/valid/truncated/failed`、input trace loss 和 Host admission 已进入代码与生产 summary；全局 summary gap 未进入单条 daily alert，gap/ring 的 unknown 状态仍需显式展示。 |
+| 输入到呈现的统一脱敏关联 | **契约完成，真实闭环未完成** | ACK、Host apply、capture、encode、RTP、decode、paint 字段均有边界和缺测语义；没有真实输入到 visible effect/physical display 的可验收样本。 |
+| watcher 实际路由与 passive runtime | **代码和当前运行态完成** | 当前 watcher 使用真实入口、manifest 和 loopback runtime，状态为 entry-healthy；历史 tunnel SIGTERM 的最终发送者仍无法由日志证明。 |
+| 维护窗口短断线、输入、首帧、资源、丢帧和 3 小时会话 | **部分完成** | 被动 3 小时 continuity PASS，短断线/媒体恢复和浏览器协议键鼠 PASS；双 Viewer FAIL，真实业务输入到可见效果、物理键盘、reset fault injection、capture backend A/B 仍 NOT RUN 或未达标。 |
+
+## 判断
+
+当前日志系统已经足够发现“网页/信令断开、媒体停滞、Host 抓帧长尾、诊断通道拥塞、输入 ACK/重置失败和资源压力”等主要症状；还不足以单凭生产摘要完成自动根因归类或宣布远程控制稳定可用。Goal 继续保持 `active`，不能标记完成。
+
+下一步优先级仍是：把全局 summary/lifecycle gap 和 ring drop 统一成可查询的 `observed/unknown/nonzero` 状态；为诊断通道拥塞建立窗口级告警；为 active-stall 设计可审计的安全恢复策略；完成一次真实输入到可见效果的脱敏闭环；再决定是否需要独立抓屏后端 A/B。当前服务保持在线，未执行重启或 tunnel 操作。

@@ -45,3 +45,11 @@
 追补事实（2026-10-31）：`4a3e92e` 已为 watcher 增加加载源码 fingerprint，并已按 runbook 重载验证；当前 watcher PID 51489 的 fingerprint 为 `33ddf5011fe34f827b8e9918`，页面、core asset 和 loopback passive runtime 均成功。`c983575` 已将输入/reset ACK 关联脱敏并把 summary gap、ring drop、coverage 和 input trace loss 接入 runtime evidence。定向验证为 watcher/runtime 19/19、entry probe 17/17、Signal 131/131、diagnostic/runtime/store/reset ACK 107/107、Host observability/admission 46/46；三小时 passive 会话仍未结束。
 
 抓帧追补事实（2026-10-31）：长会话证据显示 output FPS 被缓存帧复用掩盖，Host 新抓帧约 9–13 Hz；`c4a6888` 已把 fresh capture/reuse/age 观测接入 Host capture snapshot，待维护窗口重载 Host 后验证。
+
+## 最终复核状态（2026-10-31 16:35）
+
+- receipt 的生产传递已补证：当天手动诊断 summary 出现 `logReceipt.state=valid`（reported=48、retained=0、redacted=48、dropped=0），input trace loss 全 0，并包含 Host `diagnosticAdmission` 计数；因此“代码已接入但生产未加载”的旧风险已关闭。
+- 全局 `.summary-state` 的 receipt-horizon gap 仍未直接进入单条 daily summary；当诊断没有携带覆盖信息时，`summaryGapCount`/`ringDropCount`/`coverageStatus` 保持 unknown/null，需在管理员摘要或日告警中显式标记。
+- 三小时 passive continuity 已 PASS，但只覆盖连接/帧回调连续性；真实输入到 visible effect、物理显示、reset fault injection、双 Viewer 语义、capture backend A/B 仍未闭环。
+- Host 诊断准入降频后拥塞已从 dropped=113 降至短窗口 dropped=9，但仍可能出现 `congested`；fresh capture 长尾、缓存复用和非 CPU 抖动仍未解决。
+- 计划阶段 1–4 的实现和离线测试可视为完成；阶段 5 只完成被动连续性和协议层子集，整体 Goal 继续保持 `active`，不能标记完成。
