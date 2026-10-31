@@ -201,6 +201,31 @@ def test_tunnel_relay_downshifts_and_recovers_from_ack_feedback(monkeypatch):
     assert relay.profile_name == "low"
 
 
+def test_tunnel_relay_capture_latency_sets_a_floor_until_capture_recovers():
+    relay = TunnelRelayStreamer(FakeSio())
+
+    # Medium targets 6fps (~167ms), but two consecutive native captures at
+    # 220ms cannot sustain that cadence even when ACK RTT is healthy.
+    assert relay._note_capture_latency(220) is False
+    assert relay.profile_name == "medium"
+    assert relay._note_capture_latency(220) is True
+    assert relay.profile_name == "low"
+
+    # ACK success alone must not immediately promote back into the impossible
+    # capture rate.
+    relay.good_ack_streak = 3
+    relay._record_ack_feedback(10)
+    assert relay.profile_name == "low"
+
+    # Eight comfortably fast low-profile captures clear the floor; a later
+    # stable ACK may then restore medium.
+    for _ in range(8):
+        relay._note_capture_latency(150)
+    relay.good_ack_streak = 3
+    relay._record_ack_feedback(10)
+    assert relay.profile_name == "medium"
+
+
 def test_tunnel_relay_initial_profile_never_starts_on_high():
     sio = FakeSio()
     relay = TunnelRelayStreamer(sio)

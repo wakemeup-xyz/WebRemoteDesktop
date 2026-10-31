@@ -749,8 +749,11 @@ class TunnelRelayStreamer:
         self.stats_timeout_count = 0
         self.good_ack_streak = 0
         self.last_ack_latency_ms = None
+        self.capture_slow_streak = 0
+        self.capture_fast_streak = 0
         self.max_in_flight_frames = 2
         self._apply_profile("medium", reason="init", log=False)
+        self._capture_profile_floor_index = self._profile_index(self.profile_name)
 
     @property
     def running(self):
@@ -804,18 +807,69 @@ class TunnelRelayStreamer:
             )
         return changed
 
-    def step_down_profile(self, reason):
+    def step_down_profile(self, reason, *, capture_limited=False):
         current = self._profile_index(self.profile_name)
         next_index = min(len(TUNNEL_RELAY_PROFILE_ORDER) - 1, current + 1)
+        if capture_limited:
+            self._capture_profile_floor_index = max(
+                getattr(self, "_capture_profile_floor_index", self._profile_index("medium")),
+                next_index,
+            )
         return self._apply_profile(TUNNEL_RELAY_PROFILE_ORDER[next_index], reason)
 
     def step_up_profile(self, reason):
         current = self._profile_index(self.profile_name)
         # Never auto-promote above medium. High (1280x720 JPEG) frequently
         # reintroduces pre-capture-backpressure even after a short good-ack streak.
-        floor_index = self._profile_index("medium")
+        floor_index = max(
+            self._profile_index("medium"),
+            getattr(self, "_capture_profile_floor_index", self._profile_index("medium")),
+        )
         next_index = max(floor_index, current - 1)
         return self._apply_profile(TUNNEL_RELAY_PROFILE_ORDER[next_index], reason)
+
+    def _note_capture_latency(self, capture_ms):
+        """Keep tunnel target FPS below the measured native capture wall time.
+
+        MSS/WindowServer capture can take longer than the requested JPEG frame
+        interval even when ACK RTT is healthy.  ACK-only adaptation then keeps
+        asking for an impossible rate, which creates replaceable work and
+        repeated pre-capture backpressure.  Two consecutive slow captures lower
+        the profile; eight comfortably fast samples clear that capture floor so
+        ACK feedback may recover the profile later.  This is a pacing decision,
+        not a claim that the native capture tail was eliminated.
+        """
+        try:
+            measured = float(capture_ms)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(measured) or measured < 0:
+            return False
+        interval_ms = 1000.0 / max(1, int(self.fps))
+        if measured > interval_ms * 1.25:
+            self.capture_slow_streak += 1
+            self.capture_fast_streak = 0
+            if self.capture_slow_streak >= 2:
+                self.capture_slow_streak = 0
+                self.good_ack_streak = 0
+                return self.step_down_profile(
+                    f"capture-latency-{int(round(measured))}ms",
+                    capture_limited=True,
+                )
+            return False
+        if measured <= interval_ms * 0.75:
+            self.capture_fast_streak += 1
+            self.capture_slow_streak = 0
+            if self.capture_fast_streak >= 8:
+                self.capture_fast_streak = 0
+                self._capture_profile_floor_index = max(
+                    self._profile_index("medium"),
+                    self._capture_profile_floor_index - 1,
+                )
+            return False
+        self.capture_slow_streak = 0
+        self.capture_fast_streak = 0
+        return False
 
     def pending_frame_count(self):
         return len(self.inflight_frames)
@@ -1029,11 +1083,14 @@ class TunnelRelayStreamer:
         self.stats_timeout_count = 0
         self.good_ack_streak = 0
         self.last_ack_latency_ms = None
+        self.capture_slow_streak = 0
+        self.capture_fast_streak = 0
         self.suspended = False
         self.production_generation += 1
         self.producer_id = str(uuid.uuid4())
         self._relay_binding = dict(media_scope) if media_scope else None
         self._authority_is_current = authority_is_current
+        self._capture_profile_floor_index = self._profile_index(self.profile_name)
         self._reset_relay_observation()
         self.enabled = True
         self.task = asyncio.create_task(self._run())
@@ -1252,6 +1309,8 @@ class TunnelRelayStreamer:
                 if frame is None or not self._transport_token_is_current(token):
                     await asyncio.sleep(0.25)
                     continue
+                if isinstance(frame, dict):
+                    self._note_capture_latency(frame.get("captureMs"))
                 jpeg_bytes = frame['data']
                 encode_ms = frame['encodeMs']
                 self.frame_id += 1
