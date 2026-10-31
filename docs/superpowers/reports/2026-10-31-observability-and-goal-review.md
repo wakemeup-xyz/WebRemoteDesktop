@@ -183,6 +183,7 @@
 - `39e566f` 将 active-stall 从“只记录 `media_stalled`”补为二阶段安全恢复：首次无新帧记录 `media_stalled`，超过恢复窗口记录 `media_stall_recovery_requested`，再经过一个 `staleAfterMs` 且 `progressAgeMs` 仍无进展才进入 `session_stale_detected`/`slot_released`，释放原因为 `active-media-stale`。
 - hidden-suspended stale 判定不再只看 control heartbeat，而是综合最近 media request、applied media ACK、received/decoded frame 和 heartbeat；snapshot/Signal meta 同时暴露 `progressAgeMs`、`lastMediaAckAgeMs`、`activeStallAgeMs` 和恢复状态。
 - `dd5a1ec` 将全局 summary coverage 的 `gapTotalCount` 和 `coverageSignals` 接入管理员 observability evidence，明确 `observed`、`nonzero`、`unknown` 三种状态，保留兼容的旧 count 字段。
+- active-stall 的恢复事件现在会在当前 Viewer 仍持有 ACTIVE lease、attempt/generation 完整匹配时，向 Host 发一次带完整身份的 `request-keyframe`；无 lease、旧 attempt 或失效 generation 会 fail-closed，不会触发 Host 恢复动作。
 - freshness/signaling 定向回归 138/138 通过；diagnostic-store/runtime-evidence 定向回归 37/37 通过。当前服务保持 `hostOnline=true`、`viewerCount=0`，本轮未重启服务、未操作 tunnel。
 
 这两项补强解决了日志和 freshness 的已知 P1 缺口，但不改变 Goal 的最终边界：真实输入到 visible effect/physical display、reset fault injection、capture backend A/B、诊断拥塞长会话和 tunnel SIGTERM 根因仍未完成或缺少强证据。

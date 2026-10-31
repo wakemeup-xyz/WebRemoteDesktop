@@ -53,5 +53,6 @@
 - 三小时 passive continuity 已 PASS，但只覆盖连接/帧回调连续性；真实输入到 visible effect、物理显示、reset fault injection、双 Viewer 语义、capture backend A/B 仍未闭环。
 - Host 诊断准入降频后拥塞已从 dropped=113 降至短窗口 dropped=9，但仍可能出现 `congested`；fresh capture 长尾、缓存复用和非 CPU 抖动仍未解决。
 - freshness 追补已加入 active-stall 二阶段恢复：首次无新帧记录 `media_stalled`，恢复窗口后记录 `media_stall_recovery_requested`，再经第二个有界窗口且 `progressAgeMs` 仍无进展才按 `active-media-stale` 释放；hidden-suspended 判定同时考虑 media request、applied ACK、received/decoded frame 和 heartbeat。定向 freshness/signaling 138/138 通过。
+- active-stall recovery event 在当前 ACTIVE lease 和有效 attempt/generation 下会向 Host 发一次受身份约束的 keyframe request；旧 attempt、无 lease 和失效 generation 均被拒绝。新增 signaling 回归覆盖该路径。
 - coverage 追补已加入管理员 evidence：`coverageSignals.summaryGap`/`ringDrop` 明确为 `observed`、`nonzero` 或 `unknown`，并保留原始 count；`diagnostic-store.listSummary()` 增加 `gapTotalCount`。定向 diagnostic/store/runtime evidence 37/37 通过。
 - 计划阶段 1–4 的实现和离线测试可视为完成；阶段 5 只完成被动连续性和协议层子集，整体 Goal 继续保持 `active`，不能标记完成。
