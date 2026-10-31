@@ -684,3 +684,11 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 测试已改为分别校验一条 live snapshot 和最终 close 记录，并确认最终 ring 保留 32 条、首条序号为 69、累计 eviction 为 68；这与运行时“首次丢失立即留证、关闭时给出最终窗口”的契约一致。
 - 修复后的定向集合全部通过：Signal/诊断 **102/102**、Viewer frame-trace/diagnostic **213/213**、Host capture/diagnostic worker **98/98**、controlled-scene/collector **84/84**。该修正只同步测试断言，没有改变生产输入、媒体或诊断行为。
 - 当前服务仍为 `/health=ok`、`hostOnline=true`、`viewerCount=0`；本机 load average 约 `12.47/18.67/19.49`，Codex/WindowServer 等外部进程仍占用较高调度资源，因此本窗口不启动活动性能验收，也不把高负载数据混入产品基线。
+
+## 2026-11-01 04:33 自动化扩展验收与隧道长尾
+
+- 当前版本完成一轮真实本地/正式代码路径自动化验收：恢复 20/20，p50 **550.5ms**、p95 **776ms**、max **882ms**；暂停 15 秒期间视频帧和 RTP 字节增量均为 **0**；浏览器协议键盘和鼠标均 **PASS**；隧道媒体恢复 **20/20**，p50 **470.5ms**、p95 **481ms**。这些结果不替代物理键鼠和严格 marker 可见效果。
+- 双 Viewer 门禁报告为 **FAIL**，但日志和结果明确显示这是产品既定的 single-desktop-viewer 策略：B 建立时 Signal 自动 `viewer-superseded` A，随后 B 显式接管成功；全程 `single_writer=true`，旧 A 的本地写入被拒绝。该结果不表示两个 Viewer 同时写入，也不表示输入链路中断。
+- 隧道窗口暴露独立的性能长尾：`RelayCaptureEncodeWorker` 的 capture p95 约 **264ms**、max 约 **309ms**，出现 coalesced/drop，随后 profile 从 medium 降至 survival；encode p95 约 **26ms**。20 次恢复仍通过，但持续隧道画面在该窗口会明显降帧，后续优化应继续针对隧道 MSS/native capture，而不是调整 WebRTC ACK 或 Signal reset。
+- 自动化浏览器退出后，Signal 在 grace 窗口内暂时保留 1 个 Viewer；约 90 秒后生产 `/api/status` 回到 `viewerCount=0`，并记录 `viewer_disconnect_grace_expired`。本轮没有残留槽位，也没有重启服务或 tunnel。
+- 物理键盘、OS reserved、reset fault injection、safe quick tunnel 和严格 marker-backed `inputToVisibleEffectMs` 仍为 **NOT RUN/BLOCKED**，Goal 继续保持 `active`。
