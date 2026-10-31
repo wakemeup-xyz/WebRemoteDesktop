@@ -94,9 +94,9 @@
 
 上一版审查发现的两个运行态问题已经分别补强：
 
-- `4a3e92e` 为 watcher 增加 `watcherSchemaVersion=2` 和源码 fingerprint。启动状态与每次 tick 都记录该指纹，使常驻进程是否加载当前代码可以被直接证明。当前 PID 2284 仍是 10 月 30 日启动的旧实例，`/tmp/wrd-fixed-watch-state.json` 尚无新字段，因此本轮没有把代码提交误报成线上已加载。
+- `4a3e92e` 为 watcher 增加 `watcherSchemaVersion=2` 和源码 fingerprint。随后按 runbook 重载 watcher，当前 PID 51489 已在 `/tmp/wrd-fixed-watch-state.json` 和最新 tick 记录 `watcherSchemaVersion=2`、fingerprint `33ddf5011fe34f827b8e9918`；`/index.html`、`/viewer.html`、core asset 和 loopback `/api/status` 均返回成功。
 - `c983575` 将输入事件和 reset ACK 的关联改为 `viewerHash`、`attemptHash`、`inputIdHash`、lease/generation 等有界脱敏字段；诊断 raw、daily summary 和 runtime evidence 现在保留 `summaryGapCount`、`ringDropCount`、`coverageStatus` 与 input trace loss。原始 viewer、attempt、输入文本和坐标不进入这些关联字段。
 
 本轮定向验证结果：watcher/runtime 19/19、entry probe 17/17、Signal signaling 131/131、诊断/runtime evidence/store/reset ACK 107/107、Host observability/admission 46/46；一次 Host rotating writer 测试首跑出现已有时序抖动，单测重跑和完整 Python 定向集均通过。未重启 Signal/Host、未操作 tunnel。
 
-当前三小时 passive 会话仍在运行，约 53 分钟、3222 个采样，持续 connected/active，约 20 FPS，丢帧为 0；它仍不包含真实业务输入、visible effect 或物理显示证据。因此 Goal 仍保持 `active`，阶段 5 的短断线、真实输入、可见效果、物理显示、3 小时长会话和 watcher 重载仍未闭环。
+当前三小时 passive 会话仍在运行，约 68 分钟、4090 个采样，持续 connected/active，约 20 FPS，丢帧为 0；它仍不包含真实业务输入、visible effect 或物理显示证据。因此 Goal 仍保持 `active`，阶段 5 的短断线、真实输入、可见效果、物理显示和 3 小时长会话仍未闭环。
