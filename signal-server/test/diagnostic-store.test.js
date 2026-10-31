@@ -70,6 +70,22 @@ test('durable summaries retain only console counts and input trace counts after 
   for(const key of ['logs','inputTrace','events','keyboardDebug'])assert.equal(Object.hasOwn(row,key),false);
 });
 
+test('durable summaries retain bounded frame stage coverage', t => {
+  const f = fixture(t);
+  f.write('stage-covered', 'fixture-viewer', {
+    traceSummary: { frameTrace: {
+      acceptanceState: 'PENDING', matchedCount: 0,
+      stageCoverage: { sampleCount: 3, observed: { grab: 3, encode: 2, packetize: 1 } },
+    } },
+  });
+  const row = f.store.listSummary({ from: 0, to: Infinity }).records[0];
+  assert.deepEqual(row.frameTrace.stageCoverage, {
+    sampleCount: 3,
+    observed: { grab: 3, age_at_recv: null, worker_queue: null, prepare: null,
+      build: null, reformat: null, encode: 2, packetize: 1, encode_total: null },
+  });
+});
+
 test('durable recovery failure reason survives raw eviction without accepting free-form reasons', t => {
   const f=fixture(t,{maxPerViewer:1});
   f.write('recovery','fixture-viewer',{reason:'recovery-failed'});

@@ -221,7 +221,14 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
           droppedTraceCount: knownCount(r.traceSummary.frameTrace.droppedTraceCount),
           invalidBatchCount: knownCount(r.traceSummary.frameTrace.invalidBatchCount),
           staleTraceCount: knownCount(r.traceSummary.frameTrace.staleTraceCount),
-          conflictingTraceCount: knownCount(r.traceSummary.frameTrace.conflictingTraceCount) }
+          conflictingTraceCount: knownCount(r.traceSummary.frameTrace.conflictingTraceCount),
+          ...(r.traceSummary.frameTrace.stageCoverage && typeof r.traceSummary.frameTrace.stageCoverage === 'object'
+            ? { stageCoverage: {
+              sampleCount: knownCount(r.traceSummary.frameTrace.stageCoverage.sampleCount),
+              observed: Object.fromEntries(['grab', 'age_at_recv', 'worker_queue', 'prepare', 'build',
+                'reformat', 'encode', 'packetize', 'encode_total']
+                .map(stage => [stage, knownCount(r.traceSummary.frameTrace.stageCoverage.observed?.[stage])])),
+            } } : {}) }
         : null,
       ...((r.traceSummary?.controlHeartbeat || r.traceSummary?.diagnosticAdmission) ? { traceSummary: {
         ...(r.traceSummary?.controlHeartbeat ? { controlHeartbeat: sanitizeControlHeartbeat(r.traceSummary.controlHeartbeat) } : {}),
