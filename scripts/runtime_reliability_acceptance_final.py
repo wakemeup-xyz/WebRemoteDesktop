@@ -396,14 +396,18 @@ def main():
             # Browser target center corresponds to the content center (r.width / 2).
             cx = mouse_geometry["left"] + mouse_geometry["width"] / 2
             cy = mouse_geometry["top"] + mouse_geometry["height"] / 2
-            page.mouse.move(cx, cy)
-            page.mouse.down()
-            page.mouse.up()
-            page.mouse.down()
-            page.mouse.up()
-            page.mouse.down()
-            page.mouse.move(cx + 40, cy + 20)
-            page.mouse.up()
+            # Allow each reliable pointer ACK to settle before the next
+            # gesture.  The production input path intentionally gates a new
+            # pointer reset while the previous desktop write is unresolved;
+            # firing three gestures back-to-back makes this acceptance probe
+            # measure its own burst rather than the real browser path.
+            for move in ((0, 0), (0, 0), (40, 20)):
+                page.mouse.move(cx, cy)
+                page.mouse.down()
+                page.wait_for_timeout(120)
+                if move != (0, 0): page.mouse.move(cx + move[0], cy + move[1])
+                page.mouse.up()
+                page.wait_for_timeout(280)
         page.wait_for_timeout(100)
         mouse = page.evaluate(
             """() => {
