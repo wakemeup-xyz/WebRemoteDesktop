@@ -203,3 +203,5 @@
 - Signal/Host 的结构化 lifecycle correlation 已改为 `viewerHash`、`previousViewerHash`、`attemptHash`、`browserSessionHash`；业务 Socket payload 不变，日志不会再直接保存这些原始身份。当前修改覆盖结构化事件，Host 的部分高频纯文本 `VIEWER_STATS`/连接失败日志仍需后续单独降频和脱敏。
 - FrameTraceCollector 现在保留固定阶段的有界 `stageCoverage`（grab、prepare、encode、packetize、encode_total 等）并进入 diagnostic/runtime evidence。它能证明阶段观测覆盖率，不能把缺少同一 input scope 的数据误判成完整因果链；`correlation.complete` 仍只有真实 ACK→Host apply→capture→encode→RTP→decode→present 全部可用才成立。
 - 本轮定向验证：Node signaling/admission 164/164、Node diagnostic/runtime/frame 262/262、Python observability 15/15；这些仍是离线和结构化日志证据，不能替代真实 visible effect。
+
+`87a42e3` 已构建并重载到本地：Signal PID `8638`、Host PID `8667`，cloudflared PID `26104` 未变化；`/health`、`/api/status` 均正常，Viewer 槽位为 0。结构化日志现在只保留 lifecycle hash，业务 Socket payload 未改变；Host 高频纯文本标识仍作为后续 P1 清理范围。
