@@ -444,4 +444,22 @@ watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-s
 
 ### page-hidden 应用路径复测
 
-通过真实 Viewer 的 `WebRTC.setMediaActivityReason('page-hidden', true)` 触发生产协议后，Signal 日志出现同一 attempt 的 `media_activity_requested(state=suspended,reasons=[page-hidden])`，约 0.6 秒后页面可见性守护自动发送 `media_activity_requested(state=active,reasons=[])`，说明短暂隐藏会恢复媒体，不会误释放正常会话。headless 浏览器无法保持真实后台页状态，因此没有形成 120 秒 `session_stale_detected → slot_released` 样本；这项仍保持未验收。该会话随后被中断，仍按 grace/reset 路径完成带 attemptHash 的槽位释放。
+第一次通过真实 Viewer 的 `WebRTC.setMediaActivityReason('page-hidden', true)` 触发生产协议时，Signal 日志出现同一 attempt 的 `media_activity_requested(state=suspended,reasons=[page-hidden])`，约 0.6 秒后页面可见性守护自动发送 `media_activity_requested(state=active,reasons=[])`，说明短暂隐藏会恢复媒体，不会误释放正常会话。由于 headless 浏览器仍是可见页，这次没有进入 stale 门禁，随后按 grace/reset 路径释放。
+
+随后在新 Signal/Host 进程上用真实 Viewer 协议保持 `page-hidden`，同时停止 control heartbeat，完成了 120 秒 stale 门禁实测。生产事件链为同一 attempt 的 `media_stalled → session_stale_detected → slot_released → control_reset_completed`；`session_stale_detected.meta.correlationMissing=false`、`slot_released.meta.correlationMissing=false`，`viewerCount` 从 1 回到 0。该证据证明 stale Viewer 会自动释放槽位，并证明 `b4a618a` 的 stale 生命周期 attempt 关联已加载生效。
+
+### 当前逐项完成审查（以本节为准）
+
+前文保留了各轮检查时的历史状态；截至本次重载和生产复测，Goal 的最新状态如下：
+
+| 目标 | 当前结论 |
+|---|---|
+| `page-hidden`/媒体停滞 stale 自动释放 | **生产通过**：同一 attempt 已观察 `media_stalled → session_stale_detected → slot_released → control_reset_completed`，槽位回收，事件均有 attemptHash。 |
+| Viewer → Signal → Host → Viewer 输入关联 | **协议和 Host apply 通过**：36 条新输入全部有 attemptHash；可见效果仍缺测。 |
+| unknown、summary gap、ring eviction、ACK 关联 | **部分完成**：ACK/stale lifecycle 已关联；admin summary 已得到 gap=81、ringDrop=0 observed；没有 diagnostic report 的窗口仍会保留 logCount/FPS/visible-effect 缺测。 |
+| watcher p95/p99 | **代码和运行通过**：direct 模式隔离窗口，当前 formal-health 仍会触发 `entry-slow` 告警。 |
+| MSS/CoreGraphics 抓帧长尾 | **本机调用级 A/B 通过**；同一 relay/编码/画面会话的生产 A/B 仍未完成。 |
+| reset ACK、输入到画面 | **reset/Host apply 局部耗时通过**；完整 input-to-visible-effect p95/max 仍缺真实 marker。 |
+| 短断线、重连、持续控制和资源稳定性 | **断线 grace/reset/释放通过**；真实用户长会话和资源联合验收仍缺。 |
+
+因此 stale 自动释放这一项已经从“未验收”推进为“生产通过”，但 Goal 整体仍不能完成，原因集中在真实可见效果、完整资源长会话、生产 capture A/B 和诊断窗口的完整指标覆盖。
