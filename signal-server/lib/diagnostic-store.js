@@ -16,6 +16,7 @@ const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 const knownCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 const LOG_RECEIPT_STATES = new Set(['empty', 'valid', 'unknown', 'truncated', 'failed']);
 const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
+const FRAME_TRACE_LOSS_FIELDS = ['droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount'];
 function getDiagDir() { return process.env.WRD_DIAG_DIR?.trim() ? path.resolve(process.env.WRD_DIAG_DIR.trim()) : '/tmp/wrd-diag'; }
 function ensureDirectory(dir) {
   fs.mkdirSync(dir,{recursive:true});
@@ -210,6 +211,15 @@ function createDiagnosticStore({dir=getDiagDir(),now=Date.now,retention={}}={}) 
           redacted: knownCount(r.redactedLogCount), dropped: null },
       inputTraceEventCount:Array.isArray(r.inputTrace?.events)?r.inputTrace.events.length:knownCount(r.inputTraceEventCount),
       inputTraceLoss: Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key, knownCount(r.inputTraceLoss?.[key] ?? r.inputTrace?.counters?.[key])])),
+      frameTrace: r.traceSummary?.frameTrace && typeof r.traceSummary.frameTrace === 'object'
+        ? { acceptanceState: enumValue(r.traceSummary.frameTrace.acceptanceState, ['PENDING', 'UNALIGNED']) || 'PENDING',
+          pendingFrames: knownCount(r.traceSummary.frameTrace.pendingFrames), pendingTraces: knownCount(r.traceSummary.frameTrace.pendingTraces),
+          matchedCount: knownCount(r.traceSummary.frameTrace.matchedCount),
+          droppedTraceCount: knownCount(r.traceSummary.frameTrace.droppedTraceCount),
+          invalidBatchCount: knownCount(r.traceSummary.frameTrace.invalidBatchCount),
+          staleTraceCount: knownCount(r.traceSummary.frameTrace.staleTraceCount),
+          conflictingTraceCount: knownCount(r.traceSummary.frameTrace.conflictingTraceCount) }
+        : null,
       ...(r.traceSummary?.controlHeartbeat?{traceSummary:{controlHeartbeat:sanitizeControlHeartbeat(r.traceSummary.controlHeartbeat)}}:{}),
       sampleCount:metrics && typeof metrics==='object'?Object.values(metrics).reduce((n,item)=>Math.min(Number.MAX_SAFE_INTEGER,n+count(item?.count)),0):0};
   }

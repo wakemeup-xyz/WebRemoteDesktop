@@ -13,6 +13,7 @@ const isRuntimeDiagnostic = value => Number.parseInt(value?.schemaVersion, 10) =
 const OUTCOME_NAMES = ['sent', 'acked', 'rejected', 'timedOut', 'late', 'cancelled', 'dropped', 'unmatched'];
 const LOG_RECEIPT_STATES = new Set(['empty', 'valid', 'unknown', 'truncated', 'failed']);
 const INPUT_TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
+const FRAME_TRACE_LOSS_FIELDS = ['droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount'];
 function redactLatency(snapshot) {
   if (!isRecord(snapshot) || snapshot.schemaVersion !== 3) return null;
   const metrics = {};
@@ -67,6 +68,17 @@ function inputTraceLoss(inputTrace) {
   for (const key of INPUT_TRACE_LOSS_FIELDS) {
     const value = safeInteger(counters[key], Number.MAX_SAFE_INTEGER);
     if (value !== null) result[key] = value;
+  }
+  return result;
+}
+
+function sanitizeFrameTrace(value) {
+  if (!isRecord(value)) return null;
+  const state = safeEnum(value.acceptanceState, new Set(['PENDING', 'UNALIGNED']));
+  const result = { acceptanceState: state || 'PENDING' };
+  for (const key of ['pendingFrames', 'pendingTraces', 'seenIdentities', 'matchedCount', ...FRAME_TRACE_LOSS_FIELDS]) {
+    const count = safeInteger(value[key], Number.MAX_SAFE_INTEGER);
+    if (count !== null) result[key] = count;
   }
   return result;
 }
@@ -135,6 +147,8 @@ function redactRuntimeDiagnostic(payload) {
   const interval = payload.traceSummary?.mediaInterval;
   const controlHeartbeat = sanitizeControlHeartbeat(payload.traceSummary?.controlHeartbeat);
   if (controlHeartbeat) clean.traceSummary.controlHeartbeat = controlHeartbeat;
+  const frameTrace = sanitizeFrameTrace(payload.traceSummary?.frameTrace);
+  if (frameTrace) clean.traceSummary.frameTrace = frameTrace;
   const elapsedMs = finiteNonnegative(interval?.elapsedMs);
   const sampleAgeMs = finiteNonnegative(interval?.sampleAgeMs);
   if (interval?.schemaVersion === 1 && interval.kind === 'webrtc-inbound-interval'
@@ -581,6 +595,11 @@ function buildDiagnosticSummaryEvent(report, options = {}) {
     }
     if (isRecord(report.logReceipt)) meta.logReceipt = sanitizeLogReceipt(report.logReceipt);
     if (isRecord(report.inputTraceLoss)) meta.inputTraceLoss = inputTraceLoss(report.inputTraceLoss);
+    const frameTrace = sanitizeFrameTrace(report.traceSummary?.frameTrace);
+    if (frameTrace) {
+      meta.frameTrace = frameTrace;
+      meta.frameTraceLoss = Object.fromEntries(FRAME_TRACE_LOSS_FIELDS.map(key => [key, frameTrace[key] ?? null]));
+    }
   }
   if (safeInputState) {
     const gate = safeInputState.effectiveGate || {};

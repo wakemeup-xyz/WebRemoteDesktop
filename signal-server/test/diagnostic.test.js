@@ -970,6 +970,25 @@ test('runtime diagnostic receipt distinguishes empty and failed collection state
   assert.equal(failed.summaryEvent.meta.logReceipt.state, 'failed');
 });
 
+test('runtime frame correlation keeps bounded join counters and drops per-frame rows', () => {
+  const result = ingestDiagnosticPayload({ role: 'viewer', viewerId: 'unit', data: {
+    ...runtimeFixture(), logs: [], traceSummary: { frameTrace: {
+      acceptanceState: 'UNALIGNED', pendingFrames: 2, pendingTraces: 1, seenIdentities: 9,
+      matchedCount: 4, droppedTraceCount: 3, invalidBatchCount: 1, staleTraceCount: 2,
+      conflictingTraceCount: 1, captureSeq: 999,
+    } },
+  }, config: { enableDiagPersist: false } });
+  assert.deepEqual(result.report.traceSummary.frameTrace, {
+    acceptanceState: 'UNALIGNED', pendingFrames: 2, pendingTraces: 1, seenIdentities: 9,
+    matchedCount: 4, droppedTraceCount: 3, invalidBatchCount: 1, staleTraceCount: 2,
+    conflictingTraceCount: 1,
+  });
+  assert.equal(JSON.stringify(result.report).includes('captureSeq'), false);
+  assert.deepEqual(result.summaryEvent.meta.frameTraceLoss, {
+    droppedTraceCount: 3, invalidBatchCount: 1, staleTraceCount: 2, conflictingTraceCount: 1,
+  });
+});
+
 test('runtime diagnostic keeps absent or malformed console log counts unknown', () => {
   for (const logs of [undefined, null, 'PRIVATE_LOG_CANARY', { length: 99 }]) {
     const data = { ...runtimeFixture(), logs, reportedLogCount: 999 };

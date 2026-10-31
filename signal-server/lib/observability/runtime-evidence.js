@@ -10,6 +10,7 @@ const MAX_SAMPLES = 256;
 const MAX_MISSING = 32;
 const LOG_RECEIPT_STATES = ['empty', 'valid', 'unknown', 'truncated', 'failed'];
 const TRACE_LOSS_FIELDS = ['droppedEvents', 'droppedHashCount', 'evictedPendingAcks', 'expiredPendingAcks', 'ackTimeoutCount'];
+const FRAME_TRACE_LOSS_FIELDS = ['droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount'];
 const CORRELATION_STAGES = ['ack', 'hostApply', 'capture', 'encode', 'rtp', 'decode', 'present'];
 
 function boundedCount(value) {
@@ -80,6 +81,16 @@ function projectInputTraceLoss(report) {
   return Object.fromEntries(TRACE_LOSS_FIELDS.map(key => [key, boundedCount(counters[key])]));
 }
 
+function projectFrameTrace(report) {
+  const frameTrace = report.traceSummary?.frameTrace;
+  if (!frameTrace || typeof frameTrace !== 'object') return null;
+  const result = { acceptanceState: frameTrace.acceptanceState === 'UNALIGNED' ? 'UNALIGNED' : 'PENDING' };
+  for (const key of ['pendingFrames', 'pendingTraces', 'matchedCount', ...FRAME_TRACE_LOSS_FIELDS]) {
+    result[key] = boundedCount(frameTrace[key]);
+  }
+  return result;
+}
+
 function projectCorrelation(report, metrics, outcomes) {
   const available = name => metricCount(metrics, name) > 0;
   const correlation = {
@@ -124,6 +135,7 @@ function projectDiagnostic(report = {}) {
   );
   const logReceipt = projectLogReceipt(report, metadataOnly);
   const inputTraceLoss = projectInputTraceLoss(report);
+  const frameTrace = projectFrameTrace(report);
   const sent = firstCount(outcomes.sent, report.inputTrace?.counters?.sent);
   const visible = metricCount(metrics, 'inputToVisibleEffectMs');
   const visibleCoverage = ratio(visible, sent);
@@ -166,6 +178,7 @@ function projectDiagnostic(report = {}) {
     ringDropCount,
     logReceipt,
     inputTraceLoss,
+    frameTrace,
     correlation: projectCorrelation(report, metrics, outcomes),
     fps,
     dropped,
@@ -254,6 +267,8 @@ function createRuntimeEvidenceRecorder(options = {}) {
     const correlationStages = Object.fromEntries(CORRELATION_STAGES.map(stage => [stage,
       projected.filter(row => row.correlation?.stages?.[stage] === true).length]));
     const correlationReports = projected.filter(row => row.correlation).length;
+    const frameTraceLoss = Object.fromEntries(FRAME_TRACE_LOSS_FIELDS.map(key => [key,
+      projected.reduce((total, row) => total + (row.frameTrace?.[key] ?? 0), 0)]));
     const rss = sampleStats(resourceSamples.map(row => row.rssMiB));
     const cpu = sampleStats(resourceSamples.map(row => row.cpuPercent));
     if (!projected.length) recordMissing(missing, 'diagnostics');
@@ -279,6 +294,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
         logReceiptStates: logReceipts,
         inputTraceEventCount: sumKnown('inputTraceEventCount'),
         inputTraceLoss,
+        frameTraceLoss,
         metadataOnlyReports: projected.filter(row => row.metadataOnly).length,
         summaryGapCount: summaryCoverage.droppedSummaryCount + sum('summaryGapCount'),
         summaryGaps: summaryCoverage.gaps.slice(),

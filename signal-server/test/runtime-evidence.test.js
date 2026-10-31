@@ -247,3 +247,15 @@ test('receipt exposes stage correlation coverage without fabricating missing sta
   });
   assert.equal(row.correlation.complete, true);
 });
+
+test('runtime evidence summarizes bounded frame correlation loss', () => {
+  const evidence = createRuntimeEvidenceRecorder();
+  evidence.observeDiagnostic({ schemaVersion: 3, traceSummary: { frameTrace: {
+    acceptanceState: 'UNALIGNED', droppedTraceCount: 3, invalidBatchCount: 1,
+    staleTraceCount: 2, conflictingTraceCount: 1,
+  } } });
+  const receipt = evidence.receipt();
+  assert.deepEqual(receipt.diagnostics.frameTraceLoss, {
+    droppedTraceCount: 3, invalidBatchCount: 1, staleTraceCount: 2, conflictingTraceCount: 1,
+  });
+});
