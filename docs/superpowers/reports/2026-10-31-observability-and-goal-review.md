@@ -700,3 +700,9 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 按 runbook 只重启本地 Signal/Host 使代码加载：Signal PID `75057`、Host PID `75092`，cloudflared/tunnel 未操作，`/tmp/wrd-safe-current-url.txt` 前后均为空。重启后第二轮自动化扩展验收恢复 20/20、p95 **461ms**，隧道媒体 20/20 PASS。
 - 新窗口 Host relay 证据显示 capture p95 约 **114ms**、max **148ms**，明显低于上一窗口约 264/309ms；profile 后续下降仍由 `pre-capture-backpressure`/ACK 反馈触发，说明 capture-aware pacing 没有伪造“长尾已消失”的结论。
 - 自动化浏览器退出后再次经过 disconnect grace，当前 `/api/status` 为 `health_ok=true`、`hostOnline=true`、`viewerCount=0`。Viewer 密码仍为本机配置中的 `WSGkdvmeUEU2bzTE8Tc04zcL`，Terminal admin 密码为 `JoMKcyouKHqJAegq1q`。
+
+## 2026-11-01 04:51 重启后入口复核
+
+- 本地 Signal/Host 重启后的固定域名直连 formal-health 探测共 15 次，全部返回 HTTP 200/content 成功；p50 **793ms**、p95/p99/max **1356ms**。
+- 同一时间 watcher 状态为 `entry-healthy`，formal-health p95 **1591ms**、p99 **2473ms**，仍低于 3000ms 门限；origin-health 和 passive-runtime 无慢层。
+- 当前服务保持 `health_ok=true`、`hostOnline=true`、`viewerCount=0`；本轮只做只读入口观测，没有操作 tunnel。
