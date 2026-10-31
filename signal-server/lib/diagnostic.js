@@ -81,6 +81,16 @@ function sanitizeFrameTrace(value) {
     const count = safeInteger(value[key], Number.MAX_SAFE_INTEGER);
     if (count !== null) result[key] = count;
   }
+  if (isRecord(value.stageCoverage)) {
+    const sampleCount = safeInteger(value.stageCoverage.sampleCount, Number.MAX_SAFE_INTEGER);
+    const observed = {};
+    for (const key of ['grab', 'age_at_recv', 'worker_queue', 'prepare', 'build',
+      'reformat', 'encode', 'packetize', 'encode_total']) {
+      const count = safeInteger(value.stageCoverage.observed?.[key], Number.MAX_SAFE_INTEGER);
+      if (count !== null) observed[key] = count;
+    }
+    if (sampleCount !== null && Object.keys(observed).length) result.stageCoverage = { sampleCount, observed };
+  }
   return result;
 }
 

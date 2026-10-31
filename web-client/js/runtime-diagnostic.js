@@ -173,6 +173,14 @@
       ...Object.fromEntries(['pendingFrames', 'pendingTraces', 'seenIdentities', 'matchedCount',
         'droppedTraceCount', 'invalidBatchCount', 'staleTraceCount', 'conflictingTraceCount']
         .map(key => [key, safeNumber(rawFrameTrace[key])])),
+      ...(rawFrameTrace.stageCoverage && typeof rawFrameTrace.stageCoverage === 'object' ? {
+        stageCoverage: {
+          sampleCount: safeNumber(rawFrameTrace.stageCoverage.sampleCount),
+          observed: Object.fromEntries(['grab', 'age_at_recv', 'worker_queue', 'prepare', 'build',
+            'reformat', 'encode', 'packetize', 'encode_total']
+            .map(key => [key, safeNumber(rawFrameTrace.stageCoverage.observed?.[key])])),
+        },
+      } : {}),
     } : undefined;
     const diagnosticAdmission = sanitizeDiagnosticAdmission(payload.traceSummary?.diagnosticAdmission);
     return { schemaVersion: 3, diagnosticId: digest(payload.diagnosticId), reason: payload.reason,

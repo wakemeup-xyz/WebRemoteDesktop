@@ -989,12 +989,14 @@ test('runtime frame correlation keeps bounded join counters and drops per-frame 
       acceptanceState: 'UNALIGNED', pendingFrames: 2, pendingTraces: 1, seenIdentities: 9,
       matchedCount: 4, droppedTraceCount: 3, invalidBatchCount: 1, staleTraceCount: 2,
       conflictingTraceCount: 1, captureSeq: 999,
+      stageCoverage: { sampleCount: 2, observed: { grab: 2, encode: 1, packetize: 1 } },
     } },
   }, config: { enableDiagPersist: false } });
   assert.deepEqual(result.report.traceSummary.frameTrace, {
     acceptanceState: 'UNALIGNED', pendingFrames: 2, pendingTraces: 1, seenIdentities: 9,
     matchedCount: 4, droppedTraceCount: 3, invalidBatchCount: 1, staleTraceCount: 2,
     conflictingTraceCount: 1,
+    stageCoverage: { sampleCount: 2, observed: { grab: 2, encode: 1, packetize: 1 } },
   });
   assert.equal(JSON.stringify(result.report).includes('captureSeq'), false);
   assert.deepEqual(result.summaryEvent.meta.frameTraceLoss, {

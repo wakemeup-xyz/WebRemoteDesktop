@@ -1,3 +1,4 @@
+import json
 import logging
 import observability
 
@@ -295,6 +296,33 @@ def test_structured_payload_redaction_and_return_contract_survive_file_facade(tm
         handler.close()
         logger.handlers.clear()
         assert not handler._writer.is_alive()
+
+
+def test_structured_lifecycle_correlation_hashes_raw_viewer_attempt_and_session_ids():
+    records = []
+    logger = logging.getLogger("wrd-test-lifecycle-correlation")
+    logger.handlers.clear()
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+        def emit(self, record):
+            records.append(json.loads(record.getMessage()))
+    handler = Capture()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        payload = observability.emit_host_event(
+            logger, event="lifecycle", message="safe",
+            correlation={"viewerId": "viewer-private", "previousViewerId": "viewer-old",
+                         "connectionAttemptId": "attempt-private", "browserSessionId": "session-private",
+                         "leaseEpoch": 4},
+        )
+        correlation = payload["correlation"]
+        assert set(correlation) == {"viewerHash", "previousViewerHash", "attemptHash", "browserSessionHash", "leaseEpoch"}
+        assert all(len(correlation[key]) == 32 for key in ("viewerHash", "previousViewerHash", "attemptHash", "browserSessionHash"))
+        assert "private" not in json.dumps(payload)
+    finally:
+        logger.handlers.clear()
 
 
 def test_host_terminal_finally_stops_owned_handler_after_run_and_fatal_log():

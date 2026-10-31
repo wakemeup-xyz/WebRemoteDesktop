@@ -195,3 +195,11 @@
 - 管理员 observability summary 已返回 `coverageSignals.summaryGap={state:nonzero,count:80}`、`ringDrop={state:unknown,count:null}`、`source=observed`，验证全局 receipt-horizon gap 已可查询。
 - 重载后手动诊断 summary 新增 `logReceipt=valid`、reported=45、retained=0、redacted=45、dropped=0，input trace loss 全 0；`summaryGapCount/ringDropCount` 在 Viewer 报告未提供全局覆盖时仍保持 null，符合 unknown 语义。
 - 当前 Viewer build `6a137d3286eb3eb3` 与 manifest 的 `desktop-core.7cc6a5c79eafe8af.js` 一致。Goal 继续保持 `active`。
+
+追加复测显示：短 5 秒诊断窗口可能早于首个 `capture_stats` 到达，因此单条 summary 不一定带 `diagnosticAdmission`；这属于采集窗口竞态，不能解读为 Host 没有准入计数。把诊断发送延后到 12 秒后，summary 稳定出现 `frame_timing sent=36 dropped=1`、`capture_stats sent=1 dropped=0`，并记录 `unavailable=1`。该结果同时证明诊断 admission 的非零丢失原因可以落盘；长会话告警仍需继续补齐。
+
+## 关联与日志隐私追补（2026-11-01）
+
+- Signal/Host 的结构化 lifecycle correlation 已改为 `viewerHash`、`previousViewerHash`、`attemptHash`、`browserSessionHash`；业务 Socket payload 不变，日志不会再直接保存这些原始身份。当前修改覆盖结构化事件，Host 的部分高频纯文本 `VIEWER_STATS`/连接失败日志仍需后续单独降频和脱敏。
+- FrameTraceCollector 现在保留固定阶段的有界 `stageCoverage`（grab、prepare、encode、packetize、encode_total 等）并进入 diagnostic/runtime evidence。它能证明阶段观测覆盖率，不能把缺少同一 input scope 的数据误判成完整因果链；`correlation.complete` 仍只有真实 ACK→Host apply→capture→encode→RTP→decode→present 全部可用才成立。
+- 本轮定向验证：Node signaling/admission 164/164、Node diagnostic/runtime/frame 262/262、Python observability 15/15；这些仍是离线和结构化日志证据，不能替代真实 visible effect。

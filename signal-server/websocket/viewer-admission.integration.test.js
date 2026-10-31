@@ -8,6 +8,10 @@ const { createRuntimeContext } = require('./runtime-context');
 const { DesktopControlLease } = require('../lib/desktop-control-lease');
 const { FakeSocket, makeIo } = require('./signaling-test-fixture');
 
+function correlationHash(value) {
+  return require('node:crypto').createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 32);
+}
+
 function fixture(options = {}) {
   let now = 0;
   const timers = [];
@@ -363,7 +367,9 @@ for (const throwing of [false, true]) {
     assert.equal(timer.ms, 8000); h.advance(8001);
     assert.doesNotThrow(() => timer.fn());
     assert.equal(events.length, 1);
-    assert.deepEqual(events[0].correlation, { viewerId: 'expiry-owner', browserSessionId: 'expiry-session' });
+    assert.deepEqual(events[0].correlation, {
+      viewerHash: correlationHash('expiry-owner'), browserSessionHash: correlationHash('expiry-session'),
+    });
     assert.deepEqual(events[0].meta, { reason: 'viewer-disconnect-timeout', leaseEpoch: h.lease.snapshot().leaseEpoch, state: 'REVOKING' });
     assert.deepEqual([...h.runtime.connections.viewers.keys()], []);
     timer.fn(); assert.equal(events.length, 1, 'stale callback cannot repeat evidence');
@@ -379,7 +385,10 @@ test('rebind evidence requires applied Host ACK and contains current epoch; repl
   h.host.sent.find(e => e.event === 'viewer-session-rebind').ack(null, { status: 'applied' });
   const confirmed = events.filter(e => e.event === 'viewer_rebind_confirmed');
   assert.equal(confirmed.length, 1); assert.equal(confirmed[0].meta.leaseEpoch, h.lease.snapshot().leaseEpoch);
-  assert.deepEqual(confirmed[0].correlation, { viewerId: 'after', previousViewerId: 'before', browserSessionId: 'same-session' });
+  assert.deepEqual(confirmed[0].correlation, {
+    viewerHash: correlationHash('after'), previousViewerHash: correlationHash('before'),
+    browserSessionHash: correlationHash('same-session'),
+  });
   assert.equal(next._wrdRebindPending, false);
 });
 
@@ -403,7 +412,10 @@ for (const outcome of ['rejected', 'timeout', 'cancelled']) {
     }
     const failed = events.filter(e => e.event === 'viewer_rebind_failed');
     assert.equal(failed.length, 1);
-    assert.deepEqual(failed[0].correlation, { viewerId: 'after-failure', previousViewerId: 'before-failure', browserSessionId: 'failure-session' });
+    assert.deepEqual(failed[0].correlation, {
+      viewerHash: correlationHash('after-failure'), previousViewerHash: correlationHash('before-failure'),
+      browserSessionHash: correlationHash('failure-session'),
+    });
     assert.equal(failed[0].meta.reason, `rebind-${outcome}`);
     assert.equal(h.lease.snapshot().state, 'REVOKING');
     assert.equal(next.sent.some(e => e.event === 'control-grant'), false);

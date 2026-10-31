@@ -89,6 +89,14 @@ function projectFrameTrace(report) {
   for (const key of ['pendingFrames', 'pendingTraces', 'matchedCount', ...FRAME_TRACE_LOSS_FIELDS]) {
     result[key] = boundedCount(frameTrace[key]);
   }
+  const stageCoverage = frameTrace.stageCoverage;
+  if (stageCoverage && typeof stageCoverage === 'object') {
+    const sampleCount = boundedCount(stageCoverage.sampleCount);
+    const observed = Object.fromEntries(['grab', 'age_at_recv', 'worker_queue', 'prepare', 'build',
+      'reformat', 'encode', 'packetize', 'encode_total']
+      .map(stage => [stage, boundedCount(stageCoverage.observed?.[stage])]));
+    if (sampleCount !== null) result.stageCoverage = { sampleCount, observed };
+  }
   return result;
 }
 

@@ -322,10 +322,16 @@ function setupSignaling(io, options = {}) {
     // discarded by normalizeEvent(). Keep an explicit allowlist so adding
     // credentials or input to an effect cannot accidentally persist them.
     const correlation = {};
-    for (const key of ['viewerId', 'previousViewerId', 'connectionAttemptId']) {
-      if (typeof fields[key] === 'string') correlation[key] = fields[key];
+    const identityFields = [
+      ['viewerId', 'viewerHash'],
+      ['previousViewerId', 'previousViewerHash'],
+      ['connectionAttemptId', 'attemptHash'],
+      ['sessionId', 'browserSessionHash'],
+    ];
+    for (const [source, target] of identityFields) {
+      const digest = hashCorrelation(fields[source]);
+      if (digest) correlation[target] = digest;
     }
-    if (typeof fields.sessionId === 'string') correlation.browserSessionId = fields.sessionId;
     const meta = {};
     for (const key of [
       'reason', 'leaseEpoch', 'attempt', 'graceMs', 'connectionAttemptSequence',

@@ -83,6 +83,8 @@ class FrameTraceCollector {
     this.invalidBatchCount = 0;
     this.staleTraceCount = 0;
     this.conflictingTraceCount = 0;
+    this.stageCoverageCount = 0;
+    this.stageCoverage = Object.fromEntries(FRAME_TRACE_STAGES.map((stage) => [stage, 0]));
     this.scope = null;
   }
 
@@ -103,7 +105,19 @@ class FrameTraceCollector {
     this.invalidBatchCount = 0;
     this.staleTraceCount = 0;
     this.conflictingTraceCount = 0;
+    this.stageCoverageCount = 0;
+    this.stageCoverage = Object.fromEntries(FRAME_TRACE_STAGES.map((stage) => [stage, 0]));
     return true;
+  }
+
+  recordStageCoverage(stages) {
+    if (!stages || typeof stages !== 'object' || Array.isArray(stages)) return;
+    this.stageCoverageCount += 1;
+    FRAME_TRACE_STAGES.forEach((stage) => {
+      if (typeof stages[stage] === 'number' && Number.isFinite(stages[stage]) && stages[stage] >= 0) {
+        this.stageCoverage[stage] += 1;
+      }
+    });
   }
 
   isInScope(value) {
@@ -277,7 +291,10 @@ class FrameTraceCollector {
     this.droppedTraceCount += Math.max(0, Number(batch.droppedTraceCount) || 0);
     if (this.droppedTraceCount) this.unaligned = true;
     let joined = 0;
-    for (const trace of batch.traces) if (this.isInScope(trace)) joined += this.joinTrace(trace);
+    for (const trace of batch.traces) if (this.isInScope(trace)) {
+      this.recordStageCoverage(trace.stages);
+      joined += this.joinTrace(trace);
+    }
     return joined;
   }
 
@@ -364,6 +381,10 @@ class FrameTraceCollector {
       invalidBatchCount: this.invalidBatchCount,
       staleTraceCount: this.staleTraceCount,
       conflictingTraceCount: this.conflictingTraceCount,
+      stageCoverage: {
+        sampleCount: this.stageCoverageCount,
+        observed: { ...this.stageCoverage },
+      },
     };
   }
 

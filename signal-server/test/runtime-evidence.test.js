@@ -317,9 +317,23 @@ test('runtime evidence summarizes bounded frame correlation loss', () => {
   evidence.observeDiagnostic({ schemaVersion: 3, traceSummary: { frameTrace: {
     acceptanceState: 'UNALIGNED', droppedTraceCount: 3, invalidBatchCount: 1,
     staleTraceCount: 2, conflictingTraceCount: 1,
+    stageCoverage: { sampleCount: 2, observed: { grab: 2, encode: 1, packetize: 1 } },
   } } });
   const receipt = evidence.receipt();
   assert.deepEqual(receipt.diagnostics.frameTraceLoss, {
     droppedTraceCount: 3, invalidBatchCount: 1, staleTraceCount: 2, conflictingTraceCount: 1,
   });
+});
+
+test('runtime evidence preserves bounded frame stage coverage without claiming complete input causality', () => {
+  const evidence = createRuntimeEvidenceRecorder();
+  const projected = evidence.observeDiagnostic({ schemaVersion: 3, traceSummary: { frameTrace: {
+    acceptanceState: 'PENDING', stageCoverage: { sampleCount: 3, observed: { grab: 3, encode: 2, packetize: 2 } },
+  } } });
+  assert.deepEqual(projected.frameTrace.stageCoverage, {
+    sampleCount: 3,
+    observed: { grab: 3, age_at_recv: null, worker_queue: null, prepare: null, build: null,
+      reformat: null, encode: 2, packetize: 2, encode_total: null },
+  });
+  assert.equal(projected.correlation.complete, false);
 });

@@ -147,6 +147,23 @@ def redact_host_value(value, key=""):
     return value
 
 
+def redact_host_correlation(value):
+    """Hash lifecycle identities while preserving bounded non-identity fields."""
+    if not isinstance(value, dict):
+        return {}
+    clean = redact_host_value(value)
+    for source, target in (("viewerId", "viewerHash"),
+                           ("previousViewerId", "previousViewerHash"),
+                           ("connectionAttemptId", "attemptHash"),
+                           ("browserSessionId", "browserSessionHash")):
+        raw = value.get(source)
+        clean.pop(source, None)
+        hashed = hash_correlation(raw)
+        if hashed:
+            clean[target] = hashed
+    return clean
+
+
 def _valid_input_ids(input_ids):
     if not isinstance(input_ids, (list, tuple)) or not 1 <= len(input_ids) <= _MAX_INPUT_IDS:
         return None
@@ -271,7 +288,7 @@ def emit_host_event(logger, *, event, message, correlation=None, meta=None, leve
         "message": message,
         "source": "python-host",
         "schemaVersion": 1,
-        "correlation": redact_host_value(correlation or {}),
+        "correlation": redact_host_correlation(correlation or {}),
         "meta": redact_host_value(meta or {}),
         "redactionVersion": 1,
     }

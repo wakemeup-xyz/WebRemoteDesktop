@@ -112,6 +112,18 @@ test('late diagnostic joins the matching rVFC wire timestamp within two seconds'
   assert.equal(matched[0].viewerClockMs, 100);
 });
 
+test('frame trace diagnostics retain bounded stage coverage counts', () => {
+  const Collector = loadCollector();
+  const collector = new Collector();
+  const stages = Object.fromEntries(TRACE_STAGE_NAMES.map((stage, index) => [stage, index + 1]));
+  collector.acceptBatch({ type: 'frame_trace_batch', schemaVersion: 1,
+    traces: [validTrace({ stages })] });
+  assert.deepEqual(JSON.parse(JSON.stringify(collector.diagnostics().stageCoverage)), {
+    sampleCount: 1,
+    observed: Object.fromEntries(TRACE_STAGE_NAMES.map(stage => [stage, 1])),
+  });
+});
+
 test('wrong generation and expired or missing diagnostics stay UNALIGNED', () => {
   let now = 0;
   const Collector = loadCollector(() => now);

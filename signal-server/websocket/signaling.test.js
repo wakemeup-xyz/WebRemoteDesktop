@@ -6,6 +6,10 @@ const { setupTerminal } = require('./terminal');
 const { createRuntimeContext } = require('./runtime-context');
 const { createStructuredLogger } = require('../lib/observability/logger');
 
+function correlationHash(value) {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 32);
+}
+
 process.env.JWT_SECRET = process.env.JWT_SECRET || '12345678';
 process.env.ACCESS_PASSWORD = process.env.ACCESS_PASSWORD || 'test-viewer-password';
 process.env.HOST_PASSWORD = process.env.HOST_PASSWORD || 'test-host-password';
@@ -1214,11 +1218,12 @@ test('control lifecycle survives the production logger with correlation and no c
   assert.equal(grace.domain, 'control');
   assert.equal(grace.meta.graceMs, 8000);
   assert.deepEqual(grace.correlation, {
-    viewerId: first.id, browserSessionId: 'viewer-session-log',
+    viewerHash: correlationHash(first.id), browserSessionHash: correlationHash('viewer-session-log'),
   });
   const reconnected = events.find((event) => event.event === 'viewer_reconnected');
   assert.deepEqual(reconnected.correlation, {
-    viewerId: replacement.id, previousViewerId: first.id, browserSessionId: 'viewer-session-log',
+    viewerHash: correlationHash(replacement.id), previousViewerHash: correlationHash(first.id),
+    browserSessionHash: correlationHash('viewer-session-log'),
   });
   const failed = events.find((event) => event.event === 'control_transition_failed_closed'
     && event.meta.reason === 'reset-failed');
