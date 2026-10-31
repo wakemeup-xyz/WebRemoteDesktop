@@ -471,3 +471,11 @@ stale 复测结束后立即执行 20 秒 direct formal passive 会话，结果 *
 补做了一条生产 Viewer `showDock` command：DataChannel 发送记录了 inputId 和当前 attempt；Host 日志显示 `host_input_received → host_input_result → host_input_ack_sent`，`attemptHash` 一致，`hostAdmissionWaitMs` 约 0.18 ms，`localExecuteMs` 约 71.6 ms。对 `remoteVideo` 连续截图做前后差异检测，首次超过视觉变化阈值约 **818 ms**，最大平均像素差约 **124/255**；随后发送 Escape 并确认会话正常清理。
 
 该样本证明“输入确实改变了远端桌面画面”，但它是独立的画面差异测量，不等价于现有 marker-backed `inputToVisibleEffectMs`：没有受控 frame marker、captureSeq/RTP join，因此仍不能把它写入严格端到端 p95/max。严格指标仍需 controlled scene/marker 生产证据。
+
+### 网页资源层 watcher 优化
+
+本轮还修复了 watcher 的资源探测偏差：
+
+- `9f35389` 让入口探测发送 `Accept-Encoding: gzip, deflate`，并在 Python 侧解码 gzip/deflate 后再校验健康 JSON；此前 gzip body 未解码会把正常 `/health` 误报成 `health-invalid`。
+- `a239750` 为延迟窗口增加 `latencyProfile`，探测语义变化时清空旧历史，避免未压缩资源样本污染新 p95/p99。
+- 新 watcher fingerprint `1ff4c2a0cb0a14b320914420` 加载后首轮资源耗时约为 login 1.38 秒、viewer 1.45 秒、core asset 2.10 秒，均低于预算，状态为 `entry-healthy`。此前 core asset 未压缩传输可达约 7.2 秒；该数值不再进入当前窗口。
