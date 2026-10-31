@@ -66,7 +66,7 @@
 - [x] 通过新进程本地诊断上传核对生产路径：daily summary 与 `diagnostic_uploaded` 均出现上述三个状态，`inputTrace=observed/count=0`，gap/ring 保持 unknown；真实输入与 frame correlation 仍按缺测处理。
 - [x] 同步 guarded recovery runner 的 hash schema：只接受 `viewerHash`/`previousViewerHash`/`browserSessionHash`，拒绝 raw correlation；兼容生产 32-hex hash 与测试私有投影。Node diagnostic/store 65/65、Host observability 16/16、runner 95/95 通过。
 - [x] 本地 Signal/Host 已重载并保持在线；cloudflared 未重启、URL 文件未变化。within-grace 正式入口 relay 维护窗口 PASS（300s continuity、3s recovery、30s stable）。
-- [~] after-grace fault injection 已真实触发，但 lease expiry 后新 connection attempt 没有 `viewer_reconnected`/`viewer_rebind_confirmed`，结果 `recovery-deadline`；需补“重新 admission/重新获取控制”路径和对应真实验收，不能把新连接当成控制恢复。
+- [x] after-grace 首次复测暴露 lease expiry 后缺少控制恢复证据；已补验收侧显式重新请求控制和 `connection_attempt_bound`/新 lease 证据，后续复测 PASS。该路径仍要求用户显式请求控制，不启用自动 takeover。
 - [x] 验收 runner 已补充 after-grace 的显式 `#requestControlBtn` 用户等价动作，并采集 `connection_attempt_bound` + 新 lease 证据；复测 PASS（约 20s 恢复、30s stable、300s continuity）。生产仍保持显式请求控制，不启用自动 takeover。
 - [~] 实际业务输入、输入到可见效果、物理显示、reset fault injection 的端到端样本仍未运行；捕获后端 A/B、诊断拥塞长会话和 tunnel SIGTERM 根因仍未闭环。
 - [~] 复核确认真实输入验收当前被 Host-private native fixture probe 设计性阻断：生产 Host 没有 dedicated desktop/window + capture target 的原子绑定 API，安全边界要求继续 NOT_RUN；后续必须在隔离 macOS desktop/fixture 中补齐，不得用 ACK 或浏览器协议替代。
