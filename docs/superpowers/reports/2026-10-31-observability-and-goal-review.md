@@ -244,3 +244,5 @@
 本轮把“统一脱敏”和“within-grace 短断线”推进到可复核证据，但没有把 after-grace、实际业务输入、可见效果或物理显示误报为通过。Goal 仍保持 `active`。
 
 `1d4d591` 进一步把 `coverageSignals` 写入每份 durable summary 和 `diagnostic_uploaded` 摘要事件。当前新进程已再次重载为 Signal PID `30530`、Host PID `30565`，本地健康和 Host 在线正常，cloudflared PID `26104` 与 URL 文件保持不变；该改动尚需下一次真实诊断上传后再核对生产 summary 中的三个状态字段。
+
+随后完成了一个不含业务输入的本地生产诊断上传：`/tmp/wrd-diag/summary/2026-10-31.ndjson` 最新行和 Signal `diagnostic_uploaded` 同时出现 `coverageSignals`，其中 `inputTrace={state:observed,count:0}`、`summaryGap={state:unknown,count:null}`、`ringDrop={state:unknown,count:null}`，`logReceipt.state=empty`，摘要 correlation 全为 hash。此证据证明字段已经进入生产接收、结构化事件和 durable daily summary；它仍不等价于真实业务输入或帧关联覆盖。

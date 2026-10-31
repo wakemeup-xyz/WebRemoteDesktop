@@ -63,6 +63,7 @@
 
 - [x] 统一诊断 `diagnostic_uploaded`、Signal/Host structured correlation 和诊断持久化的脱敏字段；raw `viewerId`/`connectionAttemptId`/`browserSessionId` 不再进入诊断存储，管理端按 `attemptHash` 查询和去重。
 - [x] 将 `coverageSignals` 写入单份 durable summary 和上传摘要事件，明确 `summaryGap`、`ringDrop`、`inputTrace` 的 `observed/nonzero/unknown`，避免 `null` 被误读为零；新增 Node 诊断/store 回归并通过。
+- [x] 通过新进程本地诊断上传核对生产路径：daily summary 与 `diagnostic_uploaded` 均出现上述三个状态，`inputTrace=observed/count=0`，gap/ring 保持 unknown；真实输入与 frame correlation 仍按缺测处理。
 - [x] 同步 guarded recovery runner 的 hash schema：只接受 `viewerHash`/`previousViewerHash`/`browserSessionHash`，拒绝 raw correlation；兼容生产 32-hex hash 与测试私有投影。Node diagnostic/store 65/65、Host observability 16/16、runner 95/95 通过。
 - [x] 本地 Signal/Host 已重载并保持在线；cloudflared 未重启、URL 文件未变化。within-grace 正式入口 relay 维护窗口 PASS（300s continuity、3s recovery、30s stable）。
 - [~] after-grace fault injection 已真实触发，但 lease expiry 后新 connection attempt 没有 `viewer_reconnected`/`viewer_rebind_confirmed`，结果 `recovery-deadline`；需补“重新 admission/重新获取控制”路径和对应真实验收，不能把新连接当成控制恢复。
