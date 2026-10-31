@@ -22,13 +22,13 @@
 
 ## 会话 freshness 状态
 
-每个当前 Viewer 保存：
+每个当前 Viewer 保存有界快照：
 
 - `pageVisibility`: `visible`、`hidden` 或 `unknown`；
-- `mediaState`: `active`、`suspended`、`stalled`、`unknown`；
-- `lastMediaRequestAt`、`lastMediaAckAt`、`lastFrameAt`、`lastDecodeAt` 的有界年龄；
-- `inputHeartbeatAt`、`socketHeartbeatAt` 和当前 attempt/generation 的脱敏 scope；
-- `staleSince`, `staleReason`, `staleAction`，以及一次性事件计数。
+- `mediaState`: `active`、`suspended`、`unknown`，以及 `stale/released` 标记；
+- `lastFrameAgeMs`、`lastReceivedAgeMs`、`lastStatsAgeMs`、`lastHeartbeatAgeMs`、`mediaStateAgeMs`、`suspendedAgeMs`；
+- `generation`、`staleAfterMs` 和当前 attempt/generation 对应的脱敏 scope；
+- `media_stalled`、`session_stale_detected`、`slot_released`（或 `slot_release_failed`）的一次性事件。
 
 `page-hidden` 本身不立即断开会话。它在超过有界 grace 且没有新的 active request、media ACK、frame/decode 或控制 heartbeat 时进入 `session_stale_detected`；持续无媒体进展进入 `media_stalled`。只有经过现有身份和 lease 清理路径才记录 `slot_released`。恢复到 visible/active 或新 attempt 时清除 stale episode，但保留闭合摘要。
 
@@ -55,7 +55,7 @@ receipt: accepted | rejected | duplicate | write-failed
 
 ## 端到端帧关联
 
-同一 scope 内允许保存有限数量的 frame binding：`captureSeq`、`encoderTimestamp`、`wireTimestamp`、`ssrc`、`captureFresh`、`captureAfterApplied` 和最多 64 个 input ID hash。成功完成的阶段按以下顺序产生事件：
+同一 scope 内允许保存有限数量的 frame binding：`captureSeq`、`encoderTimestamp`、`wireTimestamp`、`ssrc`、`captureFresh`、`captureAfterApplied` 和最多 64 个 input ID hash。对外诊断只保留 bounded frame trace 状态（`PENDING`/`UNALIGNED`、pending/matched 计数及 dropped/stale/conflict 计数），不保留逐帧原值。成功完成的阶段按以下顺序产生事件：
 
 ```text
 input sent
