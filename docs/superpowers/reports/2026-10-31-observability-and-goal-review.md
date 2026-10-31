@@ -345,3 +345,12 @@ Host 轮转日志在最近窗口有 7190 个可解析事件循环样本：`lagMs
 - 需要在实际会话里测 Viewer→Signal、Signal→Host、Host apply、ACK 回程、capture/encode/RTP/decode/present 的端到端 p95/max；当前 Signal→Host 局部 ACK 已有数据，但完整输入到画面仍缺测。
 - 需要在相同用户会话负载下将 MSS/CoreGraphics 与 Viewer FPS、fresh capture rate、RSS、CPU、framesDropped 和可见效果一起对比，再决定是否修改默认 backend。
 - 需要完成一次实际短断线、重连、持续控制和资源稳定性验收；当前服务仍在线，但尚未因本轮代码变更重载。
+
+## 本轮重载结果（2026-10-31 23:36 Asia/Shanghai）
+
+- 按 runbook 只重启本地 Signal/Host：Signal PID `2631`、Host PID `2664`；`/health` 和 `/api/status` 均为 `ok`，`hostOnline=true`、`viewerCount=0`、`mediaState=unknown`。
+- cloudflared PID `26104` 保持不变，固定域名 connector 未重启；`/tmp/wrd-safe-current-url.txt` 仍为空。
+- watcher 已加载 schema 3 和 fingerprint `446a539ad1b361ce204a971a`；固定域名页面的 HTML 请求已记录，但本轮浏览器自动化未完成登录，因此没有把页面加载证据当作 Viewer/首帧/输入验收。
+- 重启后的 Viewer 网页密码和 Terminal admin 密码已按 runbook 从本机配置核对；密码不写入版本化日志和诊断摘要。
+
+本轮服务已保持在线，核心代码已加载；Goal 仍未完成，下一步需要真实 Viewer 会话才能补齐 attemptHash、输入 ACK、媒体 freshness、首帧和端到端输入到画面证据。
