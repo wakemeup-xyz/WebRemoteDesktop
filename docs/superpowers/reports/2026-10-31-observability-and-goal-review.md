@@ -706,3 +706,10 @@ Goal 目标范围暂不修改，继续保持 `active`。现有目标仍准确覆
 - 本地 Signal/Host 重启后的固定域名直连 formal-health 探测共 15 次，全部返回 HTTP 200/content 成功；p50 **793ms**、p95/p99/max **1356ms**。
 - 同一时间 watcher 状态为 `entry-healthy`，formal-health p95 **1591ms**、p99 **2473ms**，仍低于 3000ms 门限；origin-health 和 passive-runtime 无慢层。
 - 当前服务保持 `health_ok=true`、`hostOnline=true`、`viewerCount=0`；本轮只做只读入口观测，没有操作 tunnel。
+
+## 2026-11-01 04:55 扩展验收分类修正
+
+- `runtime_reliability_acceptance_final.py` 已把 single-desktop-viewer 自动 supersede 从误报的 dual-viewer `FAIL` 改为显式策略证据：`single_desktop_policy=true`、`single_writer=true`、旧控制器写入拒绝，B 后续接管成功。
+- 修正后的扩展验收结果：20 次恢复 **PASS**（p50 **314.5ms**、p95 **324ms**、max **329ms**），键盘/鼠标协议 **PASS**，single-desktop supersede/接管 **PASS**，隧道媒体恢复 20/20 **PASS**（p50 **322ms**、p95 **426ms**）。
+- 浏览器退出后再次经过 disconnect grace，`/api/status` 回到 `viewerCount=0`；Signal/Host 保持在线，未操作 tunnel。
+- 物理键盘、OS reserved、fault injection、严格 marker-backed visible effect 仍不能由自动化替代，继续保持 **NOT RUN/BLOCKED**。
