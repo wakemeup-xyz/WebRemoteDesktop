@@ -237,6 +237,7 @@
 
 - `8bb42f9` 已把 `diagnostic_uploaded`、诊断 raw/legacy 持久化、嵌套 input/scope 和 Host structured meta 统一收敛到 `viewerHash`、`attemptHash`、`browserSessionHash` 等字段；原始身份只保留在业务握手/Socket payload，不再进入诊断存储和结构化日志。`a88f5a5` 让 guarded recovery runner 严格拒绝 raw correlation，同时匹配生产无盐 SHA-256/32 与旧测试的私有 salted/16 投影。Signal diagnostic/store 65/65、Host observability 16/16、runner 95/95、capture benchmark 6/6 通过。
 - 本轮按 runbook 仅重启本地 Signal/Host：Signal PID `23232`、Host PID `23272`，`/health` 和 `/api/status` 均正常，`hostOnline=true`、`viewerCount=0`；cloudflared PID `26104` 未变化，`/tmp/wrd-safe-current-url.txt` 仍为空。新进程写入的 lifecycle 日志已使用 hash correlation，历史轮转文件中的 raw 身份仍属于旧部署证据，不能倒推为当前新代码行为。
+- 重载后结构化 Signal 日志从 10:35Z 起新增 66 行，其中 lifecycle correlation 含 raw identity 的为 0 行，使用 hash correlation 的为 15 行；这证明新脱敏出口已在生产进程生效。此前报告中的 raw 统计仍应保留为历史迁移窗口证据，不能与当前窗口混算。
 - 新建 root-attested manifest 后，`within-grace` 正式入口 relay 实测 **PASS**：300.24 秒采样、301 个样本、无缺测/迟到/Host 断开；native-direct fault 触发 1 次，约 3.00 秒恢复，稳定 30.02 秒，server coverage complete。该验收仍是无业务输入的恢复证据，`businessInput/visibleEffect/physical=NOT_RUN`。
 - `after-grace` 受控路由实测 **INCOMPLETE**：fault capability available、触发 1 次、拦截 2 个 WebSocket 请求，startup verified，但 60 秒恢复窗口内未恢复。日志显示 10:52:47Z 断开、10:52:57Z lease expired/reset completed、10:53:07Z 新 connection attempt；随后没有 `viewer_reconnected` 或 `viewer_rebind_confirmed`，因此新连接没有重新获得控制租约，最终为 `recovery-deadline`。这说明长于 grace 的恢复需要显式的重新控制/重新 admission 验收，当前 passive runner 不能把新连接当成已恢复控制。
 
