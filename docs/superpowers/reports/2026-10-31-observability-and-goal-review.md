@@ -401,3 +401,30 @@ watcher 已运行 schema 3，并持续保存分位数。当前状态为 `entry-s
 4. 在同一 relay/浏览器会话中复测 MSS/CoreGraphics 的 capture、encode、RTP、decode、paint、RSS、CPU、FPS 和 framesDropped，再决定生产后端切换。
 
 当前服务保持可用态，Goal 继续 `active`；完成上述证据后再重新审查是否可以更新为 `complete`。
+
+## 重置关联修复与直连生产复测（2026-11-01 00:31 Asia/Shanghai）
+
+### 新发现与修复
+
+复核 2026-10-31 16:00 UTC 之后的结构化日志时发现，`signal_reset_ack_observed` 已带 `attemptHash`，但 `control_reset_completed` 仍是空 correlation。根因是 Viewer 断开或租约过期后，`DesktopControlLease` 只保留 reset epoch，原 Viewer 的 attempt 绑定在进入 reset barrier 前就被清理，完成 ACK 没有可用上下文。
+
+提交 `48382ed` 增加了有界的 `resetCorrelationByEpoch` 内存映射：断线、主动释放、租约过期和重绑失败在进入 reset-only barrier 时保存 `viewerId + connectionAttemptId`；Host 应用 ACK 后消费并清理该映射。没有 attempt 的旧/异常路径仍输出 `viewerHash`，同时显式 `meta.correlationMissing=true`，不会伪造 attempt。Signal 定向集合现为 **167/167** 通过。
+
+### 重载后的固定域名会话证据
+
+- 只重启本地 Signal/Host：Signal PID `17918`、Host PID `17953`；cloudflared PID `26104` 未变。
+- 直连固定域名的 20 秒 passive 会话 **PASS**：21 个采样，`missing=0`、`late=0`、身份/路径变化均为 0，`pcState=connected`、`hasPaintedFrame=true`、`progressAfterBaseline=true`，首帧约 8.59 秒；结束后 `/api/status` 回到 `viewerCount=0`。
+- 该会话的生产日志出现同一 attempt 的 `connection_attempt_bound → viewer_disconnect_grace_started → control_reset_completed`，`control_reset_completed.meta.correlationMissing=false`。
+- 直连扩展验收重新执行，协议暂停/恢复、键盘矩阵、鼠标双击/拖拽、终端共存和正式入口烟测均 **PASS**；safe quick tunnel 仍 `BLOCKED`，没有按策略重建 tunnel。
+
+### 输入与 reset ACK 局部耗时
+
+扩展验收期间的新 Host 日志有 36 条 `host_input_received/result/ack_sent`，全部带同一 `attemptHash`，没有缺失关联。Host 入队等待 `hostAdmissionWaitMs` p50 约 0.24 ms、最大约 3.17 ms；本地执行 `localExecuteMs` p50 约 0.74 ms、p95 约 9.76 ms、最大约 13.00 ms。Signal reset ACK 有 1 条新样本，`signalRequestToAckMs` 约 4.04 ms，`correlationMissing=false`。这确认当前常规输入/Signal→Host→ACK 段不再解释历史 405–496 ms 长尾；完整 `input → visible effect` 仍缺少画面 marker，因此不能把这些局部数字当作端到端延迟。
+
+### 入口代理误报边界
+
+重载后第一次 passive runner 使用本机 `HTTPS_PROXY=127.0.0.1:7897`，在 TLS 阶段失败且 0 个采样；同一时刻 `curl --noproxy '*' https://link.stockhub.wiki/health` 返回 `status=ok`，清除代理后再次运行成功。因而当前 watcher 的 `formal-health` 长尾必须拆成“本机代理路径”和“真实公网路径”两类，不能据代理失败重启本地服务或 tunnel。正式入口直连证据已通过，但仍需要从真实用户网络采集公网路径 p95/p99。
+
+### Goal 状态
+
+本次修复完成了 reset completion 的关联缺口，但 Goal 仍保持 `active`。尚缺：真实 `page-hidden`/active-media-stale 生产触发、真实业务输入到画面的 p95/max、用户短断线后的持续控制与资源联合采样，以及同一 relay 会话中的 MSS/CoreGraphics 全链路 A/B。当前没有足够证据调用 `update_goal(complete)`。
