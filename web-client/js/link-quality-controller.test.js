@@ -141,7 +141,7 @@ test('lock mode: brief zero fps requests recovery not survival size', () => {
   assert.equal(c.snapshot().currentProfile, 'high');
 });
 
-test('lock mode: sustained stall is critical recover without survival profileConfig', () => {
+test('lock mode: sustained relay stall sheds rate once before recovery-only mode', () => {
   const c = LinkQualityController.create({
     path: 'relay',
     initialProfile: 'high',
@@ -163,12 +163,22 @@ test('lock mode: sustained stall is critical recover without survival profileCon
   for (let i = 0; i < 6; i += 1) {
     result = c.observe(stall);
   }
+  assert.equal(result.action, 'degrade');
+  assert.equal(result.shouldRequestKeyframe, true);
+  assert.equal(result.profile, 'medium');
+  assert.ok(result.profileConfig);
+  assert.equal(result.profileConfig.name, 'medium');
+  assert.equal(c.currentProfile, 'medium');
+
+  // A second sustained stall must recover without reopening the encoder again.
+  c.beginConnection(0);
+  for (let i = 0; i < 6; i += 1) result = c.observe(stall);
   assert.equal(result.action, 'critical');
   assert.equal(result.shouldRequestKeyframe, true);
-  assert.equal(result.profile, 'high');
+  assert.equal(result.profile, 'medium');
   assert.equal(result.profileConfig, null);
   assert.equal(result.changed || false, false);
-  assert.equal(c.currentProfile, 'high');
+  assert.equal(c.currentProfile, 'medium');
 });
 
 test('relay structural rtt 120ms alone does not degrade', () => {

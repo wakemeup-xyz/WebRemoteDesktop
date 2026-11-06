@@ -80,6 +80,11 @@ const LinkQualityController = {
       iceRestartAttempted: false,
       profileChanges: [],
       lastProfileChangeAt: 0,
+      // Relay media stalls can be caused by host capture/encoder pressure.
+      // Apply one rate-only shed from high to medium under the continuity lock,
+      // then keep recovering with keyframes instead of reopening the encoder
+      // for every subsequent stall window.
+      relayStallDownshifted: false,
 
       _applyPathPreset(path, { resetProfile = true } = {}) {
         const nextPath = path === 'relay' ? 'relay' : 'direct';
@@ -116,6 +121,7 @@ const LinkQualityController = {
         this.lastDecodedDelta = 0;
         this.lastReceivedDelta = 0;
         this.iceRestartAttempted = false;
+        this.relayStallDownshifted = false;
         return { changed: true, path: this.path, profile: this.currentProfile };
       },
 
@@ -139,6 +145,7 @@ const LinkQualityController = {
         this.lastDecodedDelta = 0;
         this.lastReceivedDelta = 0;
         this.iceRestartAttempted = false;
+        this.relayStallDownshifted = false;
       },
 
       _bestAllowedIndex() {
@@ -327,7 +334,21 @@ const LinkQualityController = {
             : this.iceRestartOnVeryHighRtt && !this.iceRestartAttempted;
 
           if (qualityLock) {
-            // Continuity: keyframe/diagnostic only — never emit survival size ladder.
+            // First sustained relay stall gets one rate-only downshift. With
+            // adaptive resolution disabled, WebRTC keeps the user's locked
+            // dimensions while applyMediaProfile clamps medium to the safe
+            // frame-rate/bitrate floor. Later stalls stay recovery-only so the
+            // Host encoder is not repeatedly reopened under pressure.
+            if (this.path === 'relay' && stalled && this.currentProfile === 'high'
+                && !this.relayStallDownshifted) {
+              this.relayStallDownshifted = true;
+              return this.setProfile('medium', reason, {
+                action: 'degrade',
+                shouldRequestKeyframe: true,
+                shouldRestartIce,
+              });
+            }
+            // Continuity: keyframe/diagnostic only after the one-time rate shed.
             return this._recoverResult(reason, {
               action: 'critical',
               shouldRequestKeyframe: true,

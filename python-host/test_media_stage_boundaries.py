@@ -40,7 +40,7 @@ async def test_media_clock_capture_stats_and_trace_follow_five_second_windows(mo
         reports = [row for row in sent if row["type"] == "capture_stats"]
         assert [row["fps"] for row in reports] == [0.4, 0.2]
         assert [row["frames"] for row in reports] == [2, 1]
-        assert set(reports[0]["diagnosticAdmission"]) == {"types", "reasons", "legacyDropped"}
+        assert set(reports[0]["diagnosticAdmission"]) == {"types", "reasons", "legacyDropped", "pressureActive"}
         assert set(reports[0]["diagnosticAdmission"]["types"]) == {
             "frame_timing", "capture_stats", "frame_trace_batch", "loss_lab_host_trace_batch"}
         capture_logs = [call.args for call in log.call_args_list if call.args[0].startswith("CAPTURE_STATS")]

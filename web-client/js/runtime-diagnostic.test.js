@@ -24,12 +24,15 @@ test('diagnostic admission sanitizer keeps only bounded delivery counters', () =
   const { sanitizeDiagnosticAdmission } = require('./runtime-diagnostic');
   const clean = sanitizeDiagnosticAdmission({
     types: { frame_timing: { sent: 4, dropped: 2 }, capture_stats: { sent: 1, dropped: 0 } },
-    reasons: { congested: 2, send_error: 1 }, legacyDropped: { ids: 3, metadata: 4 },
+    reasons: { congested: 2, pressure: 3, send_error: 1 }, legacyDropped: { ids: 3, metadata: 4 },
+    pressureActive: true,
     privatePayload: 'CANARY',
   });
   assert.equal(clean.types.frame_timing.sent, 4);
   assert.equal(clean.types.frame_timing.dropped, 2);
   assert.equal(clean.reasons.congested, 2);
+  assert.equal(clean.reasons.pressure, 3);
+  assert.equal(clean.pressureActive, true);
   assert.deepEqual(clean.legacyDropped, { ids: 3, metadata: 4 });
   assert.equal(JSON.stringify(clean).includes('CANARY'), false);
   assert.equal(sanitizeDiagnosticAdmission({ types: { frame_timing: { sent: -1 } } }).types.frame_timing.sent, null);

@@ -96,6 +96,16 @@ async def _noop_async():
 RESET_ACK_MIRROR_MAX_BUFFER_BYTES = 32 * 1024
 RESET_ACK_MIRROR_MAX_PACKET_BYTES = 4 * 1024
 
+# Diagnostic rows share the input DataChannel, so shed only those rows when
+# the Host is demonstrably under scheduler/capture pressure.  These thresholds
+# are intentionally conservative: they protect control traffic without
+# changing the media profile, capture dimensions, or frame cadence.
+DIAGNOSTIC_PRESSURE_SCHEDULER_RATIO = 3.0
+DIAGNOSTIC_PRESSURE_LOOP_LAG_MS = 100.0
+DIAGNOSTIC_PRESSURE_CAPTURE_AGE_MS = 500.0
+DIAGNOSTIC_PRESSURE_CAPTURE_DURATION_MS = 500.0
+DIAGNOSTIC_PRESSURE_CAPTURE_INTERVAL_MS = 500.0
+
 V2_INPUT_ACK_STATUSES = frozenset({
     "applied",
     "duplicate",
@@ -221,6 +231,7 @@ MEDIA_PROFILE_DEFAULT = {
     "target_fps": 20,
     "video_bitrate_kbps": 2500,
 }
+
 
 LOCK_AUTO_SHRINK_SIZES = {(640, 360), (854, 480)}
 PRESENTATION_RUNGS = {(960, 540), (1280, 720), (1600, 900), (1920, 1080)}
@@ -3416,6 +3427,92 @@ class WebRemoteHost:
             "schedulerLoadClass": scheduler_load_class,
         }
 
+    def _update_diagnostic_pressure(self, context):
+        """Update the disposable diagnostic gate from the latest pressure sample.
+
+        This method is deliberately synchronous and bounded.  It only changes
+        a scalar admission flag; it never waits on a data channel, touches the
+        input queue, or changes media settings.  The event-loop monitor calls it
+        once per diagnostic window, and the latest values are used so the gate
+        naturally recovers after load subsides.
+        """
+        if not isinstance(context, dict):
+            return False
+        track = getattr(self, "screen_track", None)
+        if track is None:
+            return False
+        gate = getattr(track, "_diagnostic_admission", None)
+        if gate is None:
+            # DiagnosticAdmission is tiny and has no I/O.  Eagerly creating it
+            # here means pressure protection is active even before the first
+            # capture_stats/frame_timing row has been attempted.
+            try:
+                gate = DiagnosticAdmission()
+                track._diagnostic_admission = gate
+            except Exception:
+                return False
+        setter = getattr(gate, "set_pressure", None)
+        if not callable(setter):
+            return False
+
+        def at_least(value, threshold):
+            return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value) and value >= threshold)
+
+        capture = context.get("capture")
+        if not isinstance(capture, dict):
+            capture = {}
+        cadence = capture.get("cadence")
+        if not isinstance(cadence, dict):
+            cadence = {}
+        last_interval = cadence.get("lastInterval")
+        if not isinstance(last_interval, dict):
+            last_interval = {}
+        loop_lag = context.get("lagMs")
+        if loop_lag is None:
+            loop_lag = context.get("maxLagMs")
+        capture_duration = capture.get("lastDurationMs")
+        if capture_duration is None:
+            capture_duration = capture.get("maxDurationMs")
+        capture_interval = last_interval.get("intervalMs")
+        if capture_interval is None:
+            maximum_interval = cadence.get("maxInterval")
+            if isinstance(maximum_interval, dict):
+                capture_interval = maximum_interval.get("intervalMs")
+
+        # Use current/last values for recovery.  The context also carries
+        # rolling maxima, but those intentionally remain evidence and should
+        # not hold the gate open forever after a single old stall.
+        pressure = any((
+            at_least(context.get("schedulerLoadRatio"), DIAGNOSTIC_PRESSURE_SCHEDULER_RATIO),
+            at_least(loop_lag, DIAGNOSTIC_PRESSURE_LOOP_LAG_MS),
+            at_least(capture.get("currentGrabAgeMs"), DIAGNOSTIC_PRESSURE_CAPTURE_AGE_MS),
+            at_least(capture_duration, DIAGNOSTIC_PRESSURE_CAPTURE_DURATION_MS),
+            at_least(capture_interval, DIAGNOSTIC_PRESSURE_CAPTURE_INTERVAL_MS),
+        ))
+        previous = bool(getattr(gate, "pressure_active", False))
+        try:
+            active = bool(setter(pressure))
+        except Exception:
+            return previous
+        if active != previous:
+            emit_host_event(
+                logger,
+                event="host_diagnostic_pressure",
+                message=("Disposable Host diagnostics shed under scheduler/capture pressure"
+                         if active else "Disposable Host diagnostic pressure cleared"),
+                level="warning" if active else "info",
+                meta={
+                    "pressureActive": active,
+                    "schedulerLoadRatio": context.get("schedulerLoadRatio"),
+                    "lagMs": loop_lag,
+                    "captureCurrentGrabAgeMs": capture.get("currentGrabAgeMs"),
+                    "captureLastDurationMs": capture_duration,
+                    "captureLastIntervalMs": capture_interval,
+                },
+            )
+        return active
+
     def _should_process_offer(self, viewer_id, offer_epoch):
         """Return whether an offer is current, tracking epochs per viewer socket."""
         pc_state = self.pc.connectionState if self.pc is not None else None
@@ -3935,6 +4032,46 @@ class WebRemoteHost:
         except Exception:
             await reject()
 
+    async def _close_peer_for_recovery(self, closing_pc, *, timeout_ms=3000):
+        """Request peer shutdown without blocking a reset/reconnect barrier.
+
+        aiortc can wait on a dead ICE/DTLS/SCTP transport for tens of seconds.
+        Recovery owns the detached peer after the synchronous references have
+        been cleared, so the close task can finish in the background while the
+        caller proceeds through the reset barrier. The task set contains only
+        task handles and is drained when each close completes.
+        """
+        try:
+            close_task = asyncio.create_task(closing_pc.close())
+        except Exception:
+            logger.warning("WRD_PEER_CLOSE_BACKGROUND_START_FAILED")
+            return "failed"
+        tasks = getattr(self, "_peer_close_tasks", None)
+        if tasks is None:
+            tasks = self._peer_close_tasks = set()
+        tasks.add(close_task)
+
+        def finish(task):
+            tasks.discard(task)
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("WRD_PEER_CLOSE_BACKGROUND_FAILED")
+
+        close_task.add_done_callback(finish)
+        try:
+            await asyncio.wait_for(asyncio.shield(close_task), timeout=timeout_ms / 1000)
+            return "returned"
+        except asyncio.TimeoutError:
+            logger.warning(
+                "WRD_PEER_CLOSE_TIMEOUT timeoutMs=%s state=%s",
+                timeout_ms,
+                getattr(closing_pc, "connectionState", "unknown"),
+            )
+            return "timed-out"
+
     async def _close_peer_connection(self, reason="manual", reset_offer_state=False,
                                      preserve_authority=False, reset_input=True):
         closing_pc = getattr(self, "pc", None)
@@ -4018,8 +4155,28 @@ class WebRemoteHost:
             if closing_pc:
                 record.stage('peerClose', 'running')
                 active_stage = 'peerClose'
-                await closing_pc.close()
-                record.stage('peerClose', 'returned')
+                # aiortc can wait indefinitely while an ICE/DTLS/SCTP transport
+                # is already broken (observed in production as a 63s cleanup
+                # blocking the control-transition ACK).  A control transition
+                # must release the old authority within a bounded window so the
+                # Signal reset barrier can complete.  Other teardown paths keep
+                # their historical await semantics because they are the final
+                # owner of the peer during shutdown.
+                if reason in {'control-transition', 'signal-disconnect', 'viewer-disconnected'}:
+                    recovery_close = getattr(self, '_close_peer_for_recovery', None)
+                    if callable(recovery_close):
+                        close_status = await recovery_close(closing_pc)
+                    else:
+                        # AST-only ordering fixtures extract this method without
+                        # the production helper; preserve their fake close path.
+                        await closing_pc.close()
+                        close_status = 'returned'
+                    record.stage('peerClose', close_status)
+                    if close_status == 'timed-out':
+                        record.peer_close_timeout(3000)
+                else:
+                    await closing_pc.close()
+                    record.stage('peerClose', 'returned')
                 active_stage = None
             if closing_track:
                 record.stage('trackShutdown', 'running')
@@ -6309,17 +6466,19 @@ class WebRemoteHost:
                 if observed_at - last_emitted_at >= 5_000_000_000:
                     summary = self._runtime_observability.snapshot(observed_at)['eventLoop']
                     max_lag = summary['max']
+                    context = self.build_event_loop_lag_context(
+                        lag_ms=summary['last'],
+                        sample_count=summary['count'],
+                        max_lag_ms=max_lag,
+                        task_count=len(asyncio.all_tasks()),
+                    )
+                    self._update_diagnostic_pressure(context)
                     emit_host_event(
                         logger,
                         event="host_event_loop_lag",
                         message="Host complete sampled event loop window",
                         level="warning" if max_lag > 20 else "info",
-                        meta=self.build_event_loop_lag_context(
-                            lag_ms=summary['last'],
-                            sample_count=summary['count'],
-                            max_lag_ms=max_lag,
-                            task_count=len(asyncio.all_tasks()),
-                        ),
+                        meta=context,
                     )
                     last_emitted_at = observed_at
 

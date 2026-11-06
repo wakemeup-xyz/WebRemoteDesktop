@@ -5,7 +5,12 @@ BUDGET_BYTES = 4096
 COUNTER_MAX = (1 << 63) - 1
 TYPES = ('frame_timing', 'capture_stats', 'frame_trace_batch', 'loss_lab_host_trace_batch')
 REASONS = ('unsupported', 'serialization', 'oversized', 'unavailable', 'replaced',
-           'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'send_error')
+           'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'pressure', 'send_error')
+
+# These payloads are disposable diagnostics.  They may be dropped under host
+# scheduler/capture pressure so the same SCTP transport remains available for
+# input ACKs, heartbeats and reset barriers.
+PRESSURE_DROP_TYPES = frozenset(('frame_timing', 'frame_trace_batch', 'loss_lab_host_trace_batch'))
 
 
 class DiagnosticAdmission:
@@ -13,6 +18,17 @@ class DiagnosticAdmission:
         self.counts = {kind: {'sent': 0, 'dropped': 0} for kind in TYPES}
         self.reasons = dict.fromkeys(REASONS, 0)
         self.legacy = {'ids': 0, 'metadata': 0}
+        self.pressure_active = False
+
+    def set_pressure(self, active):
+        """Enable/disable the disposable-only pressure gate.
+
+        This is a scalar state update used by the Host event-loop monitor.  It
+        never touches the reliable input admission queue or waits on a data
+        channel.
+        """
+        self.pressure_active = bool(active)
+        return self.pressure_active
 
     @staticmethod
     def _add(counters, key, count=1):
@@ -24,14 +40,18 @@ class DiagnosticAdmission:
 
     def snapshot(self):
         return {'types': {k: dict(v) for k, v in self.counts.items()},
-                'reasons': dict(self.reasons), 'legacyDropped': dict(self.legacy)}
+                'reasons': dict(self.reasons), 'legacyDropped': dict(self.legacy),
+                'pressureActive': self.pressure_active}
 
     def send(self, host, dc, payload):
         kind = payload.get('type') if isinstance(payload, dict) else None
         if not isinstance(kind, str) or kind not in TYPES:
             reason = 'unsupported'
+        elif self.pressure_active and kind in PRESSURE_DROP_TYPES:
+            reason = 'pressure'
         else:
             reason = self._attempt(host, dc, payload)
+        if kind in TYPES:
             self._add(self.counts[kind], 'dropped' if reason else 'sent')
         if reason:
             self._add(self.reasons, reason)

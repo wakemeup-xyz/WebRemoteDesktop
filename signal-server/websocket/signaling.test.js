@@ -994,6 +994,49 @@ test('authenticated viewer reconnect rebinds the lease during the short disconne
   assert.equal(replacement.sent.at(-1)?.event, 'control-state');
 });
 
+test('rebound control grant retries across one lost packet and stops after Viewer ACK', () => {
+  resetConnections();
+  let now = 0;
+  const timers = [];
+  const scheduler = {
+    setInterval: () => ({ unref() {} }),
+    setTimeout(fn, ms) {
+      const timer = { fn, ms, cancelled: false, unref() {} };
+      timers.push(timer); return timer;
+    },
+    clearTimeout(timer) { if (timer) timer.cancelled = true; },
+  };
+  const io = makeIo();
+  setupSignaling(io, {
+    desktopControlLease: new (require('../lib/desktop-control-lease').DesktopControlLease)({
+      now: () => now, makeLeaseId: () => 'lease-grant-retry',
+    }),
+    now: () => now, scheduler, viewerDisconnectGraceMs: 8_000,
+    grantAckRetryDelaysMs: [500, 1_000],
+  });
+  const host = new FakeSocket('host-grant-retry', 'host');
+  const first = new FakeSocket('viewer-grant-retry-a', 'viewer');
+  first.handshake.auth.viewerSessionId = 'browser-session-grant-retry';
+  io.connect(host); io.connect(first);
+  const grant = grantActiveLease(io, host, first, 'grant-retry');
+  first.trigger('control-grant-ack', { schemaVersion: 1, leaseEpoch: grant.leaseEpoch });
+  const identity = first.sent.find(entry => entry.event === 'connected')?.data?.viewerAdmission;
+  first.disconnect();
+  const replacement = new FakeSocket('viewer-grant-retry-b', 'viewer');
+  replacement.handshake.auth.viewerSessionId = 'browser-session-grant-retry';
+  replacement.handshake.auth.viewerAdmission = identity;
+  io.connect(replacement);
+  const rebind = host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+  rebind.ack(null, { status: 'applied' });
+  assert.equal(replacement.sent.filter(entry => entry.event === 'control-grant').length, 1);
+  const retryTimer = timers.find(timer => timer.ms === 500 && !timer.cancelled);
+  assert.ok(retryTimer);
+  retryTimer.fn();
+  assert.equal(replacement.sent.filter(entry => entry.event === 'control-grant').length, 2);
+  replacement.trigger('control-grant-ack', { schemaVersion: 1, leaseEpoch: grant.leaseEpoch });
+  assert.equal(timers.filter(timer => timer.ms === 1_000 && !timer.cancelled).length, 0);
+});
+
 test('rebind preserves an active lease when no media attempt was bound yet', () => {
   resetConnections();
   const io = makeIo();
@@ -1251,6 +1294,7 @@ test('control lifecycle survives the production logger with correlation and no c
   const grace = events.find((event) => event.event === 'viewer_disconnect_grace_started');
   assert.equal(grace.domain, 'control');
   assert.equal(grace.meta.graceMs, 8000);
+  assert.equal(grace.meta.leaseHeldForReconnect, true);
   assert.deepEqual(grace.correlation, {
     viewerHash: correlationHash(first.id), browserSessionHash: correlationHash('viewer-session-log'),
     attemptHash: correlationHash('attempt-grace-log'),
@@ -3909,8 +3953,9 @@ function makeRebindRenewalFixture() {
   const { DesktopControlLease } = require('../lib/desktop-control-lease');
   const lease = new DesktopControlLease({ now: () => now, makeLeaseId: () => 'lease-000000000001' });
   const timers = [];
+  let dispatchExpiry = null;
   const scheduler = {
-    setInterval: () => ({ unref() {} }),
+    setInterval(fn) { dispatchExpiry = fn; return { unref() {} }; },
     setTimeout(fn, ms) { const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer; },
     clearTimeout(timer) { if (timer) timer.cancelled = true; },
   };
@@ -3929,7 +3974,11 @@ function makeRebindRenewalFixture() {
   const rebind = host.sent.find(e => e.event === 'viewer-session-rebind');
   assert.equal(rebind.timeoutMs, 1500);
   assert.equal(b.sent.some(e => e.event === 'control-grant'), false);
-  return { lease, host, b, io, rebind, granted, timers, advanceTo: value => { now = value; } };
+  return {
+    lease, host, b, io, rebind, granted, timers,
+    advanceTo: value => { now = value; },
+    dispatchExpiry: () => dispatchExpiry?.(),
+  };
 }
 
 test('confirmed rebind renews only after current Host applied ACK', () => {
@@ -3948,23 +3997,38 @@ for (const outcome of ['deadline', 'timeout', 'host-replaced', 'same-id-host-rep
   test(`pending rebind ${outcome} cannot renew, grant, or recreate cancelled work`, () => {
     const h = makeRebindRenewalFixture();
     h.advanceTo(11000);
-    if (outcome === 'deadline') h.advanceTo(12000);
+    // The production disconnect grace is 30s; the old 12s heartbeat TTL is
+    // intentionally suspended while this authenticated rebind is pending.
+    if (outcome === 'deadline') {
+      h.advanceTo(37000);
+    }
     if (outcome === 'timeout') {
       h.advanceTo(12300); h.rebind.ack(new Error('operation has timed out'));
+      const second = h.host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+      second.ack(new Error('operation has timed out'));
+      const third = h.host.sent.filter(entry => entry.event === 'viewer-session-rebind').at(-1);
+      third.ack(new Error('operation has timed out'));
     }
     if (outcome.includes('host-replaced')) h.io.connect(new FakeSocket(
       outcome === 'same-id-host-replaced' ? h.host.id : 'host-renew-next', 'host'));
-    if (outcome === 'disconnected') h.b.disconnect();
+    if (outcome === 'disconnected') {
+      h.b.disconnect();
+      h.advanceTo(34000);
+      h.timers.filter(timer => timer.ms === 30000 && !timer.cancelled)
+        .forEach(timer => timer.fn());
+    }
     if (outcome === 'superseded') {
       const other = new FakeSocket('viewer-renew-unrelated', 'viewer');
       other.handshake.auth.viewerSessionId = 'fixture-other-session'; h.io.connectManual(other);
     }
     const before = h.host.sent.filter(e => e.event === 'control-transition').length;
+    if (outcome === 'deadline') h.dispatchExpiry();
     h.rebind.ack(null, { status: 'applied' });
     assert.equal(h.b.sent.filter(e => e.event === 'control-grant').length, 0);
     const after = h.host.sent.filter(e => e.event === 'control-transition').length;
     assert.equal(after, before + (outcome === 'deadline' ? 1 : 0));
-    h.advanceTo(13000); assert.equal(h.lease.getActiveLease(h.b.id), null);
+    h.advanceTo(outcome === 'deadline' || outcome === 'disconnected' ? 37000 : 13000);
+    assert.equal(h.lease.getActiveLease(h.b.id), null);
     h.rebind.ack(null, { status: 'applied' });
     assert.equal(h.host.sent.filter(e => e.event === 'control-transition').length, after);
   });
@@ -4023,7 +4087,10 @@ test('old rebind callback cannot clear a newer same-session rebind operation', (
 
 test('expired rebind clears only its pending gate so reset FREE can accept a fresh acquire', () => {
   const h = makeRebindRenewalFixture();
-  h.advanceTo(12000); h.rebind.ack(null, { status: 'applied' });
+  // Reconnect grace extends past the normal 12s heartbeat TTL. Once the
+  // bounded grace plus transition margin is over, a late Host ACK must still
+  // enter the reset barrier instead of reviving the lease.
+  h.advanceTo(37000); h.dispatchExpiry(); h.rebind.ack(null, { status: 'applied' });
   assert.equal(h.b._wrdRebindPending, false);
   assert.equal(h.lease.snapshot().state, 'REVOKING');
   const reset = h.host.sent.filter(e => e.event === 'control-transition').at(-1).data;
@@ -4152,10 +4219,15 @@ test('disconnect telemetry whitelists protocol reasons without altering host cle
     structuredLogger: { info(event) { events.push(event); } },
   });
   const host = new FakeSocket('runtime-host', 'host');
+  host.conn = { readyState: 'open', transport: { name: 'websocket', writable: true }, writeBuffer: [] };
   io.connect(host);
   host.trigger('disconnect', { payload: 'disconnect-secret-canary' });
   const event = events.find((item) => item.event === 'signal_socket_disconnected');
   assert.equal(event.meta.reason, 'other');
+  assert.equal(event.meta.transport, 'websocket');
+  assert.equal(event.meta.engineReadyState, 'open');
+  assert.equal(event.meta.transportWritable, true);
+  assert.match(event.correlation.socketHash, /^[a-f0-9]{32}$/);
   assert.equal(JSON.stringify(events).includes('disconnect-secret-canary'), false);
   assert.equal(context.connections.host, null);
 });

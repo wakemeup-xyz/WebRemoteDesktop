@@ -61,6 +61,38 @@ test('rebindViewer preserves a pending grant and refuses an expired active lease
   assert.equal(lease.snapshot().controllerViewerId, 'socket-b');
 });
 
+test('disconnect grace holds an active lease past the heartbeat TTL for same-session rebind', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'socket-a' });
+  const active = lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+
+  lease.advanceTo(2_000);
+  assert.equal(lease.holdActiveForReconnect({ viewerId: 'socket-a', graceMs: 30_000 }), true);
+  lease.advanceTo(20_000);
+  assert.deepEqual(lease.expire(), { state: 'ACTIVE' });
+  assert.equal(lease.authorize({ viewerId: 'socket-a', ...active.lease }), true);
+  assert.equal(lease.rebindViewer('socket-a', 'socket-b'), true);
+  assert.equal(lease.authorize({ viewerId: 'socket-a', ...active.lease }), false);
+  assert.equal(lease.authorize({ viewerId: 'socket-b', ...active.lease }), true);
+  assert.deepEqual(lease.heartbeat({ viewerId: 'socket-b', ...active.lease }), {
+    state: 'ACTIVE', ok: true,
+  });
+});
+
+test('disconnect grace hold is owner-bound and formal reset clears it', () => {
+  const lease = makeLease();
+  const request = lease.requestControl({ viewerId: 'socket-a' });
+  lease.confirmTransition({ leaseEpoch: request.transition.leaseEpoch });
+
+  assert.equal(lease.holdActiveForReconnect({ viewerId: 'other', graceMs: 30_000 }), false);
+  assert.equal(lease.holdActiveForReconnect({ viewerId: 'socket-a', graceMs: 30_000 }), true);
+  const reset = lease.viewerDisconnected('socket-a');
+  assert.equal(reset.state, 'REVOKING');
+  lease.advanceTo(3_000);
+  assert.equal(lease.expire().reason, 'transition-timeout');
+  assert.equal(lease.snapshot().state, 'REVOKING');
+});
+
 test('Host transition materialization includes only the pending lease token', () => {
   const lease = makeLease();
   const requested = lease.requestControl({ viewerId: 'viewer-a' });

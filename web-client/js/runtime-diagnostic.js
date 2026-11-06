@@ -16,7 +16,7 @@
   };
   const DIAGNOSTIC_ADMISSION_TYPES = ['frame_timing', 'capture_stats', 'frame_trace_batch', 'loss_lab_host_trace_batch'];
   const DIAGNOSTIC_ADMISSION_REASONS = ['unsupported', 'serialization', 'oversized', 'unavailable', 'replaced',
-    'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'send_error'];
+    'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'pressure', 'send_error'];
   function sanitizeDiagnosticAdmission(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const count = item => Number.isSafeInteger(item) && item >= 0 && item <= 999999999 ? item : null;
@@ -24,7 +24,8 @@
     const types = Object.fromEntries(DIAGNOSTIC_ADMISSION_TYPES.map(kind => [kind, typeValue(kind)]));
     const reasons = Object.fromEntries(DIAGNOSTIC_ADMISSION_REASONS.map(reason => [reason, count(value.reasons?.[reason])]));
     return { types, reasons,
-      legacyDropped: { ids: count(value.legacyDropped?.ids), metadata: count(value.legacyDropped?.metadata) } };
+      legacyDropped: { ids: count(value.legacyDropped?.ids), metadata: count(value.legacyDropped?.metadata) },
+      pressureActive: typeof value.pressureActive === 'boolean' ? value.pressureActive : null };
   }
   function sanitizeDataChannelWatchdog(value) {
     const fields = ['phase', 'timedOut', 'elapsedMs', 'remainingMs', 'extensions', 'pcState', 'iceState',

@@ -22,6 +22,7 @@ class DesktopControlLease {
     this._active = null;
     this._pending = null;
     this._activeDeadline = null;
+    this._reconnectHoldUntil = null;
     this._transitionDeadline = null;
     this._barrierReason = null;
   }
@@ -40,6 +41,7 @@ class DesktopControlLease {
       }
       this._active = null;
       this._activeDeadline = null;
+      this._reconnectHoldUntil = null;
       this._state = 'REVOKING';
     } else {
       this._state = 'GRANTING';
@@ -68,10 +70,12 @@ class DesktopControlLease {
       this._state = 'FREE';
       this._active = null;
       this._activeDeadline = null;
+      this._reconnectHoldUntil = null;
       return { state: 'FREE', reason: pending.reason || 'released' };
     }
     this._active = pending;
     this._activeDeadline = this._now() + this._expiresAfterMs;
+    this._reconnectHoldUntil = null;
     this._state = 'ACTIVE';
     return {
       state: 'ACTIVE',
@@ -93,6 +97,7 @@ class DesktopControlLease {
       this._state = 'REVOKING';
       this._active = null;
       this._activeDeadline = null;
+      this._reconnectHoldUntil = null;
       this._transitionDeadline = null;
       this._pending.reason = failureReason;
       this._barrierReason = failureReason;
@@ -103,6 +108,7 @@ class DesktopControlLease {
     // bump epoch once, and open a reset-only REVOKING barrier.
     this._active = null;
     this._activeDeadline = null;
+    this._reconnectHoldUntil = null;
     this._state = 'REVOKING';
     const nextEpoch = ++this._epoch;
     this._pending = { viewerId: null, leaseEpoch: nextEpoch, reason: failureReason };
@@ -129,7 +135,27 @@ class DesktopControlLease {
       return { state: this._state, ok: false, reason: 'unauthorized' };
     }
     this._activeDeadline = this._now() + this._expiresAfterMs;
+    this._reconnectHoldUntil = null;
     return { state: 'ACTIVE', ok: true };
+  }
+
+  // Keep an authenticated active lease recoverable while its Socket.IO
+  // transport is in the signaling layer's bounded reconnect grace window.
+  // The disconnected socket is still rejected by authorize(); only a
+  // same-session rebind can move the lease to a replacement socket. The
+  // extra transition timeout prevents the one-second expiry poll from racing
+  // the grace timer; viewerDisconnected() clears this hold and starts the
+  // formal Host reset barrier when grace really ends.
+  holdActiveForReconnect({ viewerId, graceMs }) {
+    if (!viewerId || !Number.isFinite(Number(graceMs))) return false;
+    if (this._state !== 'ACTIVE' || !this._active || this._active.viewerId !== viewerId) return false;
+    const now = this._now();
+    if (this._activeDeadline !== null && now >= this._activeDeadline) return false;
+    const boundedGraceMs = Math.max(0, Math.min(30_000, Math.floor(Number(graceMs))));
+    const holdUntil = now + boundedGraceMs + this._transitionTimeoutMs + 1;
+    this._reconnectHoldUntil = Math.max(this._reconnectHoldUntil || 0, holdUntil);
+    this._activeDeadline = Math.max(this._activeDeadline || 0, this._reconnectHoldUntil);
+    return true;
   }
 
   // A Socket.IO reconnect may give the same browser a new socket id while the
@@ -186,6 +212,7 @@ class DesktopControlLease {
     this._active = null;
     this._pending = null;
     this._activeDeadline = null;
+    this._reconnectHoldUntil = null;
     this._transitionDeadline = null;
     this._barrierReason = null;
     this._state = 'FREE';
@@ -273,6 +300,7 @@ class DesktopControlLease {
     this._active = null;
     this._pending = null;
     this._activeDeadline = null;
+    this._reconnectHoldUntil = null;
     this._transitionDeadline = null;
     this._barrierReason = null;
     return { state: 'FREE', reason };
@@ -281,6 +309,7 @@ class DesktopControlLease {
   _beginResetTransition(reason) {
     this._active = null;
     this._activeDeadline = null;
+    this._reconnectHoldUntil = null;
     this._state = 'REVOKING';
     const leaseEpoch = ++this._epoch;
     this._pending = { viewerId: null, leaseEpoch, reason };

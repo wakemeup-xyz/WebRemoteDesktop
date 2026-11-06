@@ -12,7 +12,7 @@ REASONS = frozenset({'manual', 'host-stop', 'new-offer', 'control-transition',
                      'viewer-disconnected', 'signal-disconnect'})
 STAGES = ('resetInput', 'peerClose', 'trackShutdown')
 STATUSES = frozenset({'not-requested', 'absent', 'not-started', 'running',
-                      'returned', 'failed', 'cancelled'})
+                      'returned', 'timed-out', 'failed', 'cancelled'})
 CLOSE_STATES = frozenset({'unclaimed', 'worker-owned', 'closing', 'closed',
                          'close-failed', 'unknown'})
 JOIN_STATES = frozenset({'not-requested', 'pending', 'returned', 'unknown'})
@@ -50,6 +50,7 @@ class PeerCleanupObservation:
                         'peerClose': 'not-started' if peer_present is True else 'absent',
                         'trackShutdown': 'not-started' if track_present is True else 'absent'}
         self._reset_result = 'unknown'
+        self._peer_close_timeout_ms = None
 
     def stage(self, name, status, result=None):
         if type(name) is not str or name not in STAGES:
@@ -57,6 +58,11 @@ class PeerCleanupObservation:
         self._stages[name] = _choice(status, STATUSES, 'not-started')
         if name == 'resetInput':
             self._reset_result = _choice(result, {'applied', 'rejected'})
+
+    def peer_close_timeout(self, timeout_ms):
+        """Record a bounded recovery close without retaining the peer/task."""
+        if type(timeout_ms) is int and 0 < timeout_ms <= 60_000:
+            self._peer_close_timeout_ms = timeout_ms
 
     def start_record(self):
         return dict(self._base, event='start')
@@ -71,7 +77,7 @@ class PeerCleanupObservation:
             clipped = clipped or duration > DURATION_CAP_NS
             elapsed = min(duration, DURATION_CAP_NS) / 1_000_000
         facts = observations if type(observations) is dict else {}
-        return dict(self._base, event='terminal',
+        result = dict(self._base, event='terminal',
             outcome=_choice(outcome, {'returned', 'failed', 'cancelled'}),
             elapsedMs=elapsed, clipped=clipped, stages=dict(self._stages),
             resetResult=self._reset_result,
@@ -83,6 +89,10 @@ class PeerCleanupObservation:
             senderReleaseConfirmed=None,
             authorityCurrent=_boolean(facts.get('authorityCurrent')),
             currentPeerPresent=_boolean(facts.get('currentPeerPresent')))
+        if self._peer_close_timeout_ms is not None:
+            result['peerCloseTimedOut'] = True
+            result['peerCloseTimeoutMs'] = self._peer_close_timeout_ms
+        return result
 
 
 def peer_cleanup_json(record):

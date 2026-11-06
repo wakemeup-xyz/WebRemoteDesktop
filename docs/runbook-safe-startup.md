@@ -577,6 +577,8 @@ find /tmp/wrd-diag -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | tail 
 
 重点字段是 `WRD_MEDIA_APPLY`、`WRD_ENCODER_RATE`、`WRD_ENCODER_SAMPLE`、`host_event_loop_lag`、`dc-error`、`ice-disconnected` 和 `control_reset_blocked`。固定 Relay policy 下，相同 fingerprint 的 `WRD_ENCODER_RATE` 应为有界 `no-op`；持续出现 `reopen-required`、critical event-loop lag 或 `pendingMouseReset` 时，停止继续调网络参数，先排查 Host 编码器和资源回收。
 
+高负载窗口还应查看 `host_diagnostic_pressure` 与 `diagnosticAdmission.pressureActive`。压力门只丢弃 `frame_timing`、`frame_trace_batch` 和 `loss_lab_host_trace_batch` 这类可丢弃诊断行，保留 `capture_stats`、输入 ACK、控制复位和媒体帧；低负载采样恢复后会自动清零。Relay 质量锁在持续停帧时最多执行一次 `high → medium` 码率/帧率降档，保持用户分辨率，后续只走关键帧恢复，避免重复重开编码器。
+
 ### 信令短断线与上下文连续性（2026-10-04）
 
 Viewer 对 Relay、STUN/直连和 Tunnel 都启用 signaling recovery。短暂断线先等待 Socket.IO 自动恢复，页面从后台、休眠或网络切换回来时会复用现有 socket；媒体仍健康时保留现有 PeerConnection，并把 UI 和输入 gate 回切到可用状态，只有媒体不健康才刷新 offer。Signal 对同一页面会话保留 8 秒 grace，用于迁移 Socket.IO 重连产生的新 socket id、控制租约和媒体 attempt；手动断开和 viewer 被 supersede 不会触发自动恢复。

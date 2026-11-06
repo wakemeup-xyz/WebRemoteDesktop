@@ -3013,7 +3013,25 @@ const WebRTC = {
       return this.socket;
     }
     if (this.socket) {
-      this.socket.disconnect();
+      // Retire ownership before closing the old transport. Socket.IO may emit
+      // `disconnect` synchronously (and browsers can flush a queued close
+      // callback in the same turn). If `this.socket` still points at the old
+      // instance, its listener can arm another recovery timer or freeze the
+      // newly recovering control lease while this replacement is being built.
+      // The listener guards then make every late callback from this instance
+      // inert, while the existing signaling session/fallback policy remains
+      // available to the replacement.
+      const previousSocket = this.socket;
+      this.socket = null;
+      // Do not leave an interval/ACK deadline scoped to a socket that can no
+      // longer become current. The replacement's `connected` handler starts a
+      // fresh heartbeat once the lease is rebound.
+      this.stopControlHeartbeat();
+      try {
+        previousSocket.disconnect();
+      } catch (error) {
+        console.warn('[RECOVERY] Failed to retire signaling socket:', error);
+      }
     }
     const token = Auth.getToken();
     if (!token) {
@@ -4115,7 +4133,11 @@ const WebRTC = {
       this._controlHeartbeatCapability = data.controlHeartbeatAckVersion === 1
         ? { socket, socketId: socket.id } : null;
       if (this.hasActiveControl()) {
-        this.bindCurrentConnectionAttempt();
+        // A capability-bearing welcome can arrive after the lease was granted
+        // and the attempt was already bound. Re-send the binding before the
+        // first confirmed heartbeat so the server can attribute that heartbeat
+        // to the current attempt even when the welcome is late or duplicated.
+        this.bindCurrentConnectionAttempt({ force: true });
         this.startControlHeartbeat();
       }
       if (!this.readProofAdmission() && data.viewerAdmission?.mode === 'resume') {
@@ -4258,7 +4280,18 @@ const WebRTC = {
       this.handleRelayFrame(data);
     });
     onCurrentSocket('control-state', (data) => this.handleControlState(data));
-    onCurrentSocket('control-grant', (data) => this.handleControlGrant(data));
+    onCurrentSocket('control-grant', (data) => {
+      this.handleControlGrant(data);
+      // The server retries a grant until it sees this bounded acknowledgement.
+      // Only acknowledge after the lease is actually installed; an ignored or
+      // stale grant must remain eligible for retry on a lossy edge path.
+      const lease = this.controlState?.lease;
+      if (this.hasActiveControl() && lease?.leaseId === data?.leaseId
+        && lease?.leaseEpoch === data?.leaseEpoch && this.socket === socket
+        && socket.connected) {
+        socket.emit('control-grant-ack', { schemaVersion: 1, leaseEpoch: data.leaseEpoch });
+      }
+    });
     onCurrentSocket('control-acquire-result', (data) => this.handleControlAcquireResult(data));
     onCurrentSocket('control-revoked', () => this.freezeControl('control-revoked'));
     onCurrentSocket('control-transition-failed', () => this.freezeControl('control-transition-failed'));
@@ -7443,8 +7476,24 @@ if (this.tunnelLastObjectUrl) {
     // still moving so reconnecting the control plane does not cause a visible
     // black frame. A stale/closed peer gets a fresh attempt and offer.
     const pcState = this.pc?.connectionState;
-    const peerHealthy = pcState === 'connected'
-      && (this.isInboundVideoHealthy(5000) || this.hasPaintedFrame === true);
+    // `hasPaintedFrame` is a lifetime/UI marker. It intentionally survives a
+    // signaling blip so the last frame can remain visible, but it cannot prove
+    // that this peer is still receiving media after the blip. Reusing a peer
+    // on that stale marker leaves the UI/input gate connected while Host has
+    // stopped sending (the observed 0-FPS + `reason=closed` recovery case).
+    // Require a recent inbound decode sample before retaining the peer; an
+    // unknown/stale sample must take the normal fresh-attempt path.
+    const mediaHealthy = this.isInboundVideoHealthy(5000);
+    const peerHealthy = pcState === 'connected' && mediaHealthy;
+    if (pcState === 'connected' && !mediaHealthy && this.hasPaintedFrame) {
+      let inboundAgeMs = null;
+      try {
+        const at = Number(this._lastInboundFramesDecodedAt);
+        if (Number.isFinite(at)) inboundAgeMs = Math.max(0, performance.now() - at);
+      } catch (_) {}
+      console.warn('[RECOVERY] Retiring signaling peer with stale media: inboundAgeMs=%s painted=%s',
+        inboundAgeMs == null ? 'unknown' : Math.round(inboundAgeMs), this.hasPaintedFrame);
+    }
     if (!peerHealthy || !this.pc || ['failed', 'closed', 'disconnected'].includes(pcState)) {
       this.refresh({ reason: 'signal-reconnected' });
       return true;

@@ -243,7 +243,7 @@ def test_allowlist_and_bounded_scalar_counters():
     gate.note_legacy_drop(1, 1)
     assert gate.reasons['unsupported'] == COUNTER_MAX
     assert gate.legacy == {'ids': COUNTER_MAX, 'metadata': COUNTER_MAX}
-    assert len(gate.counts) == 4 and len(gate.reasons) == 10
+    assert len(gate.counts) == 4 and len(gate.reasons) == 11
 
 
 def host_methods(names, **extra):
@@ -301,6 +301,30 @@ def test_second_batch_sees_first_send_bytes():
     assert not gate.send(host, dc, payload)
     assert len(dc.sent) == 1
     assert gate.reasons['congested'] == 1
+
+
+def test_pressure_gate_drops_only_disposable_diagnostics():
+    dc = Channel()
+    host = SimpleNamespace(get_input_datachannel=lambda: dc)
+    gate = DiagnosticAdmission()
+    assert gate.set_pressure(True) is True
+
+    assert not gate.send(host, dc, {'type': 'frame_timing', 'frameId': 1})
+    assert not gate.send(host, dc, {'type': 'frame_trace_batch', 'traces': []})
+    assert not gate.send(host, dc, {'type': 'loss_lab_host_trace_batch', 'events': []})
+    # Low-rate capture summaries remain available for diagnosing the pressure
+    # window, while high-frequency trace rows are shed first.
+    assert gate.send(host, dc, {'type': 'capture_stats', 'fps': 8.0})
+    assert [row['type'] for row in dc.sent] == ['capture_stats']
+    assert gate.reasons['pressure'] == 3
+    assert gate.counts['frame_timing']['dropped'] == 1
+    assert gate.counts['frame_trace_batch']['dropped'] == 1
+    assert gate.counts['loss_lab_host_trace_batch']['dropped'] == 1
+    assert gate.snapshot()['pressureActive'] is True
+
+    gate.set_pressure(False)
+    assert gate.send(host, dc, {'type': 'frame_timing', 'frameId': 2})
+    assert dc.sent[-1]['frameId'] == 2
 
 
 @pytest.mark.parametrize('field', ['readyState', 'send', 'bufferedAmount'])

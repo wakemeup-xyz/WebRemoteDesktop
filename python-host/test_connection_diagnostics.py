@@ -715,6 +715,68 @@ def test_event_loop_lag_context_is_bounded_and_actionable(monkeypatch):
     assert "payload" not in context
 
 
+def test_diagnostic_pressure_gate_sheds_disposable_rows_and_recovers():
+    class PressureGate:
+        def __init__(self):
+            self.pressure_active = False
+            self.transitions = []
+
+        def set_pressure(self, active):
+            self.pressure_active = bool(active)
+            self.transitions.append(self.pressure_active)
+            return self.pressure_active
+
+    gate = PressureGate()
+    host = object.__new__(WebRemoteHost)
+    host.screen_track = SimpleNamespace(_diagnostic_admission=gate)
+    healthy = {
+        "schedulerLoadRatio": 0.2,
+        "lagMs": 3.0,
+        "capture": {
+            "currentGrabAgeMs": 12.0,
+            "lastDurationMs": 9.0,
+            "cadence": {"lastInterval": {"intervalMs": 48.0}},
+        },
+    }
+    pressured = {
+        **healthy,
+        "schedulerLoadRatio": 3.0,
+    }
+
+    assert host._update_diagnostic_pressure(pressured) is True
+    assert gate.pressure_active is True
+    # A later healthy sample clears the scalar gate; no queue or media setting
+    # is touched, so reliable input/ACK admission remains independent.
+    assert host._update_diagnostic_pressure(healthy) is False
+    assert gate.pressure_active is False
+    assert gate.transitions == [True, False]
+
+
+@pytest.mark.parametrize("capture_field", [
+    {"currentGrabAgeMs": 500.0},
+    {"lastDurationMs": 500.0},
+    {"cadence": {"lastInterval": {"intervalMs": 500.0}}},
+])
+def test_diagnostic_pressure_gate_uses_capture_stall_thresholds(capture_field):
+    class PressureGate:
+        pressure_active = False
+
+        def set_pressure(self, active):
+            self.pressure_active = bool(active)
+            return self.pressure_active
+
+    host = object.__new__(WebRemoteHost)
+    host.screen_track = SimpleNamespace(_diagnostic_admission=PressureGate())
+    capture = {
+        "currentGrabAgeMs": 10.0,
+        "lastDurationMs": 10.0,
+        "cadence": {"lastInterval": {"intervalMs": 10.0}},
+    }
+    capture.update(capture_field)
+    context = {"schedulerLoadRatio": 0.2, "lagMs": 1.0, "capture": capture}
+    assert host._update_diagnostic_pressure(context) is True
+
+
 @pytest.mark.asyncio
 async def test_on_diagnostic_logs_summary_without_viewer_log_dump_by_default(monkeypatch, caplog):
     monkeypatch.delenv("WRD_HOST_VERBOSE_DIAGNOSTICS", raising=False)

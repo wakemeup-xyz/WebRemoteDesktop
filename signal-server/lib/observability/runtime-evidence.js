@@ -308,7 +308,7 @@ function createRuntimeEvidenceRecorder(options = {}) {
           dropped: projected.reduce((total, row) => total + (row.diagnosticAdmission?.types?.[kind]?.dropped ?? 0), 0),
         }])),
       reasons: Object.fromEntries(['unsupported', 'serialization', 'oversized', 'unavailable', 'replaced',
-        'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'send_error']
+        'closed', 'invalid_channel', 'invalid_buffer', 'congested', 'pressure', 'send_error']
         .map(reason => [reason, projected.reduce((total, row) => total + (row.diagnosticAdmission?.reasons?.[reason] ?? 0), 0)])),
       legacyDropped: {
         ids: projected.reduce((total, row) => total + (row.diagnosticAdmission?.legacyDropped?.ids ?? 0), 0),

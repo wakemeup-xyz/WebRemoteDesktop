@@ -1367,6 +1367,39 @@ test('createSignalingSocket records websocket-first transports for blocked-WS po
   assert.ok(Number(calls[0].options.timeout) <= 5000);
 });
 
+test('replacing signaling socket retires old callbacks before synchronous disconnect', () => {
+  const sockets = [];
+  const { WebRTC } = loadWebRTC({
+    io(_base, options) {
+      const handlers = new Map();
+      const socket = {
+        connected: false,
+        on(event, handler) { handlers.set(event, handler); },
+        emit() {},
+        disconnectCalls: 0,
+        disconnect() {
+          this.disconnectCalls += 1;
+          this.connected = false;
+          // Some Socket.IO/browser close paths can synchronously dispatch the
+          // old listener while a replacement is being created.
+          handlers.get('disconnect')?.('transport close');
+        },
+        io: { opts: options },
+      };
+      sockets.push(socket);
+      return socket;
+    },
+    Auth: { getToken: () => 'token-test' },
+  });
+  WebRTC.clearSignalingRecovery();
+  const first = WebRTC.createSignalingSocket(true);
+  const second = WebRTC.createSignalingSocket(true);
+  assert.equal(first.disconnectCalls, 1);
+  assert.equal(WebRTC.socket, second);
+  assert.equal(WebRTC._signalRecoveryPending, false);
+  assert.equal(sockets.length, 2);
+});
+
 test('evaluateSignalingTransportPlan: websocket blocked then polling succeeds within budget', () => {
   const { WebRTC } = loadWebRTC();
   const plan = WebRTC.evaluateSignalingTransportPlan([
@@ -2807,6 +2840,31 @@ test('healthy peer signaling recovery restores connected UI and input without a 
   assert.equal(WebRTC.handleSignalingRecoveryConnected(), true);
   assert.equal(WebRTC.uiPhase, 'connected');
   assert.equal(inputStates.at(-1), true);
+  assert.equal(WebRTC._signalRecoveryPending, false);
+});
+
+test('stale painted marker does not retain a frozen peer after signaling recovery', () => {
+  const { WebRTC } = loadWebRTC();
+  let refreshes = 0;
+  WebRTC.refresh = () => { refreshes += 1; };
+  WebRTC.socket = { connected: true };
+  WebRTC.pc = { connectionState: 'connected' };
+  WebRTC.uiPhase = 'signaling';
+  // A previous frame is still held on screen, but no recent inbound decode
+  // sample exists. This is the exact state produced by a prolonged 0-FPS
+  // media stall during a signaling reconnect.
+  WebRTC.hasPaintedFrame = true;
+  WebRTC._signalRecoveryPending = true;
+  WebRTC.controlState = {
+    state: 'ACTIVE',
+    controller: true,
+    hostOnline: true,
+    lease: { leaseId: 'lease-frozen-0001', leaseEpoch: 4 },
+  };
+  WebRTC.isInboundVideoHealthy = () => false;
+
+  assert.equal(WebRTC.handleSignalingRecoveryConnected(), true);
+  assert.equal(refreshes, 1);
   assert.equal(WebRTC._signalRecoveryPending, false);
 });
 
@@ -5160,7 +5218,12 @@ function signalMediaReplayFixture({ acknowledge = true } = {}) {
   const { FakeSocket, makeIo, resetConnections, grantActiveLease } = require('../../signal-server/websocket/signaling-test-fixture');
   resetConnections();
   const io = makeIo();
-  setupSignaling(io, { makeLeaseId: () => 'lease-000000000001', now: () => 0 });
+  setupSignaling(io, {
+    makeLeaseId: () => 'lease-000000000001', now: () => 0,
+    // This fixture exercises media replay, not grant delivery. Disable the
+    // production retry timer so a later server resend cannot outlive the test.
+    grantAckRetryDelaysMs: [],
+  });
   const host = new FakeSocket('host-media-replay', 'host');
   const viewer = new FakeSocket('viewer-media-replay', 'viewer');
   host.handshake.auth.inputProtocolVersion = viewer.handshake.auth.inputProtocolVersion = 2;
@@ -9614,6 +9677,11 @@ test('after-grace ownership: duplicate grant preserves healthy peer', async () =
 test('after-grace ownership: within grace rebind preserves peer and ACK barrier', async () => {
   const f = await afterGracePeerFixture();
   const pc = f.w.pc, attempt = f.w.currentConnectionAttemptId, sequence = f.w.connectionAttemptSequence;
+  // The fixture has a real stats sampler but no interval clock tick. Add two
+  // positive decode samples so health is proven by the same production path
+  // used to distinguish a short outage from a stale painted marker.
+  pc.decoded = 1; await f.w._statsSampler.sampleNow();
+  pc.decoded = 2; await f.w._statsSampler.sampleNow();
   f.w.socket.connected = false; f.w.freezeControl('signal-disconnect');
   f.w.scheduleSignalingRecovery('signal-disconnected');
   f.w.socket.connected = true;

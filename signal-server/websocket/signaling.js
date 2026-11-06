@@ -191,6 +191,54 @@ function setupSignaling(io, options = {}) {
   const logger = options.logger || console;
   const recentEventStore = options.recentEventStore || null;
   const structuredLogger = options.structuredLogger || null;
+
+  // Engine.IO closes can be caused by the edge path while the Node process is
+  // healthy. Keep the transport snapshot bounded and metadata-only so a
+  // disconnect can be joined to the tunnel/heartbeat evidence without
+  // retaining socket objects, payloads, or credentials.
+  function socketTransportSnapshot(socket) {
+    const unavailable = {
+      transport: null,
+      engineReadyState: null,
+      transportWritable: null,
+      writeBufferLength: null,
+    };
+    try {
+      const connection = socket?.conn;
+      const transport = connection?.transport;
+      const writeBuffer = connection?.writeBuffer;
+      const bufferLength = Array.isArray(writeBuffer) && Number.isSafeInteger(writeBuffer.length)
+        ? Math.max(0, Math.min(1_000_000, writeBuffer.length)) : null;
+      const transportName = typeof transport?.name === 'string'
+        && ['websocket', 'polling', 'webtransport'].includes(transport.name)
+        ? transport.name : null;
+      const engineReadyState = typeof connection?.readyState === 'string'
+        && ['opening', 'open', 'closing', 'closed'].includes(connection.readyState)
+        ? connection.readyState : null;
+      const transportWritable = typeof transport?.writable === 'boolean' ? transport.writable : null;
+      return { transport: transportName, engineReadyState, transportWritable, writeBufferLength: bufferLength };
+    } catch (_error) {
+      return unavailable;
+    }
+  }
+
+  function emitSignalingLifecycleEvent(event, socket, meta = {}) {
+    const payload = {
+      domain: 'signaling', event,
+      message: event === 'signal_socket_connected'
+        ? 'Signaling socket connected' : 'Signaling socket disconnected',
+      correlation: {
+        ...(hashCorrelation(socket?.id) ? { socketHash: hashCorrelation(socket.id) } : {}),
+        ...(hashCorrelation(socket?._wrdViewerSessionId)
+          ? { browserSessionHash: hashCorrelation(socket._wrdViewerSessionId) } : {}),
+      },
+      meta: { role: socket?.userRole || socket?.user?.role || socket?.handshake?.auth?.role || null,
+        ...socketTransportSnapshot(socket), ...meta },
+    };
+    try { structuredLogger?.info?.(payload); } catch (_error) {}
+    try { recentEventStore?.append?.(payload); } catch (_error) {}
+    return payload;
+  }
   const heartbeatNow = typeof options.controlHeartbeatNow === 'function'
     ? options.controlHeartbeatNow : () => performance.now();
   const heartbeatCount = value => Math.min(999999999, Math.max(0, Math.floor(value)));
@@ -325,11 +373,83 @@ function setupSignaling(io, options = {}) {
   // Attempt binding and generation progress share one record, but applied:false only
   // releases generation progress — never deletes the authoritative attempt bind.
   const mediaActivityProgress = new Map();
+  // A control grant is the only packet that teaches a reconnecting Viewer
+  // which lease it must heartbeat. Keep a short, bounded retry window so one
+  // edge-path packet loss cannot leave the server renewing an authority that
+  // the browser never received. The Viewer ACK or its first accepted
+  // heartbeat cancels the delivery operation.
+  const configuredGrantAckRetryDelaysMs = Array.isArray(options.grantAckRetryDelaysMs)
+    ? options.grantAckRetryDelaysMs
+      .map(value => Number.isFinite(Number(value))
+        ? Math.max(250, Math.min(5_000, Math.floor(Number(value)))) : null)
+      .filter(value => value !== null)
+      .slice(0, 3)
+    : null;
+  const grantAckRetryDelaysMs = configuredGrantAckRetryDelaysMs === null
+    ? [1_200, 2_400, 4_800] : configuredGrantAckRetryDelaysMs;
+  const grantDeliveries = new Map();
   // Reset-only barriers outlive the Viewer socket that caused them. Retain
   // only bounded in-memory identity context until the matching Host ACK so
   // reset completion can be correlated without retaining lease/input data.
   const resetCorrelationByEpoch = new Map();
   const freshnessCorrelationByViewer = new Map();
+
+  function clearGrantDelivery(viewerId) {
+    const delivery = grantDeliveries.get(viewerId);
+    if (!delivery) return false;
+    if (delivery.timer) clearTimeoutFn(delivery.timer);
+    grantDeliveries.delete(viewerId);
+    return true;
+  }
+
+  function clearAllGrantDeliveries() {
+    for (const viewerId of [...grantDeliveries.keys()]) clearGrantDelivery(viewerId);
+  }
+
+  function scheduleGrantDelivery(viewerId, lease) {
+    const viewerSocket = connections.viewers.get(viewerId);
+    if (!viewerSocket || !lease) return false;
+    clearGrantDelivery(viewerId);
+    const delivery = {
+      socket: viewerSocket,
+      leaseId: lease.leaseId,
+      leaseEpoch: lease.leaseEpoch,
+      attempt: 0,
+      timer: null,
+    };
+    grantDeliveries.set(viewerId, delivery);
+    const deliver = () => {
+      if (grantDeliveries.get(viewerId) !== delivery
+        || connections.viewers.get(viewerId) !== delivery.socket
+        || delivery.socket._wrdDisconnected === true) {
+        clearGrantDelivery(viewerId);
+        return;
+      }
+      delivery.attempt += 1;
+      sendGrant(viewerId, lease, { broadcast: delivery.attempt === 1 });
+      // A local test adapter or an in-process transport may deliver the
+      // Viewer ACK synchronously from emit(). Do not arm a retry after that
+      // acknowledgement has already retired this operation.
+      if (grantDeliveries.get(viewerId) !== delivery) return;
+      if (delivery.attempt <= grantAckRetryDelaysMs.length) {
+        const delay = grantAckRetryDelaysMs[delivery.attempt - 1];
+        delivery.timer = setTimeoutFn(deliver, delay);
+        delivery.timer?.unref?.();
+        if (delivery.attempt > 1) {
+          try {
+            emitControlEvent('control_grant_retry', {
+              viewerId, leaseEpoch: lease.leaseEpoch, attempt: delivery.attempt,
+              reason: 'ack-timeout',
+            });
+          } catch (_error) { /* observability cannot affect grant delivery */ }
+        }
+      } else {
+        grantDeliveries.delete(viewerId);
+      }
+    };
+    deliver();
+    return true;
+  }
 
   function boundedResetCorrelation(context = {}) {
     const viewerId = typeof context.viewerId === 'string' && context.viewerId ? context.viewerId : null;
@@ -404,7 +524,7 @@ function setupSignaling(io, options = {}) {
     const meta = {};
     for (const key of [
       'reason', 'leaseEpoch', 'attempt', 'graceMs', 'connectionAttemptSequence',
-      'rebound', 'schemaVersion', 'state', 'reasons', 'generation', 'status',
+      'rebound', 'leaseHeldForReconnect', 'schemaVersion', 'state', 'reasons', 'generation', 'status',
       'mediaState', 'pageVisibility', 'pageHidden', 'stale', 'released',
       'lastFrameAgeMs', 'lastReceivedAgeMs', 'lastStatsAgeMs', 'lastHeartbeatAgeMs',
       'lastProgressAgeMs', 'progressAgeMs', 'lastMediaAckAgeMs', 'activeStallAgeMs',
@@ -845,7 +965,7 @@ function setupSignaling(io, options = {}) {
             return;
           }
           clearRebind();
-          sendGrant(nextId, activeLease);
+          scheduleGrantDelivery(nextId, activeLease);
           emitControlEvent('viewer_rebind_confirmed', { viewerId: nextId, previousViewerId: previousId, sessionId, leaseEpoch: activeLease.leaseEpoch });
           return;
         }
@@ -924,6 +1044,7 @@ function setupSignaling(io, options = {}) {
       sessionId,
       connectionAttemptId,
       graceMs: viewerDisconnectGraceMs,
+      leaseHeldForReconnect: socket._wrdLeaseHeldForReconnect === true,
     });
     return true;
   }
@@ -934,6 +1055,7 @@ function setupSignaling(io, options = {}) {
     if (!socket) return null;
     if (connections.viewers.get(socket.id) !== socket) return null;
     clearViewerSessionBinding(socket);
+    clearGrantDelivery(socket.id);
     clearLegacyRelayCompanion(socket.id, { stop: true });
     const resetCorrelation = {
       viewerId: socket.id,
@@ -998,6 +1120,14 @@ function setupSignaling(io, options = {}) {
 
   function dispatchLeaseEffect(effect, reason = effect?.reason, correlationContext = {}) {
     if (!effect || (!effect.reason && !effect.transition)) return false;
+    // A pending control grant belongs to the lease being released/revoked.
+    // Stop its retry timer before starting the Host reset barrier; otherwise a
+    // delayed grant can arrive after the UI has already entered REVOKING and
+    // keep stale control work alive.
+    if ((effect.state === 'REVOKING' || effect.state === 'FREE')
+      && typeof correlationContext.viewerId === 'string') {
+      clearGrantDelivery(correlationContext.viewerId);
+    }
     if (reason === 'lease-expired') {
       for (const viewer of connections.viewers.values()) summarizeControlHeartbeat(viewer, 'lease-expired');
     }
@@ -1008,6 +1138,7 @@ function setupSignaling(io, options = {}) {
     const resetOnlyBarrier = effect.state === 'REVOKING'
       && snapshotAfter.pendingViewerId === null;
     if (effect.state === 'FREE' || resetOnlyBarrier) {
+      clearAllGrantDeliveries();
       clearPendingInputs();
       pendingControllerProtocolVersion = null;
       legacyControllerViewerId = null;
@@ -1027,7 +1158,7 @@ function setupSignaling(io, options = {}) {
     return true;
   }
 
-  function sendGrant(viewerId, lease) {
+  function sendGrant(viewerId, lease, { broadcast = true } = {}) {
     const viewerSocket = connections.viewers.get(viewerId);
     if (!viewerSocket || !lease) return;
     const observation = controlHeartbeatObservation(viewerSocket);
@@ -1039,7 +1170,7 @@ function setupSignaling(io, options = {}) {
     observation.leaseEpoch = lease.leaseEpoch;
     observation.lastGrantAt = heartbeatNow();
     viewerSocket.emit('control-grant', { controller: true, ...lease });
-    broadcastControlState('granted');
+    if (broadcast) broadcastControlState('granted');
   }
 
   function authorizeViewer(socket, data = {}, { legacy = true } = {}) {
@@ -1421,6 +1552,10 @@ function setupSignaling(io, options = {}) {
       }
       clearHostCapabilities();
       socket.emit('connected', { role: 'host', status: 'ok', inputProtocolVersion: socket.inputProtocolVersion });
+      emitSignalingLifecycleEvent('signal_socket_connected', socket, {
+        viewerCount: connections.viewers.size,
+        rebound: false,
+      });
       emitViewerStatus('host-connected');
       // Notify all viewers that host is online
       connections.viewers.forEach((viewerSocket) => {
@@ -1488,6 +1623,11 @@ function setupSignaling(io, options = {}) {
         hostInputProtocolVersion: hostInputProtocolVersion(),
         hostCapabilities: getHostCapabilities(),
       });
+      emitSignalingLifecycleEvent('signal_socket_connected', socket, {
+        admissionMode: humanAdmission?.mode || (isProofViewer ? 'proof' : 'legacy'),
+        viewerCount: connections.viewers.size,
+        rebound,
+      });
       emitViewerStatus('viewer-connected', socket);
       socket.emit('control-state', {
         ...controlSnapshot(),
@@ -1505,6 +1645,10 @@ function setupSignaling(io, options = {}) {
         role: 'relay-viewer',
         status: 'ok',
         hostOnline: connections.host !== null
+      });
+      emitSignalingLifecycleEvent('signal_socket_connected', socket, {
+        viewerCount: connections.viewers.size,
+        rebound: false,
       });
     }
 
@@ -1604,6 +1748,7 @@ function setupSignaling(io, options = {}) {
         leaseEpoch: data.leaseEpoch,
       }));
       viewerFreshness.observeHeartbeat(socket.id);
+      if (result.ok) clearGrantDelivery(socket.id);
       const observation = observeControlHeartbeat(socket, data, result, ackScopeMatches);
       if (!result.ok && observation.rejected === 1) summarizeControlHeartbeat(socket, 'rejected');
       if (!result.ok) socket.emit('control-heartbeat-rejected', { reason: result.reason });
@@ -1616,6 +1761,22 @@ function setupSignaling(io, options = {}) {
           observation.lastAckEnqueuedHeartbeatSeq = data.heartbeatSeq;
         } catch (_error) { /* Renewal is already committed; ACK enqueue is best effort. */ }
       }
+    });
+
+    socket.on('control-grant-ack', (data = {}) => {
+      if (role !== 'viewer' || !isActiveViewerSocket(socket)
+        || !data || typeof data !== 'object' || Array.isArray(data)) return;
+      const delivery = grantDeliveries.get(socket.id);
+      if (!delivery || delivery.socket !== socket
+        || data.schemaVersion !== 1
+        || data.leaseEpoch !== delivery.leaseEpoch) return;
+      const activeLease = withLeaseExpiry(() => desktopLease.getActiveLease(socket.id));
+      if (!activeLease || activeLease.leaseId !== delivery.leaseId
+        || activeLease.leaseEpoch !== delivery.leaseEpoch) {
+        clearGrantDelivery(socket.id);
+        return;
+      }
+      clearGrantDelivery(socket.id);
     });
 
     socket.on('control-release', (data = {}) => {
@@ -1675,7 +1836,7 @@ function setupSignaling(io, options = {}) {
           : null;
         if (legacyControllerViewerId) legacyRelayOwnerIds.add(legacyControllerViewerId);
         pendingControllerProtocolVersion = null;
-        sendGrant(controlSnapshot().controllerViewerId, result.lease);
+        scheduleGrantDelivery(controlSnapshot().controllerViewerId, result.lease);
       }
       dispatchLeaseEffect(result, result.reason || result.state.toLowerCase());
       if (result.lease) {
@@ -2379,10 +2540,27 @@ function setupSignaling(io, options = {}) {
 
     socket.on('disconnect', (reason) => {
       if (role === 'viewer') summarizeControlHeartbeat(socket, 'socket-disconnected');
+      const progress = role === 'viewer' ? mediaActivityProgress.get(socket.id) : null;
+      const leaseSnapshot = desktopLease.snapshot();
       const disconnectEvent = {
         domain: 'signaling', event: 'signal_socket_disconnected',
         message: 'Signaling socket disconnected',
-        meta: { role, reason: normalizeDisconnectReason(reason) },
+        correlation: {
+          ...(hashCorrelation(socket?.id) ? { socketHash: hashCorrelation(socket.id) } : {}),
+          ...(hashCorrelation(socket?._wrdViewerSessionId)
+            ? { browserSessionHash: hashCorrelation(socket._wrdViewerSessionId) } : {}),
+          ...(hashCorrelation(progress?.connectionAttemptId)
+            ? { attemptHash: hashCorrelation(progress.connectionAttemptId) } : {}),
+        },
+        meta: {
+          role,
+          reason: normalizeDisconnectReason(reason),
+          ...socketTransportSnapshot(socket),
+          connectionAttemptSequence: Number.isSafeInteger(progress?.connectionAttemptSequence)
+            ? progress.connectionAttemptSequence : null,
+          leaseEpoch: Number.isSafeInteger(leaseSnapshot?.leaseEpoch) ? leaseSnapshot.leaseEpoch : null,
+          rebindPending: socket?._wrdRebindPending === true,
+        },
       };
       // Observability failures must never interrupt the existing authority cleanup.
       try { structuredLogger?.info?.(disconnectEvent); } catch (_error) { /* best effort */ }
@@ -2412,6 +2590,11 @@ function setupSignaling(io, options = {}) {
         // while marking the old socket inactive so delayed packets cannot
         // write through the preserved context.
         socket._wrdDisconnected = true;
+        const leaseHeldForReconnect = desktopLease.holdActiveForReconnect?.({
+          viewerId: socket.id,
+          graceMs: viewerDisconnectGraceMs,
+        }) === true;
+        socket._wrdLeaseHeldForReconnect = leaseHeldForReconnect;
         if (!scheduleDesktopViewerGrace(socket)) {
           removeDesktopViewer(socket, 'viewer-disconnected');
         }

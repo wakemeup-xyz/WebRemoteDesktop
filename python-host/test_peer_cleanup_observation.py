@@ -27,6 +27,9 @@ class Log:
             self.records.append(json.loads(args[0]))
         elif message.startswith('WRD_MEDIA_RESOURCES '):
             self.legacy_reasons.append(args[0])
+        else:
+            self.legacy_reasons.append(message % args if args else message)
+    warning = error = info
     def terminal(self):
         return [record for record in self.records if record['event'] == 'terminal']
 
@@ -43,6 +46,16 @@ def close_method(log, clock=None):
         namespace.update(vars(peer_cleanup_observation))
     exec(compile(ast.Module(body=[node], type_ignores=[]), '<AST peer cleanup>', 'exec'), namespace)
     return namespace['_close_peer_connection']
+
+
+def recovery_close_method(log):
+    tree = ast.parse(Path(__file__).with_name('host.py').read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'WebRemoteHost')
+    node = next(node for node in cls.body if isinstance(node, ast.AsyncFunctionDef)
+                and node.name == '_close_peer_for_recovery')
+    namespace = dict(logger=log, asyncio=asyncio)
+    exec(compile(ast.Module(body=[node], type_ignores=[]), '<AST peer recovery>', 'exec'), namespace)
+    return namespace['_close_peer_for_recovery']
 
 
 def host():
@@ -113,6 +126,7 @@ class HostPeerCleanupTest(unittest.TestCase):
         terminal_reasons = {record['reason'] for record in log.terminal()} | set(log.legacy_reasons)
         self.assertEqual(terminal_reasons, {'manual', 'viewer-disconnected'})
         self.assertEqual(len(log.records), 4)
+
         starts = [item for item in log.records if item['event'] == 'start']
         terminals = log.terminal()
         self.assertEqual([item['cleanupSequence'] for item in starts], [1, 2])
@@ -127,6 +141,32 @@ class HostPeerCleanupTest(unittest.TestCase):
         self.assertFalse(old['authorityCurrent'])
         self.assertTrue(old['currentPeerPresent'])
         self.assertIsNone(old['senderReleaseConfirmed'])
+
+    def test_recovery_peer_close_timeout_keeps_background_cleanup_and_emits_bounded_diagnostic(self):
+        async def scenario():
+            log = Log()
+            close = recovery_close_method(log)
+            finished = asyncio.Event()
+
+            class Peer:
+                connectionState = 'connected'
+
+                async def close(self):
+                    await finished.wait()
+
+            obj = SimpleNamespace()
+            task = asyncio.create_task(close(obj, Peer(), timeout_ms=1))
+            await asyncio.sleep(0)
+            status = await task
+            self.assertEqual(status, 'timed-out')
+            self.assertTrue(any('WRD_PEER_CLOSE_TIMEOUT' in line for line in log.legacy_reasons))
+            pending = list(getattr(obj, '_peer_close_tasks', ()))
+            self.assertEqual(len(pending), 1)
+            for item in pending:
+                item.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        asyncio.run(scenario())
 
 
 class PeerCleanupObservationTest(unittest.TestCase):
@@ -170,6 +210,21 @@ class PeerCleanupObservationTest(unittest.TestCase):
         self.assertEqual(record.terminal('returned', 0, {})['stages']['peerClose'], 'returned')
         record.start_record()['reason'] = 'changed'
         self.assertEqual(record.start_record()['reason'], 'manual')
+
+    def test_timeout_terminal_includes_only_bounded_close_metadata(self):
+        from peer_cleanup_observation import peer_cleanup_json
+        record = self.record()
+        record.stage('peerClose', 'timed-out')
+        record.peer_close_timeout(3000)
+        terminal = record.terminal('returned', 1_000_000, {
+            'peerConnectionClosed': False,
+            'captureCloseState': 'unknown',
+        })
+        self.assertTrue(terminal['peerCloseTimedOut'])
+        self.assertEqual(terminal['peerCloseTimeoutMs'], 3000)
+        encoded = peer_cleanup_json(terminal)
+        self.assertLessEqual(len(encoded.encode()), 2048)
+        self.assertEqual(json.loads(encoded), terminal)
 
     def test_scalar_allowlists_never_evaluate_or_retain_objects(self):
         from peer_cleanup_observation import PeerCleanupObservation, peer_cleanup_json

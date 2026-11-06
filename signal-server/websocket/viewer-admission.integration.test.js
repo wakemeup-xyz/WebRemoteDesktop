@@ -21,7 +21,8 @@ function fixture(options = {}) {
   setupSignaling(io, { runtimeContext: runtime, desktopControlLease: lease, now: () => now,
     // These admission fixtures intentionally drive one 8s grace/one ACK timer.
     // Production defaults (30s and bounded retries) have separate contract tests.
-    viewerDisconnectGraceMs: 8000, rebindAckTimeoutsMs: [1500],
+    viewerDisconnectGraceMs: options.viewerDisconnectGraceMs ?? 8000,
+    rebindAckTimeoutsMs: [1500],
     structuredLogger: options.structuredLogger,
     scheduler: { setInterval: () => ({ unref() {} }), setTimeout(fn, ms) {
       const timer = { fn, ms, cancelled: false, unref() {} }; timers.push(timer); return timer;
@@ -118,6 +119,26 @@ for (const guardedOwner of [false, true]) {
     }
   });
 }
+
+test('active lease remains rebindable beyond the 12s heartbeat TTL during the 30s disconnect grace', () => {
+  const h = fixture({ viewerDisconnectGraceMs: 30_000 });
+  const first = h.manual('ttl-owner', 'ttl-session');
+  h.grant(first);
+  const identity = admissionOf(first);
+  first.disconnect();
+
+  // The grace scheduler is intentionally not advanced yet. This is the
+  // production window in which the lease must remain recoverable even though
+  // no heartbeat can arrive from the disconnected socket.
+  h.advance(20_000);
+  const replacement = h.viewer('ttl-owner-replacement', 'ttl-session', identity);
+  assert.equal(replacement.disconnected, false);
+  const rebind = h.host.sent.filter(e => e.event === 'viewer-session-rebind').at(-1);
+  assert.ok(rebind);
+  rebind.ack(null, { status: 'applied' });
+  assert.equal(h.lease.snapshot().state, 'ACTIVE');
+  assert.equal(replacement.sent.some(e => e.event === 'control-grant'), true);
+});
 
 test('explicit B replaces A but cannot acquire before the reset barrier', () => {
   const h = fixture(); const a = h.manual('a', 'session-alpha'); h.grant(a);
